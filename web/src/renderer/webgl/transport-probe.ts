@@ -12,7 +12,7 @@ export interface TransportReport {
   instancedBytes: number;
   /** Bytes the same scene would need as four expanded vertices per segment. */
   expandedBytes: number;
-  /** Median milliseconds. */
+  /** Mean milliseconds per operation. */
   ms: {
     /** Create typed-array views over WASM memory; touch nothing. */
     pullViews: number;
@@ -39,19 +39,18 @@ export interface TransportReport {
 const EXPANDED_FLOATS_PER_VERTEX = 5;
 const EXPANDED_VERTICES_PER_SEGMENT = 4;
 
-function median(samples: number[]): number {
-  const sorted = [...samples].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)] ?? 0;
-}
+/** Browsers clamp `performance.now()` to about 0.1 ms, so single operations cannot be timed. */
+const MIN_TIMED_MS = 40;
 
-function time(repeats: number, run: () => void): number {
-  const samples: number[] = [];
-  for (let index = 0; index < repeats; index += 1) {
+/** Mean milliseconds per run, timing ever larger batches until the clock can resolve them. */
+function time(run: () => void): number {
+  run(); // warm up
+  for (let batch = 1; ; batch *= 2) {
     const start = performance.now();
-    run();
-    samples.push(performance.now() - start);
+    for (let index = 0; index < batch; index += 1) run();
+    const elapsed = performance.now() - start;
+    if (elapsed >= MIN_TIMED_MS || batch >= 1 << 20) return elapsed / batch;
   }
-  return median(samples);
 }
 
 interface ChromiumMemory {
@@ -62,7 +61,7 @@ function heapSize(): number | undefined {
   return (performance as Performance & { memory?: ChromiumMemory }).memory?.usedJSHeapSize;
 }
 
-export function probeTransport(engine: CadEngine, repeats = 15): TransportReport {
+export function probeTransport(engine: CadEngine): TransportReport {
   const gl = document.createElement("canvas").getContext("webgl2");
   if (!gl) throw new Error("WebGL2 is not available");
 
@@ -90,18 +89,14 @@ export function probeTransport(engine: CadEngine, repeats = 15): TransportReport
   };
 
   const ms = {
-    pullViews: time(repeats, () =>
+    pullViews: time(() =>
       engine.readScene((frame) => frame.segments.length + frame.batches.length),
     ),
-    pullAndCopy: time(repeats, () => engine.readScene((frame) => frame.segments.slice().length)),
-    uploadFromViews: time(repeats, () =>
-      engine.readScene((frame) => upload(scene, frame.segments)),
-    ),
-    uploadFromCopy: time(repeats, () =>
-      engine.readScene((frame) => upload(scene, frame.segments.slice())),
-    ),
-    uploadExpanded: time(repeats, () => upload(wide, expanded)),
-    uploadWithRealloc: time(repeats, () =>
+    pullAndCopy: time(() => engine.readScene((frame) => frame.segments.slice().length)),
+    uploadFromViews: time(() => engine.readScene((frame) => upload(scene, frame.segments))),
+    uploadFromCopy: time(() => engine.readScene((frame) => upload(scene, frame.segments.slice()))),
+    uploadExpanded: time(() => upload(wide, expanded)),
+    uploadWithRealloc: time(() =>
       engine.readScene((frame) => {
         gl.bindBuffer(gl.ARRAY_BUFFER, scene);
         gl.bufferData(gl.ARRAY_BUFFER, frame.segments, gl.STATIC_DRAW);
@@ -113,7 +108,6 @@ export function probeTransport(engine: CadEngine, repeats = 15): TransportReport
   };
 
   // Pointer frames: the committed scene is not touched at all.
-  const POINTER_FRAMES = 500;
   let step = 0;
   const pointerFrame = () => {
     step += 1;
@@ -122,14 +116,17 @@ export function probeTransport(engine: CadEngine, repeats = 15): TransportReport
     engine.overlayTransform();
     engine.sceneTransform();
   };
-  for (let warmUp = 0; warmUp < 50; warmUp += 1) pointerFrame();
+  ms.pointerFrame = time(pointerFrame);
+
+  // Heap growth over many frames. Needs --enable-precise-memory-info to be meaningful.
+  const HEAP_FRAMES = 20_000;
   const heapBefore = heapSize();
-  ms.pointerFrame = time(POINTER_FRAMES, pointerFrame);
+  for (let frame = 0; frame < HEAP_FRAMES; frame += 1) pointerFrame();
   const heapAfter = heapSize();
 
   // An edit: one new line, then the whole committed scene is rebuilt and re-uploaded.
   let editStep = 0;
-  ms.editAndReupload = time(Math.min(repeats, 7), () => {
+  ms.editAndReupload = time(() => {
     editStep += 1;
     engine.submitText("L");
     engine.submitText(`${editStep},0`);
@@ -148,6 +145,18 @@ export function probeTransport(engine: CadEngine, repeats = 15): TransportReport
     heapBytesPerPointerFrame:
       heapBefore === undefined || heapAfter === undefined
         ? undefined
-        : (heapAfter - heapBefore) / POINTER_FRAMES,
+        : (heapAfter - heapBefore) / HEAP_FRAMES,
   };
+}
+
+/** Milliseconds to import a DXF file into a fresh session: parse, build the drawing and its index. */
+export function probeOpen(createEngine: () => CadEngine, text: string): number {
+  const bytes = new TextEncoder().encode(text);
+  const engine = createEngine();
+  engine.resize(800, 600);
+  const start = performance.now();
+  engine.loadDxf(bytes, "probe.dxf");
+  const elapsed = performance.now() - start;
+  engine.dispose();
+  return elapsed;
 }

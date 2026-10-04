@@ -12,4 +12,18 @@ export default defineConfig({
   workers: 1,
   timeout: 300_000,
   reporter: "list",
+  projects: [
+    {
+      name: "chromium",
+      use: {
+        launchOptions: {
+          args: [
+            "--enable-unsafe-swiftshader",
+            "--ignore-gpu-blocklist",
+            "--enable-precise-memory-info",
+          ],
+        },
+      },
+    },
+  ],
 });

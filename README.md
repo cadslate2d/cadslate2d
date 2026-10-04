@@ -41,7 +41,7 @@ Unexported changes exist only in the browser tab until autosave arrives (M5); th
 
 Rust compiled to WebAssembly owns all CAD state — entities, commands, selection, undo history, snapping, DXF — and prepares batched render data. TypeScript owns the React shell and the WebGL2 context and submits those batches to the GPU. The boundary between them is deliberately coarse: browser events go in, dirty flags come out, and frames are pulled in bulk. There is no backend; the production build is a folder of static files.
 
-Details: [`docs/DESIGN.md`](docs/DESIGN.md) (implementation baseline) and [`docs/adr/`](docs/adr/README.md) (architecture decisions).
+Details: [`docs/DESIGN.md`](docs/DESIGN.md) (implementation baseline), [`docs/adr/`](docs/adr/README.md) (architecture decisions), [`docs/roadmap.md`](docs/roadmap.md) (what is next and why), and [`docs/reviews/`](docs/reviews/m0-exit-review.md) (milestone reviews with evidence).
 
 ## Development
 

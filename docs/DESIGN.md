@@ -1,6 +1,6 @@
 # CadSlate2D — Design Specification
 
-**Status:** Implementation Baseline v5  
+**Status:** Implementation Baseline v5, annotated with M0 evidence (2026-10-04)  
 **Date:** 2026-08-18  
 **Product:** CadSlate2D  
 **Tagline:** Classic 2D CAD. In your browser.
@@ -355,7 +355,7 @@ cadslate2d/
         └── future.md
 ```
 
-This document should eventually become `docs/DESIGN.md`.
+This document is `docs/DESIGN.md`. Decisions are recorded in `docs/adr/`, milestone reviews in `docs/reviews/`.
 
 Detailed subsystem documents should be written only when their milestone approaches.
 
@@ -443,6 +443,8 @@ A deleted entity may free slot 91 for reuse, while `EntityId(734)` itself is nev
 Undo may restore entity 734 into a different storage slot.
 
 The concrete dense-store implementation remains open until benchmarked.
+
+> **Resolved in M0:** dense vector with an ID-to-slot map — [ADR-0006](adr/0006-entity-store.md).
 
 This permits:
 
@@ -669,6 +671,8 @@ Circle and arc representation remains intentionally unspecified until the M1 ren
 - analytic shader/SDF primitives;
 - a hybrid.
 
+> **Clarified in M0:** the curve experiment runs at the start of M1. §23.3 says "M0 should evaluate", but §27 excludes circles and arcs from M0.
+
 A green M0 validates the committed/transient rendering skeleton for line geometry only.
 
 It does not validate the eventual curve protocol.
@@ -689,6 +693,8 @@ M0 should measure:
 - GPU upload cost.
 
 The performance data should guide the final packed-buffer transport.
+
+> **Resolved in M0:** typed-array views, one 16-byte instance per segment, reused GPU buffers — [ADR-0008](adr/0008-render-buffer-transport.md). View ownership and the stroke model are in [ADR-0003](adr/0003-view-ownership-and-viewport-independent-scene.md).
 
 ---
 
@@ -1266,6 +1272,8 @@ trait SpatialIndex {
 
 An R-tree implementation is PROVISIONAL.
 
+> **Resolved for M0–M1:** rstar R*-tree grown by insertion only, after a crash was found in its bulk loader — [ADR-0007](adr/0007-spatial-index.md). To be re-measured with M2 editing workloads.
+
 Real editing workloads must be benchmarked.
 
 Transient previews should avoid continuous index churn.
@@ -1458,6 +1466,8 @@ Initial interchange format:
 > **DXF**
 
 The exact initial DXF release target is PROVISIONAL.
+
+> **Resolved in M0:** ASCII R12 writer, release-agnostic reader, hand-written — [ADR-0005](adr/0005-dxf-baseline.md).
 
 The internal document must remain semantic rather than mirroring DXF group codes.
 

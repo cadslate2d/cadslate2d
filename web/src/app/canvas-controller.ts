@@ -1,7 +1,7 @@
 // Binds one canvas to the app: DOM events go in as semantic engine calls and
 // frames are drawn on demand. This module interprets nothing — every decision
 // is made in Rust.
-import { Dirty, Modifier } from "../cad/engine";
+import { CadEngine, Dirty, Modifier } from "../cad/engine";
 import { documentPalette } from "../renderer/palette";
 import { renderFrame } from "../renderer/render-frame";
 import { WebGlRenderer } from "../renderer/webgl/webgl-renderer";
@@ -61,6 +61,10 @@ export class CanvasController {
       probeTransport: async () => {
         const { probeTransport } = await import("../renderer/webgl/transport-probe");
         return probeTransport(app.engine);
+      },
+      probeOpen: async (text) => {
+        const { probeOpen } = await import("../renderer/webgl/transport-probe");
+        return probeOpen(() => new CadEngine(), text);
       },
     });
 

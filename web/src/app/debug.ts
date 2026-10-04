@@ -7,6 +7,8 @@ export interface DebugHandle {
   readonly renderer: Readonly<RendererStats>;
   /** Runs the render-transport measurement (DESIGN §12.6) on the open drawing. */
   readonly probeTransport: () => Promise<TransportReport>;
+  /** Milliseconds to import `text` as DXF into a throwaway session. */
+  readonly probeOpen: (text: string) => Promise<number>;
 }
 
 declare global {

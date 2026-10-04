@@ -1,6 +1,6 @@
 // Render-transport measurement (DESIGN §12.6). Opens generated drawings in the
 // production bundle and runs the in-page probe on each.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { chooseFile, enter, logLines, openApp } from "../e2e/support";
@@ -31,8 +31,17 @@ for (const size of SIZES) {
       if (!handle) throw new Error("debug handle is not published");
       return handle.probeTransport();
     });
+    // Import alone, without the file picker and the first render.
+    const importMs = await page.evaluate(
+      async (text) => {
+        const handle = window.__cadslate;
+        if (!handle) throw new Error("debug handle is not published");
+        return handle.probeOpen(text);
+      },
+      readFileSync(path, "utf8"),
+    );
 
-    console.log(`TRANSPORT ${JSON.stringify({ size, openMs, ...report })}`);
+    console.log(`TRANSPORT ${JSON.stringify({ size, openMs, importMs, ...report })}`);
     expect(report.segments).toBe(size);
   });
 }
