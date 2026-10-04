@@ -6,8 +6,8 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 
 | Milestone | State |
 | --- | --- |
-| M0 — The Line | Functionally complete. All 18 acceptance criteria are covered by automated tests ([review](reviews/m0-exit-review.md)). One manual check is outstanding. |
-| M1 — Input and Basic Entities | Next. |
+| M0 — The Line | Complete and closed. All 18 acceptance criteria are covered by automated tests ([review](reviews/m0-exit-review.md)). |
+| M1 — Input and Basic Entities | In progress. |
 | M2 — OSNAP, Grips, and Basic Modify | Planned in detail. |
 | M3–M7 | PROVISIONAL placeholders, to be broken down at the preceding exit review. |
 | M8 | FUTURE. Not planned against. |
@@ -37,7 +37,6 @@ M0 was built so that M1 is mostly *adding instances* of things that already exis
 
 ### Carried over from M0
 
-- Verify an exported DXF in a real CAD program.
 - Run the end-to-end suite in Firefox and WebKit.
 - Measure GPU upload cost on real hardware.
 - A safe bulk loader for the spatial index, to speed up opening large files.

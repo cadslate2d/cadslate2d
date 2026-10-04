@@ -10,7 +10,7 @@ CadSlate2D is a free, browser-native, local-first 2D CAD application inspired by
 
 ## Status
 
-Milestone **M0 — The Line** is functionally complete: a vertical slice that proves the architecture with a single entity type. You can draw lines by command or pointer, select them, undo and redo, export DXF, and reopen it — all in a static page with no backend. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
+Milestone **M0 — The Line** is complete: a vertical slice that proves the architecture with a single entity type. **M1 — Input and Basic Entities** is in progress. You can draw lines by command or pointer, select them, undo and redo, export DXF, and reopen it — all in a static page with no backend. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
 
 ## What works today
 

@@ -33,7 +33,7 @@ R12 has no mandatory handles, so none are written. When a later release is targe
 - Files written by ezdxf 1.4.4 as R12, R2010, and R2018 import correctly, including a mixed-content file whose circles, arc, polyline, text, block, and insert are each reported.
 - The R12 fixture exposed a real compatibility detail that the first implementation missed: R12 writers name the model-space container `$MODEL_SPACE`, not `*Model_Space`.
 
-**Not verified:** no interactive CAD program (AutoCAD, LibreCAD, QCAD, …) has opened a file written by CadSlate2D yet. That check needs a person with such a tool and is tracked on the export issue.
+**Verified by hand (2026-10-04):** the maintainer opened the golden export, `test-data/dxf/valid/cadslate-m0-line.dxf`, in a CAD program and it loaded correctly. This check cannot be automated here and was the last open M0 criterion.
 
 ## Alternatives considered
 

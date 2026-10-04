@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-04  
 **Scope:** DESIGN §26–28  
-**Outcome:** 18 of 18 acceptance criteria demonstrated by automated tests. One item outside the criteria needs a person (see [Open items](#open-items)).
+**Outcome:** 18 of 18 acceptance criteria demonstrated by automated tests. The one check that needed a person — opening an exported file in a real CAD program — was done by the maintainer on 2026-10-04. M0 is closed.
 
 M0 exists to prove the architecture with one entity. This review records the evidence, answers the questions §28 says M0 should answer, and lists what changes for M1.
 
@@ -86,7 +86,7 @@ No LOCKED decision was changed.
 
 ## Open items
 
-1. **Open an exported DXF in a real CAD program** (issue 35). ezdxf reads our export with zero audit errors, which is good evidence, but no interactive CAD program has been tried. This needs a person.
+1. ~~Open an exported DXF in a real CAD program~~ — done by the maintainer on 2026-10-04; the file loaded correctly. The maintainer also exercised the web UI by hand.
 2. **GPU upload cost on real hardware** is unmeasured; the transport comparison ran on a software rasteriser (ADR-0008).
 3. **Firefox and WebKit** are not part of the automated suite.
 4. **Opening very large files** spends most of its time building the index by insertion, because bulk loading is unsafe (ADR-0007).
