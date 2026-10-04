@@ -1,0 +1,18 @@
+[package]
+name = "cad-wasm"
+description = "The JS/WASM boundary. Marshalling only; no CAD logic."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+cad-commands.workspace = true
+cad-render.workspace = true
+cad-dxf.workspace = true
+
+[lints]
+workspace = true

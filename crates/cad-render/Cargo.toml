@@ -1,0 +1,16 @@
+[package]
+name = "cad-render"
+description = "Render preparation: RenderScene from the document, OverlayFrame from the session."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+cad-core.workspace = true
+cad-geometry.workspace = true
+cad-document.workspace = true
+cad-commands.workspace = true
+
+[lints]
+workspace = true

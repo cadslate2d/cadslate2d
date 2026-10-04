@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[workspace.dependencies]
+cad-core = { path = "crates/cad-core" }
+cad-geometry = { path = "crates/cad-geometry" }
+cad-input = { path = "crates/cad-input" }
+cad-document = { path = "crates/cad-document" }
+cad-commands = { path = "crates/cad-commands" }
+cad-dxf = { path = "crates/cad-dxf" }
+cad-render = { path = "crates/cad-render" }
+
+# The wasm-bindgen crate version must equal the installed wasm-bindgen-cli
+# version; scripts/build-wasm.sh checks this (ADR-0004).
+wasm-bindgen = "=0.2.129"
+js-sys = "0.3.106"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+console_error_panic_hook = "0.1"
+rstar = "0.13"
+proptest = "1"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# DESIGN §21.1: no indiscriminate float equality. Compare through cad_core::tolerance.
+float_cmp = "deny"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"

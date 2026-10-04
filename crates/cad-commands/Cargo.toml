@@ -1,0 +1,16 @@
+[package]
+name = "cad-commands"
+description = "The interactive session: command state machines, selection, transient edits."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+cad-core.workspace = true
+cad-geometry.workspace = true
+cad-input.workspace = true
+cad-document.workspace = true
+
+[lints]
+workspace = true
