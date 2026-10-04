@@ -28,6 +28,9 @@
 
   /* Drawing area */
   --canvas-background: #0b0f17;
+  /* The reference grid: faint, with every fifth line a little stronger. */
+  --canvas-grid-minor: #131a27;
+  --canvas-grid-major: #1d2738;
   --canvas-entity: #f1f4f8;
   --canvas-selection: #3d8bfd;
   --canvas-preview: #9fb4d1;
@@ -39,6 +42,8 @@
   --canvas-snap-marker: #ffb224;
   /* The direction polar tracking has locked onto. */
   --canvas-tracking: #2aa198;
+  --canvas-lineweight-grid-minor: 1;
+  --canvas-lineweight-grid-major: 1;
   --canvas-lineweight-entity: 1.25;
   --canvas-lineweight-selection: 2.75;
   --canvas-lineweight-preview: 1;

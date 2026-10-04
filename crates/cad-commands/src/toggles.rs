@@ -54,15 +54,20 @@ pub struct Toggles {
 }
 
 impl Default for Toggles {
-    /// Object snaps run from the start, as a drafter expects; the rest are off.
+    /// Object snaps and the grid are on from the start; the rest are off.
     fn default() -> Self {
-        Self {
-            bits: Toggle::Osnap.bit(),
-        }
+        Self::only(&[Toggle::Osnap, Toggle::Grid])
     }
 }
 
 impl Toggles {
+    /// Exactly these toggles on.
+    pub fn only(on: &[Toggle]) -> Self {
+        Self {
+            bits: on.iter().fold(0, |bits, toggle| bits | toggle.bit()),
+        }
+    }
+
     pub fn is_on(self, toggle: Toggle) -> bool {
         self.bits & toggle.bit() != 0
     }
@@ -84,26 +89,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_object_snaps_start_on() {
+    fn object_snaps_and_the_grid_start_on() {
         let toggles = Toggles::default();
-        assert!(toggles.is_on(Toggle::Osnap));
-        assert!(
-            !toggles.is_on(Toggle::Grid)
-                && !toggles.is_on(Toggle::Ortho)
-                && !toggles.is_on(Toggle::Polar)
-        );
-        assert_eq!(toggles.bits(), Toggle::Osnap.bit());
+        assert!(toggles.is_on(Toggle::Osnap) && toggles.is_on(Toggle::Grid));
+        assert!(!toggles.is_on(Toggle::Ortho) && !toggles.is_on(Toggle::Polar));
+        assert_eq!(toggles.bits(), Toggle::Osnap.bit() | Toggle::Grid.bit());
     }
 
     #[test]
     fn flipping_one_toggle_leaves_the_others_alone() {
-        let mut toggles = Toggles::default();
+        let mut toggles = Toggles::only(&[Toggle::Osnap]);
         assert!(toggles.flip(Toggle::Ortho));
         assert!(toggles.is_on(Toggle::Ortho) && toggles.is_on(Toggle::Osnap));
         assert!(!toggles.is_on(Toggle::Grid) && !toggles.is_on(Toggle::Polar));
         assert!(!toggles.flip(Toggle::Ortho));
         assert!(!toggles.flip(Toggle::Osnap));
-        assert_eq!(toggles.bits(), 0);
+        assert_eq!(toggles, Toggles::only(&[]));
     }
 
     #[test]

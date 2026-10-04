@@ -12,9 +12,17 @@ import { loadEngineForTests } from "./test-support";
 
 beforeAll(loadEngineForTests);
 
-function engine(): CadEngine {
+/** An engine as the app starts it: 800×600, grid and object snaps on. */
+function freshEngine(): CadEngine {
   const engine = new CadEngine();
   engine.resize(800, 600);
+  return engine;
+}
+
+/** The same with the grid hidden, so overlay assertions see only what a test put there. */
+function engine(): CadEngine {
+  const engine = freshEngine();
+  engine.key(KeyAction.ToggleGrid);
   return engine;
 }
 
@@ -129,7 +137,7 @@ describe("commands", () => {
   });
 
   test("log lines are fetched incrementally", () => {
-    const cad = engine();
+    const cad = freshEngine();
     enter(cad, "L");
     const seen = cad.uiState().logTotal;
     enter(cad, "banana");
@@ -338,5 +346,37 @@ describe("drafting aids", () => {
     cad.pointerMove(480, 260, 0);
     expect(styles()).not.toContain(StyleRole.Tracking);
     expect(cad.uiState().tracking).toBeUndefined();
+  });
+});
+
+describe("grid", () => {
+  const roles = (cad: CadEngine) =>
+    cad.readOverlay((frame) => Array.from(frame.batches).filter((_, index) => index % 3 === 0));
+
+  test("is on from the start, in the overlay, as minor then major lines", () => {
+    const cad = freshEngine();
+    expect(roles(cad)).toEqual([StyleRole.GridMinor, StyleRole.GridMajor]);
+    expect(cad.readScene((frame) => frame.segments.length)).toBe(0);
+  });
+
+  test("F7 hides and shows it without touching the scene", () => {
+    const cad = freshEngine();
+    enter(cad, "L", "0,0", "100,0", "");
+    const revision = cad.sceneRevision;
+
+    expect(cad.key(KeyAction.ToggleGrid) & Dirty.Overlay).toBeTruthy();
+    expect(roles(cad)).toEqual([]);
+    cad.key(KeyAction.ToggleGrid);
+    expect(roles(cad)).toContain(StyleRole.GridMajor);
+    expect(cad.sceneRevision).toBe(revision);
+  });
+
+  test("zooming out shows fewer, wider-spaced lines instead of a solid fill", () => {
+    const cad = freshEngine();
+    const lines = () => cad.readOverlay((frame) => frame.segments.length / 4);
+    const before = lines();
+    for (let step = 0; step < 12; step += 1) cad.wheel(400, 300, 400, 0);
+    expect(lines()).toBeLessThan(before * 2);
+    expect(lines()).toBeGreaterThan(20);
   });
 });

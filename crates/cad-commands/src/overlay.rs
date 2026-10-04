@@ -10,6 +10,10 @@ use crate::SnapMode;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum OverlayItem {
+    /// The reference grid, with lines `spacing` drawing units apart. It
+    /// depends on the view, so it lives here and not in the committed scene;
+    /// it is drawn beneath the drawing.
+    Grid { spacing: f64 },
     /// A selected entity to highlight.
     Highlight(EntityId),
     /// A rubber-band segment that is not itself an entity, such as the

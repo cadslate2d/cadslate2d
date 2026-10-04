@@ -87,6 +87,8 @@ export const StyleRole = {
   SelectionCrossing: 5,
   SnapMarker: 6,
   Tracking: 7,
+  GridMinor: 8,
+  GridMajor: 9,
 } as const;
 export type StyleRole = (typeof StyleRole)[keyof typeof StyleRole];
 

@@ -78,11 +78,13 @@ test.describe("status toggles", () => {
     await expect(logLines(page).last()).toHaveText("<ORTHO off>");
   });
 
-  test("each function key flips its own toggle; object snaps start on", async ({ page }) => {
+  test("each function key flips its own toggle; object snaps and the grid start on", async ({
+    page,
+  }) => {
     await openApp(page);
     for (const [key, label, initially] of [
       ["F3", "OSNAP", "true"],
-      ["F7", "GRID", "false"],
+      ["F7", "GRID", "true"],
       ["F8", "ORTHO", "false"],
       ["F10", "POLAR", "false"],
     ] as const) {

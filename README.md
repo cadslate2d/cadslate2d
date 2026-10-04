@@ -10,7 +10,7 @@ CadSlate2D is a free, browser-native, local-first 2D CAD application inspired by
 
 ## Status
 
-Milestones **M0 — The Line** and **M1 — Input and Basic Entities** are complete. **M2 — OSNAP, Grips, and Basic Modify** is in progress: object snaps, ORTHO, and POLAR work; the grid, grips, and more modify commands follow. You can draw lines, circles, arcs, polylines, and rectangles by command or pointer, snap exactly to existing geometry, select with clicks and boxes, move, copy, and erase, undo and redo whole commands, export DXF, and reopen it — all in a static page with no backend. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
+Milestones **M0 — The Line** and **M1 — Input and Basic Entities** are complete. **M2 — OSNAP, Grips, and Basic Modify** is in progress: object snaps, ORTHO, POLAR, and the grid work; grips and more modify commands follow. You can draw lines, circles, arcs, polylines, and rectangles by command or pointer, snap exactly to existing geometry, select with clicks and boxes, move, copy, and erase, undo and redo whole commands, export DXF, and reopen it — all in a static page with no backend. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
 
 ## What works today
 
@@ -29,6 +29,7 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `UNDO` | `U`, Ctrl+Z | Reverts the last command. |
 | `REDO` | Ctrl+Y, Ctrl+Shift+Z | Re-applies the last undone command. |
 | `OSNAP` | `OS` | Chooses which object snaps run. Each mode is switched by its keyword; Enter finishes. |
+| `GRID` | | Sets the grid spacing (10 at start). |
 | `POLARANG` | | Sets the angle between polar tracking directions (90° at start). |
 | `OPEN` | `DXFIN`, Ctrl+O | Opens an ASCII DXF file. Lines, circles, arcs, and straight polylines are imported; everything else is counted and reported. |
 | `DXFOUT` | `SAVE`, `SAVEAS`, `EXPORT`, Ctrl+S | Downloads the drawing as ASCII DXF (R12). |
@@ -52,7 +53,7 @@ Options shown in brackets, as in `Specify next point or [Close/Undo]:`, are chos
 | F3 | Object snaps on or off (on at start) |
 | F8 | ORTHO on or off: the pointer draws horizontally or vertically from the previous point |
 | F10 | POLAR on or off: the pointer locks onto angles at a fixed increment from the previous point |
-| F7 | Toggle GRID. The switch works; the grid itself arrives later in M2 |
+| F7 | Grid on or off (on at start). Zoomed out, it shows every 2nd, 5th, 10th… line rather than crowding |
 
 ### Object snaps
 

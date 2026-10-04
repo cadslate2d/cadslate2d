@@ -15,8 +15,6 @@ export interface ToggleSpec {
 }
 
 /** Toggles the session knows about, in status-bar order. */
-const NOT_YET = "Its drafting behaviour is not available yet.";
-
 export const TOGGLES: readonly ToggleSpec[] = [
   {
     id: "grid",
@@ -24,7 +22,7 @@ export const TOGGLES: readonly ToggleSpec[] = [
     key: "F7",
     bit: ToggleBit.Grid,
     action: KeyAction.ToggleGrid,
-    hint: NOT_YET,
+    hint: "Shows a reference grid under the drawing. Type GRID to set its spacing.",
   },
   {
     id: "ortho",

@@ -115,6 +115,14 @@ impl Session {
         }
     }
 
+    /// The same session with the drafting toggles set as given, instead of
+    /// the defaults: for restoring preferences, and for tests that want a
+    /// bare drawing area.
+    pub fn with_toggles(mut self, toggles: Toggles) -> Self {
+        self.toggles = toggles;
+        self
+    }
+
     // ── read access ──
 
     pub fn drawing(&self) -> &Drawing {
@@ -232,8 +240,13 @@ impl Session {
     /// What should be drawn on top of the committed scene, in draw order.
     /// Purely descriptive; `cad-render` turns it into geometry.
     pub fn overlay(&self) -> Vec<OverlayItem> {
-        let mut items: Vec<OverlayItem> =
-            self.selection.iter().map(OverlayItem::Highlight).collect();
+        let mut items = Vec::new();
+        if self.toggles.is_on(Toggle::Grid) {
+            items.push(OverlayItem::Grid {
+                spacing: self.settings.grid_spacing,
+            });
+        }
+        items.extend(self.selection.iter().map(OverlayItem::Highlight));
         let (Some(cursor), Some(aim)) = (self.cursor_world(), self.aim()) else {
             return items;
         };

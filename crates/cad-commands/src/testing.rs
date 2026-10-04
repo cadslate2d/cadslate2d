@@ -14,7 +14,7 @@
 use cad_core::{EntityId, Point2, ScreenPoint};
 use cad_document::{Entity, LineEntity};
 
-use crate::{Dirty, KeyAction, Modifiers, PointerButton, Session, Toggle};
+use crate::{Dirty, KeyAction, Modifiers, PointerButton, Session, Toggle, Toggles};
 
 /// A session on an 800×600 canvas centred on the world origin at one pixel
 /// per unit, so screen `(400, 300)` is world `(0, 0)`.
@@ -31,7 +31,9 @@ impl Default for Harness {
 
 impl Harness {
     pub fn new() -> Self {
-        let mut session = Session::new();
+        // No grid: overlay assertions then see only what the test put there.
+        // Tests about the grid switch it on.
+        let mut session = Session::new().with_toggles(Toggles::only(&[Toggle::Osnap]));
         session.resize(800.0, 600.0);
         Self { session }
     }

@@ -608,6 +608,8 @@ The exact packed-buffer representation is PROVISIONAL.
 
 The lifetime split is not.
 
+> **Resolved in M2:** the reference grid depends on the view (which lines are visible, and how many), so it is `OverlayFrame` content, not a third lifetime. Its batches carry their own style roles, and the adapter draws those beneath the committed scene; everything else in the overlay is drawn on top. The grid shows the set spacing times 1, 2, 5, 10, … so that lines stay at least 12 CSS pixels apart.
+
 ## 12.3 Scene revision rule
 
 **LOCKED:**
@@ -801,7 +803,7 @@ F8         ORTHO
 F10        POLAR
 ```
 
-> **Resolved in M2:** a pointer-derived point is decided in a fixed order — object snap, then ORTHO or POLAR, then the free cursor — and typed coordinates bypass all three. ORTHO and POLAR are mutually exclusive: switching one on switches the other off. OSNAP is on in a new session; the others are off. POLAR locks within 8 CSS pixels of a tracked direction; its increment is set with `POLARANG` (90° at start). The readout is shown in the status bar, since text in the drawing area arrives with M4.
+> **Resolved in M2:** a pointer-derived point is decided in a fixed order — object snap, then ORTHO or POLAR, then the free cursor — and typed coordinates bypass all three. ORTHO and POLAR are mutually exclusive: switching one on switches the other off. OSNAP and GRID are on in a new session; ORTHO and POLAR are off. POLAR locks within 8 CSS pixels of a tracked direction; its increment is set with `POLARANG` (90° at start). The readout is shown in the status bar, since text in the drawing area arrives with M4.
 
 Right-click-as-Enter is PROVISIONAL and may become a preference.
 

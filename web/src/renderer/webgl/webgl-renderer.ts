@@ -3,6 +3,7 @@
 import {
   FLOATS_PER_ARC,
   FLOATS_PER_SEGMENT,
+  StyleRole,
   type ClipTransform,
   type FrameBuffers,
 } from "../../cad/engine";
@@ -12,6 +13,15 @@ import { ARC_FRAGMENT_SHADER, ARC_STRIP_VERTICES, ARC_VERTEX_SHADER } from "./ar
 import { InstanceLayer, type InstanceLayout, type StrokeUniforms } from "./instance-layer";
 import { linkProgram } from "./program";
 import { STROKE_FRAGMENT_SHADER, STROKE_VERTEX_SHADER } from "./shaders";
+
+/**
+ * Roles that travel in the overlay frame, because they depend on the view,
+ * but are drawn beneath the committed scene: the background of the drawing.
+ */
+const UNDERLAY_ROLES: ReadonlySet<StyleRole> = new Set([StyleRole.GridMinor, StyleRole.GridMajor]);
+const isUnderlay = (role: StyleRole): boolean => UNDERLAY_ROLES.has(role);
+const isNotUnderlay = (role: StyleRole): boolean => !UNDERLAY_ROLES.has(role);
+const everyRole = (): boolean => true;
 
 /** Counters that let tests prove what the renderer did and did not do. */
 export interface RendererStats {
@@ -137,14 +147,19 @@ export class WebGlRenderer implements FrameSink {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied alpha
 
-    // Committed geometry first, transient geometry on top.
-    const passes: [FrameLayers, ClipTransform][] = [
-      [scene, sceneTransform],
-      [overlay, overlayTransform],
+    // The grid, then committed geometry, then transient geometry on top.
+    const passes: [FrameLayers, ClipTransform, (role: StyleRole) => boolean][] = [
+      [overlay, overlayTransform, isUnderlay],
+      [scene, sceneTransform, everyRole],
+      [overlay, overlayTransform, isNotUnderlay],
     ];
-    for (const [layers, transform] of passes) {
-      this.stats.drawCalls += this.#drawLayer(pipelines.segments, layers.segments, transform);
-      this.stats.drawCalls += this.#drawLayer(pipelines.arcs, layers.arcs, transform);
+    for (const [layers, transform, include] of passes) {
+      for (const [pipeline, layer] of [
+        [pipelines.segments, layers.segments],
+        [pipelines.arcs, layers.arcs],
+      ] as const) {
+        this.stats.drawCalls += this.#drawLayer(pipeline, layer, transform, include);
+      }
     }
     this.stats.frames += 1;
   }
@@ -160,11 +175,16 @@ export class WebGlRenderer implements FrameSink {
     this.#gl.deleteProgram(pipelines.arcs.program);
   }
 
-  #drawLayer(pipeline: Pipeline, layer: InstanceLayer, transform: ClipTransform): number {
+  #drawLayer(
+    pipeline: Pipeline,
+    layer: InstanceLayer,
+    transform: ClipTransform,
+    include: (role: StyleRole) => boolean,
+  ): number {
     const gl = this.#gl;
     gl.useProgram(pipeline.program);
     gl.uniform2f(pipeline.uniforms.viewport, this.#canvas.width, this.#canvas.height);
-    return layer.draw(pipeline.uniforms, transform, this.#palette, this.#devicePixelRatio);
+    return layer.draw(pipeline.uniforms, transform, this.#palette, this.#devicePixelRatio, include);
   }
 
   readonly #onContextLost = (event: Event): void => {

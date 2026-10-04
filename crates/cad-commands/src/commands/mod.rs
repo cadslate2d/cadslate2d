@@ -25,6 +25,7 @@ macro_rules! immediate_command {
 mod arc;
 mod circle;
 mod files;
+mod grid;
 mod history;
 mod line;
 mod modify;
@@ -44,6 +45,7 @@ mod keywords {
 pub(crate) use arc::ArcCommand;
 pub(crate) use circle::CircleCommand;
 pub(crate) use files::{ExportCommand, OpenCommand};
+pub(crate) use grid::GridCommand;
 pub(crate) use history::{RedoCommand, UndoCommand};
 pub(crate) use line::LineCommand;
 pub(crate) use modify::{EraseCommand, PlaceCommand};

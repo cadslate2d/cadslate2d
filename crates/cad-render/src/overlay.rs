@@ -16,6 +16,11 @@ use crate::{PackedFrame, StyleRole};
 const CROSSHAIR_ARM_PIXELS: f64 = 24.0;
 /// Half-size of the pick box at the centre of the crosshair, in CSS pixels.
 const PICK_BOX_PIXELS: f64 = 3.0;
+/// The closest two grid lines may come on screen, in CSS pixels. Below it
+/// the grid would turn into a solid fill, so fewer lines are shown.
+const MIN_GRID_PIXELS: f64 = 12.0;
+/// Every this-many-th grid line is a major line.
+const GRID_MAJOR_EVERY: i64 = 5;
 /// Half-size of an object-snap marker, in CSS pixels.
 const SNAP_MARKER_PIXELS: f64 = 7.0;
 
@@ -47,6 +52,21 @@ fn marker_strokes(mode: SnapMode) -> &'static [&'static [(f64, f64)]] {
     }
 }
 
+/// The spacing the grid is drawn at: `spacing` times the smallest of 1, 2,
+/// 5, 10, 20, 50, … that keeps lines at least [`MIN_GRID_PIXELS`] apart at
+/// `scale` pixels per unit. Lines therefore always sit on multiples of the
+/// setting. `None` when there is nothing sensible to draw.
+pub fn displayed_grid_spacing(spacing: f64, scale: f64) -> Option<f64> {
+    let usable = spacing.is_finite() && spacing > 0.0 && scale.is_finite() && scale > 0.0;
+    if !usable {
+        return None;
+    }
+    (0..=308)
+        .flat_map(|decade| [1.0, 2.0, 5.0].map(|step| spacing * step * 10f64.powi(decade)))
+        .take_while(|shown| shown.is_finite())
+        .find(|shown| shown * scale >= MIN_GRID_PIXELS)
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OverlayFrame {
     frame: PackedFrame,
@@ -70,6 +90,7 @@ impl OverlayFrame {
         self.frame.reset(view.center());
         for item in items {
             match item {
+                OverlayItem::Grid { spacing } => self.push_grid(*spacing, view),
                 OverlayItem::Highlight(id) => {
                     if let Some(entity) = drawing.entity(*id) {
                         self.frame.push_entity(StyleRole::Selection, entity);
@@ -107,6 +128,34 @@ impl OverlayFrame {
                 }
                 OverlayItem::SnapMarker { mode, at } => self.push_snap_marker(*mode, *at, view),
                 OverlayItem::Crosshair { at } => self.push_crosshair(*at, view),
+            }
+        }
+    }
+
+    /// Grid lines across the visible area, on multiples of the displayed
+    /// spacing in world coordinates — so the grid stays put under pan and zoom.
+    /// Minor lines first, then major lines over them.
+    fn push_grid(&mut self, spacing: f64, view: &View) {
+        let Some(shown) = displayed_grid_spacing(spacing, view.scale()) else {
+            return;
+        };
+        let visible = view.visible_bounds();
+        let (min, max) = (visible.min(), visible.max());
+        // Line numbers: line `n` is at `n × shown`.
+        let columns = (min.x / shown).ceil() as i64..=(max.x / shown).floor() as i64;
+        let rows = (min.y / shown).ceil() as i64..=(max.y / shown).floor() as i64;
+
+        for (style, major) in [(StyleRole::GridMinor, false), (StyleRole::GridMajor, true)] {
+            let wanted = |line: &i64| (line % GRID_MAJOR_EVERY == 0) == major;
+            for column in columns.clone().filter(wanted) {
+                let x = column as f64 * shown;
+                self.frame
+                    .push_segment(style, Point2::new(x, min.y), Point2::new(x, max.y));
+            }
+            for row in rows.clone().filter(wanted) {
+                let y = row as f64 * shown;
+                self.frame
+                    .push_segment(style, Point2::new(min.x, y), Point2::new(max.x, y));
             }
         }
     }
@@ -430,6 +479,180 @@ mod tests {
         assert_eq!(
             styles(&overlay_of(&h)),
             vec![StyleRole::SnapMarker, StyleRole::Crosshair]
+        );
+    }
+
+    // ── grid ──
+
+    fn grid_frame(spacing: f64, view: &View) -> OverlayFrame {
+        let mut overlay = OverlayFrame::new();
+        overlay.rebuild(&[OverlayItem::Grid { spacing }], &Drawing::new(), view);
+        overlay
+    }
+
+    /// World coordinates of the vertical and horizontal lines of one style.
+    fn grid_lines(overlay: &OverlayFrame, style: StyleRole) -> (Vec<f64>, Vec<f64>) {
+        let frame = overlay.frame();
+        let origin = frame.origin();
+        let (mut columns, mut rows) = (Vec::new(), Vec::new());
+        for batch in frame.batches().iter().filter(|batch| batch.style == style) {
+            let (first, count) = (batch.first as usize, batch.count as usize);
+            for segment in &frame.segments().as_chunks::<4>().0[first..first + count] {
+                let [x0, y0, x1, y1] = segment.map(f64::from);
+                if (x0 - x1).abs() < f64::EPSILON {
+                    columns.push((origin.x + x0).round());
+                } else {
+                    assert!((y0 - y1).abs() < f64::EPSILON, "a grid line is slanted");
+                    rows.push((origin.y + y0).round());
+                }
+            }
+        }
+        (columns, rows)
+    }
+
+    #[test]
+    fn the_displayed_spacing_steps_1_2_5_so_lines_never_crowd() {
+        // At one pixel per unit, a spacing of 10 is 10px: too close; 20 is shown.
+        assert_eq!(displayed_grid_spacing(10.0, 1.0), Some(20.0));
+        assert_eq!(displayed_grid_spacing(10.0, 2.0), Some(10.0));
+        assert_eq!(
+            displayed_grid_spacing(10.0, 100.0),
+            Some(10.0),
+            "never finer than the setting"
+        );
+        assert_eq!(displayed_grid_spacing(10.0, 0.3), Some(50.0));
+        assert_eq!(displayed_grid_spacing(10.0, 0.1), Some(200.0));
+        assert_eq!(displayed_grid_spacing(10.0, 0.001), Some(20_000.0));
+        assert_eq!(displayed_grid_spacing(2.5, 1.0), Some(12.5));
+        for scale in [1e-9, 1e-3, 0.07, 1.0, 13.0, 1e6] {
+            let shown = displayed_grid_spacing(10.0, scale).unwrap();
+            assert!(shown * scale >= MIN_GRID_PIXELS, "crowded at scale {scale}");
+        }
+    }
+
+    #[test]
+    fn a_nonsensical_grid_is_not_drawn() {
+        for (spacing, scale) in [
+            (0.0, 1.0),
+            (-10.0, 1.0),
+            (f64::NAN, 1.0),
+            (10.0, 0.0),
+            (f64::INFINITY, 1.0),
+        ] {
+            assert_eq!(displayed_grid_spacing(spacing, scale), None);
+        }
+        assert_eq!(grid_frame(0.0, &view()).frame().segment_count(), 0);
+    }
+
+    #[test]
+    fn grid_lines_cover_the_view_with_every_fifth_one_major() {
+        // 800×600 at 1px per unit around the origin; spacing 20 is shown as is.
+        let overlay = grid_frame(20.0, &view());
+        let (minor_columns, minor_rows) = grid_lines(&overlay, StyleRole::GridMinor);
+        let (major_columns, major_rows) = grid_lines(&overlay, StyleRole::GridMajor);
+
+        assert_eq!(
+            major_columns,
+            vec![
+                -400.0, -300.0, -200.0, -100.0, 0.0, 100.0, 200.0, 300.0, 400.0
+            ]
+        );
+        assert_eq!(
+            major_rows,
+            vec![-300.0, -200.0, -100.0, 0.0, 100.0, 200.0, 300.0]
+        );
+        assert_eq!(minor_columns.len(), 41 - 9);
+        assert_eq!(minor_rows.len(), 31 - 7);
+        assert!(
+            minor_columns
+                .iter()
+                .all(|x| x % 20.0 == 0.0 && x % 100.0 != 0.0)
+        );
+        // Minor lines are drawn first, so major lines lie over them.
+        assert_eq!(
+            styles(&overlay),
+            vec![StyleRole::GridMinor, StyleRole::GridMajor]
+        );
+    }
+
+    /// #82: the grid stays aligned with world coordinates through pan and zoom.
+    #[test]
+    fn grid_lines_sit_on_world_multiples_of_the_spacing_wherever_the_view_is() {
+        let mut view = view();
+        let mut seen = 0;
+        for step in 0..12 {
+            view.pan_by_pixels(137.0 * f64::from(step), -59.0 * f64::from(step));
+            view.zoom_about(
+                ScreenPoint::new(123.0, 456.0),
+                if step % 2 == 0 { 1.7 } else { 0.4 },
+            );
+            let shown = displayed_grid_spacing(10.0, view.scale()).unwrap();
+            let overlay = grid_frame(10.0, &view);
+            let visible = view.visible_bounds();
+            for style in [StyleRole::GridMinor, StyleRole::GridMajor] {
+                let frame = overlay.frame();
+                let origin = frame.origin();
+                for batch in frame.batches().iter().filter(|batch| batch.style == style) {
+                    let (first, count) = (batch.first as usize, batch.count as usize);
+                    for segment in &frame.segments().as_chunks::<4>().0[first..first + count] {
+                        let [x0, y0, x1, _] = segment.map(f64::from);
+                        let vertical = (x0 - x1).abs() < shown * 1e-6;
+                        let at = if vertical {
+                            origin.x + x0
+                        } else {
+                            origin.y + y0
+                        };
+                        let line = at / shown;
+                        // On a multiple of the spacing, to f32 precision.
+                        assert!(
+                            (line - line.round()).abs() < 1e-3,
+                            "line at {at}, spacing {shown}"
+                        );
+                        let major = (line.round() as i64) % GRID_MAJOR_EVERY == 0;
+                        assert_eq!(major, style == StyleRole::GridMajor);
+                        let (low, high) = if vertical {
+                            (visible.min().x, visible.max().x)
+                        } else {
+                            (visible.min().y, visible.max().y)
+                        };
+                        assert!(at >= low - shown * 1e-3 && at <= high + shown * 1e-3);
+                        seen += 1;
+                    }
+                }
+            }
+        }
+        assert!(seen > 500);
+    }
+
+    #[test]
+    fn the_number_of_grid_lines_is_bounded_at_any_zoom() {
+        let mut view = View::new(3840.0, 2160.0);
+        for _ in 0..40 {
+            view.zoom_about(ScreenPoint::new(1900.0, 1000.0), 0.5);
+            let count = grid_frame(10.0, &view).frame().segment_count();
+            assert!(
+                count <= (3840 + 2160) / MIN_GRID_PIXELS as u32 + 4,
+                "{count} lines"
+            );
+            assert!(count > 100);
+        }
+    }
+
+    #[test]
+    fn the_grid_lies_under_everything_else_in_the_overlay() {
+        let mut h = Harness::new();
+        h.toggle(cad_commands::Toggle::Grid);
+        h.enter_all(&["L", "0,0", "100,0", ""]);
+        h.click_world(Point2::new(50.0, 0.0));
+        h.move_to(10.0, 10.0);
+        assert_eq!(
+            styles(&overlay_of(&h)),
+            vec![
+                StyleRole::GridMinor,
+                StyleRole::GridMajor,
+                StyleRole::Selection,
+                StyleRole::Crosshair
+            ]
         );
     }
 

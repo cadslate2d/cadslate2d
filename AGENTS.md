@@ -26,6 +26,7 @@ If code and these documents disagree, fix the code or write an ADR. Do not silen
 - **React holds no drawing data.** No entity geometry, selection membership, grips, or view matrices in React state or props.
 - **Coarse WASM boundary (ADR-0002).** Events in, dirty flags out, frames pulled in batches. No per-entity or per-vertex getters. Rust never issues GL calls.
 - **Two render lifetimes (DESIGN §12).** Committed geometry → `RenderScene`, re-uploaded only when the scene revision changes. Transient geometry → `OverlayFrame`. Pointer movement, pan, and zoom must never regenerate or re-upload committed geometry (ADR-0003).
+- **View-dependent background is overlay content.** The grid is rebuilt with the `OverlayFrame`; the adapter draws its style roles beneath the scene. It is not a third render lifetime and never touches committed buffers.
 - **Transient edits do not touch the document.** Previews live in the session; one committed gesture produces one transaction.
 - **Entities being transiently edited are never snap targets** (DESIGN §18.2). A command that moves existing geometry reports it through `Command::transient_sources`.
 - **One pipeline turns the pointer into a point:** `Session::aim` — object snap, then ORTHO or POLAR, then the free cursor. Previews, the status-bar readout, direct-distance entry, and the click all use it. Typed coordinates bypass it. Do not add a second path.

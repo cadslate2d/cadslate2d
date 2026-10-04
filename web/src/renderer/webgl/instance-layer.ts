@@ -94,14 +94,15 @@ export class InstanceLayer {
   }
 
   /**
-   * Issues one instanced draw per batch with the currently bound program.
-   * Returns the number of draw calls.
+   * Issues one instanced draw per batch whose role `include` accepts, with
+   * the currently bound program. Returns the number of draw calls.
    */
   draw(
     uniforms: StrokeUniforms,
     transform: ClipTransform,
     palette: CanvasPalette,
     devicePixelRatio: number,
+    include: (role: StyleRole) => boolean,
   ): number {
     const gl = this.#gl;
     if (this.#batches.length === 0) return 0;
@@ -117,7 +118,7 @@ export class InstanceLayer {
       const first = this.#batches[offset + 1] ?? 0;
       const count = this.#batches[offset + 2] ?? 0;
       const stroke = palette.strokes[role];
-      if (stroke === undefined || count === 0) continue;
+      if (stroke === undefined || count === 0 || !include(role)) continue;
 
       gl.uniform4f(uniforms.color, ...stroke.color);
       gl.uniform1f(uniforms.halfWidth, (stroke.width * devicePixelRatio) / 2);

@@ -37,10 +37,14 @@ pub enum StyleRole {
     SnapMarker = 6,
     /// The direction polar tracking has locked onto.
     Tracking = 7,
+    /// Ordinary lines of the reference grid.
+    GridMinor = 8,
+    /// Every fifth line of the reference grid.
+    GridMajor = 9,
 }
 
 impl StyleRole {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 10] = [
         Self::Entity,
         Self::Selection,
         Self::Preview,
@@ -49,6 +53,8 @@ impl StyleRole {
         Self::SelectionCrossing,
         Self::SnapMarker,
         Self::Tracking,
+        Self::GridMinor,
+        Self::GridMajor,
     ];
 
     fn from_word(word: u32) -> Option<Self> {

@@ -26,6 +26,8 @@ const ROLE_TOKENS: Readonly<Record<StyleRole, string>> = {
   [StyleRole.SelectionCrossing]: "selection-crossing",
   [StyleRole.SnapMarker]: "snap-marker",
   [StyleRole.Tracking]: "tracking",
+  [StyleRole.GridMinor]: "grid-minor",
+  [StyleRole.GridMajor]: "grid-major",
 };
 
 /** Parses `#rgb`, `#rrggbb`, or `#rrggbbaa`. */

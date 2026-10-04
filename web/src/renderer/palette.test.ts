@@ -44,6 +44,10 @@ describe("readPalette", () => {
     "--canvas-lineweight-snap-marker": "1.5",
     "--canvas-tracking": "#00aaaa",
     "--canvas-lineweight-tracking": "1",
+    "--canvas-grid-minor": "#111111",
+    "--canvas-grid-major": "#222222",
+    "--canvas-lineweight-grid-minor": "1",
+    "--canvas-lineweight-grid-major": "1",
   };
   const read = (property: string) => tokens[property] ?? "";
 

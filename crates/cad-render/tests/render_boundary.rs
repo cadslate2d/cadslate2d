@@ -7,7 +7,7 @@
 //! `web/src/cad/render-boundary.test.ts`.
 
 use cad_commands::testing::Harness;
-use cad_commands::{Dirty, Modifiers, PointerButton};
+use cad_commands::{Dirty, Modifiers, PointerButton, Toggle};
 use cad_core::ScreenPoint;
 use cad_render::{OverlayFrame, PackedFrame, SceneCache, StyleRole};
 
@@ -161,6 +161,32 @@ fn snap_markers_cause_no_committed_upload() {
         assert_eq!(cache.scene(h.session.drawing()).revision(), revision);
     }
     assert!(markers > 0, "the sweep never met a snap point");
+    assert_eq!(cache.build_count(), builds, "the scene was rebuilt");
+}
+
+/// #82: the grid is view-dependent overlay geometry. Showing it, and
+/// panning and zooming under it, never rebuilds the committed scene.
+#[test]
+fn the_grid_costs_no_committed_upload() {
+    let mut h = drawing();
+    let mut cache = SceneCache::new();
+    let revision = cache.scene(h.session.drawing()).revision();
+    let builds = cache.build_count();
+
+    let dirty = h.toggle(Toggle::Grid);
+    assert!(dirty.contains(Dirty::OVERLAY) && !dirty.contains(Dirty::SCENE));
+    let mut counts = Vec::new();
+    for step in 0..30 {
+        let at = ScreenPoint::new(100.0 + f64::from(step) * 20.0, 300.0);
+        let delta = if step % 3 == 0 { -240.0 } else { 90.0 };
+        let dirty = h.session.wheel(at, delta, Modifiers::NONE);
+        assert!(dirty.contains(Dirty::OVERLAY) && !dirty.contains(Dirty::SCENE));
+        let overlay = overlay_of(&h);
+        assert_frame_is_consistent(overlay.frame(), "grid overlay");
+        counts.push(overlay.frame().segment_count());
+        assert_eq!(cache.scene(h.session.drawing()).revision(), revision);
+    }
+    assert!(counts.iter().all(|count| *count > 0), "the grid vanished");
     assert_eq!(cache.build_count(), builds, "the scene was rebuilt");
 }
 

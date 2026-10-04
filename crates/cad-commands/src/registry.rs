@@ -10,8 +10,9 @@ use cad_input::{CommandAliases, DuplicateCommandName};
 
 use crate::Command;
 use crate::commands::{
-    ArcCommand, CircleCommand, EraseCommand, ExportCommand, LineCommand, OpenCommand, OsnapCommand,
-    PlaceCommand, PlineCommand, PolarAngleCommand, RectangCommand, RedoCommand, UndoCommand,
+    ArcCommand, CircleCommand, EraseCommand, ExportCommand, GridCommand, LineCommand, OpenCommand,
+    OsnapCommand, PlaceCommand, PlineCommand, PolarAngleCommand, RectangCommand, RedoCommand,
+    UndoCommand,
 };
 
 type CommandFactory = fn() -> Box<dyn Command>;
@@ -47,7 +48,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 14] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 15] = [
             ("ERASE", &["E"], || Box::new(EraseCommand)),
             ("MOVE", &["M"], || Box::new(PlaceCommand::moving())),
             ("COPY", &["CO", "CP"], || Box::new(PlaceCommand::copying())),
@@ -61,6 +62,7 @@ impl CommandRegistry {
             ("UNDO", &["U"], || Box::new(UndoCommand)),
             ("REDO", &[], || Box::new(RedoCommand)),
             ("OSNAP", &["OS"], || Box::new(OsnapCommand)),
+            ("GRID", &[], || Box::new(GridCommand::default())),
             ("POLARANG", &[], || Box::new(PolarAngleCommand::default())),
             ("OPEN", &["DXFIN"], || Box::new(OpenCommand)),
             ("DXFOUT", &["SAVE", "SAVEAS", "EXPORT"], || {
