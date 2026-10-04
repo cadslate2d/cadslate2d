@@ -6,40 +6,34 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 
 | Milestone | State |
 | --- | --- |
-| M0 — The Line | Complete and closed. All 18 acceptance criteria are covered by automated tests ([review](reviews/m0-exit-review.md)). |
-| M1 — Input and Basic Entities | In progress. |
-| M2 — OSNAP, Grips, and Basic Modify | Planned in detail. |
+| M0 — The Line | Complete and closed ([review](reviews/m0-exit-review.md)). |
+| M1 — Input and Basic Entities | Complete ([review](reviews/m1-exit-review.md)). Two carried-over items need a person. |
+| M2 — OSNAP, Grips, and Basic Modify | Next. Planned in detail. |
 | M3–M7 | PROVISIONAL placeholders, to be broken down at the preceding exit review. |
 | M8 | FUTURE. Not planned against. |
 
-## M1, revised after M0
+## M2, as adjusted after M1
 
-M0 was built so that M1 is mostly *adding instances* of things that already exist once. The revisions below reflect that.
-
-### Already in place from M0
-
-- A command registry with aliases and one `invoke` entry point for typed input, shortcuts, and UI actions. The M1 registry issue shrinks to adding the remaining aliases and any registration ergonomics that prove necessary.
-- Input history with Up/Down recall, and incremental command log.
-- Parser diagnostics shown in the command line, with the command staying active.
-- A semantic overlay description that commands fill in. The M1 transient-preview framework generalises this to edits of existing entities; it does not start from zero.
-- `View::fit`, used when opening a file.
+M1 left M2 several pieces already in place: toggle state with status-bar buttons and function keys, a transient-edit framework that names its source entities, box-crossing tests and segment–circle root finding in `cad-geometry`, and an overlay that any new marker can join.
 
 ### Order of work
 
-1. **Curve-rendering spike** → ADR. Nothing curved is drawn before this is decided. It must state how its choice fits ADR-0003 (pan and zoom never re-upload committed geometry) and what crosses the render boundary (ADR-0008 covers straight segments only).
-2. **Keyword options and scalar input** (`[Close/Undo]`, distances, angles, direct distance). These extend `ExpectedInput`, which is matched exhaustively on purpose.
-3. **Undo granularity.** Decide whether one UNDO reverts one segment or one command invocation, and implement it as a general history mechanism before more multi-step commands are written.
-4. **Circle and arc entities**, then their commands. Adding a variant to `Entity` will fail compilation in rendering, picking, the test harness, and DXF; that is the checklist.
-5. **Polyline entity and joins**, then `PLINE` and `RECTANG`.
-6. **Selection sets** and the generalised transient-edit framework, then `ERASE`, `MOVE`, `COPY`.
-7. **DXF for the new entities.** R12 has no `LWPOLYLINE`; polylines are written as `POLYLINE`/`VERTEX` (ADR-0005).
-8. **Status toggles framework and toolbar**, which are independent of the above and can be done at any point.
+1. **Intersection primitives and robust predicates.** Everything else in M2 — intersection snap, trim, extend, fillet, chamfer — stands on these. Extend `cad-geometry` from boolean tests to intersection points, with a regression corpus under `test-data/geometry/`.
+2. **Snap engine**, then the single-entity snaps, intersection snap, and the transient-edit exclusion rule (§18.2), which uses `Command::transient_sources`.
+3. **Snap markers and the drafting aids** behind the existing toggles: OSNAP, ORTHO, GRID, POLAR.
+4. **A general entity transform** (rotation, uniform scale, mirror) alongside `Entity::translated`, then ROTATE, SCALE, MIRROR.
+5. **Grips:** the model and display, the grip-edit session on the transient framework, then per-entity grips.
+6. **Narrow modify geometry:** OFFSET for lines and circles, simple TRIM and EXTEND, line–line FILLET and CHAMFER, each with a published matrix of supported inputs.
+7. **Exit:** visual regression for markers and grips, a drafting scenario, a second look at the spatial index with snapping workloads (ADR-0007), and the M3 breakdown.
 
-### Carried over from M0
+### Open scope question
 
-- Run the end-to-end suite in Firefox and WebKit.
-- Measure GPU upload cost on real hardware.
-- A safe bulk loader for the spatial index, to speed up opening large files.
+§18 lists perpendicular and tangent snaps among the initial modes; §30 does not include them in M2. The M1 review recommends leaving M2 as §30 has it and taking them into M3.
+
+### Carried over
+
+- Measure rendering on real GPU hardware (needs a person).
+- Decide whether to report the R-tree bulk-load crash upstream (maintainer's call).
 
 ## Standing rules
 

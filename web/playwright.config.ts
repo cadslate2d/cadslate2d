@@ -26,7 +26,21 @@ export default defineConfig({
         launchOptions: { args: ["--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] },
       },
     },
-    { name: "firefox", use: { ...devices["Desktop Firefox"] } },
+    {
+      name: "firefox",
+      use: {
+        ...devices["Desktop Firefox"],
+        // Headless Firefox on a machine without a GPU refuses WebGL unless told
+        // to use its software path.
+        launchOptions: {
+          firefoxUserPrefs: {
+            "webgl.force-enabled": true,
+            "webgl.disabled": false,
+            "gfx.webrender.software": true,
+          },
+        },
+      },
+    },
     // WebKit needs system libraries that Playwright installs with `--with-deps`
     // (root required). CI has them; locally, opt in with PLAYWRIGHT_WEBKIT=1.
     ...(process.env.CI || process.env.PLAYWRIGHT_WEBKIT

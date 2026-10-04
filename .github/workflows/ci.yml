@@ -59,7 +59,8 @@ jobs:
         run: pnpm --dir web exec playwright install --with-deps chromium firefox webkit
 
       - name: End-to-end tests
-        run: pnpm --dir web e2e
+        # Stop early when a whole browser is broken instead of timing out one test at a time.
+        run: pnpm --dir web e2e --max-failures=15
 
       - uses: actions/upload-artifact@v4
         with:
