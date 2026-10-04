@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      # rust-toolchain.toml pins the toolchain, components, and wasm target.
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Resolve pinned wasm-bindgen version
+        id: wbg
+        run: |
+          version=$(cargo tree -p cad-wasm -i wasm-bindgen --depth 0 --prefix none | awk '{ sub(/^v/, "", $2); print $2; exit }')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@${{ steps.wbg.outputs.version }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install web dependencies
+        run: pnpm --dir web install --frozen-lockfile
+
+      # Format, clippy, Rust tests, crate boundaries, WASM build, typecheck, lint, unit tests.
+      - name: Check
+        run: scripts/check.sh
+
+      - name: Build production bundle
+        run: pnpm --dir web build
+
+      - name: Install Playwright browser
+        run: pnpm --dir web exec playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: pnpm --dir web e2e
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report
+            web/test-results
+          if-no-files-found: ignore
