@@ -100,7 +100,7 @@ pnpm --dir web dev
 | Render-transport measurement in the browser | `pnpm --dir web bench:transport` (after `build` and generating `lines-1k`, `-10k`, `-100k`) |
 | Curve-rendering experiment in the browser | `pnpm --dir web bench:curves` (after `build`) |
 
-First-time Playwright setup: `pnpm --dir web exec playwright install chromium`.
+First-time Playwright setup: `pnpm --dir web exec playwright install chromium firefox`. The suite runs in Chromium and Firefox locally; CI adds WebKit, which needs system libraries (`playwright install --with-deps webkit`, then `PLAYWRIGHT_WEBKIT=1`).
 
 ### Deployment
 

@@ -26,6 +26,12 @@ export default defineConfig({
         launchOptions: { args: ["--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] },
       },
     },
+    { name: "firefox", use: { ...devices["Desktop Firefox"] } },
+    // WebKit needs system libraries that Playwright installs with `--with-deps`
+    // (root required). CI has them; locally, opt in with PLAYWRIGHT_WEBKIT=1.
+    ...(process.env.CI || process.env.PLAYWRIGHT_WEBKIT
+      ? [{ name: "webkit", use: { ...devices["Desktop Safari"] } }]
+      : []),
   ],
   webServer: [
     {

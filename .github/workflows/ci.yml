@@ -55,8 +55,8 @@ jobs:
       - name: Build production bundle
         run: pnpm --dir web build
 
-      - name: Install Playwright browser
-        run: pnpm --dir web exec playwright install --with-deps chromium
+      - name: Install Playwright browsers
+        run: pnpm --dir web exec playwright install --with-deps chromium firefox webkit
 
       - name: End-to-end tests
         run: pnpm --dir web e2e
