@@ -7,8 +7,10 @@
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
 mod aabb;
+mod id;
 mod point;
 pub mod tolerance;
 
 pub use aabb::Aabb;
+pub use id::EntityId;
 pub use point::{Point2, Vec2};

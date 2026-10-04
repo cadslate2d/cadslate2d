@@ -9,6 +9,10 @@ publish.workspace = true
 [dependencies]
 cad-core.workspace = true
 cad-geometry.workspace = true
+rstar.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
 
 [lints]
 workspace = true
