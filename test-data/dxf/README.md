@@ -20,8 +20,10 @@ Files with specific expectations (entity counts, report contents, exact coordina
 | `ezdxf-r2018-two-lines.dxf` | ezdxf 1.4.4, `ezdxf.new("R2018")` | A modern file (AC1032) with handles, subclass markers, objects, and structural `*Model_Space` blocks. Coordinates chosen to need all 17 significant digits. |
 | `ezdxf-r2010-mixed-content.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | Mixed content: lines, circles, an arc, and a polyline (imported), plus text, a user block and its insert (unsupported), and lines carrying a layer and a colour (properties dropped). |
 
-| `ezdxf-r2010-polylines.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | `LWPOLYLINE` open and closed, an old-style `POLYLINE`, plus two that are reported: one with an arc segment (bulge) and a 3D polyline. |
+| `ezdxf-r2010-polylines.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | `LWPOLYLINE` open and closed, one with an arc segment (bulge), an old-style `POLYLINE`, plus a 3D polyline that is reported. |
 | `ezdxf-r12-polylines.dxf` | ezdxf 1.4.4, `ezdxf.new("R12")` | R12 `POLYLINE`/`VERTEX`/`SEQEND`, open and closed — the encoding our own writer uses. |
+| `ezdxf-r12-bulged-polylines.dxf` | ezdxf 1.4.4, `add_polyline2d(..., format="xyb")` | Arc segments as group 42 on `VERTEX` records: a closed slot with two semicircular ends (bulge 1), an open run with a quarter-arc corner (bulge tan 22.5°), and a clockwise arc (bulge −0.5). |
+| `ezdxf-r2010-bulged-lwpolylines.dxf` | ezdxf 1.4.4, `add_lwpolyline(..., format="xyb")` | The same three shapes as `LWPOLYLINE`, where group 42 follows the vertex it belongs to. |
 
 ## malformed/
 

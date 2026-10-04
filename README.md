@@ -39,8 +39,8 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `OSNAP` | `OS` | Chooses which object snaps run. Each mode is switched by its keyword; Enter finishes. |
 | `GRID` | | Sets the grid spacing (10 at start). |
 | `POLARANG` | | Sets the angle between polar tracking directions (90° at start). |
-| `OPEN` | `DXFIN`, Ctrl+O | Opens an ASCII DXF file. Lines, circles, arcs, and straight polylines are imported; everything else is counted and reported. |
-| `DXFOUT` | `SAVE`, `SAVEAS`, `EXPORT`, Ctrl+S | Downloads the drawing as ASCII DXF (R12). |
+| `OPEN` | `DXFIN`, Ctrl+O | Opens an ASCII DXF file. Lines, circles, arcs, and polylines — including their arc segments — are imported; everything else is counted and reported. |
+| `DXFOUT` | `SAVE`, `SAVEAS`, `EXPORT`, Ctrl+S | Downloads the drawing as ASCII DXF (R12). Polyline arc segments are written as bulges. |
 
 Modify commands work in either order: select first and then give the command, or give the command and select at `Select objects:`, finishing with Enter.
 

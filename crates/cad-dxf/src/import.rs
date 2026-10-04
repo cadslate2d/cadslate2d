@@ -14,8 +14,6 @@ const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF";
 /// Records that belong to the entity before them (POLYLINE vertices, INSERT
 /// attributes) and are not counted on their own.
 const SUBORDINATE_RECORDS: [&str; 1] = ["ATTRIB"];
-/// Report key for polylines with arc segments (bulge), which arrive in M3.
-const POLYLINE_WITH_ARCS: &str = "POLYLINE (arc segments)";
 /// POLYLINE flag bits for 3D polylines, meshes, and polyface meshes.
 const POLYLINE_NOT_2D: i64 = 8 | 16 | 32 | 64;
 /// Polyline flag bit: closed.
@@ -151,8 +149,9 @@ struct Reader<'a> {
 #[derive(Debug, Default)]
 struct PolylineBuilder {
     vertices: Vec<Point2>,
+    /// One per vertex: the bulge of the segment that starts there.
+    bulges: Vec<f64>,
     closed: bool,
-    has_arc_segments: bool,
     /// Not a 2D polyline at all (mesh, 3D polyline): already reported; its
     /// vertices are swallowed.
     unsupported: bool,
@@ -238,7 +237,7 @@ impl<'a> Reader<'a> {
                 let builder = PolylineBuilder {
                     vertices: body.points(record.line, "LWPOLYLINE")?,
                     closed: body.flags & POLYLINE_CLOSED != 0,
-                    has_arc_segments: body.has_bulge,
+                    bulges: body.bulges.clone(),
                     unsupported: false,
                     has_dropped_properties: body.has_dropped_properties,
                 };
@@ -265,7 +264,7 @@ impl<'a> Reader<'a> {
                     polyline
                         .vertices
                         .extend(body.points(record.line, "VERTEX")?);
-                    polyline.has_arc_segments |= body.has_bulge;
+                    polyline.bulges.extend(&body.bulges);
                 }
             }
             (RecordContext::Entities, "SEQEND") => {
@@ -308,13 +307,15 @@ impl<'a> Reader<'a> {
     }
 
     fn finish_polyline(&mut self, polyline: PolylineBuilder) -> Result<(), DxfError> {
-        if polyline.has_arc_segments {
-            self.report.count_unsupported(POLYLINE_WITH_ARCS);
-        } else if polyline.vertices.len() < 2 {
+        if polyline.vertices.len() < 2 {
             self.report.count_unsupported(INVALID);
         } else {
             self.report.polylines += 1;
-            let entity = Entity::Polyline(PolylineEntity::new(polyline.vertices, polyline.closed));
+            let entity = Entity::Polyline(PolylineEntity::with_bulges(
+                polyline.vertices,
+                polyline.bulges,
+                polyline.closed,
+            ));
             self.push(entity, polyline.has_dropped_properties)?;
         }
         Ok(())
@@ -336,8 +337,9 @@ struct RecordBody {
     ys: Vec<f64>,
     /// Group 70: entity flags.
     flags: i64,
-    /// A non-zero group 42: an arc segment in a polyline.
-    has_bulge: bool,
+    /// Group 42 of each vertex, in step with `xs`: the bulge of the polyline
+    /// segment that starts there. Zero where the vertex has none.
+    bulges: Vec<f64>,
     x0: Option<f64>,
     y0: Option<f64>,
     x1: Option<f64>,
@@ -356,13 +358,20 @@ impl RecordBody {
                 let x = real(group)?;
                 self.x0.get_or_insert(x);
                 self.xs.push(x);
+                self.bulges.push(0.0);
             }
             20 => {
                 let y = real(group)?;
                 self.y0.get_or_insert(y);
                 self.ys.push(y);
             }
-            42 => self.has_bulge |= real(group)? != 0.0,
+            // A bulge belongs to the vertex whose coordinates precede it.
+            42 => {
+                let bulge = real(group)?;
+                if let Some(last) = self.bulges.last_mut() {
+                    *last = bulge;
+                }
+            }
             // Constant width of an LWPOLYLINE: dropped.
             43 => self.has_dropped_properties |= real(group)? != 0.0,
             70 => self.flags = group.value.parse().unwrap_or(0),
@@ -717,16 +726,22 @@ mod tests {
         );
     }
 
+    /// #115: group 42 is read in both encodings, on the vertex it follows.
     #[test]
-    fn polylines_with_arc_segments_are_reported_not_flattened() {
+    fn polylines_with_arc_segments_keep_their_bulges() {
         let lightweight = [
             (0, "LWPOLYLINE"),
-            (70, "0"),
+            (70, "1"),
             (10, "0"),
             (20, "0"),
-            (42, "0.5"),
-            (10, "1"),
+            (10, "10"),
             (20, "0"),
+            (42, "1.0"),
+            (10, "10"),
+            (20, "4"),
+            (10, "0"),
+            (20, "4"),
+            (42, "-0.5"),
         ];
         let classic = [
             (0, "POLYLINE"),
@@ -742,8 +757,71 @@ mod tests {
         ];
         let import =
             import(entities(&[lightweight.as_slice(), &classic].concat()).as_bytes()).unwrap();
-        assert!(import.drawing.is_empty());
-        assert_eq!(import.report.unsupported.get(POLYLINE_WITH_ARCS), Some(&2));
+        assert_eq!(import.report.polylines, 2);
+        assert!(import.report.unsupported.is_empty());
+        assert_eq!(
+            polylines_of(&import),
+            vec![
+                PolylineEntity::with_bulges(
+                    vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 4.0), p(0.0, 4.0)],
+                    vec![0.0, 1.0, 0.0, -0.5],
+                    true
+                ),
+                PolylineEntity::with_bulges(vec![p(0.0, 0.0), p(2.0, 0.0)], vec![1.0], false),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_absurd_bulge_never_becomes_unbounded_geometry() {
+        let with_bulge = |bulge: &'static str| {
+            let body = [
+                (0, "LWPOLYLINE"),
+                (10, "0"),
+                (20, "0"),
+                (42, bulge),
+                (10, "1"),
+                (20, "0"),
+            ];
+            import(entities(&body).as_bytes())
+        };
+        // Finite but far too large to square: imported, as a straight segment.
+        let import = with_bulge("1e200").unwrap();
+        let bounds = Entity::Polyline(polylines_of(&import)[0].clone()).bounds();
+        assert!(bounds.min().is_finite() && bounds.max().is_finite());
+        // Not a finite number, or not a number: a malformed file, as for a coordinate.
+        for bulge in ["1e400", "round"] {
+            assert!(
+                matches!(
+                    with_bulge(bulge),
+                    Err(DxfError::InvalidNumber { group: 42, .. })
+                ),
+                "bulge {bulge}"
+            );
+        }
+    }
+
+    /// #115: export → import → export is byte-identical for bulged polylines.
+    #[test]
+    fn a_bulged_polyline_survives_a_round_trip_exactly() {
+        let slot = PolylineEntity::with_bulges(
+            vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 4.0), p(0.0, 4.0)],
+            vec![0.0, 1.0, 0.0, 2f64.sqrt() - 1.0],
+            true,
+        );
+        let open = PolylineEntity::with_bulges(
+            vec![p(0.1, 0.2), p(7.3, -9.1), p(20.0, 0.0)],
+            vec![-0.333_333_333_333_333_3, 0.0],
+            false,
+        );
+        let drawing = Drawing::from_entities([
+            Entity::Polyline(slot.clone()),
+            Entity::Polyline(open.clone()),
+        ]);
+        let text = export(&drawing);
+        let reread = import(text.as_bytes()).unwrap();
+        assert_eq!(polylines_of(&reread), vec![slot, open]);
+        assert_eq!(export(&reread.drawing), text);
     }
 
     #[test]
@@ -1090,6 +1168,23 @@ mod tests {
         }
 
         /// Export → import reproduces every coordinate bit for bit.
+        /// #115: any polyline, bulged or not, survives export and import
+        /// exactly, and a second export is byte-identical.
+        #[test]
+        fn polylines_with_bulges_round_trip_exactly(
+            vertices in proptest::collection::vec((coordinate(), coordinate()), 2..8),
+            bulges in proptest::collection::vec(prop_oneof![Just(0.0), -4.0..4.0f64], 0..8),
+            closed in any::<bool>(),
+        ) {
+            let vertices: Vec<Point2> = vertices.into_iter().map(|(x, y)| p(x, y)).collect();
+            let original = PolylineEntity::with_bulges(vertices, bulges, closed);
+            let text = export(&Drawing::from_entities([Entity::Polyline(original.clone())]));
+            let imported = import(text.as_bytes()).unwrap();
+            prop_assert_eq!(polylines_of(&imported), vec![original]);
+            prop_assert!(!imported.report.has_unsupported_content());
+            prop_assert_eq!(export(&imported.drawing), text);
+        }
+
         #[test]
         fn export_then_import_is_exact(
             coordinates in proptest::collection::vec((coordinate(), coordinate(), coordinate(), coordinate()), 0..20)

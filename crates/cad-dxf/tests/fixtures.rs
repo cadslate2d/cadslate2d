@@ -241,6 +241,72 @@ fn polylines(drawing: &Drawing) -> Vec<PolylineSummary> {
         .collect()
 }
 
+/// The bulges of every polyline, one per vertex, in file order.
+fn bulges(drawing: &Drawing) -> Vec<Vec<f64>> {
+    in_file_order(drawing)
+        .into_iter()
+        .filter_map(|entity| match entity {
+            Entity::Polyline(polyline) => Some(polyline.bulges().collect()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// #115: polylines with arc segments, written by an independent library in
+/// both encodings, import with the right arcs.
+#[test]
+fn bulged_polylines_in_both_encodings() {
+    let quarter = (std::f64::consts::PI / 8.0).tan();
+    for file in [
+        "ezdxf-r12-bulged-polylines.dxf",
+        "ezdxf-r2010-bulged-lwpolylines.dxf",
+    ] {
+        let import = load("valid", file).unwrap();
+        assert_eq!(import.report.polylines, 3, "{file}");
+        assert!(import.report.unsupported.is_empty(), "{file}");
+        assert_eq!(
+            polylines(&import.drawing),
+            vec![
+                (vec![(0.0, 0.0), (10.0, 0.0), (10.0, 4.0), (0.0, 4.0)], true),
+                (
+                    vec![(20.0, 0.0), (30.0, 0.0), (35.0, 5.0), (35.0, 15.0)],
+                    false
+                ),
+                (vec![(50.0, 0.0), (60.0, 0.0)], false),
+            ],
+            "{file}"
+        );
+        let found = bulges(&import.drawing);
+        assert_eq!(found[0], vec![0.0, 1.0, 0.0, 1.0], "{file}");
+        assert_eq!(found[2], vec![-0.5, 0.0], "{file}");
+        assert!(
+            (found[1][1] - quarter).abs() < 1e-12,
+            "{file}: {:?}",
+            found[1]
+        );
+
+        // The geometry those bulges describe.
+        let shapes = in_file_order(&import.drawing);
+        // The slot's ends are semicircles of radius 2 reaching x = 12 and x = -2.
+        assert!(
+            shapes[0].distance_to(Point2::new(12.0, 2.0)) < 1e-9,
+            "{file}"
+        );
+        assert!(
+            shapes[0].distance_to(Point2::new(-2.0, 2.0)) < 1e-9,
+            "{file}"
+        );
+        // The rounded corner is a quarter arc of radius 5 about (30, 5).
+        let on_the_corner = Point2::new(30.0 + 5.0 * 0.5f64.sqrt(), 5.0 - 5.0 * 0.5f64.sqrt());
+        assert!(shapes[1].distance_to(on_the_corner) < 1e-9, "{file}");
+        // The clockwise arc rises above its chord: sagitta 0.5 × 10 / 2.
+        assert!(
+            shapes[2].distance_to(Point2::new(55.0, 2.5)) < 1e-9,
+            "{file}"
+        );
+    }
+}
+
 /// Both polyline encodings, written by an independent library.
 #[test]
 fn polylines_in_both_encodings() {
@@ -250,20 +316,19 @@ fn polylines_in_both_encodings() {
         vec![
             (vec![(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)], true),
             (vec![(20.0, 0.0), (25.0, 5.0), (30.0, 0.0)], false),
+            // The one with an arc segment, which used to be reported.
+            (vec![(0.0, 20.0), (10.0, 20.0)], false),
             (vec![(40.0, 0.0), (45.0, 5.0), (50.0, 0.0)], false),
         ]
     );
+    assert_eq!(bulges(&modern.drawing)[2], vec![0.5, 0.0]);
     let skipped: Vec<(&str, usize)> = modern
         .report
         .unsupported
         .iter()
         .map(|(kind, count)| (kind.as_str(), *count))
         .collect();
-    assert_eq!(
-        skipped,
-        vec![("POLYLINE", 1), ("POLYLINE (arc segments)", 1)],
-        "a 3D polyline and a bulged one"
-    );
+    assert_eq!(skipped, vec![("POLYLINE", 1)], "only the 3D polyline");
 
     let classic = load("valid", "ezdxf-r12-polylines.dxf").unwrap();
     assert_eq!(

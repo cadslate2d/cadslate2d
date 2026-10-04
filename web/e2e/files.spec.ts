@@ -46,6 +46,35 @@ test.describe("open", () => {
     expect(await litPixels(canvas)).toBeGreaterThan(empty + 300);
   });
 
+  test("polylines with arc segments open, draw their arcs, and export them again", async ({
+    page,
+  }) => {
+    const canvas = await openApp(page);
+    await chooseFile(
+      page,
+      () => enter(page, "OPEN"),
+      fixturePath("valid/ezdxf-r2010-bulged-lwpolylines.dxf"),
+    );
+    await expect(logLines(page).last()).toHaveText("Imported 3 polylines.");
+
+    const first = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    expect(first.text.match(/^POLYLINE$/gm)).toHaveLength(3);
+    // Two semicircles, one quarter arc, one clockwise arc.
+    expect(first.text.match(/^ 42$/gm)).toHaveLength(4);
+    expect(first.text).toContain(" 42\n-0.5\n");
+
+    // Reopening our own export gives the same file again.
+    await chooseFile(page, () => enter(page, "OPEN"), {
+      name: "again.dxf",
+      mimeType: "application/dxf",
+      buffer: Buffer.from(first.text),
+    });
+    await expect(logLines(page).last()).toHaveText("Imported 3 polylines.");
+    const second = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    expect(second.text).toBe(first.text);
+    expect(await litPixels(canvas)).toBeGreaterThan(300);
+  });
+
   test("Ctrl+O opens the file picker", async ({ page }) => {
     await openApp(page);
     await chooseFile(

@@ -69,7 +69,8 @@ fn write_arc(out: &mut String, arc: &ArcEntity) {
 }
 
 /// R12 has no LWPOLYLINE: a polyline is a POLYLINE header, one VERTEX per
-/// point, and a closing SEQEND (ADR-0005).
+/// point, and a closing SEQEND (ADR-0005). A vertex that starts an arc
+/// segment carries its bulge in group 42; straight ones carry none.
 fn write_polyline(out: &mut String, polyline: &PolylineEntity) {
     /// "Vertices follow" — required on every R12 polyline.
     const VERTICES_FOLLOW: &str = "1";
@@ -81,11 +82,14 @@ fn write_polyline(out: &mut String, polyline: &PolylineEntity) {
     group(out, 8, DEFAULT_LAYER);
     group(out, 66, VERTICES_FOLLOW);
     group(out, 70, if polyline.closed { CLOSED } else { OPEN });
-    for vertex in &polyline.vertices {
+    for (vertex, bulge) in polyline.vertices.iter().zip(polyline.bulges()) {
         group(out, 0, "VERTEX");
         group(out, 8, DEFAULT_LAYER);
         real(out, 10, vertex.x);
         real(out, 20, vertex.y);
+        if bulge.abs() > 0.0 {
+            real(out, 42, bulge);
+        }
     }
     group(out, 0, "SEQEND");
 }
@@ -158,6 +162,27 @@ mod tests {
             ),
             "{dxf}"
         );
+    }
+
+    /// #115: a bulge is written on the vertex that starts the arc segment,
+    /// and nowhere else — straight polylines are written as before.
+    #[test]
+    fn bulges_are_written_as_group_42_on_their_vertices() {
+        let slot = PolylineEntity::with_bulges(
+            vec![
+                Point2::new(0.0, 0.0),
+                Point2::new(10.0, 0.0),
+                Point2::new(10.0, 4.0),
+                Point2::new(0.0, 4.0),
+            ],
+            vec![0.0, 1.0, 0.0, -0.5],
+            true,
+        );
+        let dxf = export(&Drawing::from_entities([Entity::Polyline(slot)]));
+        assert_eq!(dxf.matches("\n 42\n").count(), 2);
+        assert!(dxf.contains("VERTEX\n  8\n0\n 10\n10.0\n 20\n0.0\n 42\n1.0\n"));
+        assert!(dxf.contains("VERTEX\n  8\n0\n 10\n0.0\n 20\n4.0\n 42\n-0.5\n"));
+        assert!(dxf.contains("VERTEX\n  8\n0\n 10\n0.0\n 20\n0.0\n  0\nVERTEX"));
     }
 
     #[test]
