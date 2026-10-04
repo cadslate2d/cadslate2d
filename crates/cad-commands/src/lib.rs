@@ -19,6 +19,8 @@ mod selection;
 mod session;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
+#[cfg(test)]
+mod tests;
 mod ui_state;
 
 pub use command::{Command, CommandContext, CommandInput, Step};

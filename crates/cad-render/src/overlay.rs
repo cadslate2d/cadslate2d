@@ -184,6 +184,58 @@ mod tests {
         );
     }
 
+    #[test]
+    fn selected_entities_are_drawn_as_highlights_under_the_crosshair() {
+        let mut h = Harness::new();
+        h.enter_all(&["L", "-100,0", "100,0", ""]);
+        h.click(400.0, 300.0);
+
+        let overlay = overlay_of(&h);
+        assert_eq!(
+            styles(&overlay),
+            vec![StyleRole::Selection, StyleRole::Crosshair]
+        );
+        assert_eq!(&overlay.frame().segments()[..4], &[-100.0, 0.0, 100.0, 0.0]);
+    }
+
+    #[test]
+    fn selecting_never_changes_the_committed_scene() {
+        let mut h = Harness::new();
+        h.enter_all(&["L", "-100,0", "100,0", ""]);
+        let mut scenes = SceneCache::new();
+        let revision = scenes.scene(h.session.drawing()).revision();
+
+        h.click(400.0, 300.0);
+        h.escape();
+        h.click(400.0, 300.0);
+
+        assert_eq!(scenes.scene(h.session.drawing()).revision(), revision);
+        assert_eq!(scenes.build_count(), 1);
+    }
+
+    #[test]
+    fn the_highlight_follows_undo_and_redo() {
+        let mut h = Harness::new();
+        h.enter_all(&["L", "-100,0", "100,0", ""]);
+        h.click(400.0, 300.0);
+        assert!(styles(&overlay_of(&h)).contains(&StyleRole::Selection));
+
+        h.undo();
+        assert!(
+            !styles(&overlay_of(&h)).contains(&StyleRole::Selection),
+            "no highlight for a line that is gone"
+        );
+    }
+
+    #[test]
+    fn a_highlight_for_a_missing_entity_is_skipped() {
+        let h = Harness::new();
+        let mut overlay = OverlayFrame::new();
+        let ghost = OverlayItem::Highlight(cad_core::EntityId::from_raw(999));
+        overlay.rebuild(&[ghost], h.session.drawing(), h.session.view());
+        assert_eq!(overlay.frame().segment_count(), 0);
+    }
+
     /// DESIGN §26.3 criteria 5 and 6: the rubber band changes only overlay
     /// data; the committed scene is neither rebuilt nor given a new revision.
     #[test]

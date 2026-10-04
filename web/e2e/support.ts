@@ -56,21 +56,32 @@ export const prompt = (page: Page): Locator => page.getByTestId("prompt");
 export const logLines = (page: Page): Locator => page.getByTestId("log-line");
 export const commandInput = (page: Page): Locator => page.locator("#command-input");
 
-/**
- * Counts canvas pixels that are clearly brighter than the background, i.e.
- * pixels covered by drawn geometry. Reads a real screenshot, so it sees
- * exactly what the user sees.
- */
-export async function litPixels(canvas: Locator): Promise<number> {
+type Rgb = readonly [number, number, number];
+
+/** Counts canvas pixels matching `predicate`, from a real screenshot — exactly what the user sees. */
+async function countPixels(canvas: Locator, predicate: (rgb: Rgb) => boolean): Promise<number> {
   const image = PNG.sync.read(await canvas.screenshot());
-  let lit = 0;
+  let count = 0;
   for (let offset = 0; offset < image.data.length; offset += 4) {
-    const [red, green, blue] = [
+    const rgb = [
       image.data[offset] ?? 0,
       image.data[offset + 1] ?? 0,
       image.data[offset + 2] ?? 0,
-    ];
-    if (red + green + blue > 3 * 96) lit += 1;
+    ] as const;
+    if (predicate(rgb)) count += 1;
   }
-  return lit;
+  return count;
+}
+
+/** Pixels clearly brighter than the background, i.e. covered by drawn geometry. */
+export function litPixels(canvas: Locator): Promise<number> {
+  return countPixels(canvas, ([red, green, blue]) => red + green + blue > 3 * 96);
+}
+
+/** Pixels in the selection accent colour (blue, not white). */
+export function highlightPixels(canvas: Locator): Promise<number> {
+  return countPixels(
+    canvas,
+    ([red, green, blue]) => blue > 180 && red < 140 && blue - red > 80 && green < 200,
+  );
 }

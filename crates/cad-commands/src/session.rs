@@ -1,6 +1,6 @@
 //! The session facade.
 
-use cad_core::{Point2, ScreenPoint, View};
+use cad_core::{EntityId, PixelTolerance, Point2, ScreenPoint, View};
 use cad_document::Drawing;
 use cad_input::{ExpectedInput, Input};
 
@@ -16,6 +16,9 @@ const IDLE_PROMPT: &str = "Command:";
 const ZOOM_PER_WHEEL_PIXEL: f64 = 0.002;
 /// Caps a single wheel event so a runaway delta cannot jump the view.
 const MAX_WHEEL_DELTA: f64 = 500.0;
+/// How close, on screen, a click must be to an entity to select it. A
+/// display/picking tolerance: never used for geometric equality (DESIGN §18.3).
+const PICK_TOLERANCE: PixelTolerance = PixelTolerance(5.0);
 
 #[derive(Debug)]
 struct ActiveCommand {
@@ -59,10 +62,15 @@ impl Session {
 
     /// A session on an existing drawing, for example one just imported.
     pub fn with_drawing(drawing: Drawing) -> Self {
+        Self::with_registry(drawing, CommandRegistry::standard())
+    }
+
+    /// A session with a caller-supplied set of commands.
+    pub fn with_registry(drawing: Drawing, registry: CommandRegistry) -> Self {
         Self {
             drawing,
             view: View::new(1.0, 1.0),
-            registry: CommandRegistry::standard(),
+            registry,
             active: None,
             selection: Selection::default(),
             last_point: Point2::ORIGIN,
@@ -168,6 +176,7 @@ impl Session {
             PointerButton::Primary if self.expects_point() => {
                 self.feed(CommandInput::Point(self.view.screen_to_world(at)))
             }
+            PointerButton::Primary if self.active.is_none() => self.select_at(at),
             PointerButton::Primary | PointerButton::Secondary => Dirty::NONE,
         }
     }
@@ -271,6 +280,35 @@ impl Session {
 
     fn cursor_world(&self) -> Option<Point2> {
         self.cursor.map(|cursor| self.view.screen_to_world(cursor))
+    }
+
+    /// The entity under a screen position, if any.
+    ///
+    /// The spatial index proposes candidates from a pick box sized in pixels;
+    /// only those candidates get the exact distance test. The drawing is never
+    /// scanned (DESIGN §26.3, criterion 12).
+    fn pick(&self, at: ScreenPoint) -> Option<EntityId> {
+        let point = self.view.screen_to_world(at);
+        let reach = self.view.pixels_to_world(PICK_TOLERANCE.0);
+        self.drawing
+            .query(&self.view.pick_bounds(at, PICK_TOLERANCE))
+            .into_iter()
+            .filter_map(|id| Some((id, self.drawing.entity(id)?.distance_to(point))))
+            .filter(|(_, distance)| *distance <= reach)
+            // Nearest wins; ties go to the older entity so picking is deterministic.
+            .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
+            .map(|(id, _)| id)
+    }
+
+    /// A click at the idle prompt selects the entity under the cursor.
+    fn select_at(&mut self, at: ScreenPoint) -> Dirty {
+        match self.pick(at) {
+            Some(id) => {
+                self.selection.replace_with(id);
+                Dirty::OVERLAY | Dirty::UI
+            }
+            None => Dirty::NONE,
+        }
     }
 
     fn expects_point(&self) -> bool {
@@ -600,9 +638,9 @@ mod tests {
     }
 
     #[test]
-    fn clicking_at_the_idle_prompt_creates_nothing() {
+    fn clicking_empty_space_at_the_idle_prompt_does_nothing() {
         let mut h = Harness::new();
-        h.click(400.0, 300.0);
+        assert!(h.click(400.0, 300.0).is_empty());
         assert!(h.lines().is_empty());
         assert_eq!(h.prompt(), "Command:");
     }
