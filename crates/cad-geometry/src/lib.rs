@@ -21,7 +21,10 @@ pub use corner::{Chamfer, Corner, CornerError, Fillet};
 pub use extend::{extend_arc, extend_segment};
 pub use intersect::{Hits, Orientation, Primitive, orientation};
 pub use offset::{offset_circle, offset_segment};
-pub use polyline::{bounds_of, polyline_distance_to_point, polyline_segments};
+pub use polyline::{
+    arc_from_bulge, bulge_from_arc, bulge_primitive, is_straight, polyline_primitives,
+    polyline_spans,
+};
 pub use segment::Segment;
 pub use transform::{Transform, unit_at_degrees};
 pub use trim::{trim_arc, trim_circle, trim_segment};

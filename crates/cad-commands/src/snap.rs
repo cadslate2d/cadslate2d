@@ -493,6 +493,44 @@ mod tests {
         );
     }
 
+    /// #114: arc segments of a polyline snap like arcs.
+    #[test]
+    fn the_arc_segments_of_a_polyline_offer_arc_snaps() {
+        // A slot 200 long and 80 high with semicircular ends of radius 40.
+        let slot: Entity = PolylineEntity::with_bulges(
+            vec![p(0.0, 0.0), p(200.0, 0.0), p(200.0, 80.0), p(0.0, 80.0)],
+            vec![0.0, 1.0, 0.0, 1.0],
+            true,
+        )
+        .into();
+        assert_eq!(
+            entity_snap_points(&slot, SnapMode::Center),
+            vec![p(200.0, 40.0), p(0.0, 40.0)]
+        );
+        let d = drawing(vec![slot]);
+
+        // The outermost point of the right end is both the arc's midpoint
+        // and a quadrant point; either name is right, the point is what counts.
+        let found = snap_at(&d, p(238.0, 41.0), SnapModes::default()).unwrap();
+        assert!(matches!(
+            found.mode,
+            SnapMode::Midpoint | SnapMode::Quadrant
+        ));
+        assert!(found.point.distance_to(p(240.0, 40.0)) < 1e-9);
+
+        // Hovering the arc away from its snap points offers its centre.
+        let on_the_arc = p(200.0 + 40.0 * 0.6, 40.0 + 40.0 * 0.8);
+        assert_eq!(
+            snap_at(&d, on_the_arc, SnapModes::default()),
+            hit(SnapMode::Center, 200.0, 40.0)
+        );
+        // The chord between the two vertices is not there to snap to.
+        assert_eq!(
+            snap_at(&d, p(200.0, 20.0), SnapModes::only(&[SnapMode::Nearest])),
+            None
+        );
+    }
+
     #[test]
     fn nearest_is_the_fallback_and_lands_exactly_on_the_curve() {
         let d = drawing(vec![line(0.0, 0.0, 100.0, 0.0)]);

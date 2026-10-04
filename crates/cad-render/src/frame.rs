@@ -14,7 +14,7 @@
 
 use cad_core::Point2;
 use cad_document::Entity;
-use cad_geometry::Arc;
+use cad_geometry::{Arc, Primitive};
 
 /// What a batch of geometry *is*. TypeScript resolves each role to a colour
 /// and lineweight from the theme, so Rust never hard-codes theme colours.
@@ -208,10 +208,20 @@ impl PackedFrame {
             }
             Entity::Arc(arc) => self.push_arc(style, &arc.arc()),
             // Round caps on every segment meet at the vertices, so joints have
-            // neither gaps nor spikes at any angle.
+            // neither gaps nor spikes at any angle. Arc segments are drawn
+            // as arcs, exactly like arc entities (ADR-0009).
             Entity::Polyline(polyline) => {
-                for segment in polyline.segments() {
-                    self.push_segment(style, segment.start, segment.end);
+                for primitive in polyline.primitives() {
+                    match primitive {
+                        Primitive::Segment(segment) => {
+                            self.push_segment(style, segment.start, segment.end);
+                        }
+                        Primitive::Arc(arc) => self.push_arc(style, &arc),
+                        Primitive::Circle(circle) => self.push_arc(
+                            style,
+                            &Arc::new(circle.center, circle.radius, 0.0, std::f64::consts::TAU),
+                        ),
+                    }
                 }
             }
         }
@@ -347,6 +357,35 @@ mod tests {
         frame.reset(p(0.0, 0.0));
         assert_eq!(frame.arc_count(), 0);
         assert!(frame.arc_batch_words().is_empty());
+    }
+
+    /// #114: arc segments of a polyline are drawn as arcs, like arc entities.
+    #[test]
+    fn a_bulged_polyline_becomes_segments_and_arcs() {
+        use cad_document::PolylineEntity;
+        let slot = PolylineEntity::with_bulges(
+            vec![
+                Point2::new(0.0, 0.0),
+                Point2::new(10.0, 0.0),
+                Point2::new(10.0, 4.0),
+                Point2::new(0.0, 4.0),
+            ],
+            vec![0.0, 1.0, 0.0, 1.0],
+            true,
+        );
+        let mut frame = PackedFrame::default();
+        frame.push_entity(StyleRole::Entity, &slot.into());
+
+        assert_eq!(
+            frame.segments(),
+            &[0.0, 0.0, 10.0, 0.0, 10.0, 4.0, 0.0, 4.0]
+        );
+        assert_eq!(frame.arc_count(), 2);
+        // Centre and radius of the right end, then of the left.
+        assert_eq!(&frame.arcs()[..3], &[10.0, 2.0, 2.0]);
+        assert_eq!(&frame.arcs()[5..8], &[0.0, 2.0, 2.0]);
+        assert_eq!(frame.batches().len(), 1);
+        assert_eq!(frame.arc_batches().len(), 1);
     }
 
     #[test]

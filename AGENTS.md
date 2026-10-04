@@ -31,6 +31,7 @@ If code and these documents disagree, fix the code or write an ADR. Do not silen
 - **A grip edit is a command** (ADR-0010). What a grip does is a pure function, `Entity::grip_moved`; the interaction is `GripEditCommand`, so it shares point acquisition, snapping, previews, and undo with every other command. Do not build a parallel interaction path.
 - **Entities being transiently edited are never snap targets** (DESIGN §18.2). A command that moves existing geometry reports it through `Command::transient_sources`.
 - **One pipeline turns the pointer into a point:** `Session::aim` — object snap, then ORTHO or POLAR, then the free cursor. Previews, the status-bar readout, direct-distance entry, and the click all use it. Typed coordinates bypass it. Do not add a second path.
+- **Geometry is read through primitives.** `Entity::primitives` turns every entity into segments, circles, and arcs — including the arc segments of a polyline (a bulge per vertex). Snapping, intersection, selection, trimming, and rendering work from those; do not walk `PolylineEntity::vertices` as if the segments between them were straight.
 - **Pixel tolerances are not geometric tolerances.** Pick and snap apertures are `PixelTolerance`s converted through the `View` at the moment of use (§18.3).
 - **No magic epsilons.** Use the tolerance classes in `cad-core`; they are not interchangeable (DESIGN §21).
 - **Only `web/src/renderer/` touches WebGL; only `web/src/cad/` imports the generated WASM package.** ESLint enforces both.

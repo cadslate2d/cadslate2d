@@ -1,10 +1,7 @@
 //! Semantic entity types (DESIGN §11).
 
 use cad_core::{Aabb, Point2, Vec2};
-use cad_geometry::{
-    Arc, Circle, Primitive, Segment, Transform, bounds_of, polyline_distance_to_point,
-    polyline_segments,
-};
+use cad_geometry::{Arc, Circle, Primitive, Segment, Transform, is_straight, polyline_primitives};
 
 /// A straight line between two points.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -72,25 +69,74 @@ impl From<Arc> for ArcEntity {
     }
 }
 
-/// A chain of straight segments through at least two vertices, optionally
-/// closed back to the first.
+/// A chain of segments through at least two vertices, optionally closed back
+/// to the first. A segment is straight unless the vertex it starts at has a
+/// *bulge*, which makes it a circular arc (see `cad_geometry::polyline` for
+/// the convention: `tan(included angle / 4)`, positive counter-clockwise).
 ///
-/// Arc segments (bulge) are not modelled yet; when they are (M3) each vertex
-/// gains a bulge and this type keeps its shape.
+/// Bulges are stored only as far as the last non-zero one, so two polylines
+/// with the same shape always compare equal, and an all-straight polyline
+/// carries no bulge data at all.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PolylineEntity {
     pub vertices: Vec<Point2>,
+    /// One per vertex, for the segment starting there; missing ones are zero.
+    bulges: Vec<f64>,
     pub closed: bool,
 }
 
 impl PolylineEntity {
+    /// A polyline of straight segments.
     pub fn new(vertices: Vec<Point2>, closed: bool) -> Self {
-        Self { vertices, closed }
+        Self {
+            vertices,
+            bulges: Vec::new(),
+            closed,
+        }
     }
 
-    /// The straight segments, including the closing one when closed.
-    pub fn segments(&self) -> impl Iterator<Item = Segment> + '_ {
-        polyline_segments(&self.vertices, self.closed)
+    /// A polyline whose segment from vertex `i` has bulge `bulges[i]`.
+    /// Missing bulges are zero; so are those of segments that do not exist
+    /// (the last vertex of an open polyline) and any that are not numbers.
+    pub fn with_bulges(vertices: Vec<Point2>, mut bulges: Vec<f64>, closed: bool) -> Self {
+        let segments = cad_geometry::polyline_spans(vertices.len(), closed).count();
+        bulges.truncate(segments);
+        for bulge in &mut bulges {
+            if is_straight(*bulge) {
+                *bulge = 0.0;
+            }
+        }
+        let used = bulges
+            .iter()
+            .rposition(|bulge| bulge.abs() > 0.0)
+            .map_or(0, |last| last + 1);
+        bulges.truncate(used);
+        Self {
+            vertices,
+            bulges,
+            closed,
+        }
+    }
+
+    /// The bulge of the segment that starts at vertex `index`.
+    pub fn bulge(&self, index: usize) -> f64 {
+        self.bulges.get(index).copied().unwrap_or(0.0)
+    }
+
+    /// One bulge per vertex.
+    pub fn bulges(&self) -> impl Iterator<Item = f64> + '_ {
+        (0..self.vertices.len()).map(|index| self.bulge(index))
+    }
+
+    /// True when at least one segment is an arc.
+    pub fn has_arcs(&self) -> bool {
+        !self.bulges.is_empty()
+    }
+
+    /// The segments in order — straight segments and arcs — including the
+    /// closing one when closed.
+    pub fn primitives(&self) -> impl Iterator<Item = Primitive> + '_ {
+        polyline_primitives(&self.vertices, |index| self.bulge(index), self.closed)
     }
 }
 
@@ -115,8 +161,12 @@ impl Entity {
             Entity::Line(line) => line.segment().bounds(),
             Entity::Circle(circle) => circle.circle().bounds(),
             Entity::Arc(arc) => arc.arc().bounds(),
-            // Every polyline in a drawing has vertices; an empty one bounds nothing useful.
-            Entity::Polyline(polyline) => bounds_of(&polyline.vertices)
+            // Arc segments can reach beyond the vertices. Every polyline in a
+            // drawing has segments; one without bounds nothing useful.
+            Entity::Polyline(polyline) => polyline
+                .primitives()
+                .map(|primitive| primitive.bounds())
+                .reduce(|a, b| a.union(&b))
                 .unwrap_or_else(|| Aabb::from_points(Point2::ORIGIN, Point2::ORIGIN)),
         }
     }
@@ -127,9 +177,10 @@ impl Entity {
             Entity::Line(line) => line.segment().distance_to_point(point),
             Entity::Circle(circle) => circle.circle().distance_to_point(point),
             Entity::Arc(arc) => arc.arc().distance_to_point(point),
-            Entity::Polyline(polyline) => {
-                polyline_distance_to_point(&polyline.vertices, polyline.closed, point)
-            }
+            Entity::Polyline(polyline) => polyline
+                .primitives()
+                .map(|primitive| primitive.distance_to_point(point))
+                .fold(f64::INFINITY, f64::min),
         }
     }
 
@@ -140,7 +191,7 @@ impl Entity {
             Entity::Line(line) => vec![Primitive::Segment(line.segment())],
             Entity::Circle(circle) => vec![Primitive::Circle(circle.circle())],
             Entity::Arc(arc) => vec![Primitive::Arc(arc.arc())],
-            Entity::Polyline(polyline) => polyline.segments().map(Primitive::Segment).collect(),
+            Entity::Polyline(polyline) => polyline.primitives().collect(),
         }
     }
 
@@ -167,8 +218,8 @@ impl Entity {
             Entity::Circle(circle) => circle.circle().intersects_aabb(bounds),
             Entity::Arc(arc) => arc.arc().intersects_aabb(bounds),
             Entity::Polyline(polyline) => polyline
-                .segments()
-                .any(|segment| segment.intersects_aabb(bounds)),
+                .primitives()
+                .any(|primitive| primitive.intersects_aabb(bounds)),
         }
     }
 
@@ -206,15 +257,25 @@ impl Entity {
                 )
                 .into()
             }
-            Entity::Polyline(polyline) => PolylineEntity::new(
-                polyline
-                    .vertices
-                    .iter()
-                    .map(|vertex| transform.apply(*vertex))
-                    .collect(),
-                polyline.closed,
-            )
-            .into(),
+            Entity::Polyline(polyline) => {
+                // Vertices keep their order, so a mirror turns every
+                // counter-clockwise arc segment into a clockwise one.
+                let flip = if transform.reverses_orientation() {
+                    -1.0
+                } else {
+                    1.0
+                };
+                PolylineEntity::with_bulges(
+                    polyline
+                        .vertices
+                        .iter()
+                        .map(|vertex| transform.apply(*vertex))
+                        .collect(),
+                    polyline.bulges().map(|bulge| bulge * flip).collect(),
+                    polyline.closed,
+                )
+                .into()
+            }
         }
     }
 
@@ -475,6 +536,253 @@ mod tests {
             arc.transformed(&scale),
             ArcEntity::new(Point2::new(3.0, 6.0), 12.0, 0.3, 2.1).into()
         );
+    }
+
+    // ── polyline arc segments (#114) ──
+
+    /// A slot from (0,0) to (10,4): two straight sides and two semicircular
+    /// ends of radius 2, bulging out to x = -2 and x = 12.
+    fn slot() -> PolylineEntity {
+        PolylineEntity::with_bulges(
+            vec![
+                Point2::new(0.0, 0.0),
+                Point2::new(10.0, 0.0),
+                Point2::new(10.0, 4.0),
+                Point2::new(0.0, 4.0),
+            ],
+            vec![0.0, 1.0, 0.0, 1.0],
+            true,
+        )
+    }
+
+    #[test]
+    fn bulges_have_one_canonical_form() {
+        let corners = || {
+            vec![
+                Point2::new(0.0, 0.0),
+                Point2::new(4.0, 0.0),
+                Point2::new(4.0, 3.0),
+            ]
+        };
+        let plain = PolylineEntity::new(corners(), false);
+        assert!(!plain.has_arcs());
+        assert_eq!(plain.bulges().collect::<Vec<_>>(), vec![0.0, 0.0, 0.0]);
+
+        // Zeros, a bulge on a segment that does not exist, and non-numbers
+        // all mean "straight", and compare equal to a plain polyline.
+        for bulges in [
+            vec![],
+            vec![0.0, 0.0],
+            vec![0.0, 0.0, 0.5],
+            vec![f64::NAN, 1e-300],
+        ] {
+            assert_eq!(
+                PolylineEntity::with_bulges(corners(), bulges.clone(), false),
+                plain,
+                "{bulges:?}"
+            );
+        }
+        // Closed, the last vertex does start a segment.
+        let closed = PolylineEntity::with_bulges(corners(), vec![0.0, 0.0, 0.5], true);
+        assert!(closed.has_arcs());
+        assert_eq!(closed.bulge(2), 0.5);
+        assert_eq!(closed.bulge(99), 0.0);
+        // Trailing zeros are not stored, so equal shapes are equal values.
+        assert_eq!(
+            PolylineEntity::with_bulges(corners(), vec![0.5, 0.0, 0.0], true),
+            PolylineEntity::with_bulges(corners(), vec![0.5], true)
+        );
+    }
+
+    #[test]
+    fn an_arc_segment_reaches_beyond_the_vertices() {
+        let slot = Entity::from(slot());
+        assert_eq!(
+            slot.bounds(),
+            Aabb::from_points(Point2::new(-2.0, 0.0), Point2::new(12.0, 4.0))
+        );
+        // On the right end's arc, 2 from its centre (10, 2).
+        assert!(slot.distance_to(Point2::new(12.0, 2.0)) < 1e-12);
+        // The chord between vertices 1 and 2 is not part of the polyline.
+        assert!((slot.distance_to(Point2::new(10.0, 2.0)) - 2.0).abs() < 1e-12);
+        assert_eq!(slot.primitives().len(), 4);
+        assert_eq!(
+            slot.primitives()
+                .iter()
+                .filter(|primitive| matches!(primitive, Primitive::Arc(_)))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn selection_boxes_see_the_arc_not_the_chord() {
+        let slot = Entity::from(slot());
+        // A box over the bulge of the right end only.
+        let over_the_bulge = Aabb::from_points(Point2::new(11.5, 1.5), Point2::new(13.0, 2.5));
+        assert!(slot.crosses(&over_the_bulge));
+        // A box over the chord, inside the bulge: nothing is there.
+        let over_the_chord = Aabb::from_points(Point2::new(9.8, 1.5), Point2::new(10.4, 2.5));
+        assert!(!slot.crosses(&over_the_chord));
+        // Window selection needs the bulges inside too.
+        let vertices_only = Aabb::from_points(Point2::new(-0.5, -0.5), Point2::new(10.5, 4.5));
+        assert!(!slot.is_inside(&vertices_only));
+        assert!(slot.is_inside(&vertices_only.expanded(2.0)));
+    }
+
+    #[test]
+    fn other_entities_intersect_the_arc_segments() {
+        let slot = Entity::from(slot());
+        // A horizontal line through the middle crosses both semicircular ends.
+        let through: Entity =
+            LineEntity::new(Point2::new(-20.0, 2.0), Point2::new(20.0, 2.0)).into();
+        let mut hits = slot.intersections(&through);
+        hits.sort_by(|a, b| a.x.total_cmp(&b.x));
+        assert_eq!(hits.len(), 2);
+        assert!(hits[0].distance_to(Point2::new(-2.0, 2.0)) < 1e-9);
+        assert!(hits[1].distance_to(Point2::new(12.0, 2.0)) < 1e-9);
+    }
+
+    #[test]
+    fn a_mirror_negates_bulges_and_other_transforms_keep_them() {
+        let slot = Entity::from(slot());
+        let bulges = |entity: &Entity| match entity {
+            Entity::Polyline(polyline) => polyline.bulges().collect::<Vec<_>>(),
+            other => panic!("expected a polyline, got {other:?}"),
+        };
+        let about = Point2::new(3.0, -2.0);
+        for kept in [
+            Transform::translation(Vec2::new(7.0, 1.0)),
+            Transform::rotation(about, 37.0),
+            Transform::scaling(about, 2.5).unwrap(),
+        ] {
+            assert_eq!(bulges(&slot.transformed(&kept)), vec![0.0, 1.0, 0.0, 1.0]);
+        }
+        let mirror = Transform::mirror(about, Point2::new(8.0, 5.0)).unwrap();
+        assert_eq!(
+            bulges(&slot.transformed(&mirror)),
+            vec![0.0, -1.0, 0.0, -1.0]
+        );
+        assert_eq!(
+            bulges(&slot.transformed(&mirror).transformed(&mirror)),
+            vec![0.0, 1.0, 0.0, 1.0]
+        );
+        // A move is still exact.
+        let offset = Vec2::new(100.0, -50.0);
+        assert_eq!(slot.translated(offset).translated(-offset), slot);
+    }
+
+    mod bulged_polylines {
+        use proptest::prelude::*;
+
+        use super::*;
+
+        fn coordinate() -> impl Strategy<Value = f64> {
+            -500.0..500f64
+        }
+
+        fn point() -> impl Strategy<Value = Point2> {
+            (coordinate(), coordinate()).prop_map(|(x, y)| Point2::new(x, y))
+        }
+
+        /// A polyline of three to six well-separated vertices with a mix of
+        /// straight and arc segments.
+        fn polyline() -> impl Strategy<Value = PolylineEntity> {
+            (3..7usize, any::<bool>()).prop_flat_map(|(count, closed)| {
+                (
+                    proptest::collection::vec(point(), count),
+                    proptest::collection::vec(prop_oneof![Just(0.0), -3.0..3.0f64], count),
+                )
+                    .prop_filter("vertices apart", |(vertices, _)| {
+                        vertices.iter().enumerate().all(|(index, a)| {
+                            vertices[index + 1..]
+                                .iter()
+                                .all(|b| a.distance_to(*b) > 1.0)
+                        })
+                    })
+                    .prop_map(move |(vertices, bulges)| {
+                        PolylineEntity::with_bulges(vertices, bulges, closed)
+                    })
+            })
+        }
+
+        /// Points along every segment: both ends and the middle.
+        fn samples(polyline: &PolylineEntity) -> Vec<Point2> {
+            polyline
+                .primitives()
+                .flat_map(|primitive| match primitive {
+                    Primitive::Segment(segment) => {
+                        vec![
+                            segment.start,
+                            segment.start + (segment.end - segment.start) * 0.5,
+                            segment.end,
+                        ]
+                    }
+                    Primitive::Arc(arc) => {
+                        vec![arc.start_point(), arc.mid_point(), arc.end_point()]
+                    }
+                    Primitive::Circle(circle) => vec![circle.center],
+                })
+                .collect()
+        }
+
+        proptest! {
+            /// #114: transforms preserve the shape — the image of every point
+            /// of the polyline lies on the image of the polyline.
+            #[test]
+            fn transforms_carry_every_point_onto_the_image(
+                polyline in polyline(), about in point(), other in point(),
+                degrees in -360.0..360f64, factor in 0.2..5f64,
+            ) {
+                prop_assume!(about.distance_to(other) > 1.0);
+                let entity = Entity::from(polyline.clone());
+                let transforms = [
+                    Transform::translation(other - about),
+                    Transform::rotation(about, degrees),
+                    Transform::scaling(about, factor).unwrap(),
+                    Transform::mirror(about, other).unwrap(),
+                ];
+                for transform in transforms {
+                    let image = entity.transformed(&transform);
+                    let Entity::Polyline(image_polyline) = &image else {
+                        return Err(TestCaseError::fail("a polyline stays a polyline"));
+                    };
+                    prop_assert_eq!(image_polyline.vertices.len(), polyline.vertices.len());
+                    prop_assert_eq!(image.primitives().len(), entity.primitives().len());
+                    let size = image.bounds().min().distance_to(image.bounds().max());
+                    for point in samples(&polyline) {
+                        let off = image.distance_to(transform.apply(point));
+                        prop_assert!(off < 1e-6 * (1.0 + size), "{:?}: off by {}", transform, off);
+                    }
+                }
+            }
+
+            /// Mirroring twice gives back the same polyline.
+            #[test]
+            fn a_double_mirror_restores_the_polyline(polyline in polyline(), about in point(), other in point()) {
+                prop_assume!(about.distance_to(other) > 1.0);
+                let mirror = Transform::mirror(about, other).unwrap();
+                let entity = Entity::from(polyline.clone());
+                let Entity::Polyline(twice) = entity.transformed(&mirror).transformed(&mirror) else {
+                    return Err(TestCaseError::fail("a polyline stays a polyline"));
+                };
+                prop_assert_eq!(twice.bulges().collect::<Vec<_>>(), polyline.bulges().collect::<Vec<_>>());
+                for (a, b) in twice.vertices.iter().zip(&polyline.vertices) {
+                    prop_assert!(a.distance_to(*b) < 1e-6);
+                }
+            }
+
+            /// The bounding box holds every sample point, arcs included.
+            #[test]
+            fn bounds_contain_the_whole_polyline(polyline in polyline()) {
+                let entity = Entity::from(polyline.clone());
+                let bounds = entity.bounds().expanded(1e-6);
+                for point in samples(&polyline) {
+                    prop_assert!(bounds.contains_point(point), "{:?} outside {:?}", point, bounds);
+                    prop_assert!(entity.distance_to(point) < 1e-6);
+                }
+            }
+        }
     }
 
     #[test]

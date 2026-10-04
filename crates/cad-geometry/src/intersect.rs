@@ -15,8 +15,8 @@
 //! lines, concentric or identical circles, and zero-length segments yield no
 //! intersection points, because no finite set of points describes them.
 
-use cad_core::Point2;
 use cad_core::tolerance::{AngularTolerance, LinearTolerance};
+use cad_core::{Aabb, Point2};
 
 use crate::{Arc, Circle, Segment};
 
@@ -216,6 +216,24 @@ impl Primitive {
             (C(a), C(b)) => circle_circle(a, b),
             (C(circle), A(arc)) | (A(arc), C(circle)) => circle_arc(circle, arc),
             (A(a), A(b)) => arc_arc(a, b),
+        }
+    }
+
+    /// The primitive's bounding box.
+    pub fn bounds(&self) -> Aabb {
+        match self {
+            Primitive::Segment(segment) => segment.bounds(),
+            Primitive::Circle(circle) => circle.bounds(),
+            Primitive::Arc(arc) => arc.bounds(),
+        }
+    }
+
+    /// True when any part of the primitive lies within `bounds`.
+    pub fn intersects_aabb(&self, bounds: &Aabb) -> bool {
+        match self {
+            Primitive::Segment(segment) => segment.intersects_aabb(bounds),
+            Primitive::Circle(circle) => circle.intersects_aabb(bounds),
+            Primitive::Arc(arc) => arc.intersects_aabb(bounds),
         }
     }
 

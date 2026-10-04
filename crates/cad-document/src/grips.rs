@@ -140,20 +140,25 @@ impl Entity {
                 }
             }
             Entity::Polyline(polyline) => {
-                let count = polyline.vertices.len();
-                if index >= count {
+                let (before, after) = polyline_neighbours(polyline, index)?;
+                let lands_on = |neighbour: Option<usize>| {
+                    neighbour.is_some_and(|at| TOLERANCE.coincident(polyline.vertices[at], to))
+                };
+                if lands_on(before) || lands_on(after) {
                     return None;
                 }
-                let neighbours = self.polyline_neighbours(index);
-                if neighbours
-                    .iter()
-                    .any(|vertex| TOLERANCE.coincident(*vertex, to))
-                {
-                    return None;
-                }
+                // The bulges stay: each neighbouring arc is re-fitted between
+                // its new ends with the same included angle.
                 let mut vertices = polyline.vertices.clone();
                 vertices[index] = to;
-                Some(PolylineEntity::new(vertices, polyline.closed).into())
+                Some(
+                    PolylineEntity::with_bulges(
+                        vertices,
+                        polyline.bulges().collect(),
+                        polyline.closed,
+                    )
+                    .into(),
+                )
             }
         }
     }
@@ -168,51 +173,57 @@ impl Entity {
         let Entity::Polyline(polyline) = self else {
             return self.grip_moved(index, to);
         };
-        if index >= polyline.vertices.len() || !to.is_finite() {
+        if !to.is_finite() {
             return None;
         }
-        let neighbours = self.polyline_neighbours(index);
-        if neighbours
-            .iter()
-            .any(|vertex| TOLERANCE.coincident(*vertex, to))
-        {
-            return None;
-        }
-        let stub = match neighbours.as_slice() {
-            [only] => vec![*only, to],
-            [before, after] => vec![*before, to, *after],
-            _ => return None,
+        let (before, after) = polyline_neighbours(polyline, index)?;
+        let lands_on = |neighbour: Option<usize>| {
+            neighbour.is_some_and(|at| TOLERANCE.coincident(polyline.vertices[at], to))
         };
-        Some(PolylineEntity::new(stub, false).into())
+        if lands_on(before) || lands_on(after) {
+            return None;
+        }
+        // A short open polyline: the neighbour before, the dragged vertex,
+        // the neighbour after — with the bulges of the two segments between.
+        let mut vertices = Vec::with_capacity(3);
+        let mut bulges = Vec::with_capacity(2);
+        if let Some(before) = before {
+            vertices.push(polyline.vertices[before]);
+            bulges.push(polyline.bulge(before));
+        }
+        vertices.push(to);
+        if let Some(after) = after {
+            vertices.push(polyline.vertices[after]);
+            bulges.push(polyline.bulge(index));
+        }
+        (vertices.len() > 1).then(|| PolylineEntity::with_bulges(vertices, bulges, false).into())
     }
+}
 
-    /// The vertices joined to polyline vertex `index` by a segment: the one
-    /// before and the one after, wrapping around when the polyline is closed.
-    /// Empty for anything that is not a polyline.
-    fn polyline_neighbours(&self, index: usize) -> Vec<Point2> {
-        let Entity::Polyline(polyline) = self else {
-            return Vec::new();
-        };
-        let vertices = &polyline.vertices;
-        let count = vertices.len();
-        let before = match index {
-            0 if polyline.closed => Some(count - 1),
-            0 => None,
-            _ => Some(index - 1),
-        };
-        let after = match index + 1 {
-            next if next < count => Some(next),
-            _ if polyline.closed => Some(0),
-            _ => None,
-        };
-        let mut neighbours: Vec<usize> = before.into_iter().chain(after).collect();
-        neighbours.dedup();
-        neighbours
-            .into_iter()
-            .filter(|neighbour| *neighbour != index)
-            .map(|neighbour| vertices[neighbour])
-            .collect()
+/// The vertices joined to vertex `index` by a segment: the one before and
+/// the one after, wrapping around when the polyline is closed. `None` when
+/// there is no such vertex.
+fn polyline_neighbours(
+    polyline: &PolylineEntity,
+    index: usize,
+) -> Option<(Option<usize>, Option<usize>)> {
+    let count = polyline.vertices.len();
+    if index >= count {
+        return None;
     }
+    // A closed polyline of two vertices has one segment, not two.
+    let wraps = polyline.closed && count > 2;
+    let before = match index {
+        0 if wraps => Some(count - 1),
+        0 => None,
+        _ => Some(index - 1),
+    };
+    let after = match index + 1 {
+        next if next < count => Some(next),
+        _ if wraps => Some(0),
+        _ => None,
+    };
+    Some((before, after))
 }
 
 #[cfg(test)]
@@ -499,10 +510,7 @@ mod tests {
             open.grip_preview(1, to),
             stub(vec![p(0.0, 0.0), to, p(10.0, 10.0)])
         );
-        assert_eq!(
-            open.grip_preview(0, to),
-            stub(vec![to, p(10.0, 0.0)]).map(reversed)
-        );
+        assert_eq!(open.grip_preview(0, to), stub(vec![to, p(10.0, 0.0)]));
         assert_eq!(open.grip_preview(3, to), stub(vec![p(10.0, 10.0), to]));
 
         let closed = polyline(true);
@@ -521,16 +529,58 @@ mod tests {
         );
     }
 
-    /// An open polyline's first vertex has one neighbour; the stub runs from
-    /// that neighbour to the cursor.
-    fn reversed(entity: Entity) -> Entity {
-        match entity {
-            Entity::Polyline(mut polyline) => {
-                polyline.vertices.reverse();
-                polyline.into()
-            }
-            other => other,
-        }
+    /// A slot: two straight sides and two semicircular ends.
+    fn slot() -> Entity {
+        PolylineEntity::with_bulges(
+            vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 4.0), p(0.0, 4.0)],
+            vec![0.0, 1.0, 0.0, 1.0],
+            true,
+        )
+        .into()
+    }
+
+    /// #114: vertex grips keep the bulges of the neighbouring segments.
+    #[test]
+    fn moving_a_vertex_keeps_the_bulges_of_its_segments() {
+        let Some(Entity::Polyline(moved)) = slot().grip_moved(2, p(10.0, 8.0)) else {
+            panic!("a polyline stays a polyline");
+        };
+        assert_eq!(moved.bulges().collect::<Vec<_>>(), vec![0.0, 1.0, 0.0, 1.0]);
+        assert_eq!(moved.vertices[2], p(10.0, 8.0));
+        // The right end is still a semicircle, now over a chord of 8.
+        let Some(cad_geometry::Primitive::Arc(end)) = moved.primitives().nth(1) else {
+            panic!("the second segment is an arc");
+        };
+        assert!((end.radius - 4.0).abs() < 1e-12 && end.center.distance_to(p(10.0, 4.0)) < 1e-12);
+    }
+
+    #[test]
+    fn the_preview_of_a_bulged_vertex_drag_carries_both_bulges() {
+        // Vertex 1 sits between a straight segment and a semicircle.
+        let to = p(12.0, -3.0);
+        assert_eq!(
+            slot().grip_preview(1, to),
+            Some(
+                PolylineEntity::with_bulges(
+                    vec![p(0.0, 0.0), to, p(10.0, 4.0)],
+                    vec![0.0, 1.0],
+                    false
+                )
+                .into()
+            )
+        );
+        // Vertex 0 closes the loop: the arc from vertex 3 arrives, a straight one leaves.
+        assert_eq!(
+            slot().grip_preview(0, to),
+            Some(
+                PolylineEntity::with_bulges(
+                    vec![p(0.0, 4.0), to, p(10.0, 0.0)],
+                    vec![1.0, 0.0],
+                    false
+                )
+                .into()
+            )
+        );
     }
 
     #[test]
@@ -546,7 +596,7 @@ mod tests {
         let pair: Entity = PolylineEntity::new(vec![p(0.0, 0.0), p(10.0, 0.0)], true).into();
         assert_eq!(
             pair.grip_preview(0, p(5.0, 5.0)),
-            Some(PolylineEntity::new(vec![p(10.0, 0.0), p(5.0, 5.0)], false).into())
+            Some(PolylineEntity::new(vec![p(5.0, 5.0), p(10.0, 0.0)], false).into())
         );
     }
 }

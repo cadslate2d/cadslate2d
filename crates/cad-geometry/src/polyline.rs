@@ -1,94 +1,265 @@
-//! Polylines: chains of straight segments through a list of vertices.
+//! Polylines: chains of segments through a list of vertices, where a
+//! segment is straight or — when its starting vertex carries a *bulge* — a
+//! circular arc.
+//!
+//! The bulge is the DXF convention, and the one drafters' polylines have
+//! always used: for the segment from one vertex to the next,
+//!
+//! ```text
+//! bulge = tan(included angle / 4)
+//! ```
+//!
+//! positive when the arc turns counter-clockwise on the way from the first
+//! vertex to the second, negative when clockwise, zero for a straight
+//! segment. A bulge of ±1 is a semicircle. The sagitta — how far the arc
+//! stands off the chord — is `|bulge| × chord / 2`.
 
-use cad_core::{Aabb, Point2};
+use cad_core::Point2;
+use cad_core::tolerance::{LinearTolerance, ParametricTolerance};
 
-use crate::Segment;
+use crate::{Arc, Primitive, Segment};
 
-/// The segments of a polyline through `vertices`, including the closing
-/// segment when `closed`. Fewer than two vertices yield no segments.
-pub fn polyline_segments(vertices: &[Point2], closed: bool) -> impl Iterator<Item = Segment> + '_ {
-    let closing = match (closed, vertices.first(), vertices.last()) {
-        (true, Some(first), Some(last)) if vertices.len() > 2 => Some(Segment::new(*last, *first)),
-        _ => None,
-    };
-    vertices
-        .windows(2)
-        .map(|pair| Segment::new(pair[0], pair[1]))
-        .chain(closing)
+/// A bulge this small is a straight segment: the arc's radius would exceed
+/// 10¹¹ chord lengths.
+const STRAIGHT: ParametricTolerance = ParametricTolerance::DEFAULT;
+
+/// True when a segment with this bulge is straight.
+pub fn is_straight(bulge: f64) -> bool {
+    !bulge.is_finite() || STRAIGHT.is_zero(bulge)
 }
 
-/// The bounding box of a set of points, or `None` when there are none.
-pub fn bounds_of(points: &[Point2]) -> Option<Aabb> {
-    points
-        .iter()
-        .map(|point| Aabb::from_points(*point, *point))
-        .reduce(|a, b| a.union(&b))
+/// The arc a bulged segment from `start` to `end` runs along, as a
+/// counter-clockwise [`Arc`]. A clockwise segment (negative bulge) is the
+/// same set of points as the counter-clockwise arc from `end` to `start`.
+///
+/// `None` when the segment is straight, or has no length.
+pub fn arc_from_bulge(start: Point2, end: Point2, bulge: f64) -> Option<Arc> {
+    let chord = end - start;
+    let length = chord.length();
+    if is_straight(bulge) || LinearTolerance::DEFAULT.is_zero(length) {
+        return None;
+    }
+    // The centre lies on the chord's perpendicular bisector, to the left of
+    // the direction of travel for a counter-clockwise minor arc.
+    let middle = start + chord * 0.5;
+    let left = cad_core::Vec2::new(-chord.y, chord.x) * (1.0 / length);
+    let to_center = (length / 2.0) * (1.0 - bulge * bulge) / (2.0 * bulge);
+    let center = middle + left * to_center;
+    let radius = length * (1.0 + bulge * bulge) / (4.0 * bulge.abs());
+
+    // Stored counter-clockwise: a clockwise segment starts at its far end.
+    let from = if bulge > 0.0 { start } else { end } - center;
+    let sweep = 4.0 * bulge.abs().atan();
+    radius
+        .is_finite()
+        .then(|| Arc::new(center, radius, from.y.atan2(from.x), sweep))
 }
 
-/// Distance from `point` to the nearest segment of the polyline.
-pub fn polyline_distance_to_point(vertices: &[Point2], closed: bool, point: Point2) -> f64 {
-    polyline_segments(vertices, closed)
-        .map(|segment| segment.distance_to_point(point))
-        .fold(f64::INFINITY, f64::min)
+/// The bulge of a segment that runs along `arc`: from the arc's start to its
+/// end when `forwards` (counter-clockwise, positive), from its end back to
+/// its start otherwise (clockwise, negative).
+pub fn bulge_from_arc(arc: &Arc, forwards: bool) -> f64 {
+    let bulge = (arc.sweep / 4.0).tan();
+    if forwards { bulge } else { -bulge }
+}
+
+/// One segment of a polyline from `start` to `end`: a straight segment, or
+/// the arc its bulge describes.
+pub fn bulge_primitive(start: Point2, end: Point2, bulge: f64) -> Primitive {
+    arc_from_bulge(start, end, bulge).map_or_else(
+        || Primitive::Segment(Segment::new(start, end)),
+        Primitive::Arc,
+    )
+}
+
+/// The index pairs `(from, to)` of a polyline's segments, including the
+/// closing segment when `closed`. Fewer than two vertices yield none, and a
+/// closed polyline of two vertices is one segment, not one doubled.
+pub fn polyline_spans(count: usize, closed: bool) -> impl Iterator<Item = (usize, usize)> {
+    let closing = (closed && count > 2).then(|| (count - 1, 0));
+    (1..count).map(|to| (to - 1, to)).chain(closing)
+}
+
+/// The geometry of a polyline through `vertices`: one primitive per segment,
+/// in order. `bulge_at(i)` is the bulge of the segment that starts at vertex
+/// `i`.
+pub fn polyline_primitives<'a>(
+    vertices: &'a [Point2],
+    bulge_at: impl Fn(usize) -> f64 + 'a,
+    closed: bool,
+) -> impl Iterator<Item = Primitive> + 'a {
+    polyline_spans(vertices.len(), closed)
+        .map(move |(from, to)| bulge_primitive(vertices[from], vertices[to], bulge_at(from)))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::f64::consts::{FRAC_PI_2, PI};
+
+    use proptest::prelude::*;
+
     use super::*;
 
     fn p(x: f64, y: f64) -> Point2 {
         Point2::new(x, y)
     }
 
+    fn close(a: Point2, b: Point2) -> bool {
+        a.distance_to(b) < 1e-9 * (1.0 + a.distance_to(Point2::ORIGIN))
+    }
+
     fn square() -> Vec<Point2> {
         vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)]
     }
 
+    fn straight(vertices: &[Point2], closed: bool) -> Vec<Primitive> {
+        polyline_primitives(vertices, |_| 0.0, closed).collect()
+    }
+
     #[test]
     fn an_open_polyline_has_one_segment_fewer_than_vertices() {
-        assert_eq!(polyline_segments(&square(), false).count(), 3);
+        assert_eq!(straight(&square(), false).len(), 3);
     }
 
     #[test]
     fn a_closed_polyline_adds_the_segment_back_to_the_start() {
-        let segments: Vec<Segment> = polyline_segments(&square(), true).collect();
+        let segments = straight(&square(), true);
         assert_eq!(segments.len(), 4);
-        assert_eq!(segments[3], Segment::new(p(0.0, 10.0), p(0.0, 0.0)));
+        assert_eq!(
+            segments[3],
+            Primitive::Segment(Segment::new(p(0.0, 10.0), p(0.0, 0.0)))
+        );
     }
 
     #[test]
     fn degenerate_polylines_have_no_spurious_segments() {
-        assert_eq!(polyline_segments(&[], true).count(), 0);
-        assert_eq!(polyline_segments(&[p(1.0, 1.0)], true).count(), 0);
+        assert_eq!(straight(&[], true).len(), 0);
+        assert_eq!(straight(&[p(1.0, 1.0)], true).len(), 0);
         // Two vertices closed is still one segment, not a doubled one.
+        assert_eq!(straight(&[p(0.0, 0.0), p(1.0, 0.0)], true).len(), 1);
+    }
+
+    #[test]
+    fn a_zero_bulge_is_a_straight_segment() {
+        for bulge in [0.0, -0.0, 1e-15, f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                bulge_primitive(p(1.0, 2.0), p(4.0, 6.0), bulge),
+                Primitive::Segment(Segment::new(p(1.0, 2.0), p(4.0, 6.0))),
+                "bulge {bulge}"
+            );
+        }
         assert_eq!(
-            polyline_segments(&[p(0.0, 0.0), p(1.0, 0.0)], true).count(),
-            1
+            arc_from_bulge(p(1.0, 2.0), p(1.0, 2.0), 1.0),
+            None,
+            "no chord"
         );
     }
 
     #[test]
-    fn bounds_cover_every_vertex() {
-        let vertices = [p(3.0, -1.0), p(-2.0, 4.0), p(0.0, 0.0)];
-        assert_eq!(
-            bounds_of(&vertices),
-            Some(Aabb::from_points(p(-2.0, -1.0), p(3.0, 4.0)))
-        );
-        assert_eq!(bounds_of(&[]), None);
+    fn a_bulge_of_one_is_a_semicircle_on_the_right_of_the_way_travelled() {
+        // From (0,0) to (2,0), counter-clockwise: round the centre (1,0),
+        // dipping below the chord.
+        let arc = arc_from_bulge(p(0.0, 0.0), p(2.0, 0.0), 1.0).unwrap();
+        assert!(close(arc.center, p(1.0, 0.0)));
+        assert!((arc.radius - 1.0).abs() < 1e-12 && (arc.sweep - PI).abs() < 1e-12);
+        assert!(close(arc.start_point(), p(0.0, 0.0)) && close(arc.end_point(), p(2.0, 0.0)));
+        assert!(close(arc.mid_point(), p(1.0, -1.0)));
     }
 
     #[test]
-    fn distance_is_to_the_nearest_segment_and_respects_closure() {
-        // Just outside the left edge, which exists only when closed.
-        let point = p(-2.0, 5.0);
-        assert_eq!(polyline_distance_to_point(&square(), true, point), 2.0);
-        // Open: the nearest geometry is the vertex (0, 10) or (0, 0), 5 above or below.
-        let open = polyline_distance_to_point(&square(), false, point);
-        assert!((open - 29f64.sqrt()).abs() < 1e-12, "{open}");
-        // The interior is not the polyline.
-        assert_eq!(
-            polyline_distance_to_point(&square(), true, p(5.0, 5.0)),
-            5.0
+    fn a_negative_bulge_turns_clockwise_and_bulges_to_the_left() {
+        let arc = arc_from_bulge(p(0.0, 0.0), p(2.0, 0.0), -1.0).unwrap();
+        assert!(close(arc.mid_point(), p(1.0, 1.0)), "above the chord");
+        // Stored counter-clockwise, so it starts where the segment ends.
+        assert!(close(arc.start_point(), p(2.0, 0.0)) && close(arc.end_point(), p(0.0, 0.0)));
+    }
+
+    #[test]
+    fn a_quarter_arc_has_the_familiar_bulge() {
+        // tan(90° / 4) = √2 − 1.
+        let bulge = 2f64.sqrt() - 1.0;
+        let arc = arc_from_bulge(p(10.0, 0.0), p(0.0, 10.0), bulge).unwrap();
+        assert!(close(arc.center, p(0.0, 0.0)));
+        assert!((arc.radius - 10.0).abs() < 1e-9 && (arc.sweep - FRAC_PI_2).abs() < 1e-12);
+        assert!((bulge_from_arc(&arc, true) - bulge).abs() < 1e-12);
+        assert!((bulge_from_arc(&arc, false) + bulge).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_bulge_above_one_is_more_than_a_semicircle() {
+        // Three quarters of a circle: tan(270° / 4) = 1 + √2.
+        let arc = arc_from_bulge(p(10.0, 0.0), p(0.0, -10.0), 1.0 + 2f64.sqrt()).unwrap();
+        assert!(close(arc.center, p(0.0, 0.0)));
+        assert!((arc.sweep - 3.0 * FRAC_PI_2).abs() < 1e-12);
+        assert!(close(arc.mid_point(), p(-50f64.sqrt(), 50f64.sqrt())));
+    }
+
+    #[test]
+    fn a_polyline_mixes_straight_and_arc_segments_in_order() {
+        // A slot: two straight sides joined by two semicircular ends.
+        let vertices = [p(0.0, 0.0), p(10.0, 0.0), p(10.0, 4.0), p(0.0, 4.0)];
+        let bulges = [0.0, 1.0, 0.0, 1.0];
+        let slot: Vec<Primitive> =
+            polyline_primitives(&vertices, |index| bulges[index], true).collect();
+        assert_eq!(slot.len(), 4);
+        assert!(
+            matches!(slot[0], Primitive::Segment(_)) && matches!(slot[2], Primitive::Segment(_))
         );
+        let (Primitive::Arc(right), Primitive::Arc(left)) = (slot[1], slot[3]) else {
+            panic!("the ends are arcs");
+        };
+        assert!(close(right.center, p(10.0, 2.0)) && close(right.mid_point(), p(12.0, 2.0)));
+        assert!(close(left.center, p(0.0, 2.0)) && close(left.mid_point(), p(-2.0, 2.0)));
+    }
+
+    fn coordinate() -> impl Strategy<Value = f64> {
+        -1e3..1e3f64
+    }
+
+    fn bulge() -> impl Strategy<Value = f64> {
+        prop_oneof![0.01..6.0f64, -6.0..-0.01f64]
+    }
+
+    proptest! {
+        /// #114: bulge → arc → bulge round-trips, and the arc is the one the
+        /// bulge describes.
+        #[test]
+        fn a_bulge_and_its_arc_describe_each_other(
+            ax in coordinate(), ay in coordinate(), bx in coordinate(), by in coordinate(), bulge in bulge(),
+        ) {
+            let (start, end) = (p(ax, ay), p(bx, by));
+            let chord = start.distance_to(end);
+            prop_assume!(chord > 1e-3);
+            let arc = arc_from_bulge(start, end, bulge).unwrap();
+            let scale = 1.0 + arc.radius;
+
+            // It runs between the two vertices, in the direction of the sign.
+            let (from, to) = if bulge > 0.0 { (start, end) } else { (end, start) };
+            prop_assert!(arc.start_point().distance_to(from) < 1e-9 * scale);
+            prop_assert!(arc.end_point().distance_to(to) < 1e-7 * scale);
+            // The included angle and the sagitta are what the definition says.
+            prop_assert!((arc.sweep - 4.0 * bulge.abs().atan()).abs() < 1e-12);
+            let middle = start + (end - start) * 0.5;
+            let sagitta = arc.mid_point().distance_to(middle);
+            prop_assert!((sagitta - bulge.abs() * chord / 2.0).abs() < 1e-7 * scale);
+            // And back again.
+            let back = bulge_from_arc(&arc, bulge > 0.0);
+            prop_assert!((back - bulge).abs() < 1e-9 * (1.0 + bulge.abs()));
+        }
+
+        /// The arc bulges to the right of the way travelled when it turns
+        /// counter-clockwise, to the left when clockwise.
+        #[test]
+        fn the_sign_of_the_bulge_chooses_the_side(
+            ax in coordinate(), ay in coordinate(), bx in coordinate(), by in coordinate(), bulge in bulge(),
+        ) {
+            let (start, end) = (p(ax, ay), p(bx, by));
+            prop_assume!(start.distance_to(end) > 1e-3);
+            let arc = arc_from_bulge(start, end, bulge).unwrap();
+            let along = end - start;
+            let to_middle = arc.mid_point() - start;
+            let side = along.x * to_middle.y - along.y * to_middle.x;
+            prop_assert!(side * bulge < 0.0, "side {side}, bulge {bulge}");
+        }
     }
 }
