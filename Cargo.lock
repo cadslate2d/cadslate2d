@@ -73,6 +73,7 @@ name = "cad-geometry"
 version = "0.0.1"
 dependencies = [
  "cad-core",
+ "proptest",
 ]
 
 [[package]]
