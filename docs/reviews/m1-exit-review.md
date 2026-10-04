@@ -55,7 +55,7 @@ Test counts at this review: 426 Rust tests, 82 Vitest tests, 73 Playwright tests
 - **Analytic curves have a measured precision limit.** Exact up to an on-screen radius of about 10⁵ pixels, visibly heavier from 3×10⁵, gone near 10⁷ (ADR-0009). Zooming into a tangency on a large arc will reach it.
 - **Exhaustive matches paid off twice.** Adding `Circle`/`Arc` and then `Polyline` to `Entity` made the compiler list every place to update: rendering, picking, DXF export, test helpers.
 - **Realistic fixtures keep finding things.** Files written by an independent DXF library confirmed the arc angle convention and both polyline encodings.
-- **The second browser engine was cheap.** All 73 end-to-end tests pass in Firefox without changes.
+- **The second browser engine was cheap locally and not in CI.** All 73 end-to-end tests pass in Firefox on a developer machine without changes. On the hosted CI runner, headless Firefox provides no WebGL2, so CI still runs Chromium only; WebKit has not been run at all.
 
 ## Performance sanity check
 
@@ -66,6 +66,7 @@ Ten thousand lines (generated drawing), production bundle, headless Chromium wit
 ## Open items carried forward
 
 1. Render measurements on real GPU hardware (needs a person).
+1. Firefox in CI and any WebKit run at all (the cross-browser issue stays open).
 2. Whether to report the R-tree library's bulk-load crash upstream (maintainer's call).
 3. A fallback for curves at extreme zoom.
 4. Unit suffixes and drawing units.

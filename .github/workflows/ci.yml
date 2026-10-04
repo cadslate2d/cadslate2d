@@ -55,12 +55,14 @@ jobs:
       - name: Build production bundle
         run: pnpm --dir web build
 
-      - name: Install Playwright browsers
-        run: pnpm --dir web exec playwright install --with-deps chromium firefox webkit
+      - name: Install Playwright browser
+        run: pnpm --dir web exec playwright install --with-deps chromium
 
       - name: End-to-end tests
         # Stop early when a whole browser is broken instead of timing out one test at a time.
         run: pnpm --dir web e2e --max-failures=15
+        env:
+          E2E_BROWSERS: chromium
 
       - uses: actions/upload-artifact@v4
         with:
