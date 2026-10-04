@@ -1,6 +1,8 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./ui/App";
+import "./ui/theme.css";
+import "./ui/app.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root element");

@@ -41,6 +41,7 @@ export default tseslint.config(
     },
   },
   { files: ["src/cad/**"], rules: { "no-restricted-imports": "off" } },
-  { files: ["src/renderer/**"], rules: { "no-restricted-syntax": "off" } },
+  // Renderer code owns WebGL; end-to-end tests may poke the context to simulate failures.
+  { files: ["src/renderer/**", "e2e/**"], rules: { "no-restricted-syntax": "off" } },
   { files: ["*.config.{js,ts}", "e2e/**"], languageOptions: { globals: globals.node } },
 );

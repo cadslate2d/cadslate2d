@@ -2,6 +2,8 @@
 # The full local check. Run before every push; CI runs the same steps.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# rustup installs cargo outside PATH for non-login shells.
+command -v cargo >/dev/null || . "$HOME/.cargo/env"
 
 step() { printf '\n── %s\n' "$*"; }
 

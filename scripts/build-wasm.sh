@@ -4,6 +4,8 @@
 # Set CAD_WASM_FEATURES (e.g. "demo-scene") to enable cad-wasm cargo features in a debug build.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# rustup installs cargo outside PATH for non-login shells.
+command -v cargo >/dev/null || . "$HOME/.cargo/env"
 
 profile_dir=debug
 cargo_flags=()

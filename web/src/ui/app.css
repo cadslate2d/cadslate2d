@@ -1,0 +1,177 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: var(--color-surface-app);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-md);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The canvas owns most of the screen; the command line is always present (DESIGN §5). */
+.shell {
+  display: grid;
+  grid-template-rows: var(--size-header) minmax(0, 1fr) auto var(--size-status);
+  height: 100%;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.header__brand {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.header__brand-accent {
+  color: var(--color-accent);
+}
+
+.header__tagline {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.canvas-region {
+  position: relative;
+  min-height: 0;
+  margin: var(--space-2) var(--space-2) 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-canvas);
+  overflow: hidden;
+}
+
+.canvas-region__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: none;
+  touch-action: none;
+  outline: none;
+}
+
+.canvas-region__message {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.canvas-region__message--error {
+  color: var(--color-danger);
+}
+
+.command {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  margin: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-panel);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-mono);
+  height: calc(var(--line-height-mono) * var(--command-visible-lines) + var(--space-2) * 2);
+  overflow: hidden;
+}
+
+.command__gutter,
+.command__lines {
+  margin: 0;
+  padding: var(--space-2) 0;
+  list-style: none;
+}
+
+.command__gutter {
+  padding-inline: var(--space-3);
+  border-right: 1px solid var(--color-border);
+  color: var(--color-text-faint);
+  text-align: right;
+  user-select: none;
+}
+
+.command__lines {
+  padding-inline: var(--space-3);
+  overflow: hidden;
+  white-space: pre;
+}
+
+.command__line--prompt {
+  display: flex;
+  gap: 1ch;
+}
+
+.command__input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  caret-color: var(--color-accent);
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+}
+
+.status__spacer {
+  flex: 1;
+}
+
+.status__chip {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-panel);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.04em;
+}
+
+.status__chip--active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+.status__chip--unavailable {
+  color: var(--color-text-faint);
+  border-color: var(--color-border);
+}
+
+.status__coordinates {
+  min-width: 22ch;
+  font-family: var(--font-mono);
+  text-align: center;
+}
