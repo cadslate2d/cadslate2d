@@ -41,7 +41,7 @@ Test counts at this review: 264 Rust tests (unit, property, fixture, regression)
 
 **Is the `RenderScene` / `OverlayFrame` split natural in practice?** Yes. It falls exactly on the line between document and session: the scene is a function of `Drawing`, the overlay a function of session state plus the view. Selection highlight fits the overlay without strain. One nuance: the overlay depends on the view (the crosshair is sized in pixels) while the scene must not.
 
-**Is the coarse render transport efficient enough?** Yes, with a wide margin. A pointer frame costs about 3 µs regardless of drawing size; a committed edit at 100k lines costs about 2 ms including a full scene rebuild and re-upload (ADR-0008).
+**Is the coarse render transport efficient enough?** Yes, with a wide margin. A pointer frame costs about 3 µs of main-thread time regardless of drawing size, and is indistinguishable from an empty GPU round trip; a committed edit at 100k lines costs about 2 ms including a full scene rebuild and re-upload (ADR-0008, corrected after its first measurement turned out to exclude GPU-side work).
 
 **Is TypeScript-side WebGL ownership clean?** Yes. The adapter is about 300 lines, handles context loss by itself, and takes its colours from theme tokens through semantic style roles, so Rust knows no colours.
 

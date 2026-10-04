@@ -14,6 +14,8 @@ export interface TransportReport {
   expandedBytes: number;
   /** Mean milliseconds per operation. */
   ms: {
+    /** Waiting for the GPU process with nothing queued: the floor under every figure that uploads. */
+    waitForGpu: number;
     /** Create typed-array views over WASM memory; touch nothing. */
     pullViews: number;
     /** Create views and copy the segment data out of WASM memory. */
@@ -81,14 +83,19 @@ export function probeTransport(engine: CadEngine): TransportReport {
   gl.bindBuffer(gl.ARRAY_BUFFER, overlay);
   gl.bufferData(gl.ARRAY_BUFFER, 4096, gl.DYNAMIC_DRAW);
 
-  // gl.finish() makes the driver complete the upload inside the timed region.
+  // Chromium queues GL commands for another process; `gl.finish()` returns
+  // before they run. Reading a pixel back is what actually waits for them, so
+  // the timed region includes the real upload and not just queueing it.
+  const pixel = new Uint8Array(4);
+  const sync = () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
   const upload = (buffer: WebGLBuffer, data: Float32Array) => {
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
-    gl.finish();
+    sync();
   };
 
   const ms = {
+    waitForGpu: time(sync),
     pullViews: time(() =>
       engine.readScene((frame) => frame.segments.length + frame.batches.length),
     ),
@@ -100,7 +107,7 @@ export function probeTransport(engine: CadEngine): TransportReport {
       engine.readScene((frame) => {
         gl.bindBuffer(gl.ARRAY_BUFFER, scene);
         gl.bufferData(gl.ARRAY_BUFFER, frame.segments, gl.STATIC_DRAW);
-        gl.finish();
+        sync();
       }),
     ),
     pointerFrame: 0,

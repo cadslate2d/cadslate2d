@@ -66,6 +66,10 @@ export class CanvasController {
         const { probeOpen } = await import("../renderer/webgl/transport-probe");
         return probeOpen(() => new CadEngine(), text);
       },
+      probeCurves: async (arcCount) => {
+        const { probeCurves } = await import("../renderer/webgl/curve-probe");
+        return probeCurves(arcCount);
+      },
     });
 
     const options = { signal: this.#abort.signal };

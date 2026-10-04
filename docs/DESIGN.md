@@ -671,7 +671,7 @@ Circle and arc representation remains intentionally unspecified until the M1 ren
 - analytic shader/SDF primitives;
 - a hybrid.
 
-> **Clarified in M0:** the curve experiment runs at the start of M1. §23.3 says "M0 should evaluate", but §27 excludes circles and arcs from M0.
+> **Resolved in M1:** analytic arc instances drawn under a covering strip — [ADR-0009](adr/0009-curve-rendering.md). (§23.3 says "M0 should evaluate"; the experiment ran at the start of M1 because §27 excludes circles and arcs from M0.)
 
 A green M0 validates the committed/transient rendering skeleton for line geometry only.
 

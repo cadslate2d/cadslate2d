@@ -5,6 +5,8 @@
 
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
+mod arc;
 mod segment;
 
+pub use arc::{Arc, Circle, normalize_angle};
 pub use segment::Segment;

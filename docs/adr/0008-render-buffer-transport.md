@@ -26,29 +26,34 @@ Confirm the M0 starting point as the transport:
 
 **The GPU is SwiftShader, a software rasteriser.** Upload figures therefore measure a memcpy-like path, not a real driver. Comparisons between layouts and between views and copies are meaningful; absolute upload times on real hardware are not established here.
 
+**Method correction (2026-10-04, same day).** The first version of this table timed uploads with `gl.finish()`. In Chromium that call returns before the queued commands have run in the GPU process, so those figures covered only the main-thread side. The probe now waits by reading one pixel back, and reports that wait on its own as the floor under every upload figure. The table below is the corrected one. The conclusions did not change; the size of the gaps did.
+
 | Operation | 1k | 10k | 100k |
 | --- | --- | --- | --- |
-| Create views over the scene | 0.1 µs | 0.1 µs | 0.2 µs |
-| Create views and copy the data out | 10 µs | 62 µs | 705 µs |
-| Upload from views into an existing buffer | 6 µs | 14 µs | 94 µs |
-| Copy, then upload the copy | 19 µs | 92 µs | 908 µs |
-| Upload an expanded-vertex buffer (5× the bytes) | 7 µs | 52 µs | 827 µs |
-| Upload with reallocation every time | 7 µs | 15 µs | 121 µs |
-| One pointer-move frame (engine call, overlay pull and upload, both transforms) | 3.0 µs | 2.6 µs | 2.7 µs |
-| One edit: commit a line, rebuild the scene, re-upload it | 64 µs | 314 µs | 2.05 ms |
+| Wait for the GPU process, nothing queued (floor) | 162 µs | 166 µs | 158 µs |
+| Create views over the scene (no GPU work) | 0.1 µs | 0.1 µs | 0.1 µs |
+| Create views and copy the data out (no GPU work) | 9 µs | 58 µs | 472 µs |
+| Upload from views into an existing buffer | 151 µs | 162 µs | 316 µs |
+| Copy, then upload the copy | 164 µs | 239 µs | 938 µs |
+| Upload an expanded-vertex buffer (5× the bytes) | 158 µs | 218 µs | 855 µs |
+| Upload with reallocation every time | 184 µs | 170 µs | 327 µs |
+| One pointer-move frame (engine call, overlay pull and upload, both transforms) | 163 µs | 163 µs | 167 µs |
+| One edit: commit a line, rebuild the scene, re-upload it | 0.34 ms | 0.49 ms | 2.4 ms |
 
 Committed data size: 16 KB, 160 KB, 1.6 MB instanced; 80 KB, 800 KB, 8 MB as expanded vertices.
+
+Without the wait — main-thread time only — a pointer-move frame measures about 3 µs at every size.
 
 Native scene preparation alone (`cargo bench -p cad-benchmarks --bench render`): 0.65 ms at 100k, cold or after an edit; 1.4 ns to look up an unchanged scene.
 
 JavaScript heap, with `--enable-precise-memory-info`: no growth over 20,000 consecutive pointer frames at any size (the measured delta was slightly negative, i.e. within garbage-collector noise).
 
-Reading the numbers:
+Reading the numbers, net of the floor:
 
-- **Views are free; copies are not.** Creating views costs 0.1–0.2 µs whatever the drawing size. Copying first makes the upload path about 10× more expensive at 100k.
-- **Instancing is the right layout.** The expanded-vertex equivalent is 5× the bytes and about 9× the upload time at 100k, before counting the Rust-side cost of generating it.
-- **Pointer movement costs about 3 µs and does not depend on drawing size.** That is the §12.3 requirement, with more than three orders of magnitude of headroom inside a 16.7 ms frame.
-- **A whole-scene rebuild per edit is affordable through 100k:** about 2 ms, an eighth of a frame. Incremental scene updates would add complexity for no visible gain at the stated scale targets.
+- **Views are free; copies are not.** Creating views costs 0.1 µs whatever the drawing size. At 100k, uploading from views costs about 0.16 ms above the floor; copying first makes it about 0.78 ms, roughly five times as much.
+- **Instancing is the right layout.** The expanded-vertex equivalent is 5× the bytes and about 0.70 ms above the floor at 100k — more than four times the instanced upload — before counting the Rust-side cost of generating it.
+- **Pointer movement does not depend on drawing size.** A pointer frame is indistinguishable from the floor at 1k, 10k, and 100k: it adds about 3 µs of main-thread work and uploads a few hundred bytes. That is the §12.3 requirement.
+- **A whole-scene rebuild per edit is affordable through 100k:** about 2.4 ms including the GPU wait, a seventh of a frame. Incremental scene updates would add complexity for no visible gain at the stated scale targets.
 - **Buffer reuse versus reallocation is within noise in software GL.** Reuse is kept because it is already written, cannot be worse, and real drivers are known to penalise orphaning large buffers.
 - **Nothing accumulates per frame.** The probe cannot measure allocation *rate* — each pull creates a few small short-lived objects — only that the heap does not grow.
 
@@ -59,15 +64,14 @@ Reading the numbers:
 | `.wasm` size (after `wasm-opt -Os`) | 202 KB | 220 KB |
 | Import the 100k drawing (parse, build drawing and index) | 610 ms | 235 ms |
 | Import the 10k drawing | 51 ms | 22 ms |
-| One edit at 100k | 2.8 ms | 2.05 ms |
 
-Eighteen kilobytes buys a 2.6× faster open. The table above uses `opt-level = 3`.
+Eighteen kilobytes buys a 2.6× faster open (later runs measure the 100k import at about 190 ms). The table above uses `opt-level = 3`.
 
 ## Alternatives considered
 
-- **Copy geometry into JS-owned arrays.** Removes the view-lifetime rule, at 10× the transport cost. The rule is enforced structurally instead: `readScene`/`readOverlay` take a callback, and a test grows memory to show both the hazard and that pulls stay correct.
+- **Copy geometry into JS-owned arrays.** Removes the view-lifetime rule, at about five times the transport cost. The rule is enforced structurally instead: `readScene`/`readOverlay` take a callback, and a test grows memory to show both the hazard and that pulls stay correct.
 - **Four expanded vertices per segment.** Simpler shader, 5× the data. Rejected on the numbers.
-- **Incremental scene patches** (send only changed entities). Not needed at 2 ms per full rebuild; would complicate the revision rule that makes the boundary easy to reason about.
+- **Incremental scene patches** (send only changed entities). Not needed at about 2 ms per full rebuild; would complicate the revision rule that makes the boundary easy to reason about.
 - **One combined "frame" call** returning scene and overlay together. Saves a few calls per frame out of four, and would marshal unchanged scene data on pointer moves.
 
 ## Consequences

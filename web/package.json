@@ -14,7 +14,8 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "e2e": "playwright test",
-    "bench:transport": "playwright test --config playwright.bench.config.ts"
+    "bench:transport": "playwright test --config playwright.bench.config.ts transport",
+    "bench:curves": "playwright test --config playwright.bench.config.ts curves"
   },
   "dependencies": {
     "react": "^19.3.0",

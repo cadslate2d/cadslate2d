@@ -19,6 +19,7 @@ There are two kinds:
 | [0006](0006-entity-store.md) | Entity store: dense vector with an ID-to-slot map | Accepted | Evidence |
 | [0007](0007-spatial-index.md) | Spatial index: rstar R*-tree, grown by insertion only | Accepted for M0–M1 | Evidence |
 | [0008](0008-render-buffer-transport.md) | Render buffer transport: views, instanced segments, reused buffers | Accepted | Evidence |
+| [0009](0009-curve-rendering.md) | Curve rendering: analytic arc instances under a covering strip | Accepted | Evidence |
 
 ## Expected evidence ADRs
 
@@ -27,7 +28,6 @@ These are deliberately **not** written yet. Each is the deliverable of a tracked
 | Topic | Design ref | Resolved by |
 | --- | --- | --- |
 | Spatial index, re-measured with snapping and window-selection workloads | §20 | M2 exit (ADR-0007 covers M0–M1) |
-| Curve rendering strategy | §12.5, §23.3 | M1 curve-rendering spike |
 | Local persistence (IndexedDB / OPFS / hybrid) | §25 | M5 |
 | Worker architecture | §37 | M7, profiling-driven |
 

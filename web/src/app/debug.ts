@@ -1,5 +1,6 @@
 // Counters and measurements exposed for end-to-end tests and benchmarks.
 // Nothing here can reach CAD state: no entities, no selection, no geometry.
+import type { CurveReport } from "../renderer/webgl/curve-probe";
 import type { TransportReport } from "../renderer/webgl/transport-probe";
 import type { RendererStats } from "../renderer/webgl/webgl-renderer";
 
@@ -9,6 +10,8 @@ export interface DebugHandle {
   readonly probeTransport: () => Promise<TransportReport>;
   /** Milliseconds to import `text` as DXF into a throwaway session. */
   readonly probeOpen: (text: string) => Promise<number>;
+  /** Runs the curve-rendering experiment (ADR-0009) on `arcCount` generated arcs. */
+  readonly probeCurves: (arcCount: number) => Promise<CurveReport>;
 }
 
 declare global {

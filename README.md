@@ -84,6 +84,7 @@ pnpm --dir web dev
 | Rust benchmarks (store, index, scene) | `cargo bench -p cad-benchmarks` |
 | Generate a benchmark drawing | `cargo run --release -p cad-benchmarks --bin generate-drawing -- 100000 benches/generated-drawings/lines-100k.dxf` |
 | Render-transport measurement in the browser | `pnpm --dir web bench:transport` (after `build` and generating `lines-1k`, `-10k`, `-100k`) |
+| Curve-rendering experiment in the browser | `pnpm --dir web bench:curves` (after `build`) |
 
 First-time Playwright setup: `pnpm --dir web exec playwright install chromium`.
 
