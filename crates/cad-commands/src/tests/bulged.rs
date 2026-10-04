@@ -119,6 +119,7 @@ fn an_arc_segment_is_a_cutting_edge_and_a_boundary() {
     let mut h = Harness::with_entities([Entity::from(slot()), through]);
     h.enter("TR");
     h.click_world(p(100.0, 0.0)); // the slot is the cutting edge
+    h.enter("");
     h.click_world(p(280.0, 40.0)); // the part beyond the right end
     h.enter("");
     assert_eq!(
@@ -131,6 +132,7 @@ fn an_arc_segment_is_a_cutting_edge_and_a_boundary() {
     let mut h = Harness::with_entities([Entity::from(slot()), short]);
     h.enter("EX");
     h.click_world(p(100.0, 0.0));
+    h.enter("");
     h.click_world(p(25.0, 60.0));
     h.enter("");
     // The left end is the circle about (0, 40) of radius 40: at y = 60, x = -√1200.

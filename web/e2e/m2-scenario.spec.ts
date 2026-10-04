@@ -50,6 +50,8 @@ function expectArc(text: string, expected: number[]): void {
 }
 
 test("the M2 drafting scenario", async ({ page }) => {
+  // A long script with many downloads: allow for a loaded machine.
+  test.slow();
   const canvas = await openApp(page);
 
   // ── four edges of a plate, deliberately not meeting ──
@@ -97,6 +99,7 @@ test("the M2 drafting scenario", async ({ page }) => {
   // ── EXTEND the bottom edge to the left edge ──
   await enter(page, "EX");
   await clickWorld(page, canvas, 0, 60);
+  await enter(page, "");
   await clickWorld(page, canvas, 25, 0);
   await enter(page, "");
   text = await exported(page);
@@ -115,6 +118,7 @@ test("the M2 drafting scenario", async ({ page }) => {
   // ── TRIM: the half of the hole outside the plate ──
   await enter(page, "TR");
   await clickWorld(page, canvas, 0, 70); // the left edge is the cutting edge
+  await enter(page, "");
   await clickWorld(page, canvas, -12, 40);
   await enter(page, "");
   text = await exported(page);

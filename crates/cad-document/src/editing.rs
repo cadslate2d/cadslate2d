@@ -6,10 +6,10 @@
 //! `docs/modify-matrix.md`; a combination not listed there is an
 //! `Unsupported` error, never a guess.
 
-use cad_core::Point2;
 use cad_core::tolerance::LinearTolerance;
+use cad_core::{Aabb, Point2};
 use cad_geometry::{
-    Corner, extend_arc, extend_segment, offset_circle, offset_segment, trim_arc_parts,
+    Corner, Primitive, extend_arc, extend_segment, offset_circle, offset_segment, trim_arc_parts,
     trim_circle_parts, trim_segment_parts,
 };
 
@@ -96,25 +96,31 @@ impl Entity {
     /// [`Entity::trimmed`], together with the part that is cut away — which
     /// is what a preview of the trim shows.
     pub fn trim_parts(&self, cutting: &Entity, pick: Point2) -> Result<TrimParts, TrimError> {
-        let cuts = self.intersections(cutting);
+        self.trim_parts_at(&self.intersections(cutting), pick)
+    }
+
+    /// [`Entity::trim_parts`] for cuts found beforehand — the crossings of
+    /// any number of cutting edges. The part at `pick` between the nearest
+    /// cut on either side goes.
+    pub fn trim_parts_at(&self, cuts: &[Point2], pick: Point2) -> Result<TrimParts, TrimError> {
         let line =
             |piece: cad_geometry::Segment| Entity::from(LineEntity::new(piece.start, piece.end));
         let arc = |piece: cad_geometry::Arc| Entity::from(ArcEntity::from(piece));
         match self {
-            Entity::Line(entity) => trim_segment_parts(&entity.segment(), &cuts, pick, TOLERANCE)
+            Entity::Line(entity) => trim_segment_parts(&entity.segment(), cuts, pick, TOLERANCE)
                 .map(|parts| TrimParts {
                     kept: parts.kept.into_iter().map(line).collect(),
                     removed: line(parts.removed),
                 })
                 .ok_or(TrimError::NoIntersection),
-            Entity::Arc(entity) => trim_arc_parts(&entity.arc(), &cuts, pick, TOLERANCE)
+            Entity::Arc(entity) => trim_arc_parts(&entity.arc(), cuts, pick, TOLERANCE)
                 .map(|parts| TrimParts {
                     kept: parts.kept.into_iter().map(arc).collect(),
                     removed: arc(parts.removed),
                 })
                 .ok_or(TrimError::NoIntersection),
             Entity::Circle(entity) => {
-                match trim_circle_parts(&entity.circle(), &cuts, pick, TOLERANCE) {
+                match trim_circle_parts(&entity.circle(), cuts, pick, TOLERANCE) {
                     Some(parts) => Ok(TrimParts {
                         kept: parts.kept.into_iter().map(arc).collect(),
                         removed: arc(parts.removed),
@@ -130,11 +136,16 @@ impl Entity {
     /// This entity lengthened from the end nearer to `pick` until it meets
     /// `boundary`: a line straight on, an arc along its circle.
     pub fn extended(&self, boundary: &Entity, pick: Point2) -> Result<Entity, ExtendError> {
-        let boundary = boundary.primitives();
+        self.extended_to(&boundary.primitives(), pick)
+    }
+
+    /// [`Entity::extended`] against the geometry of any number of boundary
+    /// edges: the first of them met is where the extension stops.
+    pub fn extended_to(&self, boundary: &[Primitive], pick: Point2) -> Result<Entity, ExtendError> {
         match self {
             Entity::Line(line) => {
                 let from_end = pick.distance_to(line.end) <= pick.distance_to(line.start);
-                extend_segment(&line.segment(), from_end, &boundary, TOLERANCE)
+                extend_segment(&line.segment(), from_end, boundary, TOLERANCE)
                     .map(|longer| LineEntity::new(longer.start, longer.end).into())
                     .ok_or(ExtendError::NoMeeting)
             }
@@ -142,13 +153,45 @@ impl Entity {
                 let arc = arc.arc();
                 let from_end =
                     pick.distance_to(arc.end_point()) <= pick.distance_to(arc.start_point());
-                extend_arc(&arc, from_end, &boundary, TOLERANCE)
+                extend_arc(&arc, from_end, boundary, TOLERANCE)
                     .map(|longer| ArcEntity::from(longer).into())
                     .ok_or(ExtendError::NoMeeting)
             }
             Entity::Circle(_) | Entity::Polyline(_) => {
                 Err(ExtendError::Unsupported(self.kind_name()))
             }
+        }
+    }
+
+    /// A box that anything this entity could be extended to, from the end
+    /// nearer to `pick`, must touch — so boundary candidates can come from
+    /// the spatial index instead of the whole drawing. `within` bounds how
+    /// far to look: the extents of the drawing. `None` for entities that
+    /// cannot be extended.
+    pub fn extension_reach(&self, pick: Point2, within: &Aabb) -> Option<Aabb> {
+        match self {
+            Entity::Line(line) => {
+                let from_end = pick.distance_to(line.end) <= pick.distance_to(line.start);
+                let (tip, tail) = if from_end {
+                    (line.end, line.start)
+                } else {
+                    (line.start, line.end)
+                };
+                let onwards = tip - tail;
+                let length = onwards.length();
+                if TOLERANCE.is_zero(length) {
+                    return None;
+                }
+                // Far enough to leave `within` from wherever the tip is.
+                let reach = within
+                    .corners()
+                    .iter()
+                    .map(|corner| tip.distance_to(*corner))
+                    .fold(0.0, f64::max);
+                Some(Aabb::from_points(tip, tip + onwards * (reach / length)))
+            }
+            Entity::Arc(arc) => Some(arc.arc().circle().bounds()),
+            Entity::Circle(_) | Entity::Polyline(_) => None,
         }
     }
 
@@ -598,6 +641,84 @@ mod tests {
                 longer.start_point()
             );
         }
+    }
+
+    // ── several edges at once (#119) ──
+
+    #[test]
+    fn cuts_from_several_edges_bound_the_part_that_goes() {
+        let target: Entity = LineEntity::new(p(0.0, 0.0), p(100.0, 0.0)).into();
+        let edges: [Entity; 3] = [
+            LineEntity::new(p(20.0, -10.0), p(20.0, 10.0)).into(),
+            LineEntity::new(p(50.0, -10.0), p(50.0, 10.0)).into(),
+            LineEntity::new(p(80.0, -10.0), p(80.0, 10.0)).into(),
+        ];
+        let cuts: Vec<Point2> = edges
+            .iter()
+            .flat_map(|edge| target.intersections(edge))
+            .collect();
+
+        // Between the second and third edge: only that stretch goes.
+        let parts = target.trim_parts_at(&cuts, p(65.0, 0.0)).unwrap();
+        assert_eq!(
+            parts.removed,
+            LineEntity::new(p(50.0, 0.0), p(80.0, 0.0)).into()
+        );
+        assert_eq!(
+            parts.kept,
+            vec![
+                LineEntity::new(p(0.0, 0.0), p(50.0, 0.0)).into(),
+                LineEntity::new(p(80.0, 0.0), p(100.0, 0.0)).into()
+            ]
+        );
+        // Before the first edge: from the start to it.
+        let parts = target.trim_parts_at(&cuts, p(5.0, 0.0)).unwrap();
+        assert_eq!(
+            parts.removed,
+            LineEntity::new(p(0.0, 0.0), p(20.0, 0.0)).into()
+        );
+        // With no cuts at all there is nothing to trim.
+        assert_eq!(
+            target.trim_parts_at(&[], p(5.0, 0.0)),
+            Err(TrimError::NoIntersection)
+        );
+    }
+
+    #[test]
+    fn an_extension_stops_at_the_first_of_several_boundaries() {
+        let target: Entity = LineEntity::new(p(0.0, 0.0), p(10.0, 0.0)).into();
+        let far: Entity = LineEntity::new(p(80.0, -10.0), p(80.0, 10.0)).into();
+        let near: Entity = CircleEntity::new(p(50.0, 0.0), 10.0).into();
+        let boundary: Vec<Primitive> = [far, near].iter().flat_map(Entity::primitives).collect();
+        assert_eq!(
+            target.extended_to(&boundary, p(9.0, 0.0)),
+            Ok(LineEntity::new(p(0.0, 0.0), p(40.0, 0.0)).into())
+        );
+        assert_eq!(
+            target.extended_to(&[], p(9.0, 0.0)),
+            Err(ExtendError::NoMeeting)
+        );
+    }
+
+    #[test]
+    fn the_reach_of_an_extension_covers_what_it_could_meet() {
+        let within = Aabb::from_points(p(-100.0, -100.0), p(500.0, 300.0));
+        let line: Entity = LineEntity::new(p(0.0, 0.0), p(10.0, 0.0)).into();
+        // From the end: a box running east from (10, 0) past the far side.
+        let east = line.extension_reach(p(9.0, 0.0), &within).unwrap();
+        assert_eq!(east.min(), p(10.0, 0.0));
+        assert!(east.max().x >= 500.0 && east.max().y == 0.0);
+        // From the start: west.
+        let west = line.extension_reach(p(1.0, 0.0), &within).unwrap();
+        assert!(west.min().x <= -100.0 && west.max() == p(0.0, 0.0));
+
+        let arc: Entity = ArcEntity::new(p(0.0, 0.0), 50.0, 0.0, 1.0).into();
+        assert_eq!(
+            arc.extension_reach(p(50.0, 0.0), &within),
+            Some(Aabb::from_points(p(-50.0, -50.0), p(50.0, 50.0)))
+        );
+        let circle: Entity = CircleEntity::new(p(0.0, 0.0), 10.0).into();
+        assert_eq!(circle.extension_reach(p(10.0, 0.0), &within), None);
     }
 
     /// When the extension would not meet the boundary, nothing changes.

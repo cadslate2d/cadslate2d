@@ -18,8 +18,9 @@ test.describe("TRIM", () => {
   test("cuts a line back to the cutting edge on the side that is picked", async ({ page }) => {
     const canvas = await openApp(page);
     await enter(page, "L", "40,-60", "40,60", "", "L", "0,0", "100,0", "", "TR");
-    await expect(prompt(page)).toHaveText("Select cutting edge:");
+    await expect(prompt(page)).toHaveText("Select cutting edges <all>:");
     await clickWorld(page, canvas, 40, 30);
+    await enter(page, "");
     await expect(prompt(page)).toHaveText("Select object to trim:");
     await clickWorld(page, canvas, 80, 0);
     await enter(page, "");
@@ -33,6 +34,7 @@ test.describe("TRIM", () => {
     const canvas = await openApp(page);
     await enter(page, "L", "0,-80", "0,80", "", "C", "0,0", "50", "TR");
     await clickWorld(page, canvas, 0, 70);
+    await enter(page, "");
     await clickWorld(page, canvas, 50, 0);
     await enter(page, "");
 
@@ -50,10 +52,58 @@ test.describe("TRIM", () => {
     const canvas = await openApp(page);
     await enter(page, "L", "40,-60", "40,60", "", "L", "60,-30", "100,-30", "", "TR");
     await clickWorld(page, canvas, 40, 30);
+    await enter(page, "");
     await clickWorld(page, canvas, 80, -30);
-    await expect(logLines(page).last()).toHaveText("The object does not cross the cutting edge.");
+    await expect(logLines(page).last()).toHaveText("The object does not cross a cutting edge.");
     await enter(page, "");
     expect(await exported(page)).toContain(" 10\n60.0\n 20\n-30.0\n 11\n100.0\n 21\n-30.0\n");
+  });
+});
+
+test.describe("several edges", () => {
+  test("Enter makes every object an edge; picks are cut between the edges around them", async ({
+    page,
+  }) => {
+    const canvas = await openApp(page);
+    await enter(
+      page,
+      "L",
+      "30,-60",
+      "30,60",
+      "",
+      "L",
+      "70,-60",
+      "70,60",
+      "",
+      "L",
+      "0,0",
+      "100,0",
+      "",
+    );
+    await enter(page, "TR", "");
+    await expect(logLines(page).last()).toHaveText("Every object is an edge.");
+    await clickWorld(page, canvas, 50, 0); // between the two uprights
+    await enter(page, "");
+
+    const text = await exported(page);
+    expect(text.match(/^LINE$/gm)).toHaveLength(4);
+    expect(text).toContain(" 10\n0.0\n 20\n0.0\n 11\n30.0\n 21\n0.0\n");
+    expect(text).toContain(" 10\n70.0\n 20\n0.0\n 11\n100.0\n 21\n0.0\n");
+  });
+
+  test("two chosen edges can trim each other", async ({ page }) => {
+    const canvas = await openApp(page);
+    await enter(page, "L", "-50,0", "50,0", "", "L", "0,-50", "0,50", "", "TR");
+    await clickWorld(page, canvas, -30, 0);
+    await clickWorld(page, canvas, 0, 30);
+    await enter(page, "");
+    await clickWorld(page, canvas, 30, 0);
+    await clickWorld(page, canvas, 0, -30);
+    await enter(page, "");
+
+    const text = await exported(page);
+    expect(text).toContain(" 10\n-50.0\n 20\n0.0\n 11\n0.0\n 21\n0.0\n");
+    expect(text).toContain(" 10\n0.0\n 20\n0.0\n 11\n0.0\n 21\n50.0\n");
   });
 });
 
@@ -64,6 +114,7 @@ test.describe("hover feedback", () => {
     const canvas = await openApp(page);
     await enter(page, "L", "40,-60", "40,60", "", "L", "0,0", "100,0", "", "TR");
     await clickWorld(page, canvas, 40, 30);
+    await enter(page, "");
     const before = await rendererStats(page);
     await hoverWorld(page, canvas, 150, 100);
     expect(await hotGripPixels(canvas)).toBe(0);
@@ -93,6 +144,7 @@ test.describe("hover feedback", () => {
     const canvas = await openApp(page);
     await enter(page, "L", "100,-80", "100,80", "", "L", "0,0", "60,0", "", "EX");
     await clickWorld(page, canvas, 100, 40);
+    await enter(page, "");
     // The gap between the line's end at x = 60 and the boundary at x = 100
     // is empty until the line is hovered; then the extension is drawn in.
     const gap = { x: 80, y: 0 };
@@ -108,8 +160,9 @@ test.describe("EXTEND", () => {
   test("carries a line on to the boundary edge", async ({ page }) => {
     const canvas = await openApp(page);
     await enter(page, "L", "100,-80", "100,80", "", "L", "0,0", "60,0", "", "EX");
-    await expect(prompt(page)).toHaveText("Select boundary edge:");
+    await expect(prompt(page)).toHaveText("Select boundary edges <all>:");
     await clickWorld(page, canvas, 100, 40);
+    await enter(page, "");
     await expect(prompt(page)).toHaveText("Select object to extend:");
     await clickWorld(page, canvas, 55, 0);
     await enter(page, "");
@@ -122,9 +175,10 @@ test.describe("EXTEND", () => {
     const canvas = await openApp(page);
     await enter(page, "L", "100,20", "100,80", "", "L", "0,0", "60,0", "", "EX");
     await clickWorld(page, canvas, 100, 50);
+    await enter(page, "");
     await clickWorld(page, canvas, 55, 0);
     await expect(logLines(page).last()).toHaveText(
-      "The object does not meet the boundary edge when extended.",
+      "The object does not meet a boundary edge when extended.",
     );
     await enter(page, "");
     expect(await exported(page)).toContain(" 11\n60.0\n 21\n0.0\n");

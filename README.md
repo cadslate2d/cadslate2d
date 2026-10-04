@@ -30,8 +30,8 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `SCALE` | `SC` | Scales the selection uniformly about a base point, by a typed factor or the pointer's distance. |
 | `MIRROR` | `MI` | Reflects the selection across a line through two points; asks whether to erase the originals. |
 | `OFFSET` | `O` | A parallel copy of a line, or a concentric copy of a circle, at a set distance on the side you pick. Repeats until Enter. Arcs and polylines are not supported yet. |
-| `TRIM` | `TR` | Pick one cutting edge, then pick objects on the side to remove. Lines, arcs, and circles can be trimmed ([details](docs/modify-matrix.md)). The part a click would remove is shown in red as you hover. |
-| `EXTEND` | `EX` | Pick one boundary edge, then pick lines or arcs near the end to carry on to it. The extension is previewed as you hover. |
+| `TRIM` | `TR` | Choose the cutting edges and press Enter — or just Enter to use every object — then pick objects on the part to remove. Lines, arcs, and circles can be trimmed ([details](docs/modify-matrix.md)). The part a click would remove is shown in red as you hover. |
+| `EXTEND` | `EX` | Choose the boundary edges and press Enter — or just Enter for every object — then pick lines or arcs near the end to carry on to the first boundary. The extension is previewed as you hover. |
 | `FILLET` | `F` | Joins two lines with a tangent arc, trimming or extending both. `Radius` sets the radius (remembered); zero makes a sharp corner. |
 | `CHAMFER` | `CHA` | Joins two lines with a straight bevel. `Distance` sets the two distances (remembered). |
 | `UNDO` | `U`, Ctrl+Z | Reverts the last command. |

@@ -1,15 +1,19 @@
-//! TRIM and EXTEND against one edge (DESIGN §22): choose the edge, then
-//! pick objects — each pick is cut back to the edge, or carried on to it.
+//! TRIM and EXTEND (DESIGN §22): choose the edges, then pick objects — each
+//! pick is cut back between the edges around it, or carried on to the first
+//! edge it meets.
 //!
 //! The two commands are one state machine. They differ in what a pick does
-//! and in their wording. What each kind of object supports is decided by
-//! `Entity::trimmed` and `Entity::extended`, and published in
-//! `docs/modify-matrix.md`.
+//! and in their wording. Edges are chosen like any selection set; Enter with
+//! nothing chosen makes every object an edge. What each kind of object
+//! supports is decided by `Entity::trim_parts_at` and `Entity::extended_to`,
+//! and published in `docs/modify-matrix.md`.
 
-use cad_core::{EntityId, Point2};
-use cad_document::{Entity, ExtendError, TrimError};
+use cad_core::{Aabb, EntityId, Point2};
+use cad_document::{Drawing, Entity, ExtendError, TrimError};
+use cad_geometry::Primitive;
 use cad_input::ExpectedInput;
 
+use super::modify::selection_expected;
 use crate::{Command, CommandContext, CommandInput, HoveredObject, OverlayItem, Prompt, Step};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,10 +23,10 @@ enum Operation {
 }
 
 impl Operation {
-    fn edge_prompt(self) -> &'static str {
+    fn edges_prompt(self) -> &'static str {
         match self {
-            Self::Trim => "Select cutting edge",
-            Self::Extend => "Select boundary edge",
+            Self::Trim => "Select cutting edges",
+            Self::Extend => "Select boundary edges",
         }
     }
 
@@ -32,46 +36,28 @@ impl Operation {
             Self::Extend => "Select object to extend",
         }
     }
+}
 
-    fn itself(self) -> &'static str {
-        match self {
-            Self::Trim => "The cutting edge cannot trim itself.",
-            Self::Extend => "The boundary edge cannot be extended to itself.",
-        }
-    }
+/// Which objects cut or bound.
+#[derive(Debug)]
+enum Edges {
+    /// Every object in the drawing: Enter was pressed with nothing chosen.
+    All,
+    Chosen(Vec<EntityId>),
+}
 
-    /// What `target` becomes when picked at `pick`: the entities that replace
-    /// it — the first takes its place, any others are new — or why not.
-    fn apply(self, target: &Entity, edge: &Entity, pick: Point2) -> Result<Vec<Entity>, String> {
-        match self {
-            Self::Trim => target.trimmed(edge, pick).map_err(|error| match error {
-                TrimError::Unsupported(kind) => format!("TRIM does not support {kind}s yet."),
-                TrimError::NoIntersection => {
-                    "The object does not cross the cutting edge.".to_owned()
-                }
-                TrimError::CircleNeedsTwo => {
-                    "A circle must cross the cutting edge twice to be trimmed.".to_owned()
-                }
-            }),
-            Self::Extend => target
-                .extended(edge, pick)
-                .map(|longer| vec![longer])
-                .map_err(|error| match error {
-                    ExtendError::Unsupported(kind) => {
-                        format!("EXTEND does not support {kind}s yet.")
-                    }
-                    ExtendError::NoMeeting => {
-                        "The object does not meet the boundary edge when extended.".to_owned()
-                    }
-                }),
-        }
-    }
+/// What a pick does: the entities that replace the picked one — the first
+/// takes its place, any others are new — and, for a trim, the part removed.
+#[derive(Debug)]
+struct Edit {
+    replacement: Vec<Entity>,
+    removed: Option<Entity>,
 }
 
 #[derive(Debug)]
 enum State {
-    Edge,
-    Target { edge: EntityId },
+    Edges,
+    Target { edges: Edges },
 }
 
 #[derive(Debug)]
@@ -92,23 +78,99 @@ impl EdgeCommand {
     fn new(operation: Operation) -> Self {
         Self {
             operation,
-            state: State::Edge,
+            state: State::Edges,
+        }
+    }
+
+    /// The edges that could matter to `target` within `region`, never the
+    /// target itself: an object that is both an edge and a target is cut or
+    /// bounded by the others.
+    fn edges_near<'a>(
+        edges: &Edges,
+        drawing: &'a Drawing,
+        target: EntityId,
+        region: &Aabb,
+    ) -> Vec<&'a Entity> {
+        let ids = match edges {
+            // Candidates come from the index, never from a scan of the drawing.
+            Edges::All => drawing.query(region),
+            Edges::Chosen(ids) => ids.clone(),
+        };
+        ids.into_iter()
+            .filter(|id| *id != target)
+            .filter_map(|id| drawing.entity(id))
+            .collect()
+    }
+
+    /// What picking `target` at `pick` would do. The hover preview and the
+    /// committed edit both come from here, so they cannot differ.
+    fn edit(
+        &self,
+        edges: &Edges,
+        drawing: &Drawing,
+        target: EntityId,
+        pick: Point2,
+    ) -> Result<Edit, String> {
+        let shape = drawing
+            .entity(target)
+            .ok_or_else(|| "That object no longer exists.".to_owned())?;
+        match self.operation {
+            Operation::Trim => {
+                let cuts: Vec<Point2> = Self::edges_near(edges, drawing, target, &shape.bounds())
+                    .into_iter()
+                    .flat_map(|edge| shape.intersections(edge))
+                    .collect();
+                let parts = shape
+                    .trim_parts_at(&cuts, pick)
+                    .map_err(|error| match error {
+                        TrimError::Unsupported(kind) => {
+                            format!("TRIM does not support {kind}s yet.")
+                        }
+                        TrimError::NoIntersection => {
+                            "The object does not cross a cutting edge.".to_owned()
+                        }
+                        TrimError::CircleNeedsTwo => {
+                            "A circle must be crossed twice by cutting edges to be trimmed."
+                                .to_owned()
+                        }
+                    })?;
+                Ok(Edit {
+                    replacement: parts.kept,
+                    removed: Some(parts.removed),
+                })
+            }
+            Operation::Extend => {
+                let within = drawing.extents().unwrap_or_else(|| shape.bounds());
+                let boundary: Vec<Primitive> = shape
+                    .extension_reach(pick, &within)
+                    .map(|reach| Self::edges_near(edges, drawing, target, &reach))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .flat_map(Entity::primitives)
+                    .collect();
+                let longer = shape
+                    .extended_to(&boundary, pick)
+                    .map_err(|error| match error {
+                        ExtendError::Unsupported(kind) => {
+                            format!("EXTEND does not support {kind}s yet.")
+                        }
+                        ExtendError::NoMeeting => {
+                            "The object does not meet a boundary edge when extended.".to_owned()
+                        }
+                    })?;
+                Ok(Edit {
+                    replacement: vec![longer],
+                    removed: None,
+                })
+            }
         }
     }
 
     /// One pick: one transaction, or a message and no change.
-    fn edit(&self, edge: EntityId, target: EntityId, pick: Point2, ctx: &mut CommandContext<'_>) {
-        if target == edge {
-            ctx.message(self.operation.itself());
-            return;
-        }
-        let (Some(edge), Some(shape)) = (ctx.drawing.entity(edge), ctx.drawing.entity(target))
-        else {
-            return;
-        };
-        match self.operation.apply(shape, edge, pick) {
-            Ok(pieces) => {
-                let mut pieces = pieces.into_iter();
+    fn commit(&self, edges: &Edges, target: EntityId, pick: Point2, ctx: &mut CommandContext<'_>) {
+        match self.edit(edges, ctx.drawing, target, pick) {
+            Ok(edit) => {
+                let mut pieces = edit.replacement.into_iter();
                 let mut transaction = ctx.drawing.transaction();
                 if let Some(first) = pieces.next() {
                     transaction
@@ -126,26 +188,44 @@ impl EdgeCommand {
 }
 
 impl Command for EdgeCommand {
+    fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
+        // The edges are chosen here, from nothing: an earlier selection is
+        // not silently taken to be them.
+        ctx.selection.clear();
+        Step::Continue
+    }
+
     fn prompt(&self) -> Prompt {
-        Prompt::new(match self.state {
-            State::Edge => self.operation.edge_prompt(),
-            State::Target { .. } => self.operation.target_prompt(),
-        })
+        match self.state {
+            State::Edges => Prompt::new(self.operation.edges_prompt()).with_default("all"),
+            State::Target { .. } => Prompt::new(self.operation.target_prompt()),
+        }
     }
 
     fn expected(&self) -> ExpectedInput {
-        ExpectedInput::object()
+        match self.state {
+            State::Edges => selection_expected(),
+            State::Target { .. } => ExpectedInput::object(),
+        }
     }
 
     fn step(&mut self, input: CommandInput, ctx: &mut CommandContext<'_>) -> Step {
         match (&self.state, input) {
-            (State::Edge, CommandInput::Pick { entity, .. }) => {
-                self.state = State::Target { edge: entity };
+            (State::Edges, CommandInput::Accept) => {
+                let chosen: Vec<EntityId> = ctx.selection.iter().collect();
+                ctx.selection.clear();
+                let edges = if chosen.is_empty() {
+                    ctx.message("Every object is an edge.");
+                    Edges::All
+                } else {
+                    Edges::Chosen(chosen)
+                };
+                self.state = State::Target { edges };
             }
-            (State::Target { edge }, CommandInput::Pick { entity, at }) => {
-                self.edit(*edge, entity, at, ctx);
+            (State::Target { edges }, CommandInput::Pick { entity, at }) => {
+                self.commit(edges, entity, at, ctx);
             }
-            (_, CommandInput::Accept) => return Step::Finished,
+            (State::Target { .. }, CommandInput::Accept) => return Step::Finished,
             _ => {}
         }
         Step::Continue
@@ -154,30 +234,25 @@ impl Command for EdgeCommand {
     /// What a click on the hovered object would do: the part TRIM would cut
     /// away, or the object as EXTEND would lengthen it.
     fn preview_pick(&self, hovered: &HoveredObject<'_>, out: &mut Vec<OverlayItem>) {
-        let State::Target { edge } = self.state else {
+        let State::Target { edges } = &self.state else {
             return;
         };
-        let Some(edge) = hovered.drawing.entity(edge).filter(|_| hovered.id != edge) else {
+        let Ok(edit) = self.edit(edges, hovered.drawing, hovered.id, hovered.at) else {
             return;
         };
-        match self.operation {
-            Operation::Trim => {
-                if let Ok(parts) = hovered.entity.trim_parts(edge, hovered.at) {
-                    out.push(OverlayItem::PreviewRemoval(parts.removed));
-                }
-            }
-            Operation::Extend => {
-                if let Ok(longer) = hovered.entity.extended(edge, hovered.at) {
-                    out.push(OverlayItem::PreviewEntity(longer));
-                }
-            }
+        match edit.removed {
+            Some(removed) => out.push(OverlayItem::PreviewRemoval(removed)),
+            None => out.extend(edit.replacement.into_iter().map(OverlayItem::PreviewEntity)),
         }
     }
 
     fn preview(&self, _cursor: Point2, out: &mut Vec<OverlayItem>) {
-        // Keep the chosen edge marked while objects are picked against it.
-        if let State::Target { edge } = self.state {
-            out.push(OverlayItem::Highlight(edge));
+        // Keep the chosen edges marked while objects are picked against them.
+        if let State::Target {
+            edges: Edges::Chosen(ids),
+        } = &self.state
+        {
+            out.extend(ids.iter().copied().map(OverlayItem::Highlight));
         }
     }
 }

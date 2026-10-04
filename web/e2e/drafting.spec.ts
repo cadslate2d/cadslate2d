@@ -22,6 +22,8 @@ const count = (text: string, record: string) =>
   (text.match(new RegExp(`^${record}$`, "gm")) ?? []).length;
 
 test("the M1 drafting scenario", async ({ page }) => {
+  // A long script with many downloads: allow for a loaded machine.
+  test.slow();
   let canvas = await openApp(page);
   const { x, y } = await centerOf(canvas);
 

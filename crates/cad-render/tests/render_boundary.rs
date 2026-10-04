@@ -172,6 +172,7 @@ fn hovering_objects_for_a_pick_causes_no_committed_upload() {
     let mut h = drawing();
     h.enter("TR");
     h.click(450.0, 300.0); // the bottom edge of the rectangle is the cutting edge
+    h.enter("");
     let mut cache = SceneCache::new();
     let revision = cache.scene(h.session.drawing()).revision();
     let builds = cache.build_count();
