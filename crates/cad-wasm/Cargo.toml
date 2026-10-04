@@ -13,6 +13,8 @@ crate-type = ["cdylib", "rlib"]
 cad-commands.workspace = true
 cad-render.workspace = true
 cad-dxf.workspace = true
+wasm-bindgen.workspace = true
+console_error_panic_hook.workspace = true
 
 [lints]
 workspace = true

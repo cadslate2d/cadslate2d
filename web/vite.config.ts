@@ -6,5 +6,5 @@ export default defineConfig({
   base: "./",
   plugins: [react()],
   build: { target: "es2022" },
-  test: { include: ["src/**/*.test.ts", "src/**/*.test.tsx"] },
+  test: { include: ["src/**/*.test.ts", "src/**/*.test.tsx"], passWithNoTests: true },
 });
