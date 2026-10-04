@@ -3,7 +3,7 @@
  * data fits, otherwise grow geometrically so repeated small increases do not
  * reallocate every time.
  */
-export function nextCapacity(current: number, needed: number, minimum = 1024): number {
-  if (needed <= current) return current;
+export function nextCapacity(current: number, needed: number, minimum = 4096): number {
+  if (needed <= current && current >= minimum) return current;
   return Math.max(needed, current * 2, minimum);
 }

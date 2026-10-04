@@ -9,11 +9,6 @@ publish.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[features]
-# Starts every session with a few lines so the render pipeline can be seen
-# before the LINE command exists. Never enabled in release builds.
-demo-scene = []
-
 [dependencies]
 cad-core.workspace = true
 cad-document.workspace = true
@@ -22,6 +17,8 @@ cad-render.workspace = true
 cad-dxf.workspace = true
 wasm-bindgen.workspace = true
 js-sys.workspace = true
+serde.workspace = true
+serde-wasm-bindgen.workspace = true
 console_error_panic_hook.workspace = true
 
 [lints]

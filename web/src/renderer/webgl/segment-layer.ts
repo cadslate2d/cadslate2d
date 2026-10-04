@@ -45,6 +45,9 @@ export class SegmentLayer {
     gl.vertexAttribPointer(CORNER_ATTRIBUTE, 2, gl.FLOAT, false, 0, 0);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.#buffer);
+    // Allocate up front so small frames never reallocate, not even the first.
+    this.#capacityBytes = nextCapacity(0, 0);
+    gl.bufferData(gl.ARRAY_BUFFER, this.#capacityBytes, usage);
     gl.enableVertexAttribArray(SEGMENT_ATTRIBUTE);
     gl.vertexAttribPointer(SEGMENT_ATTRIBUTE, FLOATS_PER_SEGMENT, gl.FLOAT, false, 0, 0);
     gl.vertexAttribDivisor(SEGMENT_ATTRIBUTE, 1);

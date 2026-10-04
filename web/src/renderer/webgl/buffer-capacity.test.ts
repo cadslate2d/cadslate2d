@@ -2,12 +2,13 @@ import { expect, test } from "vitest";
 import { nextCapacity } from "./buffer-capacity";
 
 test("keeps the current capacity when the data fits", () => {
-  expect(nextCapacity(4096, 100)).toBe(4096);
-  expect(nextCapacity(4096, 4096)).toBe(4096);
+  expect(nextCapacity(8192, 100)).toBe(8192);
+  expect(nextCapacity(8192, 8192)).toBe(8192);
 });
 
-test("starts at the minimum", () => {
-  expect(nextCapacity(0, 16)).toBe(1024);
+test("starts at the minimum, even for empty data", () => {
+  expect(nextCapacity(0, 0)).toBe(4096);
+  expect(nextCapacity(0, 16)).toBe(4096);
 });
 
 test("grows geometrically", () => {

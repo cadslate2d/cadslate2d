@@ -21,6 +21,30 @@ export const Dirty = {
 /** Keyboard modifier bits passed with pointer and key events. */
 export const Modifier = { Shift: 1, Ctrl: 1 << 1, Alt: 1 << 2 } as const;
 
+/** Non-text keys. Text, including Enter and Space-as-Enter, goes through `submitText`. */
+export const KeyAction = { Escape: 0, Undo: 1, Redo: 2 } as const;
+export type KeyAction = (typeof KeyAction)[keyof typeof KeyAction];
+
+/**
+ * Presentation state for the shell. It holds nothing from which drawing
+ * geometry could be reconstructed (ADR-0002 §5).
+ */
+export interface UiState {
+  /** The current prompt, e.g. `Command:` or `Specify next point:`. */
+  readonly prompt: string;
+  /** Canonical name of the active command, if any. */
+  readonly command?: string;
+  /** Total log lines ever written; fetch new ones with `logSince`. */
+  readonly logTotal: number;
+  /** World position under the cursor while the pointer is over the canvas. */
+  readonly cursor?: readonly [number, number];
+  readonly selectionCount: number;
+  /** Whether Space submits the command line like Enter. */
+  readonly spaceAccepts: boolean;
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
+}
+
 /** What a batch of geometry is; the renderer maps each role to a themed style. */
 export const StyleRole = { Entity: 0, Selection: 1, Preview: 2, Crosshair: 3 } as const;
 export type StyleRole = (typeof StyleRole)[keyof typeof StyleRole];
@@ -46,16 +70,23 @@ export interface FrameBuffers {
 export type ClipTransform = Float32Array;
 
 let ready: Promise<void> | undefined;
+let memory: WebAssembly.Memory | undefined;
 
 /**
  * Instantiates the WASM module once; later calls share the same promise.
  * `source` overrides where the module is loaded from (used by tests).
  */
 export function loadEngine(source?: InitInput): Promise<void> {
-  ready ??= init(source === undefined ? undefined : { module_or_path: source }).then(
-    () => undefined,
-  );
+  ready ??= init(source === undefined ? undefined : { module_or_path: source }).then((exports) => {
+    memory = exports.memory;
+  });
   return ready;
+}
+
+/** The module's linear memory. For tests that exercise view invalidation. */
+export function wasmMemory(): WebAssembly.Memory {
+  if (!memory) throw new Error("the engine is not loaded");
+  return memory;
 }
 
 /** Version of the Rust core. Call only after `loadEngine()` resolves. */
@@ -91,9 +122,33 @@ export class CadEngine {
     return this.#session.pointer_up(x, y, button, modifiers);
   }
 
+  /** The pointer left the canvas. */
+  pointerLeave(): number {
+    return this.#session.pointer_leave();
+  }
+
   /** `deltaY` in CSS pixels. */
   wheel(x: number, y: number, deltaY: number, modifiers: number): number {
     return this.#session.wheel(x, y, deltaY, modifiers);
+  }
+
+  key(action: KeyAction): number {
+    return this.#session.key(action);
+  }
+
+  /** One completed command-line entry. The text is interpreted in Rust, never here. */
+  submitText(text: string): number {
+    return this.#session.submit_text(text);
+  }
+
+  /** Recalls an older submitted line, if there is one. */
+  historyPrevious(): string | undefined {
+    return this.#session.history_previous();
+  }
+
+  /** Recalls a newer submitted line; an empty string means "a new line". */
+  historyNext(): string | undefined {
+    return this.#session.history_next();
   }
 
   // ── output: pulled in bulk ──
@@ -115,5 +170,27 @@ export class CadEngine {
   /** Clip transform for the committed scene. An owned copy, safe to keep. */
   sceneTransform(): ClipTransform {
     return this.#session.scene_transform();
+  }
+
+  /** Lends the transient overlay's buffers to `consume` for the duration of the call. */
+  readOverlay<T>(consume: (frame: FrameBuffers) => T): T {
+    return consume({
+      segments: this.#session.overlay_segments(),
+      batches: this.#session.overlay_batches(),
+    });
+  }
+
+  /** Clip transform for the overlay. An owned copy, safe to keep. */
+  overlayTransform(): ClipTransform {
+    return this.#session.overlay_transform();
+  }
+
+  uiState(): UiState {
+    return this.#session.ui_state() as UiState;
+  }
+
+  /** Command-log lines numbered `since` and later. */
+  logSince(since: number): string[] {
+    return this.#session.log_since(since);
   }
 }

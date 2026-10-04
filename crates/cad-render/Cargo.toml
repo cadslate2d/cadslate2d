@@ -9,6 +9,10 @@ publish.workspace = true
 [dependencies]
 cad-core.workspace = true
 cad-document.workspace = true
+cad-commands.workspace = true
+
+[dev-dependencies]
+cad-commands = { workspace = true, features = ["testing"] }
 
 [lints]
 workspace = true

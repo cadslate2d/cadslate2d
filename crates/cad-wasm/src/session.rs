@@ -1,9 +1,10 @@
 //! The one exported handle (ADR-0002 §1).
 
-use cad_commands::{Modifiers, PointerButton, Session};
-use cad_core::ScreenPoint;
-use cad_render::SceneCache;
+use cad_commands::{Dirty, KeyAction, Modifiers, PointerButton, Session, UiState};
+use cad_core::{ClipTransform, ScreenPoint};
+use cad_render::{OverlayFrame, SceneCache};
 use js_sys::{Float32Array, Uint32Array};
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use crate::views::{f32_view, u32_view};
@@ -20,13 +21,61 @@ fn modifiers(bits: u32) -> Modifiers {
     }
 }
 
-/// DOM `MouseEvent.button` numbering. Unknown buttons are ignored by callers.
+/// DOM `MouseEvent.button` numbering. Unknown buttons are ignored.
 fn button(code: u32) -> Option<PointerButton> {
     match code {
         0 => Some(PointerButton::Primary),
         1 => Some(PointerButton::Middle),
         2 => Some(PointerButton::Secondary),
         _ => None,
+    }
+}
+
+/// Key action codes, mirrored by `KeyAction` in the TypeScript wrapper.
+fn key_action(code: u32) -> Option<KeyAction> {
+    match code {
+        0 => Some(KeyAction::Escape),
+        1 => Some(KeyAction::Undo),
+        2 => Some(KeyAction::Redo),
+        _ => None,
+    }
+}
+
+fn transform_words(transform: ClipTransform) -> Vec<f32> {
+    vec![
+        transform.scale[0],
+        transform.scale[1],
+        transform.translate[0],
+        transform.translate[1],
+    ]
+}
+
+/// `UiState` as the plain object JavaScript receives.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiStateDto {
+    prompt: String,
+    command: Option<&'static str>,
+    log_total: f64,
+    cursor: Option<(f64, f64)>,
+    selection_count: u32,
+    space_accepts: bool,
+    can_undo: bool,
+    can_redo: bool,
+}
+
+impl From<UiState> for UiStateDto {
+    fn from(state: UiState) -> Self {
+        Self {
+            prompt: state.prompt,
+            command: state.command,
+            log_total: state.log_total as f64,
+            cursor: state.cursor,
+            selection_count: state.selection_count as u32,
+            space_accepts: state.space_accepts,
+            can_undo: state.can_undo,
+            can_redo: state.can_redo,
+        }
     }
 }
 
@@ -37,7 +86,9 @@ fn button(code: u32) -> Option<PointerButton> {
 pub struct CadSession {
     session: Session,
     scene: SceneCache,
-    scene_batch_words: Vec<u32>,
+    overlay: OverlayFrame,
+    /// Set by any input that reports `Dirty::OVERLAY`; cleared when rebuilt.
+    overlay_stale: bool,
 }
 
 impl Default for CadSession {
@@ -46,14 +97,34 @@ impl Default for CadSession {
     }
 }
 
+impl CadSession {
+    /// Records what an input changed and returns the flags for JavaScript.
+    fn report(&mut self, dirty: Dirty) -> u32 {
+        self.overlay_stale |= dirty.contains(Dirty::OVERLAY);
+        dirty.bits()
+    }
+
+    /// Rebuilds the overlay if an input has invalidated it. Idempotent, so the
+    /// paired `overlay_segments` / `overlay_batches` pulls do the work once and
+    /// the second one allocates nothing — which keeps the first view valid.
+    fn sync_overlay(&mut self) {
+        if std::mem::take(&mut self.overlay_stale) {
+            let items = self.session.overlay();
+            self.overlay
+                .rebuild(&items, self.session.drawing(), self.session.view());
+        }
+    }
+}
+
 #[wasm_bindgen]
 impl CadSession {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Self {
-            session: initial_session(),
+            session: Session::new(),
             scene: SceneCache::new(),
-            scene_batch_words: Vec::new(),
+            overlay: OverlayFrame::new(),
+            overlay_stale: true,
         }
     }
 
@@ -61,39 +132,89 @@ impl CadSession {
 
     /// Canvas size in CSS pixels.
     pub fn resize(&mut self, width: f64, height: f64) -> u32 {
-        self.session.resize(width, height).bits()
+        let dirty = self.session.resize(width, height);
+        self.report(dirty)
     }
 
     pub fn pointer_move(&mut self, x: f64, y: f64, modifier_bits: u32) -> u32 {
-        self.session
-            .pointer_move(ScreenPoint::new(x, y), modifiers(modifier_bits))
-            .bits()
+        let dirty = self
+            .session
+            .pointer_move(ScreenPoint::new(x, y), modifiers(modifier_bits));
+        self.report(dirty)
+    }
+
+    /// The pointer left the canvas.
+    pub fn pointer_leave(&mut self) -> u32 {
+        let dirty = self.session.pointer_leave();
+        self.report(dirty)
     }
 
     pub fn pointer_down(&mut self, x: f64, y: f64, button_code: u32, modifier_bits: u32) -> u32 {
-        button(button_code).map_or(0, |button| {
+        let Some(button) = button(button_code) else {
+            return 0;
+        };
+        let dirty =
             self.session
-                .pointer_down(ScreenPoint::new(x, y), button, modifiers(modifier_bits))
-                .bits()
-        })
+                .pointer_down(ScreenPoint::new(x, y), button, modifiers(modifier_bits));
+        self.report(dirty)
     }
 
     pub fn pointer_up(&mut self, x: f64, y: f64, button_code: u32, modifier_bits: u32) -> u32 {
-        button(button_code).map_or(0, |button| {
+        let Some(button) = button(button_code) else {
+            return 0;
+        };
+        let dirty =
             self.session
-                .pointer_up(ScreenPoint::new(x, y), button, modifiers(modifier_bits))
-                .bits()
-        })
+                .pointer_up(ScreenPoint::new(x, y), button, modifiers(modifier_bits));
+        self.report(dirty)
     }
 
     /// `delta_y` in CSS pixels, as in `WheelEvent.deltaY` with pixel delta mode.
     pub fn wheel(&mut self, x: f64, y: f64, delta_y: f64, modifier_bits: u32) -> u32 {
-        self.session
-            .wheel(ScreenPoint::new(x, y), delta_y, modifiers(modifier_bits))
-            .bits()
+        let dirty = self
+            .session
+            .wheel(ScreenPoint::new(x, y), delta_y, modifiers(modifier_bits));
+        self.report(dirty)
+    }
+
+    /// A non-text key. Unknown codes are ignored.
+    pub fn key(&mut self, action_code: u32) -> u32 {
+        let Some(action) = key_action(action_code) else {
+            return 0;
+        };
+        let dirty = self.session.key(action);
+        self.report(dirty)
+    }
+
+    /// One completed command-line entry. Interpreted entirely in Rust.
+    pub fn submit_text(&mut self, text: &str) -> u32 {
+        let dirty = self.session.submit_text(text);
+        self.report(dirty)
+    }
+
+    /// Recalls an older submitted line; `undefined` when there is none.
+    pub fn history_previous(&mut self) -> Option<String> {
+        self.session.history_previous()
+    }
+
+    /// Recalls a newer submitted line; an empty string means "a new line".
+    pub fn history_next(&mut self) -> Option<String> {
+        self.session.history_next()
     }
 
     // ── output: pulled in bulk, only when flagged ──
+
+    /// Presentation state for the shell: prompt, cursor readout, counters.
+    pub fn ui_state(&self) -> Result<JsValue, JsError> {
+        Ok(serde_wasm_bindgen::to_value(&UiStateDto::from(
+            self.session.ui_state(),
+        ))?)
+    }
+
+    /// Command-log lines numbered `since` and later.
+    pub fn log_since(&self, since: f64) -> Vec<String> {
+        self.session.log_since(since.max(0.0) as u64)
+    }
 
     /// Identifies the committed scene. Re-upload committed GPU buffers only
     /// when this differs from the revision last uploaded. Cheap: does not
@@ -112,51 +233,41 @@ impl CadSession {
     /// Committed batches: `style, first, count` per batch. A view into WASM
     /// memory — consume before the next call.
     pub fn scene_batches(&mut self) -> Uint32Array {
-        let frame = self.scene.scene(self.session.drawing()).frame();
-        frame.write_batch_words(&mut self.scene_batch_words);
-        u32_view(&self.scene_batch_words)
+        u32_view(
+            self.scene
+                .scene(self.session.drawing())
+                .frame()
+                .batch_words(),
+        )
     }
 
     /// Clip transform for the committed scene: `[scale_x, scale_y, translate_x,
     /// translate_y]`, a copy. Changes with the view; the scene does not.
     pub fn scene_transform(&mut self) -> Vec<f32> {
         let origin = self.scene.scene(self.session.drawing()).frame().origin();
-        let transform = self.session.view().clip_transform(origin);
-        vec![
-            transform.scale[0],
-            transform.scale[1],
-            transform.translate[0],
-            transform.translate[1],
-        ]
+        transform_words(self.session.view().clip_transform(origin))
     }
-}
 
-#[cfg(not(feature = "demo-scene"))]
-fn initial_session() -> Session {
-    Session::new()
-}
-
-/// A recognisable test pattern, built through the public import path.
-#[cfg(feature = "demo-scene")]
-fn initial_session() -> Session {
-    use cad_core::Point2;
-    use cad_document::{Drawing, Entity, LineEntity};
-
-    let line = |x0: f64, y0: f64, x1: f64, y1: f64| {
-        Entity::Line(LineEntity::new(Point2::new(x0, y0), Point2::new(x1, y1)))
-    };
-    let mut lines = vec![
-        line(-150.0, -100.0, 150.0, -100.0),
-        line(150.0, -100.0, 150.0, 100.0),
-        line(150.0, 100.0, -150.0, 100.0),
-        line(-150.0, 100.0, -150.0, -100.0),
-        line(-150.0, -100.0, 150.0, 100.0),
-        line(-150.0, 100.0, 150.0, -100.0),
-    ];
-    // A fan of lines at many angles, to check stroke width is uniform.
-    for step in 0..24 {
-        let angle = f64::from(step) * std::f64::consts::TAU / 24.0;
-        lines.push(line(0.0, 0.0, 80.0 * angle.cos(), 80.0 * angle.sin()));
+    /// Transient segment instances (previews, highlights, crosshair). A view
+    /// into WASM memory — consume before the next call.
+    pub fn overlay_segments(&mut self) -> Float32Array {
+        self.sync_overlay();
+        f32_view(self.overlay.frame().segments())
     }
-    Session::with_drawing(Drawing::from_entities(lines))
+
+    /// Transient batches. A view into WASM memory — consume before the next call.
+    pub fn overlay_batches(&mut self) -> Uint32Array {
+        self.sync_overlay();
+        u32_view(self.overlay.frame().batch_words())
+    }
+
+    /// Clip transform for the overlay frame, a copy.
+    pub fn overlay_transform(&mut self) -> Vec<f32> {
+        self.sync_overlay();
+        transform_words(
+            self.session
+                .view()
+                .clip_transform(self.overlay.frame().origin()),
+        )
+    }
 }

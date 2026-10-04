@@ -10,7 +10,11 @@ import { STROKE_FRAGMENT_SHADER, STROKE_VERTEX_SHADER } from "./shaders";
 export interface RendererStats {
   frames: number;
   drawCalls: number;
+  /** Uploads of committed geometry. Must not grow with pointer activity. */
   sceneUploads: number;
+  /** Uploads of transient geometry. */
+  overlayUploads: number;
+  /** GPU buffer reallocations, for either layer. */
   bufferReallocations: number;
 }
 
@@ -18,7 +22,10 @@ interface GpuResources {
   readonly program: WebGLProgram;
   readonly uniforms: StrokeUniforms;
   readonly quad: WebGLBuffer;
+  /** Committed geometry: uploaded rarely, drawn often. */
   readonly scene: SegmentLayer;
+  /** Transient geometry: small, rewritten on most frames. */
+  readonly overlay: SegmentLayer;
 }
 
 export class WebGlRenderer implements FrameSink {
@@ -26,6 +33,7 @@ export class WebGlRenderer implements FrameSink {
     frames: 0,
     drawCalls: 0,
     sceneUploads: 0,
+    overlayUploads: 0,
     bufferReallocations: 0,
   };
 
@@ -72,9 +80,14 @@ export class WebGlRenderer implements FrameSink {
     this.stats.sceneUploads += 1;
   }
 
-  draw(sceneTransform: ClipTransform): void {
+  updateOverlay(frame: FrameBuffers): void {
+    if (this.#resources.overlay.upload(frame)) this.stats.bufferReallocations += 1;
+    this.stats.overlayUploads += 1;
+  }
+
+  draw(sceneTransform: ClipTransform, overlayTransform: ClipTransform): void {
     const gl = this.#gl;
-    const { program, uniforms, scene } = this.#resources;
+    const { program, uniforms, scene, overlay } = this.#resources;
     const [red, green, blue] = this.#palette.background;
 
     gl.viewport(0, 0, this.#canvas.width, this.#canvas.height);
@@ -86,20 +99,18 @@ export class WebGlRenderer implements FrameSink {
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied alpha
     gl.uniform2f(uniforms.viewport, this.#canvas.width, this.#canvas.height);
 
-    this.stats.drawCalls += scene.draw(
-      uniforms,
-      sceneTransform,
-      this.#palette,
-      this.#devicePixelRatio,
-    );
+    const ratio = this.#devicePixelRatio;
+    this.stats.drawCalls += scene.draw(uniforms, sceneTransform, this.#palette, ratio);
+    this.stats.drawCalls += overlay.draw(uniforms, overlayTransform, this.#palette, ratio);
     this.stats.frames += 1;
   }
 
   dispose(): void {
     this.#canvas.removeEventListener("webglcontextlost", this.#onContextLost);
     this.#canvas.removeEventListener("webglcontextrestored", this.#onContextRestored);
-    const { program, quad, scene } = this.#resources;
+    const { program, quad, scene, overlay } = this.#resources;
     scene.dispose();
+    overlay.dispose();
     this.#gl.deleteBuffer(quad);
     this.#gl.deleteProgram(program);
   }
@@ -142,6 +153,7 @@ function createResources(gl: WebGL2RenderingContext): GpuResources {
       color: uniform("u_color"),
     },
     scene: new SegmentLayer(gl, quad, gl.STATIC_DRAW),
+    overlay: new SegmentLayer(gl, quad, gl.DYNAMIC_DRAW),
   };
 }
 

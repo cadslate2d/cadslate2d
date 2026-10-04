@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { coreVersion, loadEngine } from "../cad/engine";
+import { CadApp } from "../app/cad-app";
+import { CadEngine, coreVersion, loadEngine } from "../cad/engine";
 import { CanvasView } from "./CanvasView";
 import { CommandLine } from "./CommandLine";
 import { Header } from "./Header";
@@ -7,7 +8,7 @@ import { StatusBar } from "./StatusBar";
 
 type CoreState =
   | { status: "loading" }
-  | { status: "ready"; version: string }
+  | { status: "ready"; app: CadApp; version: string }
   | { status: "failed"; reason: string };
 
 export function App() {
@@ -15,32 +16,44 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false;
+    let app: CadApp | undefined;
     loadEngine().then(
-      () => !cancelled && setCore({ status: "ready", version: coreVersion() }),
+      () => {
+        if (cancelled) return;
+        app = new CadApp(new CadEngine());
+        setCore({ status: "ready", app, version: coreVersion() });
+      },
       (cause: unknown) => !cancelled && setCore({ status: "failed", reason: String(cause) }),
     );
     return () => {
       cancelled = true;
+      app?.dispose();
     };
   }, []);
 
-  return (
-    <div className="shell">
-      <Header coreVersion={core.status === "ready" ? core.version : ""} />
-      {core.status === "ready" ? (
-        <CanvasView />
-      ) : (
+  if (core.status !== "ready") {
+    const failed = core.status === "failed";
+    return (
+      <div className="shell">
+        <Header coreVersion="" />
         <section className="canvas-region" aria-label="Model space">
           <p
-            className={`canvas-region__message${core.status === "failed" ? " canvas-region__message--error" : ""}`}
-            role={core.status === "failed" ? "alert" : "status"}
+            className={`canvas-region__message${failed ? " canvas-region__message--error" : ""}`}
+            role={failed ? "alert" : "status"}
           >
-            {core.status === "failed" ? `The CAD core failed to load: ${core.reason}` : "Loading…"}
+            {failed ? `The CAD core failed to load: ${core.reason}` : "Loading…"}
           </p>
         </section>
-      )}
-      <CommandLine />
-      <StatusBar />
+      </div>
+    );
+  }
+
+  return (
+    <div className="shell">
+      <Header coreVersion={core.version} />
+      <CanvasView app={core.app} />
+      <CommandLine app={core.app} />
+      <StatusBar app={core.app} />
     </div>
   );
 }

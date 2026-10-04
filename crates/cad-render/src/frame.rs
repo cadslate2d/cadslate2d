@@ -4,6 +4,9 @@
 //! until the transport measurement: one *segment instance* is four `f32`s
 //! (`x0, y0, x1, y1`), each an offset from the frame's `f64` origin. Stroke
 //! width is applied in the vertex shader, so the data is independent of zoom.
+//!
+//! Both buffers are stored exactly as they cross the WASM boundary, so
+//! handing a frame to JavaScript needs no conversion and no allocation.
 
 use cad_core::Point2;
 use cad_document::Entity;
@@ -23,6 +26,19 @@ pub enum StyleRole {
     Crosshair = 3,
 }
 
+impl StyleRole {
+    const ALL: [Self; 4] = [
+        Self::Entity,
+        Self::Selection,
+        Self::Preview,
+        Self::Crosshair,
+    ];
+
+    fn from_word(word: u32) -> Option<Self> {
+        Self::ALL.into_iter().find(|role| *role as u32 == word)
+    }
+}
+
 /// A contiguous run of segment instances drawn with one style.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DrawBatch {
@@ -38,7 +54,8 @@ pub struct DrawBatch {
 pub struct PackedFrame {
     origin: Point2,
     segments: Vec<f32>,
-    batches: Vec<DrawBatch>,
+    /// `style, first, count` per batch.
+    batch_words: Vec<u32>,
 }
 
 impl PackedFrame {
@@ -50,7 +67,7 @@ impl PackedFrame {
     pub fn reset(&mut self, origin: Point2) {
         self.origin = origin;
         self.segments.clear();
-        self.batches.clear();
+        self.batch_words.clear();
     }
 
     /// The `f64` world position that segment coordinates are relative to.
@@ -67,16 +84,22 @@ impl PackedFrame {
         (self.segments.len() / Self::FLOATS_PER_SEGMENT) as u32
     }
 
-    pub fn batches(&self) -> &[DrawBatch] {
-        &self.batches
+    /// Flat `style, first, count` per batch.
+    pub fn batch_words(&self) -> &[u32] {
+        &self.batch_words
     }
 
-    /// Batches flattened to `style, first, count` words for transfer.
-    pub fn write_batch_words(&self, out: &mut Vec<u32>) {
-        out.clear();
-        for batch in &self.batches {
-            out.extend([batch.style as u32, batch.first, batch.count]);
-        }
+    /// The batches, decoded.
+    pub fn batches(&self) -> Vec<DrawBatch> {
+        let (batches, _) = self.batch_words.as_chunks::<{ Self::WORDS_PER_BATCH }>();
+        batches
+            .iter()
+            .map(|&[style, first, count]| DrawBatch {
+                style: StyleRole::from_word(style).expect("frames only contain known style roles"),
+                first,
+                count,
+            })
+            .collect()
     }
 
     /// Appends one segment. Consecutive segments of the same style share a batch.
@@ -87,13 +110,13 @@ impl PackedFrame {
         self.segments
             .extend([a.x as f32, a.y as f32, b.x as f32, b.y as f32]);
 
-        match self.batches.last_mut() {
-            Some(batch) if batch.style == style => batch.count += 1,
-            _ => self.batches.push(DrawBatch {
-                style,
-                first,
-                count: 1,
-            }),
+        match self
+            .batch_words
+            .rchunks_exact_mut(Self::WORDS_PER_BATCH)
+            .next()
+        {
+            Some(last) if last[0] == style as u32 => last[2] += 1,
+            _ => self.batch_words.extend([style as u32, first, 1]),
         }
     }
 
@@ -135,7 +158,7 @@ mod tests {
 
         assert_eq!(
             frame.batches(),
-            &[
+            vec![
                 DrawBatch {
                     style: StyleRole::Entity,
                     first: 0,
@@ -160,9 +183,15 @@ mod tests {
         let mut frame = PackedFrame::default();
         frame.push_segment(StyleRole::Selection, p(0.0, 0.0), p(1.0, 0.0));
         frame.push_segment(StyleRole::Crosshair, p(0.0, 0.0), p(1.0, 0.0));
-        let mut words = vec![99];
-        frame.write_batch_words(&mut words);
-        assert_eq!(words, vec![1, 0, 1, 3, 1, 1]);
+        assert_eq!(frame.batch_words(), &[1, 0, 1, 3, 1, 1]);
+    }
+
+    #[test]
+    fn every_style_role_survives_the_word_encoding() {
+        for role in StyleRole::ALL {
+            assert_eq!(StyleRole::from_word(role as u32), Some(role));
+        }
+        assert_eq!(StyleRole::from_word(99), None);
     }
 
     #[test]
