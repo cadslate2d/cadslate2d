@@ -265,3 +265,50 @@ describe("views into WASM memory", () => {
     expect(cad.readOverlay(sizes)).toEqual([24, 3]); // the crosshair
   });
 });
+
+describe("object snap", () => {
+  // The view is 800×600 at one pixel per unit, centred on the origin.
+  const NEAR_THE_END = [498, 302] as const;
+
+  function hoveringTheEnd(): CadEngine {
+    const cad = engine();
+    enter(cad, "L", "0,0", "100,0", "", "L");
+    cad.pointerMove(...NEAR_THE_END, 0);
+    return cad;
+  }
+
+  const markerBatches = (cad: CadEngine) =>
+    cad.readOverlay((frame) => Array.from(frame.batches).filter((_, index) => index % 3 === 0));
+
+  test("the UI state names the snap and reports the exact point", () => {
+    const state = hoveringTheEnd().uiState();
+    expect(state.snap).toBe("Endpoint");
+    expect(state.cursor).toEqual([100, 0]);
+  });
+
+  test("the marker is in the overlay, in its own style, and the scene is untouched", () => {
+    const cad = hoveringTheEnd();
+    const revision = cad.sceneRevision;
+    expect(markerBatches(cad)).toContain(StyleRole.SnapMarker);
+    cad.pointerMove(300, 100, 0);
+    expect(markerBatches(cad)).not.toContain(StyleRole.SnapMarker);
+    expect(cad.uiState().snap).toBeUndefined();
+    expect(cad.sceneRevision).toBe(revision);
+  });
+
+  test("F3 switches snapping off, and the overlay is flagged so the marker goes", () => {
+    const cad = hoveringTheEnd();
+    const dirty = cad.key(KeyAction.ToggleOsnap);
+    expect(dirty & Dirty.Overlay).toBeTruthy();
+    expect(cad.uiState().snap).toBeUndefined();
+    expect(cad.uiState().cursor).toEqual([98, -2]);
+  });
+
+  test("a click commits the snap point", () => {
+    const cad = hoveringTheEnd();
+    cad.pointerDown(...NEAR_THE_END, 0, 0);
+    cad.pointerUp(...NEAR_THE_END, 0, 0);
+    enter(cad, "@0,50", "");
+    expect(cad.exportDxf()).toContain(" 10\n100.0\n 20\n0.0\n");
+  });
+});

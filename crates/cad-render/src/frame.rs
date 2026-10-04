@@ -33,16 +33,19 @@ pub enum StyleRole {
     SelectionWindow = 4,
     /// The rectangle of a crossing selection (entities touching it).
     SelectionCrossing = 5,
+    /// The marker of the object snap under the cursor.
+    SnapMarker = 6,
 }
 
 impl StyleRole {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Entity,
         Self::Selection,
         Self::Preview,
         Self::Crosshair,
         Self::SelectionWindow,
         Self::SelectionCrossing,
+        Self::SnapMarker,
     ];
 
     fn from_word(word: u32) -> Option<Self> {

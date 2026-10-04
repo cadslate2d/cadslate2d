@@ -6,6 +6,8 @@
 use cad_core::{EntityId, Point2, Vec2};
 use cad_document::Entity;
 
+use crate::SnapMode;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum OverlayItem {
     /// A selected entity to highlight.
@@ -24,6 +26,8 @@ pub enum OverlayItem {
         to: Point2,
         crossing: bool,
     },
+    /// The object snap the next click would take, shown at its exact point.
+    SnapMarker { mode: SnapMode, at: Point2 },
     /// The cursor crosshair at a world position.
     Crosshair { at: Point2 },
 }

@@ -23,6 +23,7 @@
   --color-accent: #3d8bfd;
   --color-accent-soft: rgb(61 139 253 / 0.16);
   --color-danger: #f0626c;
+  --color-snap: #ffb224;
 
   /* Drawing area */
   --canvas-background: #0b0f17;
@@ -33,12 +34,15 @@
   /* Window selection (left to right) and crossing selection (right to left). */
   --canvas-selection-window: #3d8bfd;
   --canvas-selection-crossing: #3fb950;
+  /* The marker of the object snap under the cursor. */
+  --canvas-snap-marker: #ffb224;
   --canvas-lineweight-entity: 1.25;
   --canvas-lineweight-selection: 2.75;
   --canvas-lineweight-preview: 1;
   --canvas-lineweight-crosshair: 1;
   --canvas-lineweight-selection-window: 1;
   --canvas-lineweight-selection-crossing: 1;
+  --canvas-lineweight-snap-marker: 1.5;
 
   /* Type */
   --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;

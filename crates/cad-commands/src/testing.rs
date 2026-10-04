@@ -14,7 +14,7 @@
 use cad_core::{EntityId, Point2, ScreenPoint};
 use cad_document::{Entity, LineEntity};
 
-use crate::{Dirty, KeyAction, Modifiers, PointerButton, Session};
+use crate::{Dirty, KeyAction, Modifiers, PointerButton, Session, Toggle};
 
 /// A session on an 800×600 canvas centred on the world origin at one pixel
 /// per unit, so screen `(400, 300)` is world `(0, 0)`.
@@ -66,6 +66,17 @@ impl Harness {
     pub fn move_to(&mut self, x: f64, y: f64) -> Dirty {
         self.session
             .pointer_move(ScreenPoint::new(x, y), Modifiers::NONE)
+    }
+
+    /// Moves the pointer to the screen position that currently shows `point`.
+    pub fn move_to_world(&mut self, point: Point2) -> Dirty {
+        let at = self.session.view().world_to_screen(point);
+        self.move_to(at.x, at.y)
+    }
+
+    /// Flips a drafting toggle, as its function key does.
+    pub fn toggle(&mut self, toggle: Toggle) -> Dirty {
+        self.session.key(KeyAction::Toggle(toggle))
     }
 
     /// Presses and releases the primary button at a screen position.

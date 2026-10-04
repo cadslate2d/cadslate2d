@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 cad-core.workspace = true
 cad-document.workspace = true
+cad-commands.workspace = true
 cad-render.workspace = true
 cad-dxf.workspace = true
 
@@ -21,6 +22,10 @@ harness = false
 
 [[bench]]
 name = "render"
+harness = false
+
+[[bench]]
+name = "snap"
 harness = false
 
 [lints]

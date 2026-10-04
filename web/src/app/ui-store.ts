@@ -11,6 +11,8 @@ export interface UiSnapshot {
   readonly command: string | undefined;
   readonly log: readonly string[];
   readonly cursor: readonly [number, number] | undefined;
+  /** Name of the object snap under the cursor, if any. */
+  readonly snap: string | undefined;
   readonly selectionCount: number;
   readonly spaceAccepts: boolean;
   readonly canUndo: boolean;
@@ -33,6 +35,7 @@ const INITIAL: UiSnapshot = {
   command: undefined,
   log: [],
   cursor: undefined,
+  snap: undefined,
   selectionCount: 0,
   spaceAccepts: true,
   canUndo: false,
@@ -74,6 +77,7 @@ export class UiStore {
       command: state.command,
       log,
       cursor: state.cursor,
+      snap: state.snap,
       selectionCount: state.selectionCount,
       spaceAccepts: state.spaceAccepts,
       canUndo: state.canUndo,

@@ -40,6 +40,8 @@ const requested = (process.env.E2E_BROWSERS ?? "chromium,firefox").split(",");
 // plain static file server. Build first: `pnpm build`.
 export default defineConfig({
   testDir: "e2e",
+  // Visual baselines live with the other test data and are compared in Chromium only.
+  snapshotPathTemplate: "../test-data/screenshots/{arg}{ext}",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,

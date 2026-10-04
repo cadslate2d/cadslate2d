@@ -41,6 +41,18 @@ impl Circle {
         (self.center.distance_to(point) - self.radius).abs()
     }
 
+    /// The point on the circle nearest to `point`. The centre itself has no
+    /// nearest point; the point at angle zero is returned.
+    pub fn closest_point(&self, point: Point2) -> Point2 {
+        let offset = point - self.center;
+        let length = offset.length();
+        if length > 0.0 {
+            self.center + offset * (self.radius / length)
+        } else {
+            self.point_at(0.0)
+        }
+    }
+
     /// The circle through three points, or `None` when they are collinear or
     /// coincide within the linear tolerance.
     pub fn through_points(
@@ -161,6 +173,27 @@ impl Arc {
             .fold(ends, |bounds, point| {
                 bounds.union(&Aabb::from_points(point, point))
             })
+    }
+
+    /// The point on the arc nearest to `point`.
+    pub fn closest_point(&self, point: Point2) -> Point2 {
+        let offset = point - self.center;
+        if offset.length() > 0.0 && self.contains_angle(offset.y.atan2(offset.x)) {
+            return self.circle().closest_point(point);
+        }
+        let (start, end) = (self.start_point(), self.end_point());
+        if point.distance_to(start) <= point.distance_to(end) {
+            start
+        } else {
+            end
+        }
+    }
+
+    /// The angles of the axis extremes (0°, 90°, 180°, 270°) the arc passes.
+    pub fn quadrant_angles(&self) -> impl Iterator<Item = f64> + '_ {
+        (0..4)
+            .map(|quadrant| f64::from(quadrant) * FRAC_PI_2)
+            .filter(|angle| self.contains_angle(*angle))
     }
 
     /// Distance from `point` to the arc: radial where the point faces the arc,

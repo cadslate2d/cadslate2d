@@ -96,6 +96,29 @@ export function highlightPixels(canvas: Locator): Promise<number> {
   );
 }
 
+/** Pixels in the snap-marker colour (amber), including antialiased ones. */
+export function markerPixels(canvas: Locator): Promise<number> {
+  return countPixels(
+    canvas,
+    ([red, green, blue]) =>
+      red > 150 && green > red * 0.5 && green < red * 0.85 && blue < red * 0.5,
+  );
+}
+
+/** Moves the pointer to a world position, in a view that has not been panned or zoomed. */
+export async function hoverWorld(page: Page, canvas: Locator, x: number, y: number): Promise<void> {
+  const center = await centerOf(canvas);
+  await page.mouse.move(center.x + x, center.y - y);
+  await settle(page);
+}
+
+/** Clicks a world position, in a view that has not been panned or zoomed. */
+export async function clickWorld(page: Page, canvas: Locator, x: number, y: number): Promise<void> {
+  const center = await centerOf(canvas);
+  await page.mouse.click(center.x + x, center.y - y);
+  await settle(page);
+}
+
 /** Absolute path of a DXF fixture under `test-data/dxf/`. */
 export function fixturePath(relative: string): string {
   return fileURLToPath(new URL(`../../test-data/dxf/${relative}`, import.meta.url));

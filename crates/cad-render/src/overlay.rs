@@ -5,9 +5,10 @@
 //! uploaded to its own small GPU buffers, entirely separately from the
 //! committed scene.
 
-use cad_commands::OverlayItem;
+use cad_commands::{OverlayItem, SnapMode};
 use cad_core::{Aabb, Point2, Vec2, View};
 use cad_document::Drawing;
+use cad_geometry::Arc;
 
 use crate::{PackedFrame, StyleRole};
 
@@ -15,6 +16,36 @@ use crate::{PackedFrame, StyleRole};
 const CROSSHAIR_ARM_PIXELS: f64 = 24.0;
 /// Half-size of the pick box at the centre of the crosshair, in CSS pixels.
 const PICK_BOX_PIXELS: f64 = 3.0;
+/// Half-size of an object-snap marker, in CSS pixels.
+const SNAP_MARKER_PIXELS: f64 = 7.0;
+
+/// The glyph of a snap mode as pen strokes, in units of the marker's
+/// half-size with +Y up. The centre snap is a circle and has no strokes.
+///
+/// | Mode | Marker |
+/// | --- | --- |
+/// | Endpoint | square |
+/// | Midpoint | triangle |
+/// | Center | circle |
+/// | Quadrant | diamond |
+/// | Intersection | cross |
+/// | Nearest | hourglass |
+fn marker_strokes(mode: SnapMode) -> &'static [&'static [(f64, f64)]] {
+    const SQUARE: &[(f64, f64)] = &[(-1., -1.), (1., -1.), (1., 1.), (-1., 1.), (-1., -1.)];
+    const TRIANGLE: &[(f64, f64)] = &[(-1., -1.), (1., -1.), (0., 1.), (-1., -1.)];
+    const DIAMOND: &[(f64, f64)] = &[(0., -1.), (1., 0.), (0., 1.), (-1., 0.), (0., -1.)];
+    const HOURGLASS: &[(f64, f64)] = &[(-1., -1.), (1., -1.), (-1., 1.), (1., 1.), (-1., -1.)];
+    const RISING: &[(f64, f64)] = &[(-1., -1.), (1., 1.)];
+    const FALLING: &[(f64, f64)] = &[(-1., 1.), (1., -1.)];
+    match mode {
+        SnapMode::Endpoint => &[SQUARE],
+        SnapMode::Midpoint => &[TRIANGLE],
+        SnapMode::Center => &[],
+        SnapMode::Quadrant => &[DIAMOND],
+        SnapMode::Intersection => &[RISING, FALLING],
+        SnapMode::Nearest => &[HOURGLASS],
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OverlayFrame {
@@ -71,7 +102,24 @@ impl OverlayFrame {
                         );
                     }
                 }
+                OverlayItem::SnapMarker { mode, at } => self.push_snap_marker(*mode, *at, view),
                 OverlayItem::Crosshair { at } => self.push_crosshair(*at, view),
+            }
+        }
+    }
+
+    /// The marker is sized in pixels here, so it looks the same at any zoom.
+    fn push_snap_marker(&mut self, mode: SnapMode, at: Point2, view: &View) {
+        let half = view.pixels_to_world(SNAP_MARKER_PIXELS);
+        if mode == SnapMode::Center {
+            let circle = Arc::new(at, half, 0.0, std::f64::consts::TAU);
+            self.frame.push_arc(StyleRole::SnapMarker, &circle);
+        }
+        for stroke in marker_strokes(mode) {
+            for pair in stroke.windows(2) {
+                let corner = |(x, y): (f64, f64)| at + Vec2::new(x * half, y * half);
+                self.frame
+                    .push_segment(StyleRole::SnapMarker, corner(pair[0]), corner(pair[1]));
             }
         }
     }
@@ -258,6 +306,115 @@ mod tests {
         let ghost = OverlayItem::Highlight(cad_core::EntityId::from_raw(999));
         overlay.rebuild(&[ghost], h.session.drawing(), h.session.view());
         assert_eq!(overlay.frame().segment_count(), 0);
+    }
+
+    // ── snap markers ──
+
+    /// The overlay of a bare marker at the origin of a 1px-per-unit view.
+    fn marker_frame(mode: SnapMode, view: &View) -> OverlayFrame {
+        let mut overlay = OverlayFrame::new();
+        let at = Point2::new(10.0, 20.0);
+        overlay.rebuild(
+            &[OverlayItem::SnapMarker { mode, at }],
+            &Drawing::new(),
+            view,
+        );
+        overlay
+    }
+
+    fn view() -> View {
+        View::new(800.0, 600.0)
+    }
+
+    #[test]
+    fn every_snap_mode_has_its_own_marker() {
+        let view = view();
+        let frames: Vec<OverlayFrame> = SnapMode::ALL
+            .iter()
+            .map(|mode| marker_frame(*mode, &view))
+            .collect();
+        for (index, frame) in frames.iter().enumerate() {
+            let drawn = frame.frame().segment_count() + frame.frame().arc_count();
+            assert!(drawn > 0, "{:?} draws nothing", SnapMode::ALL[index]);
+            for other in &frames[index + 1..] {
+                assert_ne!(frame, other, "two modes share a marker");
+            }
+        }
+    }
+
+    #[test]
+    fn markers_are_drawn_in_the_snap_marker_style_only() {
+        let view = view();
+        for mode in SnapMode::ALL {
+            let overlay = marker_frame(mode, &view);
+            let batches = [overlay.frame().batches(), overlay.frame().arc_batches()].concat();
+            assert!(
+                batches
+                    .iter()
+                    .all(|batch| batch.style == StyleRole::SnapMarker),
+                "{mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_centre_marker_is_a_circle_and_the_others_are_strokes() {
+        let view = view();
+        let centre = marker_frame(SnapMode::Center, &view);
+        assert_eq!(
+            (centre.frame().arc_count(), centre.frame().segment_count()),
+            (1, 0)
+        );
+        let counts: Vec<u32> = [
+            SnapMode::Endpoint,
+            SnapMode::Midpoint,
+            SnapMode::Quadrant,
+            SnapMode::Intersection,
+            SnapMode::Nearest,
+        ]
+        .iter()
+        .map(|mode| marker_frame(*mode, &view).frame().segment_count())
+        .collect();
+        assert_eq!(counts, vec![4, 3, 4, 2, 4]);
+    }
+
+    /// Markers are a fixed size on screen: twice the zoom, half the world size.
+    #[test]
+    fn markers_keep_their_pixel_size_at_any_zoom() {
+        let extent_in_pixels = |view: &View| {
+            let overlay = marker_frame(SnapMode::Endpoint, view);
+            let xs: Vec<f32> = overlay
+                .frame()
+                .segments()
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|point| point[0])
+                .collect();
+            let width = xs.iter().copied().fold(f32::MIN, f32::max)
+                - xs.iter().copied().fold(f32::MAX, f32::min);
+            f64::from(width) * view.scale()
+        };
+        let mut zoomed = view();
+        zoomed.zoom_about(ScreenPoint::new(400.0, 300.0), 37.5);
+        for view in [view(), zoomed] {
+            let pixels = extent_in_pixels(&view);
+            assert!(
+                (pixels - 2.0 * SNAP_MARKER_PIXELS).abs() < 1e-3,
+                "{pixels}px wide"
+            );
+        }
+    }
+
+    #[test]
+    fn hovering_a_snap_point_draws_the_marker_under_the_crosshair() {
+        let mut h = Harness::new();
+        h.enter_all(&["L", "0,0", "100,0", "", "L"]);
+        h.move_to_world(Point2::new(99.0, 1.0));
+        assert_eq!(
+            styles(&overlay_of(&h)),
+            vec![StyleRole::SnapMarker, StyleRole::Crosshair]
+        );
     }
 
     #[test]

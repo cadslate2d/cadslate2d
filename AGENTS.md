@@ -27,6 +27,8 @@ If code and these documents disagree, fix the code or write an ADR. Do not silen
 - **Coarse WASM boundary (ADR-0002).** Events in, dirty flags out, frames pulled in batches. No per-entity or per-vertex getters. Rust never issues GL calls.
 - **Two render lifetimes (DESIGN §12).** Committed geometry → `RenderScene`, re-uploaded only when the scene revision changes. Transient geometry → `OverlayFrame`. Pointer movement, pan, and zoom must never regenerate or re-upload committed geometry (ADR-0003).
 - **Transient edits do not touch the document.** Previews live in the session; one committed gesture produces one transaction.
+- **Entities being transiently edited are never snap targets** (DESIGN §18.2). A command that moves existing geometry reports it through `Command::transient_sources`.
+- **Pixel tolerances are not geometric tolerances.** Pick and snap apertures are `PixelTolerance`s converted through the `View` at the moment of use (§18.3).
 - **No magic epsilons.** Use the tolerance classes in `cad-core`; they are not interchangeable (DESIGN §21).
 - **Only `web/src/renderer/` touches WebGL; only `web/src/cad/` imports the generated WASM package.** ESLint enforces both.
 - **Rust never calls into JavaScript.** When a command needs the browser (a file picker, a download), it raises a `HostRequest`; the host serves it and reports back with an ordinary call.
@@ -61,6 +63,7 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 - **Render boundary:** determinism, revision invariance under pointer movement, buffer lengths and batch ranges.
 - **DXF:** fixture files under `test-data/dxf/`; arbitrary bytes must never panic.
 - **Browser:** Vitest for TypeScript units, Playwright for end-to-end flows against the static build.
+- **Visual baselines:** small clipped screenshots under `test-data/screenshots/`, compared in Chromium only. Re-record them deliberately (`--update-snapshots`) and look at the result before committing.
 
 ## Where things go
 
@@ -71,6 +74,7 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 | Geometry maths | `cad-geometry`, as pure functions | Unit and property tests; a regression case per fixed bug |
 | Input syntax | `cad-input` | Table-driven tests and a never-panics property test |
 | Something drawn transiently | An `OverlayItem` in `cad-commands`, turned into segments in `cad-render` | A render-boundary test that the scene revision is unchanged |
+| A snap mode | `SnapMode` and its points in `crates/cad-commands/src/snap.rs`; its marker glyph in `cad-render` | Headless tests per entity type; a marker baseline in `test-data/screenshots/` |
 | A browser capability | `web/src/app/host-services.ts`, behind the `HostServices` interface | A `CadApp` test with a fake host |
 | UI | `web/src/ui/`, styled only through tokens in `theme.css` | No drawing data in React state |
 
@@ -99,6 +103,6 @@ pnpm --dir web build && pnpm --dir web e2e
 
 ## Scope discipline
 
-- M0 non-goals are listed in DESIGN §27. Do not add circles, layers, grips, workers, or anything else on that list while M0 is open.
+- The open milestone's issues are the scope. Do not pull work forward from a later milestone (layers, text, dimensions, workers, …) because it would be convenient; DESIGN Part IV says what belongs where.
 - Product constraints in DESIGN §4 and §45 apply always: no accounts, no cloud documents, no telemetry on drawing content, no 3D.
 - When an issue's scope turns out to be wrong, update the issue; do not quietly expand or shrink it.

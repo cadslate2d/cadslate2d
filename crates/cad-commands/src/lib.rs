@@ -17,6 +17,7 @@ mod overlay;
 mod registry;
 mod selection;
 mod session;
+pub mod snap;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(test)]
@@ -32,6 +33,7 @@ pub use overlay::OverlayItem;
 pub use registry::CommandRegistry;
 pub use selection::Selection;
 pub use session::Session;
+pub use snap::{SnapMode, SnapModes, SnapPoint};
 pub use toggles::{Toggle, Toggles};
 pub use transient::TransientEdit;
 pub use ui_state::UiState;

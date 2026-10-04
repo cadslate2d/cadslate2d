@@ -28,6 +28,7 @@ mod files;
 mod history;
 mod line;
 mod modify;
+mod osnap;
 mod pline;
 mod rectang;
 
@@ -45,5 +46,6 @@ pub(crate) use files::{ExportCommand, OpenCommand};
 pub(crate) use history::{RedoCommand, UndoCommand};
 pub(crate) use line::LineCommand;
 pub(crate) use modify::{EraseCommand, PlaceCommand};
+pub(crate) use osnap::OsnapCommand;
 pub(crate) use pline::PlineCommand;
 pub(crate) use rectang::RectangCommand;

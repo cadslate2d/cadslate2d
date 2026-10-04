@@ -6,9 +6,11 @@ use cad_input::{ExpectedInput, Input, InputKind};
 
 use crate::history::InputHistory;
 use crate::log::CommandLog;
+use crate::snap::find_snap;
 use crate::{
     Command, CommandContext, CommandInput, CommandRegistry, Dirty, HostRequest, KeyAction,
-    Modifiers, OverlayItem, PointerButton, Selection, Step, Toggles, UiState,
+    Modifiers, OverlayItem, PointerButton, Selection, SnapModes, SnapPoint, Step, Toggle, Toggles,
+    UiState,
 };
 
 const IDLE_PROMPT: &str = "Command:";
@@ -59,6 +61,8 @@ pub struct Session {
     /// The command Enter repeats at the idle prompt.
     last_command: Option<&'static str>,
     toggles: Toggles,
+    /// Which object snaps run while OSNAP is on.
+    snap_modes: SnapModes,
 }
 
 impl Default for Session {
@@ -98,6 +102,7 @@ impl Session {
             export_is_lossy: false,
             last_command: None,
             toggles: Toggles::default(),
+            snap_modes: SnapModes::default(),
         }
     }
 
@@ -115,6 +120,36 @@ impl Session {
         &self.selection
     }
 
+    pub fn snap_modes(&self) -> SnapModes {
+        self.snap_modes
+    }
+
+    /// The object snap under the cursor: where a click would land right now.
+    ///
+    /// Snapping applies only while a click would be taken as a point, and
+    /// only to the pointer — typed coordinates are already exact. It is
+    /// derived on demand from the cursor, view, and drawing, so the marker
+    /// shown and the point committed cannot disagree.
+    pub fn snap(&self) -> Option<SnapPoint> {
+        let cursor = self.cursor?;
+        let command = &self.active.as_ref()?.command;
+        let takes_a_point = match command.expected().kind {
+            InputKind::Point => true,
+            InputKind::Distance | InputKind::Angle => command.base_point().is_some(),
+            InputKind::Command | InputKind::Selection | InputKind::Nothing => false,
+        };
+        if !takes_a_point || !self.toggles.is_on(Toggle::Osnap) || self.pan_anchor.is_some() {
+            return None;
+        }
+        find_snap(
+            &self.drawing,
+            &self.view,
+            cursor,
+            self.snap_modes,
+            command.transient_sources(),
+        )
+    }
+
     /// The prompt shown on the command line right now.
     pub fn prompt(&self) -> String {
         self.active.as_ref().map_or_else(
@@ -124,11 +159,13 @@ impl Session {
     }
 
     pub fn ui_state(&self) -> UiState {
+        let snap = self.snap();
         UiState {
             prompt: self.prompt(),
             command: self.active.as_ref().map(|active| active.name),
             log_total: self.log.total(),
-            cursor: self.cursor_world().map(|point| (point.x, point.y)),
+            cursor: self.aim_with(snap).map(|point| (point.x, point.y)),
+            snap: snap.map(|snap| snap.mode.label()),
             selection_count: self.selection.len(),
             space_accepts: true,
             can_undo: self.drawing.can_undo(),
@@ -150,19 +187,30 @@ impl Session {
     pub fn overlay(&self) -> Vec<OverlayItem> {
         let mut items: Vec<OverlayItem> =
             self.selection.iter().map(OverlayItem::Highlight).collect();
-        if let Some(at) = self.cursor_world() {
-            if let Some(active) = &self.active {
-                active.command.preview(at, &mut items);
-            }
-            if let Some(start) = self.selection_box {
-                items.push(OverlayItem::SelectionBox {
-                    from: self.view.screen_to_world(start),
-                    to: at,
-                    crossing: is_crossing(start, self.cursor.unwrap_or(start)),
-                });
-            }
-            items.push(OverlayItem::Crosshair { at });
+        let Some(cursor) = self.cursor_world() else {
+            return items;
+        };
+        let snap = self.snap();
+        if let Some(active) = &self.active {
+            // Previews follow the point a click would give, snapped or not.
+            let aim = snap.map_or(cursor, |snap| snap.point);
+            active.command.preview(aim, &mut items);
         }
+        if let Some(start) = self.selection_box {
+            items.push(OverlayItem::SelectionBox {
+                from: self.view.screen_to_world(start),
+                to: cursor,
+                crossing: is_crossing(start, self.cursor.unwrap_or(start)),
+            });
+        }
+        if let Some(snap) = snap {
+            items.push(OverlayItem::SnapMarker {
+                mode: snap.mode,
+                at: snap.point,
+            });
+        }
+        // The crosshair stays with the pointer; the marker shows the snap.
+        items.push(OverlayItem::Crosshair { at: cursor });
         items
     }
 
@@ -209,9 +257,10 @@ impl Session {
             // At the idle prompt and at "Select objects:", the pointer builds
             // the selection set; anywhere else a click is a point.
             PointerButton::Primary if self.is_selecting() => self.selection_click(at, modifiers),
-            PointerButton::Primary => self
-                .feed_point(self.view.screen_to_world(at))
-                .unwrap_or(Dirty::NONE),
+            PointerButton::Primary => match self.aim() {
+                Some(point) => self.feed_point(point).unwrap_or(Dirty::NONE),
+                None => Dirty::NONE,
+            },
             PointerButton::Secondary => Dirty::NONE,
         }
     }
@@ -329,7 +378,8 @@ impl Session {
                     "off"
                 };
                 self.log.push(format!("<{} {state}>", toggle.label()));
-                Dirty::UI
+                // Drafting aids change what the overlay shows under the cursor.
+                Dirty::OVERLAY | Dirty::UI
             }
         }
     }
@@ -396,6 +446,16 @@ impl Session {
 
     fn cursor_world(&self) -> Option<Point2> {
         self.cursor.map(|cursor| self.view.screen_to_world(cursor))
+    }
+
+    /// The world point a pointer click would give: the object snap under the
+    /// cursor if there is one, otherwise the cursor position itself.
+    fn aim(&self) -> Option<Point2> {
+        self.aim_with(self.snap())
+    }
+
+    fn aim_with(&self, snap: Option<SnapPoint>) -> Option<Point2> {
+        snap.map(|snap| snap.point).or_else(|| self.cursor_world())
     }
 
     /// The entity under a screen position, if any.
@@ -541,7 +601,7 @@ impl Session {
     /// point towards the cursor. `None` without a base point or a direction.
     fn direct_distance_target(&self, distance: f64) -> Option<Point2> {
         let base = self.active.as_ref()?.command.base_point()?;
-        let towards = self.cursor_world()? - base;
+        let towards = self.aim()? - base;
         let length = towards.length();
         (length > 0.0).then(|| base + towards * (distance / length))
     }
@@ -618,6 +678,7 @@ impl Session {
         let mut ctx = CommandContext {
             drawing: &mut self.drawing,
             selection: &mut self.selection,
+            snap_modes: &mut self.snap_modes,
             log: &mut self.log,
             host_request: &mut self.host_request,
         };
@@ -863,9 +924,12 @@ mod tests {
         let revision = h.session.drawing().revision();
 
         let dirty = h.session.key(KeyAction::Toggle(Toggle::Ortho));
-        assert_eq!(dirty, Dirty::UI);
+        assert_eq!(dirty, Dirty::OVERLAY | Dirty::UI);
         assert!(h.session.toggles().is_on(Toggle::Ortho));
-        assert_eq!(h.session.ui_state().toggles, Toggle::Ortho.bit());
+        assert_eq!(
+            h.session.ui_state().toggles,
+            Toggle::Ortho.bit() | Toggle::Osnap.bit()
+        );
         assert_eq!(h.log().last().unwrap(), "<ORTHO on>");
 
         // The command carries on exactly where it was.
@@ -876,7 +940,7 @@ mod tests {
 
         h.session.key(KeyAction::Toggle(Toggle::Ortho));
         assert_eq!(h.log().last().unwrap(), "<ORTHO off>");
-        assert_eq!(h.session.ui_state().toggles, 0);
+        assert_eq!(h.session.ui_state().toggles, Toggle::Osnap.bit());
     }
 
     #[test]

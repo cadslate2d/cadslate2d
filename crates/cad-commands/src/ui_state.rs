@@ -10,8 +10,11 @@ pub struct UiState {
     pub command: Option<&'static str>,
     /// Total log lines ever written; fetch new ones with `Session::log_since`.
     pub log_total: u64,
-    /// World position under the cursor, when the pointer is over the canvas.
+    /// The world point a click would give, when the pointer is over the canvas.
     pub cursor: Option<(f64, f64)>,
+    /// The object snap the cursor is on, by name; `cursor` is then the exact
+    /// snap point — what a click would give.
+    pub snap: Option<&'static str>,
     /// Number of selected entities.
     pub selection_count: usize,
     /// Whether Space submits the command line like Enter. False only while a

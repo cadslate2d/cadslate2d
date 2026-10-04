@@ -78,19 +78,18 @@ test.describe("status toggles", () => {
     await expect(logLines(page).last()).toHaveText("<ORTHO off>");
   });
 
-  test("each function key flips its own toggle", async ({ page }) => {
+  test("each function key flips its own toggle; object snaps start on", async ({ page }) => {
     await openApp(page);
-    for (const [key, label] of [
-      ["F3", "OSNAP"],
-      ["F7", "GRID"],
-      ["F8", "ORTHO"],
-      ["F10", "POLAR"],
+    for (const [key, label, initially] of [
+      ["F3", "OSNAP", "true"],
+      ["F7", "GRID", "false"],
+      ["F8", "ORTHO", "false"],
+      ["F10", "POLAR", "false"],
     ] as const) {
+      const toggle = page.getByRole("button", { name: label });
+      await expect(toggle).toHaveAttribute("aria-pressed", initially);
       await page.keyboard.press(key);
-      await expect(page.getByRole("button", { name: label })).toHaveAttribute(
-        "aria-pressed",
-        "true",
-      );
+      await expect(toggle).toHaveAttribute("aria-pressed", initially === "true" ? "false" : "true");
     }
   });
 

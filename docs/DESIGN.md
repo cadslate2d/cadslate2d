@@ -1062,6 +1062,8 @@ display marker
 commit point
 ```
 
+> **Resolved in M2:** `cad_commands::snap`. The aperture is 10 CSS pixels. The closest snap point within it wins; ties go to Endpoint, Intersection, Midpoint, Center, Quadrant, in that order. Nearest is a fallback, taken only when no other snap is in reach. Hovering a circle or arc offers its centre, ranked behind any snap point actually under the cursor. Intersections are searched among at most 24 candidate entities. The snap is derived on demand from cursor, view, and drawing, so the marker and the committed point cannot disagree.
+
 ## 18.2 Transient-edit exclusion rule
 
 **LOCKED:**

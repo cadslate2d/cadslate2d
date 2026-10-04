@@ -10,14 +10,46 @@ export interface ToggleSpec {
   readonly key: string;
   readonly bit: number;
   readonly action: KeyAction;
+  /** What the toggle does, for its tooltip. */
+  readonly hint: string;
 }
 
 /** Toggles the session knows about, in status-bar order. */
+const NOT_YET = "Its drafting behaviour is not available yet.";
+
 export const TOGGLES: readonly ToggleSpec[] = [
-  { id: "grid", label: "GRID", key: "F7", bit: ToggleBit.Grid, action: KeyAction.ToggleGrid },
-  { id: "ortho", label: "ORTHO", key: "F8", bit: ToggleBit.Ortho, action: KeyAction.ToggleOrtho },
-  { id: "polar", label: "POLAR", key: "F10", bit: ToggleBit.Polar, action: KeyAction.TogglePolar },
-  { id: "osnap", label: "OSNAP", key: "F3", bit: ToggleBit.Osnap, action: KeyAction.ToggleOsnap },
+  {
+    id: "grid",
+    label: "GRID",
+    key: "F7",
+    bit: ToggleBit.Grid,
+    action: KeyAction.ToggleGrid,
+    hint: NOT_YET,
+  },
+  {
+    id: "ortho",
+    label: "ORTHO",
+    key: "F8",
+    bit: ToggleBit.Ortho,
+    action: KeyAction.ToggleOrtho,
+    hint: NOT_YET,
+  },
+  {
+    id: "polar",
+    label: "POLAR",
+    key: "F10",
+    bit: ToggleBit.Polar,
+    action: KeyAction.TogglePolar,
+    hint: NOT_YET,
+  },
+  {
+    id: "osnap",
+    label: "OSNAP",
+    key: "F3",
+    bit: ToggleBit.Osnap,
+    action: KeyAction.ToggleOsnap,
+    hint: "Clicks land exactly on endpoints, midpoints, centres, quadrants, and intersections. Type OSNAP to choose which.",
+  },
 ];
 
 /** Shown in the reference design but not implemented: visibly unavailable. */

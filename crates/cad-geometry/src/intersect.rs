@@ -219,6 +219,15 @@ impl Primitive {
         }
     }
 
+    /// The point of the primitive nearest to `point`.
+    pub fn closest_point(&self, point: Point2) -> Point2 {
+        match self {
+            Primitive::Segment(segment) => segment.closest_point(point),
+            Primitive::Circle(circle) => circle.closest_point(point),
+            Primitive::Arc(arc) => arc.closest_point(point),
+        }
+    }
+
     pub fn distance_to_point(&self, point: Point2) -> f64 {
         match self {
             Primitive::Segment(segment) => segment.distance_to_point(point),

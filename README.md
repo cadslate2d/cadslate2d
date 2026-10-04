@@ -10,7 +10,7 @@ CadSlate2D is a free, browser-native, local-first 2D CAD application inspired by
 
 ## Status
 
-Milestones **M0 — The Line** and **M1 — Input and Basic Entities** are complete. **M2 — OSNAP, Grips, and Basic Modify** is next. You can draw lines, circles, arcs, polylines, and rectangles by command or pointer, select with clicks and boxes, move, copy, and erase, undo and redo whole commands, export DXF, and reopen it — all in a static page with no backend. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
+Milestones **M0 — The Line** and **M1 — Input and Basic Entities** are complete. **M2 — OSNAP, Grips, and Basic Modify** is in progress: object snaps work; drafting aids, grips, and more modify commands follow. You can draw lines, circles, arcs, polylines, and rectangles by command or pointer, snap exactly to existing geometry, select with clicks and boxes, move, copy, and erase, undo and redo whole commands, export DXF, and reopen it — all in a static page with no backend. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
 
 ## What works today
 
@@ -28,6 +28,7 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `COPY` | `CO`, `CP` | Copies the selection; keeps placing until Enter. |
 | `UNDO` | `U`, Ctrl+Z | Reverts the last command. |
 | `REDO` | Ctrl+Y, Ctrl+Shift+Z | Re-applies the last undone command. |
+| `OSNAP` | `OS` | Chooses which object snaps run. Each mode is switched by its keyword; Enter finishes. |
 | `OPEN` | `DXFIN`, Ctrl+O | Opens an ASCII DXF file. Lines, circles, arcs, and straight polylines are imported; everything else is counted and reported. |
 | `DXFOUT` | `SAVE`, `SAVEAS`, `EXPORT`, Ctrl+S | Downloads the drawing as ASCII DXF (R12). |
 
@@ -47,7 +48,23 @@ Options shown in brackets, as in `Specify next point or [Close/Undo]:`, are chos
 | Escape | Cancel the command; pressed again, clear the selection |
 | Up / Down | Recall earlier input |
 | Wheel / middle-drag | Zoom about the cursor / pan |
-| F3 / F7 / F8 / F10 | Toggle OSNAP / GRID / ORTHO / POLAR. The switches work; the drafting behaviour behind them arrives in M2 |
+| F3 | Object snaps on or off (on at start) |
+| F7 / F8 / F10 | Toggle GRID / ORTHO / POLAR. The switches work; the drafting behaviour behind them arrives later in M2 |
+
+### Object snaps
+
+While a command asks for a point, the pointer snaps to nearby geometry. A marker shows the snap that a click would take, and the status bar names it and shows its exact coordinates. Typed coordinates are never snapped.
+
+| Snap | Marker | Lines | Circles | Arcs | Polylines |
+| --- | --- | --- | --- | --- | --- |
+| Endpoint | square | both ends | — | both ends | every vertex |
+| Midpoint | triangle | middle | — | middle of the arc | middle of every segment |
+| Center | circle | — | centre | centre | — |
+| Quadrant | diamond | — | 0°, 90°, 180°, 270° | those the arc passes | — |
+| Intersection | cross | where any two entities meet; polylines segment by segment | | | |
+| Nearest | hourglass | the closest point on the entity (off by default) | | | |
+
+The closest snap point within ten pixels wins. Hovering a circle or arc also offers its centre. Nearest applies only when no other snap is in reach. An entity being moved is not offered as a target at its old position. `OSNAP` chooses the running modes; F3 switches them all off and on.
 
 Unexported changes exist only in the browser tab until autosave arrives (M5); the page asks before you leave with unexported work.
 
@@ -95,7 +112,8 @@ pnpm --dir web dev
 | Web typecheck, lint, unit tests | `pnpm --dir web typecheck` / `lint` / `test` |
 | Production bundle | `pnpm --dir web build` → `web/dist/` |
 | End-to-end tests (needs a production bundle) | `pnpm --dir web e2e` |
-| Rust benchmarks (store, index, scene) | `cargo bench -p cad-benchmarks` |
+| Rust benchmarks (store, index, scene, snapping) | `cargo bench -p cad-benchmarks` |
+| Re-record visual baselines (Chromium) | `E2E_BROWSERS=chromium pnpm --dir web exec playwright test --update-snapshots` |
 | Generate a benchmark drawing | `cargo run --release -p cad-benchmarks --bin generate-drawing -- 100000 benches/generated-drawings/lines-100k.dxf` |
 | Render-transport measurement in the browser | `pnpm --dir web bench:transport` (after `build` and generating `lines-1k`, `-10k`, `-100k`) |
 | Curve-rendering experiment in the browser | `pnpm --dir web bench:curves` (after `build`) |

@@ -9,7 +9,7 @@
 use cad_commands::testing::Harness;
 use cad_commands::{Dirty, Modifiers, PointerButton};
 use cad_core::ScreenPoint;
-use cad_render::{OverlayFrame, PackedFrame, SceneCache};
+use cad_render::{OverlayFrame, PackedFrame, SceneCache, StyleRole};
 
 /// A small drawing made the way a user would make it.
 fn drawing() -> Harness {
@@ -136,6 +136,34 @@ fn pointer_only_updates_do_not_change_the_scene_revision() {
 
 /// "no entity-by-entity JS/WASM getter loop": frames are produced whole, in
 /// one call each, whatever the entity count.
+/// #80: showing a snap marker is overlay work only — the committed scene is
+/// neither rebuilt nor given a new revision.
+#[test]
+fn snap_markers_cause_no_committed_upload() {
+    let mut h = drawing();
+    h.enter("L");
+    let mut cache = SceneCache::new();
+    let revision = cache.scene(h.session.drawing()).revision();
+    let builds = cache.build_count();
+
+    let mut markers = 0;
+    for step in 0..200 {
+        // Sweep across the whole view, so the cursor crosses snap points.
+        let (x, y) = (f64::from(step) * 4.0, f64::from(step) * 3.0);
+        let dirty = h.move_to(x, y);
+        assert!(!dirty.contains(Dirty::SCENE));
+        let overlay = overlay_of(&h);
+        let has_marker = [overlay.frame().batches(), overlay.frame().arc_batches()]
+            .concat()
+            .iter()
+            .any(|batch| batch.style == StyleRole::SnapMarker);
+        markers += usize::from(has_marker);
+        assert_eq!(cache.scene(h.session.drawing()).revision(), revision);
+    }
+    assert!(markers > 0, "the sweep never met a snap point");
+    assert_eq!(cache.build_count(), builds, "the scene was rebuilt");
+}
+
 #[test]
 fn frames_are_produced_in_bulk() {
     let mut h = Harness::new();

@@ -56,8 +56,10 @@ export interface UiState {
   readonly command?: string;
   /** Total log lines ever written; fetch new ones with `logSince`. */
   readonly logTotal: number;
-  /** World position under the cursor while the pointer is over the canvas. */
+  /** The world point a click would give, while the pointer is over the canvas. */
   readonly cursor?: readonly [number, number];
+  /** Name of the object snap the cursor is on; `cursor` is then the exact snap point. */
+  readonly snap?: string;
   readonly selectionCount: number;
   /** Whether Space submits the command line like Enter. */
   readonly spaceAccepts: boolean;
@@ -81,6 +83,7 @@ export const StyleRole = {
   Crosshair: 3,
   SelectionWindow: 4,
   SelectionCrossing: 5,
+  SnapMarker: 6,
 } as const;
 export type StyleRole = (typeof StyleRole)[keyof typeof StyleRole];
 

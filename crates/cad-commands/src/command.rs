@@ -12,7 +12,7 @@ use cad_document::Drawing;
 use cad_input::{ExpectedInput, Keyword};
 
 use crate::log::CommandLog;
-use crate::{HostRequest, OverlayItem, Selection};
+use crate::{HostRequest, OverlayItem, Selection, SnapModes};
 
 /// One resolved input handed to the active command.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -91,6 +91,8 @@ pub enum Step {
 pub struct CommandContext<'a> {
     pub drawing: &'a mut Drawing,
     pub selection: &'a mut Selection,
+    /// The running object snaps; session state, never undoable.
+    pub snap_modes: &'a mut SnapModes,
     pub(crate) log: &'a mut CommandLog,
     pub(crate) host_request: &'a mut Option<HostRequest>,
 }

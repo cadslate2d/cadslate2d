@@ -252,6 +252,11 @@ body {
   border-color: var(--color-border);
 }
 
+.status__snap {
+  border-color: var(--color-snap);
+  color: var(--color-snap);
+}
+
 .status__coordinates {
   min-width: 22ch;
   font-family: var(--font-mono);

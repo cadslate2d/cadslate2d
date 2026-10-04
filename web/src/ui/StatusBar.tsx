@@ -15,6 +15,11 @@ export function StatusBar({ app }: { app: CadApp }) {
     <footer className="status" aria-label="Status bar">
       <span className="status__chip status__chip--active">Model</span>
       <span className="status__spacer" />
+      {ui.snap && (
+        <span className="status__chip status__snap" data-testid="snap">
+          {ui.snap}
+        </span>
+      )}
       <span className="status__chip status__coordinates" data-testid="coordinates">
         {formatCoordinates(ui.cursor)}
       </span>
@@ -26,7 +31,7 @@ export function StatusBar({ app }: { app: CadApp }) {
             type="button"
             className={`status__chip status__toggle${on ? " status__chip--active" : ""}`}
             aria-pressed={on}
-            title={`${toggle.label} (${toggle.key}). Its drafting behaviour arrives with object snaps and drafting aids.`}
+            title={`${toggle.label} (${toggle.key}). ${toggle.hint}`}
             // Keep keyboard focus on the command line.
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => app.key(toggle.action)}

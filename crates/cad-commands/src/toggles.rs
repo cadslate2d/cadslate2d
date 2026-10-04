@@ -1,8 +1,8 @@
 //! Drafting toggles: the status-bar switches of classic CAD (DESIGN §5, §13.4).
 //!
-//! This is the framework only. The toggles hold state and can be flipped from
-//! the status bar or by function key, at any time and without disturbing the
-//! active command. The drafting behaviours they control arrive in M2.
+//! The toggles hold state and can be flipped from the status bar or by
+//! function key, at any time and without disturbing the active command. The
+//! session consults them where the drafting aid applies.
 
 /// A drafting aid that can be switched on and off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,9 +38,18 @@ impl Toggle {
 
 /// The state of every toggle. Session state: not part of the drawing and not
 /// undoable.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Toggles {
     bits: u32,
+}
+
+impl Default for Toggles {
+    /// Object snaps run from the start, as a drafter expects; the rest are off.
+    fn default() -> Self {
+        Self {
+            bits: Toggle::Osnap.bit(),
+        }
+    }
 }
 
 impl Toggles {
@@ -65,23 +74,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn everything_starts_off() {
+    fn only_object_snaps_start_on() {
         let toggles = Toggles::default();
-        assert!(Toggle::ALL.iter().all(|toggle| !toggles.is_on(*toggle)));
-        assert_eq!(toggles.bits(), 0);
+        assert!(toggles.is_on(Toggle::Osnap));
+        assert!(
+            !toggles.is_on(Toggle::Grid)
+                && !toggles.is_on(Toggle::Ortho)
+                && !toggles.is_on(Toggle::Polar)
+        );
+        assert_eq!(toggles.bits(), Toggle::Osnap.bit());
     }
 
     #[test]
     fn flipping_one_toggle_leaves_the_others_alone() {
         let mut toggles = Toggles::default();
         assert!(toggles.flip(Toggle::Ortho));
-        assert!(toggles.is_on(Toggle::Ortho));
-        assert!(
-            !toggles.is_on(Toggle::Osnap)
-                && !toggles.is_on(Toggle::Grid)
-                && !toggles.is_on(Toggle::Polar)
-        );
+        assert!(toggles.is_on(Toggle::Ortho) && toggles.is_on(Toggle::Osnap));
+        assert!(!toggles.is_on(Toggle::Grid) && !toggles.is_on(Toggle::Polar));
         assert!(!toggles.flip(Toggle::Ortho));
+        assert!(!toggles.flip(Toggle::Osnap));
         assert_eq!(toggles.bits(), 0);
     }
 
