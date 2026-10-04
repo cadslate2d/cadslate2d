@@ -7,15 +7,19 @@
 
 mod arc;
 mod crossing;
+mod extend;
 pub mod intersect;
 mod offset;
 mod polyline;
 mod segment;
 mod transform;
+mod trim;
 
 pub use arc::{Arc, Circle, normalize_angle};
+pub use extend::{extend_arc, extend_segment};
 pub use intersect::{Hits, Orientation, Primitive, orientation};
 pub use offset::{offset_circle, offset_segment};
 pub use polyline::{bounds_of, polyline_distance_to_point, polyline_segments};
 pub use segment::Segment;
 pub use transform::{Transform, unit_at_degrees};
+pub use trim::{trim_arc, trim_circle, trim_segment};

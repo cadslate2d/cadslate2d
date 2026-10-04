@@ -10,7 +10,7 @@ use cad_input::{CommandAliases, DuplicateCommandName};
 
 use crate::Command;
 use crate::commands::{
-    ArcCommand, CircleCommand, EraseCommand, ExportCommand, GridCommand, LineCommand,
+    ArcCommand, CircleCommand, EdgeCommand, EraseCommand, ExportCommand, GridCommand, LineCommand,
     MirrorCommand, OffsetCommand, OpenCommand, OsnapCommand, PlineCommand, PolarAngleCommand,
     RectangCommand, RedoCommand, TransformCommand, UndoCommand,
 };
@@ -48,7 +48,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 19] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 21] = [
             ("ERASE", &["E"], || Box::new(EraseCommand)),
             ("MOVE", &["M"], || Box::new(TransformCommand::moving())),
             ("COPY", &["CO", "CP"], || {
@@ -58,6 +58,8 @@ impl CommandRegistry {
             ("SCALE", &["SC"], || Box::new(TransformCommand::scaling())),
             ("MIRROR", &["MI"], || Box::new(MirrorCommand::new())),
             ("OFFSET", &["O"], || Box::new(OffsetCommand::new())),
+            ("TRIM", &["TR"], || Box::new(EdgeCommand::trimming())),
+            ("EXTEND", &["EX"], || Box::new(EdgeCommand::extending())),
             ("PLINE", &["PL"], || Box::new(PlineCommand::new())),
             ("RECTANG", &["REC", "RECTANGLE"], || {
                 Box::new(RectangCommand::new())

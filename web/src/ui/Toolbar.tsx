@@ -86,6 +86,28 @@ const MODIFY: readonly Tool[] = [
     icon: icon(<path d="M4 17 14 5M10 20 20 8" />),
   },
   {
+    command: "TRIM",
+    label: "Trim",
+    icon: icon(
+      <>
+        <path d="M14 3v18" />
+        <path d="M3 12h11" />
+        <path d="M17 12h4" strokeDasharray="1.5 2.5" />
+      </>,
+    ),
+  },
+  {
+    command: "EXTEND",
+    label: "Extend",
+    icon: icon(
+      <>
+        <path d="M18 3v18" />
+        <path d="M3 12h7" />
+        <path d="M10 12h8M15 9l3 3-3 3" strokeLinejoin="round" />
+      </>,
+    ),
+  },
+  {
     command: "ERASE",
     label: "Erase",
     icon: icon(<path d="M5 19h14M7 15 15 5l4 3-8 10H8z" strokeLinejoin="round" />),

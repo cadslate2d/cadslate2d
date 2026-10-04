@@ -24,6 +24,7 @@ macro_rules! immediate_command {
 
 mod arc;
 mod circle;
+mod edge;
 mod files;
 mod grid;
 pub(crate) mod grip;
@@ -48,6 +49,7 @@ mod keywords {
 
 pub(crate) use arc::ArcCommand;
 pub(crate) use circle::CircleCommand;
+pub(crate) use edge::EdgeCommand;
 pub(crate) use files::{ExportCommand, OpenCommand};
 pub(crate) use grid::GridCommand;
 pub(crate) use grip::GripEditCommand;
