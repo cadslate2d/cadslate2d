@@ -24,10 +24,11 @@ impl LineEntity {
 
 /// Every kind of entity a drawing can hold.
 ///
-/// Non-exhaustive: later milestones add circles, arcs, polylines, and the rest
-/// of DESIGN §11 without breaking downstream matches.
+/// Deliberately *not* `#[non_exhaustive]`: when a later milestone adds a
+/// variant (circle, arc, polyline, …) the compiler must point at every match
+/// in the workspace — rendering, picking, DXF — rather than letting a wildcard
+/// arm silently ignore the new entity.
 #[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
 pub enum Entity {
     Line(LineEntity),
 }

@@ -8,9 +8,7 @@ publish.workspace = true
 
 [dependencies]
 cad-core.workspace = true
-cad-geometry.workspace = true
 cad-document.workspace = true
-cad-commands.workspace = true
 
 [lints]
 workspace = true

@@ -95,10 +95,8 @@ dependencies = [
 name = "cad-render"
 version = "0.0.1"
 dependencies = [
- "cad-commands",
  "cad-core",
  "cad-document",
- "cad-geometry",
 ]
 
 [[package]]
