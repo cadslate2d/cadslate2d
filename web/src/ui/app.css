@@ -27,6 +27,72 @@ body {
   height: 100%;
 }
 
+.shell--with-toolbar {
+  grid-template-rows: var(--size-header) var(--size-toolbar) minmax(0, 1fr) auto var(--size-status);
+}
+
+.toolbar {
+  display: flex;
+  align-items: stretch;
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.toolbar__group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+}
+
+.toolbar__group + .toolbar__group {
+  border-left: 1px solid var(--color-border);
+}
+
+.toolbar__button {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  min-width: 64px;
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.toolbar__button svg {
+  color: var(--color-accent);
+}
+
+.toolbar__button:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
+}
+
+.header__spacer {
+  flex: 1;
+}
+
+.header__button {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-panel);
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.header__button[aria-pressed="true"] {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
 .header {
   display: flex;
   align-items: center;
@@ -85,8 +151,6 @@ body {
 }
 
 .command {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
   margin: var(--space-2);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -94,34 +158,46 @@ body {
   font-family: var(--font-mono);
   font-size: var(--font-size-md);
   line-height: var(--line-height-mono);
+  /* Padding sits outside the scroller so it always shows whole lines. */
+  padding: var(--space-2) 0;
   height: calc(var(--line-height-mono) * var(--command-visible-lines) + var(--space-2) * 2);
   overflow: hidden;
 }
 
-.command__gutter,
-.command__lines {
+/* The whole log scrolls; the prompt is its last row. */
+.command__scroll {
+  height: 100%;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+.command__rows {
   margin: 0;
-  padding: var(--space-2) 0;
+  padding: 0;
   list-style: none;
 }
 
-.command__gutter {
-  padding-inline: var(--space-3);
+.command__row {
+  display: flex;
+  gap: var(--space-3);
+  padding-right: var(--space-3);
+  white-space: pre;
+}
+
+.command__number {
+  flex: none;
+  /* Wide enough for four digits, so text does not shift as numbers grow. */
+  width: calc(4ch + var(--space-3) * 2);
+  padding-right: var(--space-3);
   border-right: 1px solid var(--color-border);
   color: var(--color-text-faint);
   text-align: right;
   user-select: none;
 }
 
-.command__lines {
-  padding-inline: var(--space-3);
-  overflow: hidden;
-  white-space: pre;
-}
-
-.command__line--prompt {
-  display: flex;
-  gap: 1ch;
+.command__row--prompt label {
+  flex: none;
 }
 
 .command__input {
@@ -157,6 +233,12 @@ body {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
   letter-spacing: 0.04em;
+}
+
+.status__toggle {
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
 }
 
 .status__chip--active {

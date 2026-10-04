@@ -8,7 +8,7 @@ use crate::history::InputHistory;
 use crate::log::CommandLog;
 use crate::{
     Command, CommandContext, CommandInput, CommandRegistry, Dirty, HostRequest, KeyAction,
-    Modifiers, OverlayItem, PointerButton, Selection, Step, UiState,
+    Modifiers, OverlayItem, PointerButton, Selection, Step, Toggles, UiState,
 };
 
 const IDLE_PROMPT: &str = "Command:";
@@ -58,6 +58,7 @@ pub struct Session {
     export_is_lossy: bool,
     /// The command Enter repeats at the idle prompt.
     last_command: Option<&'static str>,
+    toggles: Toggles,
 }
 
 impl Default for Session {
@@ -96,6 +97,7 @@ impl Session {
             document_name: None,
             export_is_lossy: false,
             last_command: None,
+            toggles: Toggles::default(),
         }
     }
 
@@ -131,6 +133,7 @@ impl Session {
             space_accepts: true,
             can_undo: self.drawing.can_undo(),
             can_redo: self.drawing.can_redo(),
+            toggles: self.toggles.bits(),
             document_name: self.document_name.clone(),
             unsaved_changes: self.drawing.revision() != self.saved_revision,
             export_is_lossy: self.export_is_lossy,
@@ -269,6 +272,17 @@ impl Session {
         dirty | Dirty::UI
     }
 
+    pub fn toggles(&self) -> Toggles {
+        self.toggles
+    }
+
+    /// Starts a command from the UI — a toolbar button or a menu item — and
+    /// echoes it in the command line as if it had been typed (DESIGN §5, §15).
+    pub fn invoke_from_ui(&mut self, name: &str) -> Dirty {
+        self.log.push(format!("{IDLE_PROMPT} {}", name.trim()));
+        self.invoke(name)
+    }
+
     /// Starts a command by name or alias, cancelling any active command first.
     ///
     /// This is the single entry point for typed commands, shortcuts, and UI
@@ -306,6 +320,17 @@ impl Session {
                 self.invoke("ERASE")
             }
             KeyAction::Delete => Dirty::NONE,
+            // A toggle flips whatever else is going on: the active command is
+            // not cancelled and its state is untouched.
+            KeyAction::Toggle(toggle) => {
+                let state = if self.toggles.flip(toggle) {
+                    "on"
+                } else {
+                    "off"
+                };
+                self.log.push(format!("<{} {state}>", toggle.label()));
+                Dirty::UI
+            }
         }
     }
 
@@ -825,6 +850,68 @@ mod tests {
         h.escape();
         h.enter("");
         assert_eq!(h.session.ui_state().command, Some("LINE"));
+    }
+
+    // ── toggles and UI-invoked commands ──
+
+    #[test]
+    fn a_toggle_flips_mid_command_without_disturbing_it() {
+        use crate::Toggle;
+        let mut h = Harness::new();
+        h.enter_all(&["L", "0,0", "10,0"]);
+        let prompt = h.prompt();
+        let revision = h.session.drawing().revision();
+
+        let dirty = h.session.key(KeyAction::Toggle(Toggle::Ortho));
+        assert_eq!(dirty, Dirty::UI);
+        assert!(h.session.toggles().is_on(Toggle::Ortho));
+        assert_eq!(h.session.ui_state().toggles, Toggle::Ortho.bit());
+        assert_eq!(h.log().last().unwrap(), "<ORTHO on>");
+
+        // The command carries on exactly where it was.
+        assert_eq!(h.prompt(), prompt);
+        assert_eq!(h.session.drawing().revision(), revision);
+        h.enter_all(&["10,10", ""]);
+        assert_eq!(h.lines().len(), 2);
+
+        h.session.key(KeyAction::Toggle(Toggle::Ortho));
+        assert_eq!(h.log().last().unwrap(), "<ORTHO off>");
+        assert_eq!(h.session.ui_state().toggles, 0);
+    }
+
+    #[test]
+    fn toggles_survive_opening_another_drawing_and_are_not_undoable() {
+        use crate::Toggle;
+        let mut h = Harness::new();
+        h.session.key(KeyAction::Toggle(Toggle::Grid));
+        h.enter_all(&["L", "0,0", "10,0", ""]);
+        h.undo();
+        assert!(
+            h.session.toggles().is_on(Toggle::Grid),
+            "undo reverts the drawing, not the drafting aids"
+        );
+        h.session
+            .open_drawing(Drawing::new(), "other.dxf", false, Vec::new());
+        assert!(h.session.toggles().is_on(Toggle::Grid));
+    }
+
+    /// DESIGN §15: toolbar buttons must not bypass the command architecture.
+    #[test]
+    fn a_ui_invoked_command_is_identical_to_a_typed_one_and_is_echoed() {
+        let mut typed = Harness::new();
+        typed.enter("CIRCLE");
+        let mut clicked = Harness::new();
+        clicked.session.invoke_from_ui("CIRCLE");
+
+        assert_eq!(clicked.prompt(), typed.prompt());
+        assert_eq!(clicked.session.ui_state(), typed.session.ui_state());
+        assert_eq!(clicked.log(), typed.log(), "the button echoes as if typed");
+
+        // Like the classic ^C^C, a button cancels a command in progress first.
+        clicked.enter("0,0");
+        clicked.session.invoke_from_ui("LINE");
+        assert_eq!(clicked.session.ui_state().command, Some("LINE"));
+        assert!(clicked.log().contains(&"*Cancel*".to_owned()));
     }
 
     #[test]

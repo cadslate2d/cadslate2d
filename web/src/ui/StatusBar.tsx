@@ -1,8 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { CadApp } from "../app/cad-app";
+import { TOGGLES, UNAVAILABLE_TOGGLES } from "../app/toggles";
 
-/** Drafting toggles from DESIGN §5. They gain behaviour in M1–M2. */
-const TOGGLES = ["SNAP", "GRID", "ORTHO", "POLAR", "OSNAP", "OTRACK", "LWT"] as const;
 const COORDINATE_DECIMALS = 4;
 
 export function formatCoordinates(cursor: readonly [number, number] | undefined): string {
@@ -19,14 +18,31 @@ export function StatusBar({ app }: { app: CadApp }) {
       <span className="status__chip status__coordinates" data-testid="coordinates">
         {formatCoordinates(ui.cursor)}
       </span>
-      {TOGGLES.map((toggle) => (
+      {TOGGLES.map((toggle) => {
+        const on = (ui.toggles & toggle.bit) !== 0;
+        return (
+          <button
+            key={toggle.id}
+            type="button"
+            className={`status__chip status__toggle${on ? " status__chip--active" : ""}`}
+            aria-pressed={on}
+            title={`${toggle.label} (${toggle.key}). Its drafting behaviour arrives with object snaps and drafting aids.`}
+            // Keep keyboard focus on the command line.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => app.key(toggle.action)}
+          >
+            {toggle.label}
+          </button>
+        );
+      })}
+      {UNAVAILABLE_TOGGLES.map((label) => (
         <span
-          key={toggle}
+          key={label}
           className="status__chip status__chip--unavailable"
           aria-disabled="true"
-          title={`${toggle} is not available yet`}
+          title={`${label} is not available yet`}
         >
-          {toggle}
+          {label}
         </span>
       ))}
       <span className="status__chip status__chip--active">MODEL</span>

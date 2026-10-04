@@ -15,6 +15,8 @@ export interface UiSnapshot {
   readonly spaceAccepts: boolean;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
+  /** Drafting toggles that are on; test with `ToggleBit`. */
+  readonly toggles: number;
   readonly documentName: string | undefined;
   readonly unsavedChanges: boolean;
   readonly exportIsLossy: boolean;
@@ -35,6 +37,7 @@ const INITIAL: UiSnapshot = {
   spaceAccepts: true,
   canUndo: false,
   canRedo: false,
+  toggles: 0,
   documentName: undefined,
   unsavedChanges: false,
   exportIsLossy: false,
@@ -53,6 +56,11 @@ export class UiStore {
 
   readonly getSnapshot = (): UiSnapshot => this.#snapshot;
 
+  /** Log lines written since the session began, including any no longer kept. */
+  get logTotal(): number {
+    return this.#logSeen;
+  }
+
   /** Pulls the current state and any new log lines, then notifies subscribers. */
   refresh(source: UiSource): void {
     const state = source.uiState();
@@ -70,6 +78,7 @@ export class UiStore {
       spaceAccepts: state.spaceAccepts,
       canUndo: state.canUndo,
       canRedo: state.canRedo,
+      toggles: state.toggles,
       documentName: state.documentName,
       unsavedChanges: state.unsavedChanges,
       exportIsLossy: state.exportIsLossy,

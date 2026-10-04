@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { CadApp } from "../app/cad-app";
 import { classifyKey } from "../app/key-routing";
+import { toggleSpec } from "../app/toggles";
 import { KeyAction } from "../cad/engine";
-
-/** Number of rows in the command area; must match --command-visible-lines. */
-const VISIBLE_LINES = 5;
 
 /**
  * The command line: recent log lines, the current prompt, and a native text
@@ -52,6 +50,9 @@ export function CommandLine({ app }: { app: CadApp }) {
         case "delete":
           app.key(KeyAction.Delete);
           break;
+        case "toggle":
+          app.key(toggleSpec(intent.toggle).action);
+          break;
         case "history-previous":
         case "history-next": {
           const recalled =
@@ -66,40 +67,51 @@ export function CommandLine({ app }: { app: CadApp }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [app]);
 
-  const history = ui.log.slice(-(VISIBLE_LINES - 1));
-  const firstLineNumber = ui.log.length - history.length + 1;
+  // Keep the prompt in view as lines arrive; the user can scroll back at will.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+  }, [ui.log.length, ui.prompt]);
+
+  // Line numbers count from the start of the session, even after old lines scroll out of the store.
+  const promptNumber = app.ui.logTotal + 1;
+  const firstNumber = promptNumber - ui.log.length;
 
   return (
     <section className="command" aria-label="Command line">
-      <ol className="command__gutter" aria-hidden="true">
-        {Array.from({ length: history.length + 1 }, (_, index) => (
-          <li key={index}>{firstLineNumber + index}</li>
-        ))}
-      </ol>
-      <ol className="command__lines" aria-live="polite">
-        {history.map((line, index) => (
-          <li key={firstLineNumber + index} data-testid="log-line">
-            {line}
+      <div className="command__scroll" ref={scrollRef} data-testid="command-scroll">
+        <ol className="command__rows" aria-live="polite">
+          {ui.log.map((line, index) => (
+            <li key={firstNumber + index} className="command__row">
+              <span className="command__number" aria-hidden="true">
+                {firstNumber + index}
+              </span>
+              <span data-testid="log-line">{line}</span>
+            </li>
+          ))}
+          <li className="command__row command__row--prompt">
+            <span className="command__number" aria-hidden="true">
+              {promptNumber}
+            </span>
+            <label htmlFor="command-input" data-testid="prompt">
+              {ui.prompt}
+            </label>
+            <input
+              id="command-input"
+              ref={inputRef}
+              className="command__input"
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              autoFocus
+            />
           </li>
-        ))}
-        <li className="command__line--prompt">
-          <label htmlFor="command-input" data-testid="prompt">
-            {ui.prompt}
-          </label>
-          <input
-            id="command-input"
-            ref={inputRef}
-            className="command__input"
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            autoComplete="off"
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            autoFocus
-          />
-        </li>
-      </ol>
+        </ol>
+      </div>
     </section>
   );
 }

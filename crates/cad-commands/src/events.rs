@@ -40,6 +40,8 @@ pub enum KeyAction {
     Save,
     /// Delete: erases the selection when no command is active.
     Delete,
+    /// A status-bar toggle or its function key (F3, F7, F8, F10).
+    Toggle(crate::Toggle),
 }
 
 /// Something only the host can do, requested by a command. Rust never calls

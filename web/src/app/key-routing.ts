@@ -9,6 +9,8 @@ export type KeyIntent =
   | { kind: "redo" }
   | { kind: "open" }
   | { kind: "save" }
+  /** A drafting toggle's function key. */
+  | { kind: "toggle"; toggle: "osnap" | "grid" | "ortho" | "polar" }
   /** Delete with nothing typed: erase the selection. */
   | { kind: "delete" }
   | { kind: "history-previous" }
@@ -25,6 +27,14 @@ export interface KeyLike {
   readonly altKey: boolean;
   readonly shiftKey: boolean;
 }
+
+/** Function keys from DESIGN §13.4. Browsers bind several of these; the app takes them. */
+const TOGGLE_KEYS: Readonly<Record<string, "osnap" | "grid" | "ortho" | "polar">> = {
+  F3: "osnap",
+  F7: "grid",
+  F8: "ortho",
+  F10: "polar",
+};
 
 const EDITING_KEYS = new Set(["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Home", "End"]);
 
@@ -44,6 +54,9 @@ export function classifyKey(event: KeyLike, spaceAccepts: boolean, inputEmpty = 
     return { kind: "ignore" };
   }
   if (event.altKey) return { kind: "ignore" };
+
+  const toggle = TOGGLE_KEYS[event.key];
+  if (toggle) return { kind: "toggle", toggle };
 
   switch (event.key) {
     case "Enter":

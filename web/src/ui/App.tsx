@@ -5,14 +5,29 @@ import { CanvasView } from "./CanvasView";
 import { CommandLine } from "./CommandLine";
 import { Header } from "./Header";
 import { StatusBar } from "./StatusBar";
+import { Toolbar } from "./Toolbar";
 
 type CoreState =
   | { status: "loading" }
   | { status: "ready"; app: CadApp; version: string }
   | { status: "failed"; reason: string };
 
+const TOOLBAR_KEY = "cadslate2d.toolbar";
+
+/** Toolbar visibility is a UI preference: it lives in the browser, not in the drawing. */
+function useToolbarPreference(): [boolean, () => void] {
+  const [visible, setVisible] = useState(() => localStorage.getItem(TOOLBAR_KEY) !== "hidden");
+  const toggle = () =>
+    setVisible((current) => {
+      localStorage.setItem(TOOLBAR_KEY, current ? "hidden" : "shown");
+      return !current;
+    });
+  return [visible, toggle];
+}
+
 export function App() {
   const [core, setCore] = useState<CoreState>({ status: "loading" });
+  const [toolbarVisible, toggleToolbar] = useToolbarPreference();
 
   useEffect(() => {
     let cancelled = false;
@@ -60,8 +75,12 @@ export function App() {
   }
 
   return (
-    <div className="shell">
-      <Header coreVersion={core.version} />
+    <div className={`shell${toolbarVisible ? " shell--with-toolbar" : ""}`}>
+      <Header
+        coreVersion={core.version}
+        toolbar={{ visible: toolbarVisible, toggle: toggleToolbar }}
+      />
+      {toolbarVisible && <Toolbar app={core.app} />}
       <CanvasView app={core.app} />
       <CommandLine app={core.app} />
       <StatusBar app={core.app} />

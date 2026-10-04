@@ -28,6 +28,7 @@ describe("WASM API surface", () => {
       "export_dxf",
       "history_next",
       "history_previous",
+      "invoke",
       "key",
       "load_dxf",
       "log_since",

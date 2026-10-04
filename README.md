@@ -14,7 +14,7 @@ Milestone **M0 — The Line** is complete: a vertical slice that proves the arch
 
 ## What works today
 
-Type anywhere on the page; you never need to click the command line first.
+Type anywhere on the page; you never need to click the command line first. The toolbar is optional: every button runs the same command you could type, and the `Toolbar` button in the header hides it.
 
 | Command | Aliases | What it does |
 | --- | --- | --- |
@@ -47,6 +47,7 @@ Options shown in brackets, as in `Specify next point or [Close/Undo]:`, are chos
 | Escape | Cancel the command; pressed again, clear the selection |
 | Up / Down | Recall earlier input |
 | Wheel / middle-drag | Zoom about the cursor / pan |
+| F3 / F7 / F8 / F10 | Toggle OSNAP / GRID / ORTHO / POLAR. The switches work; the drafting behaviour behind them arrives in M2 |
 
 Unexported changes exist only in the browser tab until autosave arrives (M5); the page asks before you leave with unexported work.
 

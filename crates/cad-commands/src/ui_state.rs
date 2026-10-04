@@ -19,6 +19,8 @@ pub struct UiState {
     pub space_accepts: bool,
     pub can_undo: bool,
     pub can_redo: bool,
+    /// Drafting toggles that are on, one bit each (`Toggle::bit`).
+    pub toggles: u32,
     /// Name of the file the drawing was opened from, if any.
     pub document_name: Option<String>,
     /// The drawing changed since it was opened or last exported.

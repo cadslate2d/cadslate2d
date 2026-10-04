@@ -59,6 +59,7 @@
 
   /* Fixed region sizes */
   --size-header: 44px;
+  --size-toolbar: 68px;
   --size-status: 34px;
   --command-visible-lines: 5;
 }

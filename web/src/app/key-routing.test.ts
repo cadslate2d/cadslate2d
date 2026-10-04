@@ -45,6 +45,16 @@ describe("classifyKey", () => {
     expect(classifyKey(key("Delete"), true, false).kind).toBe("text");
   });
 
+  test("F3, F7, F8, and F10 are the drafting toggles", () => {
+    const toggles = ["F3", "F7", "F8", "F10"].map((name) => classifyKey(key(name), true));
+    expect(toggles).toEqual([
+      { kind: "toggle", toggle: "osnap" },
+      { kind: "toggle", toggle: "grid" },
+      { kind: "toggle", toggle: "ortho" },
+      { kind: "toggle", toggle: "polar" },
+    ]);
+  });
+
   test("printable characters and editing keys go to the command line", () => {
     for (const name of [
       "L",
@@ -69,7 +79,7 @@ describe("classifyKey", () => {
     expect(kind(key("c", { metaKey: true }))).toBe("ignore");
     expect(kind(key("I", { ctrlKey: true, shiftKey: true }))).toBe("ignore");
     expect(kind(key("d", { altKey: true }))).toBe("ignore");
-    for (const name of ["F5", "F12", "Tab", "Shift", "Control", "PageDown"]) {
+    for (const name of ["F5", "F12", "F1", "F9", "Tab", "Shift", "Control", "PageDown"]) {
       expect(kind(key(name)), name).toBe("ignore");
     }
   });

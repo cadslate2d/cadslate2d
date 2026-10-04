@@ -1,6 +1,8 @@
 //! The one exported handle (ADR-0002 §1).
 
-use cad_commands::{Dirty, HostRequest, KeyAction, Modifiers, PointerButton, Session, UiState};
+use cad_commands::{
+    Dirty, HostRequest, KeyAction, Modifiers, PointerButton, Session, Toggle, UiState,
+};
 use cad_core::{ClipTransform, ScreenPoint};
 use cad_render::{OverlayFrame, SceneCache};
 use js_sys::{Float32Array, Uint32Array};
@@ -40,6 +42,10 @@ fn key_action(code: u32) -> Option<KeyAction> {
         3 => Some(KeyAction::Open),
         4 => Some(KeyAction::Save),
         5 => Some(KeyAction::Delete),
+        6 => Some(KeyAction::Toggle(Toggle::Osnap)),
+        7 => Some(KeyAction::Toggle(Toggle::Grid)),
+        8 => Some(KeyAction::Toggle(Toggle::Ortho)),
+        9 => Some(KeyAction::Toggle(Toggle::Polar)),
         _ => None,
     }
 }
@@ -65,6 +71,7 @@ struct UiStateDto {
     space_accepts: bool,
     can_undo: bool,
     can_redo: bool,
+    toggles: u32,
     document_name: Option<String>,
     unsaved_changes: bool,
     export_is_lossy: bool,
@@ -81,6 +88,7 @@ impl From<UiState> for UiStateDto {
             space_accepts: state.space_accepts,
             can_undo: state.can_undo,
             can_redo: state.can_redo,
+            toggles: state.toggles,
             document_name: state.document_name,
             unsaved_changes: state.unsaved_changes,
             export_is_lossy: state.export_is_lossy,
@@ -198,6 +206,13 @@ impl CadSession {
     /// One completed command-line entry. Interpreted entirely in Rust.
     pub fn submit_text(&mut self, text: &str) -> u32 {
         let dirty = self.session.submit_text(text);
+        self.report(dirty)
+    }
+
+    /// Starts a command from a toolbar button or menu item. It goes through
+    /// the same entry point as a typed command and is echoed like one.
+    pub fn invoke(&mut self, name: &str) -> u32 {
+        let dirty = self.session.invoke_from_ui(name);
         self.report(dirty)
     }
 

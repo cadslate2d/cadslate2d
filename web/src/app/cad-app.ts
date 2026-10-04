@@ -55,6 +55,12 @@ export class CadApp {
     this.#afterInput(this.engine.submitText(text));
   }
 
+  /** Starts a command from the UI. It is not a shortcut around the command line: Rust echoes and runs it. */
+  invoke(name: string): void {
+    this.loop.flushPointerMove();
+    this.#afterInput(this.engine.invoke(name));
+  }
+
   key(action: KeyAction): void {
     this.loop.flushPointerMove();
     this.#afterInput(this.engine.key(action));

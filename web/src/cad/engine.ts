@@ -24,8 +24,22 @@ export const Dirty = {
 export const Modifier = { Shift: 1, Ctrl: 1 << 1, Alt: 1 << 2 } as const;
 
 /** Non-text keys. Text, including Enter and Space-as-Enter, goes through `submitText`. */
-export const KeyAction = { Escape: 0, Undo: 1, Redo: 2, Open: 3, Save: 4, Delete: 5 } as const;
+export const KeyAction = {
+  Escape: 0,
+  Undo: 1,
+  Redo: 2,
+  Open: 3,
+  Save: 4,
+  Delete: 5,
+  ToggleOsnap: 6,
+  ToggleGrid: 7,
+  ToggleOrtho: 8,
+  TogglePolar: 9,
+} as const;
 export type KeyAction = (typeof KeyAction)[keyof typeof KeyAction];
+
+/** Bits of `UiState.toggles`: the drafting aids that are switched on. */
+export const ToggleBit = { Osnap: 1, Grid: 1 << 1, Ortho: 1 << 2, Polar: 1 << 3 } as const;
 
 /** Something only the host can do, requested by a command. */
 export const HostRequest = { None: 0, OpenFile: 1, ExportFile: 2 } as const;
@@ -49,6 +63,8 @@ export interface UiState {
   readonly spaceAccepts: boolean;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
+  /** Drafting toggles that are on; test with `ToggleBit`. */
+  readonly toggles: number;
   /** Name of the file the drawing was opened from, if any. */
   readonly documentName?: string;
   /** The drawing changed since it was opened or last exported. */
@@ -163,6 +179,14 @@ export class CadEngine {
   /** One completed command-line entry. The text is interpreted in Rust, never here. */
   submitText(text: string): number {
     return this.#session.submit_text(text);
+  }
+
+  /**
+   * Starts a command from a toolbar button or menu item. Same entry point as
+   * a typed command, echoed in the command line the same way.
+   */
+  invoke(name: string): number {
+    return this.#session.invoke(name);
   }
 
   /** Recalls an older submitted line, if there is one. */

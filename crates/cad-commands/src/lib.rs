@@ -21,6 +21,7 @@ mod session;
 pub mod testing;
 #[cfg(test)]
 mod tests;
+mod toggles;
 mod transient;
 mod ui_state;
 
@@ -31,5 +32,6 @@ pub use overlay::OverlayItem;
 pub use registry::CommandRegistry;
 pub use selection::Selection;
 pub use session::Session;
+pub use toggles::{Toggle, Toggles};
 pub use transient::TransientEdit;
 pub use ui_state::UiState;
