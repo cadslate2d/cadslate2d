@@ -1,0 +1,51 @@
+# Intersection regression corpus (DESIGN §21.3).
+#
+# Every fixed geometry bug adds a line here. One case per line:
+#
+#   <primitive> | <primitive> => <x y> [<x y>]      expected points, any order
+#   <primitive> | <primitive> => none
+#
+# Primitives:
+#   segment x0 y0 x1 y1
+#   circle  cx cy radius
+#   arc     cx cy radius start_degrees sweep_degrees     (counter-clockwise)
+#
+# Blank lines and lines starting with # are ignored.
+
+# ── baseline: one of each pairing ──
+segment 0 0 10 10 | segment 0 10 10 0 => 5 5
+segment -20 0 20 0 | circle 0 0 5 => -5 0 5 0
+segment 0 0 20 20 | arc 0 0 10 0 90 => 7.0710678118654755 7.0710678118654755
+circle 0 0 5 | circle 6 0 5 => 3 4 3 -4
+circle 6 0 5 | arc 0 0 5 0 180 => 3 4
+arc 0 0 5 0 180 | arc 6 0 5 90 180 => 3 4
+
+# ── touching, not crossing ──
+segment 0 0 5 0 | segment 5 0 5 5 => 5 0
+segment 0 0 10 0 | segment 4 0 4 3 => 4 0
+segment -10 5 10 5 | circle 0 0 5 => 0 5
+circle 0 0 5 | circle 8 0 3 => 5 0
+circle 0 0 5 | circle 2 0 3 => 5 0
+
+# ── an arc's own endpoints count as on the arc ──
+segment 10 -5 10 5 | arc 0 0 10 0 90 => 10 0
+segment -5 10 5 10 | arc 0 0 10 0 90 => 0 10
+
+# ── no finite answer ──
+segment 0 0 10 0 | segment 0 1 10 1 => none
+segment 0 0 10 0 | segment 5 0 20 0 => none
+segment 0 0 10 0 | segment 3 3 3 3 => none
+circle 0 0 5 | circle 0 0 5 => none
+circle 0 0 5 | circle 0 0 3 => none
+circle 0 0 5 | circle 20 0 5 => none
+circle 0 0 5 | circle 1 0 1 => none
+
+# ── on the carrier, off the bounded curve ──
+segment 0 0 1 1 | segment 0 10 10 0 => none
+segment -1 0 1 0 | circle 0 0 5 => none
+segment 0 0 -20 -20 | arc 0 0 10 0 90 => none
+circle 6 0 5 | arc 0 0 5 180 90 => none
+
+# ── large coordinates (survey-style) ──
+segment 5000000 7000000 5000010 7000010 | segment 5000000 7000010 5000010 7000000 => 5000005 7000005
+segment 4999990 7000000 5000020 7000000 | circle 5000005 7000000 5 => 5000000 7000000 5000010 7000000

@@ -120,6 +120,11 @@ impl Arc {
         }
     }
 
+    /// The full circle this arc is part of.
+    pub fn circle(&self) -> Circle {
+        Circle::new(self.center, self.radius)
+    }
+
     /// End angle in `[0, 2π)`.
     pub fn end(&self) -> f64 {
         normalize_angle(self.start + self.sweep)

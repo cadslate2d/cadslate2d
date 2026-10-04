@@ -2,7 +2,7 @@
 
 use cad_core::{Aabb, Point2, Vec2};
 use cad_geometry::{
-    Arc, Circle, Segment, bounds_of, polyline_distance_to_point, polyline_segments,
+    Arc, Circle, Primitive, Segment, bounds_of, polyline_distance_to_point, polyline_segments,
 };
 
 /// A straight line between two points.
@@ -130,6 +130,27 @@ impl Entity {
                 polyline_distance_to_point(&polyline.vertices, polyline.closed, point)
             }
         }
+    }
+
+    /// The entity as lines, circles, and arcs: the common currency of
+    /// intersection, snapping, and trimming.
+    pub fn primitives(&self) -> Vec<Primitive> {
+        match self {
+            Entity::Line(line) => vec![Primitive::Segment(line.segment())],
+            Entity::Circle(circle) => vec![Primitive::Circle(circle.circle())],
+            Entity::Arc(arc) => vec![Primitive::Arc(arc.arc())],
+            Entity::Polyline(polyline) => polyline.segments().map(Primitive::Segment).collect(),
+        }
+    }
+
+    /// Every point where this entity's geometry meets `other`'s.
+    pub fn intersections(&self, other: &Entity) -> Vec<Point2> {
+        let theirs = other.primitives();
+        self.primitives()
+            .iter()
+            .flat_map(|mine| theirs.iter().map(move |their| mine.intersect(their)))
+            .flat_map(|hits| hits.as_slice().to_vec())
+            .collect()
     }
 
     /// True when the whole entity lies within `bounds` (window selection).
@@ -353,6 +374,38 @@ mod tests {
         let circle = &one_of_each()[1];
         let inside_disc = Aabb::from_points(Point2::new(4.5, 4.5), Point2::new(5.5, 5.5));
         assert!(!circle.crosses(&inside_disc));
+    }
+
+    #[test]
+    fn entities_intersect_through_their_primitives() {
+        let all = one_of_each();
+        let (line, circle, triangle) = (&all[0], &all[1], &all[3]);
+        assert_eq!(
+            all.iter()
+                .map(|entity| entity.primitives().len())
+                .collect::<Vec<_>>(),
+            vec![1, 1, 1, 3]
+        );
+
+        // A vertical line through the circle's centre crosses it twice.
+        let vertical: Entity =
+            LineEntity::new(Point2::new(5.0, -10.0), Point2::new(5.0, 20.0)).into();
+        let mut hits = vertical.intersections(circle);
+        hits.sort_by(|a, b| a.y.total_cmp(&b.y));
+        assert_eq!(hits.len(), 2);
+        assert!(
+            hits[0].distance_to(Point2::new(5.0, 2.0)) < 1e-9
+                && hits[1].distance_to(Point2::new(5.0, 8.0)) < 1e-9
+        );
+
+        // It also crosses the bottom line once.
+        assert_eq!(vertical.intersections(line).len(), 1);
+        // A vertical through the closed triangle crosses its base and its hypotenuse.
+        let through: Entity =
+            LineEntity::new(Point2::new(2.0, -10.0), Point2::new(2.0, 20.0)).into();
+        assert_eq!(triangle.intersections(&through).len(), 2);
+        // Symmetric.
+        assert_eq!(circle.intersections(&vertical).len(), 2);
     }
 
     #[test]
