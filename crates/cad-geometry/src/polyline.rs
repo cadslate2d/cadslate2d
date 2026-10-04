@@ -14,8 +14,8 @@
 //! segment. A bulge of ±1 is a semicircle. The sagitta — how far the arc
 //! stands off the chord — is `|bulge| × chord / 2`.
 
-use cad_core::Point2;
-use cad_core::tolerance::{LinearTolerance, ParametricTolerance};
+use cad_core::tolerance::{AngularTolerance, LinearTolerance, ParametricTolerance};
+use cad_core::{Point2, Vec2};
 
 use crate::{Arc, Primitive, Segment};
 
@@ -42,7 +42,7 @@ pub fn arc_from_bulge(start: Point2, end: Point2, bulge: f64) -> Option<Arc> {
     // The centre lies on the chord's perpendicular bisector, to the left of
     // the direction of travel for a counter-clockwise minor arc.
     let middle = start + chord * 0.5;
-    let left = cad_core::Vec2::new(-chord.y, chord.x) * (1.0 / length);
+    let left = Vec2::new(-chord.y, chord.x) * (1.0 / length);
     let to_center = (length / 2.0) * (1.0 - bulge * bulge) / (2.0 * bulge);
     let center = middle + left * to_center;
     let radius = length * (1.0 + bulge * bulge) / (4.0 * bulge.abs());
@@ -61,6 +61,41 @@ pub fn arc_from_bulge(start: Point2, end: Point2, bulge: f64) -> Option<Arc> {
 pub fn bulge_from_arc(arc: &Arc, forwards: bool) -> f64 {
     let bulge = (arc.sweep / 4.0).tan();
     if forwards { bulge } else { -bulge }
+}
+
+/// The direction of travel on arriving at `end` along a segment from `start`
+/// with this bulge: the chord's direction for a straight segment, turned by
+/// half the included angle for an arc.
+pub fn bulge_end_tangent(start: Point2, end: Point2, bulge: f64) -> Vec2 {
+    let chord = end - start;
+    if is_straight(bulge) {
+        return chord;
+    }
+    // The tangent–chord angle is half the included angle: 2·atan(bulge).
+    let (sine, cosine) = (2.0 * bulge.atan()).sin_cos();
+    Vec2::new(
+        chord.x * cosine - chord.y * sine,
+        chord.x * sine + chord.y * cosine,
+    )
+}
+
+/// The bulge of the arc from `start` to `end` that leaves `start` in the
+/// direction `tangent` — how an arc segment continues smoothly from the
+/// segment before it. Zero when `end` lies straight ahead.
+///
+/// `None` when `end` lies straight behind (no arc turns back on its own
+/// tangent), when it is `start` itself, or when `tangent` has no direction.
+pub fn bulge_from_tangent(start: Point2, tangent: Vec2, end: Point2) -> Option<f64> {
+    let chord = end - start;
+    let usable = LinearTolerance::DEFAULT.is_zero(chord.length())
+        || LinearTolerance::DEFAULT.is_zero(tangent.length());
+    if usable {
+        return None;
+    }
+    // The signed angle from the tangent to the chord is half the included angle.
+    let turn = (tangent.x * chord.y - tangent.y * chord.x).atan2(tangent.dot(chord));
+    let straight_back = AngularTolerance::DEFAULT.is_zero(std::f64::consts::PI - turn.abs());
+    (!straight_back).then(|| (turn / 2.0).tan())
 }
 
 /// One segment of a polyline from `start` to `end`: a straight segment, or
@@ -212,6 +247,50 @@ mod tests {
         assert!(close(left.center, p(0.0, 2.0)) && close(left.mid_point(), p(-2.0, 2.0)));
     }
 
+    #[test]
+    fn an_arc_continues_from_a_tangent_direction() {
+        let east = Vec2::new(1.0, 0.0);
+        // Up and to the right from the origin, leaving eastwards: a quarter
+        // turn counter-clockwise about (0, 10).
+        let bulge = bulge_from_tangent(p(0.0, 0.0), east, p(10.0, 10.0)).unwrap();
+        assert!((bulge - (2f64.sqrt() - 1.0)).abs() < 1e-12);
+        let arc = arc_from_bulge(p(0.0, 0.0), p(10.0, 10.0), bulge).unwrap();
+        assert!(close(arc.center, p(0.0, 10.0)));
+
+        // Down and to the right: the mirror image, clockwise.
+        let bulge = bulge_from_tangent(p(0.0, 0.0), east, p(10.0, -10.0)).unwrap();
+        assert!((bulge + (2f64.sqrt() - 1.0)).abs() < 1e-12);
+        // Straight to the side: a semicircle.
+        assert!((bulge_from_tangent(p(0.0, 0.0), east, p(0.0, 6.0)).unwrap() - 1.0).abs() < 1e-12);
+        // Straight ahead: no arc needed.
+        assert_eq!(
+            bulge_from_tangent(p(0.0, 0.0), east, p(7.0, 0.0)),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn no_arc_leaves_a_point_and_comes_straight_back() {
+        let east = Vec2::new(1.0, 0.0);
+        assert_eq!(bulge_from_tangent(p(0.0, 0.0), east, p(-5.0, 0.0)), None);
+        assert_eq!(bulge_from_tangent(p(0.0, 0.0), east, p(0.0, 0.0)), None);
+        assert_eq!(
+            bulge_from_tangent(p(0.0, 0.0), Vec2::new(0.0, 0.0), p(1.0, 1.0)),
+            None
+        );
+    }
+
+    #[test]
+    fn the_end_tangent_of_a_straight_segment_is_its_direction() {
+        assert_eq!(
+            bulge_end_tangent(p(1.0, 1.0), p(4.0, 5.0), 0.0),
+            Vec2::new(3.0, 4.0)
+        );
+        // A counter-clockwise semicircle from (0,0) to (2,0) arrives heading north.
+        let arriving = bulge_end_tangent(p(0.0, 0.0), p(2.0, 0.0), 1.0);
+        assert!(arriving.x.abs() < 1e-12 && arriving.y > 0.0);
+    }
+
     fn coordinate() -> impl Strategy<Value = f64> {
         -1e3..1e3f64
     }
@@ -260,6 +339,48 @@ mod tests {
             let to_middle = arc.mid_point() - start;
             let side = along.x * to_middle.y - along.y * to_middle.x;
             prop_assert!(side * bulge < 0.0, "side {side}, bulge {bulge}");
+        }
+
+        /// The arc that continues from a tangent really leaves along it, and
+        /// the tangent it arrives with is the one a further arc would
+        /// continue from: chaining the two functions is consistent.
+        #[test]
+        fn tangent_continuation_is_smooth(
+            ax in coordinate(), ay in coordinate(), bx in coordinate(), by in coordinate(),
+            degrees in 0.0..360f64,
+        ) {
+            let (start, end) = (p(ax, ay), p(bx, by));
+            prop_assume!(start.distance_to(end) > 1e-2);
+            let tangent = crate::unit_at_degrees(degrees);
+            let Some(bulge) = bulge_from_tangent(start, tangent, end) else {
+                return Ok(()); // straight behind
+            };
+            prop_assume!(bulge.abs() > 1e-3 && bulge.abs() < 50.0);
+            let arc = arc_from_bulge(start, end, bulge).unwrap();
+
+            // At the start, the radius is perpendicular to the tangent…
+            let radius = start - arc.center;
+            prop_assert!(radius.dot(tangent).abs() < 1e-6 * arc.radius);
+            // …and travel is along it, not against it: counter-clockwise for
+            // a positive bulge means turning left of the radius.
+            let travel = if bulge > 0.0 {
+                Vec2::new(-radius.y, radius.x)
+            } else {
+                Vec2::new(radius.y, -radius.x)
+            };
+            prop_assert!(travel.dot(tangent) > 0.0);
+
+            // Arriving, the tangent is perpendicular to the radius at the end.
+            let arriving = bulge_end_tangent(start, end, bulge);
+            let end_radius = end - arc.center;
+            let scale = arc.radius * start.distance_to(end);
+            prop_assert!(end_radius.dot(arriving).abs() < 1e-6 * scale);
+            let end_travel = if bulge > 0.0 {
+                Vec2::new(-end_radius.y, end_radius.x)
+            } else {
+                Vec2::new(end_radius.y, -end_radius.x)
+            };
+            prop_assert!(end_travel.dot(arriving) > 0.0);
         }
     }
 }

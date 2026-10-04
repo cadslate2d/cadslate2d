@@ -22,8 +22,8 @@ pub use extend::{extend_arc, extend_segment};
 pub use intersect::{Hits, Orientation, Primitive, orientation};
 pub use offset::{offset_circle, offset_segment};
 pub use polyline::{
-    arc_from_bulge, bulge_from_arc, bulge_primitive, is_straight, polyline_primitives,
-    polyline_spans,
+    arc_from_bulge, bulge_end_tangent, bulge_from_arc, bulge_from_tangent, bulge_primitive,
+    is_straight, polyline_primitives, polyline_spans,
 };
 pub use segment::Segment;
 pub use transform::{Transform, unit_at_degrees};

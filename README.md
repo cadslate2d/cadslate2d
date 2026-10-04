@@ -21,7 +21,7 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `LINE` | `L` | A chain of line segments. Options: `Close`, `Undo`. |
 | `CIRCLE` | `C` | Centre and radius, or `Diameter`, `2P`, `3P`. |
 | `ARC` | `A` | Three points; or start, `Center`, end; or start, centre, `Angle`. |
-| `PLINE` | `PL` | One polyline through a chain of points. Options: `Close`, `Undo`. |
+| `PLINE` | `PL` | One polyline through a chain of points. `Arc` switches to arc segments that continue smoothly from the one before; `Line` switches back. Also `Close`, `Undo`. |
 | `RECTANG` | `REC` | A closed rectangle from two corners. |
 | `ERASE` | `E`, Delete | Erases the selected objects. |
 | `MOVE` | `M` | Moves the selection from a base point to a second point. |

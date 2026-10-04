@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   centerOf,
   chooseFile,
+  clickWorld,
   downloadFrom,
   enter,
   highlightPixels,
@@ -12,6 +13,45 @@ import {
   rendererStats,
   settle,
 } from "./support";
+
+test.describe("PLINE arc segments", () => {
+  // The issue's criterion: the result exports and re-imports unchanged.
+  test("Arc and Line draw a slot that exports with bulges and reopens identically", async ({
+    page,
+  }) => {
+    const canvas = await openApp(page);
+    await page.mouse.move(0, 0);
+    await enter(page, "PL", "0,0", "100,0", "A");
+    await expect(prompt(page)).toHaveText("Specify endpoint of arc or [Line/Undo]:");
+    await enter(page, "100,40", "L");
+    await expect(prompt(page)).toHaveText("Specify next point or [Arc/Close/Undo]:");
+    await enter(page, "0,40", "A", "C");
+    await expect(prompt(page)).toHaveText("Command:");
+
+    // The right end bulges 20 beyond its vertices. A click out there, on
+    // the arc, selects the polyline: the arc is drawn and can be picked.
+    await clickWorld(page, canvas, 120, 20);
+    expect(await highlightPixels(canvas)).toBeGreaterThan(300);
+    await page.keyboard.press("Escape");
+
+    const first = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    expect(first.text.match(/^POLYLINE$/gm)).toHaveLength(1);
+    expect(first.text.match(/^VERTEX$/gm)).toHaveLength(4);
+    // Two semicircular ends: bulge 1 on the vertices that start them.
+    const bulges = [...first.text.matchAll(/^ 42\n(.+)$/gm)].map((match) => Number(match[1]));
+    expect(bulges).toHaveLength(2);
+    for (const bulge of bulges) expect(bulge).toBeCloseTo(1, 12);
+
+    await chooseFile(page, () => enter(page, "OPEN"), {
+      name: "slot.dxf",
+      mimeType: "application/dxf",
+      buffer: Buffer.from(first.text),
+    });
+    await expect(logLines(page).last()).toHaveText("Imported 1 polyline.");
+    const second = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    expect(second.text).toBe(first.text);
+  });
+});
 
 test.describe("CIRCLE", () => {
   test("draws a circle from centre and radius", async ({ page }) => {
@@ -157,7 +197,7 @@ test.describe("polylines", () => {
     const empty = await litPixels(canvas);
 
     await enter(page, "PL", "-100,0", "0,80", "100,0");
-    await expect(prompt(page)).toHaveText("Specify next point or [Close/Undo]:");
+    await expect(prompt(page)).toHaveText("Specify next point or [Arc/Close/Undo]:");
     await page.keyboard.press("Escape");
     await settle(page);
     expect(await litPixels(canvas)).toBe(empty);
