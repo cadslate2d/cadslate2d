@@ -17,7 +17,7 @@ test.describe("OFFSET", () => {
   }) => {
     const canvas = await openApp(page);
     await enter(page, "L", "0,0", "100,0", "", "C", "0,100", "40", "O");
-    await expect(prompt(page)).toHaveText("Specify offset distance:");
+    await expect(prompt(page)).toHaveText("Specify offset distance or [Through]:");
     await enter(page, "10");
     await expect(prompt(page)).toHaveText("Select object to offset:");
 
@@ -48,11 +48,30 @@ test.describe("OFFSET", () => {
     expect((await rendererStats(page)).sceneUploads).toBe(before.sceneUploads);
   });
 
-  test("declines arcs by name and explains an empty pick", async ({ page }) => {
+  test("offsets an arc, and with Through places the copy through a point", async ({ page }) => {
     const canvas = await openApp(page);
-    await enter(page, "A", "50,0", "0,50", "-50,0", "O", "5");
+    await enter(page, "A", "50,0", "0,50", "-50,0", "O", "10");
     await clickWorld(page, canvas, 0, 50);
-    await expect(logLines(page).last()).toHaveText("OFFSET does not support arcs yet.");
+    await clickWorld(page, canvas, 0, 90);
+    await enter(page, "", "O", "T");
+    await clickWorld(page, canvas, 0, 50);
+    await expect(prompt(page)).toHaveText("Specify through point:");
+    await enter(page, "0,25", "");
+
+    const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    const radii = [...file.text.matchAll(/^ARC\n {2}8\n0\n 10\n.+\n 20\n.+\n 40\n(.+)$/gm)].map(
+      (match) => Number(match[1]),
+    );
+    expect(radii.map((radius) => Math.round(radius * 1e6) / 1e6).sort((a, b) => a - b)).toEqual([
+      25, 50, 60,
+    ]);
+  });
+
+  test("declines polylines by name and explains an empty pick", async ({ page }) => {
+    const canvas = await openApp(page);
+    await enter(page, "PL", "-50,50", "0,60", "50,50", "", "O", "5");
+    await clickWorld(page, canvas, 50, 50);
+    await expect(logLines(page).last()).toHaveText("OFFSET does not support polylines yet.");
     await clickWorld(page, canvas, 200, 200);
     await expect(logLines(page).last()).toHaveText("No object there.");
     await expect(prompt(page)).toHaveText("Select object to offset:");

@@ -1,18 +1,40 @@
-//! OFFSET: a parallel copy of a line, or a concentric copy of a circle, at a
-//! set distance on a chosen side (DESIGN §22). Repeats until Enter.
+//! OFFSET: a parallel copy of a line, or a concentric copy of a circle or an
+//! arc, on a chosen side (DESIGN §22) — at a set distance, or, with the
+//! `Through` option, through a picked point. Repeats until Enter.
 
 use cad_core::{EntityId, Point2};
 use cad_document::{Entity, OffsetError};
-use cad_input::ExpectedInput;
+use cad_input::{ExpectedInput, Keyword};
 
 use crate::{Command, CommandContext, CommandInput, OverlayItem, Prompt, Step};
+
+const THROUGH: Keyword = Keyword::new("Through");
+
+/// How far the copy is from the original.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Amount {
+    /// A fixed distance; the next point only chooses the side.
+    Distance(f64),
+    /// However far the next point is: the copy passes through it.
+    Through,
+}
+
+impl Amount {
+    /// The offset of `source` that the point `at` asks for.
+    fn apply(self, source: &Entity, at: Point2) -> Result<Entity, OffsetError> {
+        match self {
+            Self::Distance(distance) => source.offset(distance, at),
+            Self::Through => source.offset_through(at),
+        }
+    }
+}
 
 #[derive(Debug)]
 enum State {
     Distance,
     Object,
-    /// An object is chosen; waiting for the side to offset to.
-    Side {
+    /// An object is chosen; waiting for the point that places the copy.
+    Place {
         id: EntityId,
         source: Entity,
     },
@@ -21,15 +43,15 @@ enum State {
 #[derive(Debug)]
 pub(crate) struct OffsetCommand {
     state: State,
-    /// The distance in use: the session's last one until another is typed.
-    distance: Option<f64>,
+    /// What is in use: the session's last distance until something else is given.
+    amount: Option<Amount>,
 }
 
 impl OffsetCommand {
     pub(crate) fn new() -> Self {
         Self {
             state: State::Distance,
-            distance: None,
+            amount: None,
         }
     }
 }
@@ -44,32 +66,33 @@ fn explain(error: OffsetError) -> String {
     match error {
         OffsetError::Unsupported(kind) => format!("OFFSET does not support {kind}s yet."),
         OffsetError::NoSide => "That point is on the object: pick a point to one side.".to_owned(),
-        OffsetError::Collapses => "The offset would leave no circle.".to_owned(),
+        OffsetError::Collapses => "The offset would leave nothing.".to_owned(),
     }
 }
 
 impl Command for OffsetCommand {
     fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
-        self.distance = ctx.settings.offset_distance;
+        self.amount = ctx.settings.offset_distance.map(Amount::Distance);
         Step::Continue
     }
 
     fn prompt(&self) -> Prompt {
-        match (&self.state, self.distance) {
-            (State::Distance, Some(distance)) => {
+        match (&self.state, self.amount) {
+            (State::Distance, Some(Amount::Distance(distance))) => {
                 Prompt::new("Specify offset distance").with_default(display(distance))
             }
-            (State::Distance, None) => Prompt::new("Specify offset distance"),
+            (State::Distance, _) => Prompt::new("Specify offset distance"),
             (State::Object, _) => Prompt::new("Select object to offset"),
-            (State::Side { .. }, _) => Prompt::new("Specify point on side to offset"),
+            (State::Place { .. }, Some(Amount::Through)) => Prompt::new("Specify through point"),
+            (State::Place { .. }, _) => Prompt::new("Specify point on side to offset"),
         }
     }
 
     fn expected(&self) -> ExpectedInput {
         match self.state {
-            State::Distance => ExpectedInput::distance(),
+            State::Distance => ExpectedInput::distance().with_keywords(&[THROUGH]),
             State::Object => ExpectedInput::object(),
-            State::Side { .. } => ExpectedInput::point(),
+            State::Place { .. } => ExpectedInput::point(),
         }
     }
 
@@ -77,30 +100,38 @@ impl Command for OffsetCommand {
         match (&self.state, input) {
             (State::Distance, CommandInput::Distance(distance)) => {
                 if distance.is_finite() && distance > 0.0 {
-                    self.distance = Some(distance);
+                    self.amount = Some(Amount::Distance(distance));
                     ctx.settings.offset_distance = Some(distance);
                     self.state = State::Object;
                 } else {
                     ctx.message("The offset distance must be greater than zero.");
                 }
             }
+            (State::Distance, CommandInput::Keyword(_)) => {
+                self.amount = Some(Amount::Through);
+                self.state = State::Object;
+            }
             // Enter takes the remembered distance, if there is one.
-            (State::Distance, CommandInput::Accept) => match self.distance {
+            (State::Distance, CommandInput::Accept) => match self.amount {
                 Some(_) => self.state = State::Object,
                 None => return Step::Finished,
             },
             (State::Object, CommandInput::Pick { entity: id, at }) => {
-                let Some(source) = ctx.drawing.entity(id).cloned() else {
+                let (Some(source), Some(amount)) = (ctx.drawing.entity(id).cloned(), self.amount)
+                else {
                     return Step::Continue;
                 };
-                // Only "unsupported" can be told before a side is chosen.
-                match source.offset(self.distance.unwrap_or_default(), at) {
+                // Only "unsupported" can be told before the copy is placed.
+                match amount.apply(&source, at) {
                     Err(error @ OffsetError::Unsupported(_)) => ctx.message(explain(error)),
-                    _ => self.state = State::Side { id, source },
+                    _ => self.state = State::Place { id, source },
                 }
             }
-            (State::Side { source, .. }, CommandInput::Point(side)) => {
-                match source.offset(self.distance.unwrap_or_default(), side) {
+            (State::Place { source, .. }, CommandInput::Point(at)) => {
+                let Some(amount) = self.amount else {
+                    return Step::Continue;
+                };
+                match amount.apply(source, at) {
                     Ok(offset) => {
                         let mut transaction = ctx.drawing.transaction();
                         transaction.insert(offset);
@@ -114,16 +145,18 @@ impl Command for OffsetCommand {
                     }
                 }
             }
-            (State::Object | State::Side { .. }, CommandInput::Accept) => return Step::Finished,
+            (State::Object | State::Place { .. }, CommandInput::Accept) => {
+                return Step::Finished;
+            }
             _ => {}
         }
         Step::Continue
     }
 
     fn preview(&self, cursor: Point2, out: &mut Vec<OverlayItem>) {
-        if let State::Side { id, source } = &self.state {
+        if let (State::Place { id, source }, Some(amount)) = (&self.state, self.amount) {
             out.push(OverlayItem::Highlight(*id));
-            if let Ok(offset) = source.offset(self.distance.unwrap_or_default(), cursor) {
+            if let Ok(offset) = amount.apply(source, cursor) {
                 out.push(OverlayItem::PreviewEntity(offset));
             }
         }

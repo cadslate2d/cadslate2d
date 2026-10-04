@@ -9,11 +9,13 @@ Each table is backed by tests named in its section.
 | Object | Result | Refused when |
 | --- | --- | --- |
 | Line | A parallel line of the same length, on the side of the picked point | The picked point is on the line (it chooses no side) |
-| Circle | A concentric circle: larger if the point is outside, smaller if inside | The point is on the circle; or an inward offset would leave no circle |
-| Arc | Not supported yet | Always: "OFFSET does not support arcs yet." |
+| Circle | A concentric circle: larger if the point is outside, smaller if inside | The point is on the circle; or an inward offset would leave nothing |
+| Arc | A concentric arc with the same angles: larger if the point is outside the arc's circle, smaller if inside | The point is on the arc's circle; or an inward offset would leave nothing |
 | Polyline | Not supported yet | Always: "OFFSET does not support polylines yet." |
 
-The distance must be greater than zero and is remembered for the session. Not implemented: the `Through` option.
+The distance must be greater than zero and is remembered for the session.
+
+With the `Through` option there is no distance: after the object is picked, the copy is placed so that it passes through the next point. For a line the distance is measured to the line carried on past its ends, so the point may lie beyond them.
 
 Tests: `cad-geometry/src/offset.rs`, `cad-document/src/editing.rs`, `cad-commands/src/tests/offset.rs`, `web/e2e/offset.spec.ts`.
 

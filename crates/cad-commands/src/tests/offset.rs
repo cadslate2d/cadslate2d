@@ -29,7 +29,7 @@ fn scene() -> Harness {
 fn the_prompts_walk_through_distance_object_and_side() {
     let mut h = scene();
     h.enter("O");
-    assert_eq!(h.prompt(), "Specify offset distance:");
+    assert_eq!(h.prompt(), "Specify offset distance or [Through]:");
     h.enter("10");
     assert_eq!(h.prompt(), "Select object to offset:");
     h.click_world(p(50.0, 0.0));
@@ -87,7 +87,7 @@ fn an_inward_offset_that_would_leave_no_circle_is_refused() {
     h.enter_all(&["O", "40"]);
     h.click_world(p(40.0, 100.0));
     h.click_world(p(0.0, 100.0));
-    assert_eq!(h.log().last().unwrap(), "The offset would leave no circle.");
+    assert_eq!(h.log().last().unwrap(), "The offset would leave nothing.");
     assert_eq!(h.prompt(), "Select object to offset:");
     assert_eq!(h.entities().len(), 2);
 
@@ -100,24 +100,104 @@ fn an_inward_offset_that_would_leave_no_circle_is_refused() {
     );
 }
 
-/// Arcs and polylines produce a clear "not supported yet" message.
+/// #121: both directions, and the collapse case.
 #[test]
-fn arcs_and_polylines_are_declined_by_name() {
+fn an_arc_is_offset_to_a_concentric_arc() {
     let arc: Entity = ArcEntity::new(p(0.0, 0.0), 50.0, 0.0, PI).into();
+    let mut h = Harness::with_entities([arc]);
+    h.enter_all(&["O", "10"]);
+    h.click_world(p(0.0, 50.0));
+    h.click_world(p(0.0, 90.0)); // outside
+    h.click_world(p(0.0, 50.0));
+    h.click_world(p(0.0, 20.0)); // inside
+    h.enter("");
+
+    let entities = h.entities();
+    assert_eq!(
+        entities[1],
+        ArcEntity::new(p(0.0, 0.0), 60.0, 0.0, PI).into()
+    );
+    assert_eq!(
+        entities[2],
+        ArcEntity::new(p(0.0, 0.0), 40.0, 0.0, PI).into()
+    );
+
+    // Inwards by the whole radius or more leaves nothing.
+    h.enter_all(&["O", "50"]);
+    h.click_world(p(0.0, 50.0));
+    h.click_world(p(0.0, 20.0));
+    assert_eq!(h.log().last().unwrap(), "The offset would leave nothing.");
+    assert_eq!(h.entities().len(), 3);
+}
+
+#[test]
+fn polylines_are_declined_by_name() {
     let polyline: Entity =
         PolylineEntity::new(vec![p(-100.0, -50.0), p(100.0, -50.0)], false).into();
-    let mut h = Harness::with_entities([arc, polyline]);
+    let mut h = Harness::with_entities([polyline]);
     h.enter_all(&["O", "5"]);
-
-    h.click_world(p(0.0, 50.0));
-    assert_eq!(h.log().last().unwrap(), "OFFSET does not support arcs yet.");
-    assert_eq!(h.prompt(), "Select object to offset:");
     h.click_world(p(0.0, -50.0));
     assert_eq!(
         h.log().last().unwrap(),
         "OFFSET does not support polylines yet."
     );
+    assert_eq!(h.prompt(), "Select object to offset:");
+    assert_eq!(h.entities().len(), 1);
+}
+
+// ── the Through option (#121) ──
+
+#[test]
+fn through_places_the_copy_through_a_picked_point() {
+    let mut h = scene();
+    h.enter_all(&["O", "T"]);
+    assert_eq!(h.prompt(), "Select object to offset:");
+    h.click_world(p(50.0, 0.0));
+    assert_eq!(h.prompt(), "Specify through point:");
+    h.enter("250,35"); // beyond the end of the line: the distance is to the line carried on
+    assert_eq!(
+        h.entities()[2],
+        LineEntity::new(p(0.0, 35.0), p(100.0, 35.0)).into()
+    );
+
+    // The circle about (0, 100) of radius 40, through a point 3-4-5 away from its centre.
+    h.click_world(p(40.0, 100.0));
+    h.enter("30,140");
+    assert_eq!(
+        h.entities()[3],
+        CircleEntity::new(p(0.0, 100.0), 50.0).into()
+    );
+    h.enter("");
+    assert_eq!(h.prompt(), "Command:");
+}
+
+#[test]
+fn through_previews_the_copy_under_the_cursor_and_refuses_a_point_on_the_object() {
+    let mut h = scene();
+    h.enter_all(&["O", "T"]);
+    h.click_world(p(50.0, 0.0));
+    h.move_to_world(p(20.0, -45.0));
+    assert!(h.session.overlay().contains(&OverlayItem::PreviewEntity(
+        LineEntity::new(p(0.0, -45.0), p(100.0, -45.0)).into()
+    )));
+
+    h.enter("70,0");
+    assert_eq!(
+        h.log().last().unwrap(),
+        "That point is on the object: pick a point to one side."
+    );
+    assert_eq!(h.prompt(), "Specify through point:");
     assert_eq!(h.entities().len(), 2);
+}
+
+#[test]
+fn through_does_not_replace_the_remembered_distance() {
+    let mut h = scene();
+    h.enter_all(&["O", "12", ""]);
+    h.enter_all(&["O", "T", ""]);
+    assert_eq!(h.session.settings().offset_distance, Some(12.0));
+    h.enter("O");
+    assert_eq!(h.prompt(), "Specify offset distance or [Through] <12>:");
 }
 
 #[test]
@@ -145,13 +225,13 @@ fn the_distance_must_be_positive_and_is_remembered_for_the_session() {
             h.log().last().unwrap(),
             "The offset distance must be greater than zero."
         );
-        assert_eq!(h.prompt(), "Specify offset distance:");
+        assert_eq!(h.prompt(), "Specify offset distance or [Through]:");
     }
     h.enter_all(&["7.5", ""]);
     assert_eq!(h.session.settings().offset_distance, Some(7.5));
 
     h.enter("O");
-    assert_eq!(h.prompt(), "Specify offset distance <7.5>:");
+    assert_eq!(h.prompt(), "Specify offset distance or [Through] <7.5>:");
     h.enter("");
     h.click_world(p(50.0, 0.0));
     h.click_world(p(50.0, 50.0));

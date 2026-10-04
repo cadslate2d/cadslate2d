@@ -1,14 +1,14 @@
 //! Offsets of the simple primitives (DESIGN §22): a line to a parallel line,
-//! a circle to a concentric circle. Which way is decided by a point on the
-//! wanted side.
+//! a circle to a concentric circle, an arc to a concentric arc. Which way is
+//! decided by a point on the wanted side.
 //!
-//! Offsetting arcs and polylines — where pieces can vanish or need joining —
-//! is dedicated robust-geometry work and not here.
+//! Offsetting polylines — where pieces can vanish or need joining — is
+//! dedicated robust-geometry work and not here.
 
 use cad_core::tolerance::LinearTolerance;
 use cad_core::{Point2, Vec2};
 
-use crate::{Circle, Orientation, Segment, orientation};
+use crate::{Arc, Circle, Orientation, Segment, orientation};
 
 /// The parallel to `segment`, `distance` away on the side `side` is on.
 /// `None` when `side` is on the line itself — there is no side to choose —
@@ -48,6 +48,28 @@ pub fn offset_circle(
         circle.radius - distance
     };
     (radius > 0.0 && !tolerance.is_zero(radius)).then(|| Circle::new(circle.center, radius))
+}
+
+/// The concentric arc `distance` away, with the same angles: larger when
+/// `side` is outside the arc's circle, smaller when inside. `None` when
+/// `side` is on the circle, or when offsetting inwards would leave no arc.
+pub fn offset_arc(
+    arc: &Arc,
+    distance: f64,
+    side: Point2,
+    tolerance: LinearTolerance,
+) -> Option<Arc> {
+    offset_circle(&arc.circle(), distance, side, tolerance)
+        .map(|circle| Arc::new(arc.center, circle.radius, arc.start, arc.sweep))
+}
+
+/// How far `point` is from the line through `segment`, carried on past its
+/// ends: the distance at which a parallel passes through the point.
+pub fn distance_to_line(segment: &Segment, point: Point2) -> Option<f64> {
+    let along = segment.end - segment.start;
+    let length = along.length();
+    let offset = point - segment.start;
+    (length > 0.0).then(|| (along.x * offset.y - along.y * offset.x).abs() / length)
 }
 
 #[cfg(test)]
@@ -138,5 +160,47 @@ mod tests {
     fn a_point_on_the_circle_chooses_no_side() {
         let circle = Circle::new(p(0.0, 0.0), 5.0);
         assert_eq!(offset_circle(&circle, 1.0, p(3.0, 4.0), TOLERANCE), None);
+    }
+
+    #[test]
+    fn an_arc_offsets_to_a_concentric_arc_with_the_same_angles() {
+        let arc = Arc::new(p(10.0, 10.0), 5.0, 0.25, 1.5);
+        assert_eq!(
+            offset_arc(&arc, 2.0, p(30.0, 30.0), TOLERANCE),
+            Some(Arc::new(p(10.0, 10.0), 7.0, 0.25, 1.5))
+        );
+        assert_eq!(
+            offset_arc(&arc, 2.0, p(10.5, 10.5), TOLERANCE),
+            Some(Arc::new(p(10.0, 10.0), 3.0, 0.25, 1.5))
+        );
+        // The side is judged against the whole circle, not just the arc.
+        assert_eq!(
+            offset_arc(&arc, 2.0, p(10.0, -30.0), TOLERANCE),
+            Some(Arc::new(p(10.0, 10.0), 7.0, 0.25, 1.5))
+        );
+    }
+
+    #[test]
+    fn an_arc_cannot_be_offset_inwards_to_nothing_or_from_a_point_on_its_circle() {
+        let arc = Arc::new(p(0.0, 0.0), 5.0, 0.0, 1.0);
+        assert_eq!(offset_arc(&arc, 5.0, p(1.0, 0.0), TOLERANCE), None);
+        assert_eq!(offset_arc(&arc, 9.0, p(1.0, 0.0), TOLERANCE), None);
+        assert_eq!(
+            offset_arc(&arc, 1.0, p(0.0, -5.0), TOLERANCE),
+            None,
+            "on the circle"
+        );
+    }
+
+    #[test]
+    fn the_distance_to_a_line_ignores_where_the_segment_ends() {
+        let segment = Segment::new(p(0.0, 0.0), p(10.0, 0.0));
+        assert_eq!(distance_to_line(&segment, p(5.0, 3.0)), Some(3.0));
+        assert_eq!(distance_to_line(&segment, p(500.0, -3.0)), Some(3.0));
+        assert_eq!(distance_to_line(&segment, p(7.0, 0.0)), Some(0.0));
+        assert_eq!(
+            distance_to_line(&Segment::new(p(1.0, 1.0), p(1.0, 1.0)), p(5.0, 5.0)),
+            None
+        );
     }
 }
