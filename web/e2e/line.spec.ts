@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   centerOf,
   commandInput,
+  downloadFrom,
   enter,
   litPixels,
   logLines,
@@ -21,11 +22,11 @@ test.describe("LINE from the command line", () => {
     await enter(page, "L");
     await expect(prompt(page)).toHaveText("Specify first point:");
     await enter(page, "0,0");
-    await expect(prompt(page)).toHaveText("Specify next point:");
+    await expect(prompt(page)).toHaveText("Specify next point or [Undo]:");
     await enter(page, "@200<45", "");
 
     await expect(prompt(page)).toHaveText("Command:");
-    await expect(logLines(page).last()).toHaveText("Specify next point:");
+    await expect(logLines(page).last()).toHaveText("Specify next point or [Undo]:");
     // The committed scene was uploaded exactly once more, for the one new line.
     expect((await rendererStats(page)).sceneUploads).toBe(before.sceneUploads + 1);
     expect(await litPixels(canvas)).toBeGreaterThan(empty + 150);
@@ -71,7 +72,7 @@ test.describe("LINE from the command line", () => {
     const { x, y } = await centerOf(canvas);
     await enter(page, "L");
     await page.mouse.click(x - 100, y);
-    await expect(prompt(page)).toHaveText("Specify next point:");
+    await expect(prompt(page)).toHaveText("Specify next point or [Undo]:");
     await enter(page, "@200,0", "");
 
     await expect(prompt(page)).toHaveText("Command:");
@@ -84,7 +85,7 @@ test.describe("LINE from the command line", () => {
   test("invalid input is explained and the command stays active", async ({ page }) => {
     await openApp(page);
     await enter(page, "L", "banana");
-    await expect(logLines(page).last()).toHaveText("A point is required, as x,y.");
+    await expect(logLines(page).last()).toHaveText("A point is required.");
     await expect(prompt(page)).toHaveText("Specify first point:");
   });
 
@@ -132,6 +133,56 @@ test.describe("LINE from the command line", () => {
     await page.keyboard.press("Control+y");
     await settle(page);
     expect(await litPixels(canvas)).toBe(drawn);
+  });
+});
+
+test.describe("LINE options", () => {
+  // DESIGN §13.3: the same letter is an option inside a command.
+  test("C closes the chain and U undoes a segment", async ({ page }) => {
+    const canvas = await openApp(page);
+    await page.mouse.move(0, 0);
+    await enter(page, "L", "-100,-50", "100,-50", "100,50");
+    await expect(prompt(page)).toHaveText("Specify next point or [Close/Undo]:");
+    const twoSegments = await litPixels(canvas);
+
+    await enter(page, "U");
+    await expect(prompt(page)).toHaveText("Specify next point or [Undo]:");
+    expect(await litPixels(canvas)).toBeLessThan(twoSegments);
+
+    await enter(page, "100,50", "C");
+    await expect(prompt(page)).toHaveText("Command:");
+    expect(await litPixels(canvas)).toBeGreaterThan(twoSegments + 150);
+  });
+
+  test("one Ctrl+Z removes everything the command drew", async ({ page }) => {
+    const canvas = await openApp(page);
+    await page.mouse.move(0, 0);
+    const empty = await litPixels(canvas);
+    await enter(page, "L", "-100,-50", "100,-50", "100,50", "C");
+
+    await page.keyboard.press("Control+z");
+    await settle(page);
+    expect(await litPixels(canvas)).toBe(empty);
+  });
+
+  test("a bare number draws that far towards the cursor", async ({ page }) => {
+    const canvas = await openApp(page);
+    const { x, y } = await centerOf(canvas);
+    await enter(page, "L", "0,0");
+    await page.mouse.move(x + 60, y); // due east
+    await settle(page);
+    await enter(page, "200", "");
+
+    const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    expect(file.text).toContain(" 10\n0.0\n 20\n0.0\n 11\n200.0\n 21\n0.0\n");
+  });
+
+  test("Enter at the idle prompt repeats LINE", async ({ page }) => {
+    await openApp(page);
+    await enter(page, "L", "0,0", "10,0", "");
+    await expect(prompt(page)).toHaveText("Command:");
+    await enter(page, "");
+    await expect(prompt(page)).toHaveText("Specify first point:");
   });
 });
 

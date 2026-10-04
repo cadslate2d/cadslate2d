@@ -23,7 +23,7 @@ pub mod testing;
 mod tests;
 mod ui_state;
 
-pub use command::{Command, CommandContext, CommandInput, Step};
+pub use command::{Command, CommandContext, CommandInput, Prompt, Step};
 pub use dirty::Dirty;
 pub use events::{HostRequest, KeyAction, Modifiers, PointerButton};
 pub use overlay::OverlayItem;

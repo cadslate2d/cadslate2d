@@ -4,12 +4,12 @@
 /// `start` and are therefore never prompted or stepped.
 macro_rules! immediate_command {
     () => {
-        fn prompt(&self) -> String {
-            String::new()
+        fn prompt(&self) -> $crate::Prompt {
+            $crate::Prompt::new("")
         }
 
         fn expected(&self) -> cad_input::ExpectedInput {
-            cad_input::ExpectedInput::Command
+            cad_input::ExpectedInput::command()
         }
 
         fn step(

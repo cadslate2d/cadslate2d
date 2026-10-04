@@ -142,7 +142,7 @@ fn a_click_during_a_command_is_a_point_not_a_selection() {
     h.enter("L");
     h.click_world(Point2::new(0.0, 0.0));
     assert!(selected(&h).is_empty());
-    assert_eq!(h.prompt(), "Specify next point:");
+    assert_eq!(h.prompt(), "Specify next point or [Undo]:");
 }
 
 // ── criterion 12: selection uses an indexed candidate query ──

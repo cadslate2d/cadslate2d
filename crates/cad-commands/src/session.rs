@@ -1,8 +1,8 @@
 //! The session facade.
 
-use cad_core::{EntityId, PixelTolerance, Point2, ScreenPoint, View};
+use cad_core::{EntityId, PixelTolerance, Point2, ScreenPoint, Vec2, View};
 use cad_document::{Drawing, Revision};
-use cad_input::{ExpectedInput, Input};
+use cad_input::{ExpectedInput, Input, InputKind};
 
 use crate::history::InputHistory;
 use crate::log::CommandLog;
@@ -54,6 +54,8 @@ pub struct Session {
     saved_revision: Revision,
     /// The drawing came from a file with content that could not be imported.
     export_is_lossy: bool,
+    /// The command Enter repeats at the idle prompt.
+    last_command: Option<&'static str>,
 }
 
 impl Default for Session {
@@ -90,6 +92,7 @@ impl Session {
             host_request: None,
             document_name: None,
             export_is_lossy: false,
+            last_command: None,
         }
     }
 
@@ -109,9 +112,10 @@ impl Session {
 
     /// The prompt shown on the command line right now.
     pub fn prompt(&self) -> String {
-        self.active
-            .as_ref()
-            .map_or_else(|| IDLE_PROMPT.to_owned(), |active| active.command.prompt())
+        self.active.as_ref().map_or_else(
+            || IDLE_PROMPT.to_owned(),
+            |active| active.command.prompt().render(&active.command.expected()),
+        )
     }
 
     pub fn ui_state(&self) -> UiState {
@@ -188,11 +192,12 @@ impl Session {
                 self.pan_anchor = Some(at);
                 Dirty::NONE
             }
-            PointerButton::Primary if self.expects_point() => {
-                self.feed(CommandInput::Point(self.view.screen_to_world(at)))
-            }
-            PointerButton::Primary if self.active.is_none() => self.select_at(at),
-            PointerButton::Primary | PointerButton::Secondary => Dirty::NONE,
+            // A click during a command is a point, exactly like a typed coordinate.
+            PointerButton::Primary if self.active.is_some() => self
+                .feed_point(self.view.screen_to_world(at))
+                .unwrap_or(Dirty::NONE),
+            PointerButton::Primary => self.select_at(at),
+            PointerButton::Secondary => Dirty::NONE,
         }
     }
 
@@ -231,21 +236,12 @@ impl Session {
         self.log.push(echo.trim_end().to_owned());
         self.history.record(text);
 
-        let expected = self
-            .active
-            .as_ref()
-            .map_or(ExpectedInput::Command, |a| a.command.expected());
-        let dirty = match cad_input::resolve(text, expected, self.registry.aliases()) {
-            Ok(Input::Command(name)) => self.invoke(&name),
-            Ok(Input::Point(point)) => {
-                self.feed(CommandInput::Point(point.resolve(self.last_point)))
-            }
-            Ok(Input::Accept) => self.feed(CommandInput::Accept),
-            Err(diagnostic) => {
-                // The command stays active and prompts again.
-                self.log.push(diagnostic.message);
-                Dirty::NONE
-            }
+        let dirty = match cad_input::resolve(text, &self.expected(), self.registry.aliases()) {
+            Ok(input) => self
+                .dispatch(input)
+                .unwrap_or_else(|message| self.notify(message)),
+            // The command stays active and prompts again.
+            Err(diagnostic) => self.notify(diagnostic.message),
         };
         dirty | Dirty::UI
     }
@@ -266,6 +262,9 @@ impl Session {
             return Dirty::UI;
         };
         let cancelled = self.cancel_active();
+        self.last_command = Some(name);
+        // One invocation is one undo step, however many transactions it commits.
+        self.drawing.begin_group();
         cancelled
             | self.advance(ActiveCommand { name, command }, |command, ctx| {
                 command.start(ctx)
@@ -375,10 +374,72 @@ impl Session {
         }
     }
 
-    fn expects_point(&self) -> bool {
+    /// What the current prompt accepts.
+    fn expected(&self) -> ExpectedInput {
         self.active
             .as_ref()
-            .is_some_and(|active| active.command.expected() == ExpectedInput::Point)
+            .map_or_else(ExpectedInput::command, |active| active.command.expected())
+    }
+
+    /// Routes one resolved input. An `Err` is a message for the user; the
+    /// command, if any, stays active.
+    fn dispatch(&mut self, input: Input) -> Result<Dirty, &'static str> {
+        match input {
+            Input::Command(name) => Ok(self.invoke(&name)),
+            Input::Point(point) => self.feed_point(point.resolve(self.relative_origin())),
+            Input::Distance(distance) => Ok(self.feed(CommandInput::Distance(distance))),
+            Input::Angle(angle) => Ok(self.feed(CommandInput::Angle(angle))),
+            Input::Keyword(keyword) => Ok(self.feed(CommandInput::Keyword(keyword))),
+            Input::DirectDistance(distance) => {
+                let target = self.direct_distance_target(distance).ok_or(NO_DIRECTION)?;
+                Ok(self.feed(CommandInput::Point(target)))
+            }
+            // Enter at the idle prompt repeats the last command (DESIGN §13.4).
+            Input::Accept if self.active.is_none() => Ok(self
+                .last_command
+                .map_or(Dirty::NONE, |name| self.invoke(name))),
+            Input::Accept => Ok(self.feed(CommandInput::Accept)),
+        }
+    }
+
+    /// What `@` coordinates are relative to: the active command's base point
+    /// when it has one (so it follows an in-command Undo), otherwise the last
+    /// point given to any command.
+    fn relative_origin(&self) -> Point2 {
+        let base = self
+            .active
+            .as_ref()
+            .and_then(|active| active.command.base_point());
+        base.unwrap_or(self.last_point)
+    }
+
+    /// Where direct-distance entry lands: `distance` from the command's base
+    /// point towards the cursor. `None` without a base point or a direction.
+    fn direct_distance_target(&self, distance: f64) -> Option<Point2> {
+        let base = self.active.as_ref()?.command.base_point()?;
+        let towards = self.cursor_world()? - base;
+        let length = towards.length();
+        (length > 0.0).then(|| base + towards * (distance / length))
+    }
+
+    /// Hands a world point to the active command as whatever it asked for:
+    /// the point itself, or the distance or angle it makes with the command's
+    /// base point. Typed coordinates and pointer clicks both arrive here.
+    fn feed_point(&mut self, point: Point2) -> Result<Dirty, &'static str> {
+        let Some(active) = &self.active else {
+            return Ok(Dirty::NONE);
+        };
+        let from_base = active.command.base_point().map(|base| point - base);
+        let input = match (active.command.expected().kind, from_base) {
+            (InputKind::Point, _) => CommandInput::Point(point),
+            (InputKind::Distance, Some(offset)) => CommandInput::Distance(offset.length()),
+            (InputKind::Angle, Some(offset)) => CommandInput::Angle(angle_degrees(offset)),
+            (InputKind::Distance | InputKind::Angle, None) => return Err("A number is required."),
+            (InputKind::Nothing | InputKind::Command, _) => {
+                return Err("An option keyword is required.");
+            }
+        };
+        Ok(self.feed(input))
     }
 
     /// Escape cancels the active command; at the idle prompt it clears the
@@ -397,6 +458,7 @@ impl Session {
     fn cancel_active(&mut self) -> Dirty {
         match self.active.take() {
             Some(_) => {
+                self.drawing.end_group();
                 self.log.push("*Cancel*".to_owned());
                 Dirty::OVERLAY | Dirty::UI
             }
@@ -432,6 +494,8 @@ impl Session {
         };
         if run(active.command.as_mut(), &mut ctx) == Step::Continue {
             self.active = Some(active);
+        } else {
+            self.drawing.end_group();
         }
 
         // Whatever the command did, the selection must never name a dead entity.
@@ -447,6 +511,13 @@ impl Session {
         }
         dirty
     }
+}
+
+const NO_DIRECTION: &str = "Point the cursor in a direction, then enter the distance.";
+
+/// The direction of `offset` in degrees, counter-clockwise from +X, in `[0, 360)`.
+fn angle_degrees(offset: Vec2) -> f64 {
+    offset.y.atan2(offset.x).to_degrees().rem_euclid(360.0)
 }
 
 trait ReplaceIfSome<T> {
@@ -601,7 +672,7 @@ mod tests {
         let mut h = Harness::new();
         h.enter_all(&["L", "banana"]);
         assert_eq!(h.prompt(), "Specify first point:");
-        assert_eq!(h.log().last().unwrap(), "A point is required, as x,y.");
+        assert_eq!(h.log().last().unwrap(), "A point is required.");
         // The command still works afterwards.
         h.enter_all(&["0,0", "10,0", ""]);
         assert_eq!(h.lines().len(), 1);
@@ -615,12 +686,45 @@ mod tests {
     }
 
     #[test]
-    fn enter_at_the_idle_prompt_does_nothing_but_echo() {
+    fn enter_at_the_idle_prompt_before_any_command_does_nothing_but_echo() {
         let mut h = Harness::new();
         h.enter("");
         assert_eq!(h.prompt(), "Command:");
         assert_eq!(h.log(), vec!["Command:"]);
         assert!(h.lines().is_empty());
+    }
+
+    /// DESIGN §13.4: Enter (and Space) at the idle prompt repeat the last command.
+    #[test]
+    fn enter_at_the_idle_prompt_repeats_the_last_command() {
+        let mut h = Harness::new();
+        h.enter_all(&["L", "0,0", "10,0", ""]);
+        assert_eq!(h.prompt(), "Command:");
+
+        h.enter("");
+        assert_eq!(h.session.ui_state().command, Some("LINE"));
+        assert_eq!(h.prompt(), "Specify first point:");
+
+        // A cancelled command is still the one that repeats.
+        h.escape();
+        h.enter("");
+        assert_eq!(h.session.ui_state().command, Some("LINE"));
+    }
+
+    #[test]
+    fn angles_are_measured_counter_clockwise_from_x_in_degrees() {
+        for (x, y, expected) in [
+            (1.0, 0.0, 0.0),
+            (0.0, 2.0, 90.0),
+            (-3.0, 0.0, 180.0),
+            (0.0, -1.0, 270.0),
+            (1.0, 1.0, 45.0),
+        ] {
+            assert!(
+                (angle_degrees(Vec2::new(x, y)) - expected).abs() < 1e-9,
+                "({x}, {y})"
+            );
+        }
     }
 
     #[test]

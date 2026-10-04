@@ -11,11 +11,13 @@
 
 mod aliases;
 mod diagnostic;
+mod keyword;
 mod number;
 mod point;
 mod resolve;
 
 pub use aliases::{CommandAliases, DuplicateCommandName};
 pub use diagnostic::Diagnostic;
+pub use keyword::Keyword;
 pub use point::{PointInput, parse_point};
-pub use resolve::{ExpectedInput, Input, resolve};
+pub use resolve::{ExpectedInput, Input, InputKind, resolve};

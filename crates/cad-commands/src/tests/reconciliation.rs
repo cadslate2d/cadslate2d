@@ -9,7 +9,7 @@ use cad_document::{Drawing, Entity, LineEntity};
 use cad_input::ExpectedInput;
 
 use crate::testing::Harness;
-use crate::{Command, CommandContext, CommandInput, CommandRegistry, Session, Step};
+use crate::{Command, CommandContext, CommandInput, CommandRegistry, Prompt, Session, Step};
 
 /// Erases the selected entities in one transaction.
 #[derive(Debug)]
@@ -42,11 +42,11 @@ macro_rules! immediate {
                 edit_selection(ctx, $edit);
                 Step::Finished
             }
-            fn prompt(&self) -> String {
-                String::new()
+            fn prompt(&self) -> Prompt {
+                Prompt::new("")
             }
             fn expected(&self) -> ExpectedInput {
-                ExpectedInput::Command
+                ExpectedInput::command()
             }
             fn step(&mut self, _input: CommandInput, _ctx: &mut CommandContext<'_>) -> Step {
                 Step::Finished

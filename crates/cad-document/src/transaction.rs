@@ -86,6 +86,11 @@ impl Transaction {
         self.changes.is_empty()
     }
 
+    /// One transaction with the changes of all of `parts`, in order.
+    pub(crate) fn merged(parts: impl IntoIterator<Item = Transaction>) -> Self {
+        Self::new(parts.into_iter().flat_map(|part| part.changes).collect())
+    }
+
     /// The transaction that exactly undoes this one: inverse changes in
     /// reverse order.
     pub fn inverse(&self) -> Self {

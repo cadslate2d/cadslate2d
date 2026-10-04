@@ -9,7 +9,7 @@ use std::fmt::Debug;
 
 use cad_core::Point2;
 use cad_document::Drawing;
-use cad_input::ExpectedInput;
+use cad_input::{ExpectedInput, Keyword};
 
 use crate::log::CommandLog;
 use crate::{HostRequest, OverlayItem, Selection};
@@ -19,8 +19,59 @@ use crate::{HostRequest, OverlayItem, Selection};
 pub enum CommandInput {
     /// A world point — already resolved from typed coordinates or the pointer.
     Point(Point2),
+    /// A length, typed or measured from the command's base point.
+    Distance(f64),
+    /// An angle in degrees, typed or measured from the command's base point.
+    Angle(f64),
+    /// One of the option keywords the command offered.
+    Keyword(Keyword),
     /// Enter or Space on an empty line.
     Accept,
+}
+
+/// What a command asks for, before formatting.
+///
+/// Commands never write `[Close/Undo]` or `<default>` by hand: the session
+/// renders the option list from [`Command::expected`], so the brackets always
+/// match what is actually accepted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prompt {
+    /// The request, without options or a trailing colon: `Specify next point`.
+    pub message: String,
+    /// What Enter will use, shown as `<…>`.
+    pub default: Option<String>,
+}
+
+impl Prompt {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            default: None,
+        }
+    }
+
+    pub fn with_default(mut self, default: impl Into<String>) -> Self {
+        self.default = Some(default.into());
+        self
+    }
+
+    /// The full prompt line, e.g. `Specify next point or [Close/Undo]:`.
+    pub fn render(&self, expected: &ExpectedInput) -> String {
+        let mut line = self.message.clone();
+        if !expected.keywords.is_empty() {
+            let names: Vec<&str> = expected
+                .keywords
+                .iter()
+                .map(|keyword| keyword.name())
+                .collect();
+            line.push_str(&format!(" or [{}]", names.join("/")));
+        }
+        if let Some(default) = &self.default {
+            line.push_str(&format!(" <{default}>"));
+        }
+        line.push(':');
+        line
+    }
 }
 
 /// What a command wants after consuming an input.
@@ -65,8 +116,8 @@ pub trait Command: Debug {
         Step::Continue
     }
 
-    /// The prompt for the current state, for example `Specify next point:`.
-    fn prompt(&self) -> String;
+    /// The request for the current state, for example `Specify next point`.
+    fn prompt(&self) -> Prompt;
 
     /// What the current state accepts. Drives input resolution (§13.3).
     fn expected(&self) -> ExpectedInput;
@@ -78,4 +129,50 @@ pub trait Command: Debug {
     /// point were `cursor`. The preview is transient: it lives in the overlay
     /// and never touches the document (§17).
     fn preview(&self, _cursor: Point2, _out: &mut Vec<OverlayItem>) {}
+
+    /// The point the current input is measured from, if any: the anchor of
+    /// the rubber band. It gives meaning to direct-distance entry, and to a
+    /// point supplied where a distance or an angle is expected.
+    fn base_point(&self) -> Option<Point2> {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_plain_prompt_ends_with_a_colon() {
+        assert_eq!(
+            Prompt::new("Specify first point").render(&ExpectedInput::point()),
+            "Specify first point:"
+        );
+    }
+
+    #[test]
+    fn options_are_rendered_from_the_expectation() {
+        let expected =
+            ExpectedInput::point().with_keywords(&[Keyword::new("Close"), Keyword::new("Undo")]);
+        assert_eq!(
+            Prompt::new("Specify next point").render(&expected),
+            "Specify next point or [Close/Undo]:"
+        );
+    }
+
+    #[test]
+    fn a_default_is_shown_in_angle_brackets_after_the_options() {
+        let expected = ExpectedInput::distance().with_keywords(&[Keyword::new("Diameter")]);
+        let prompt = Prompt::new("Specify radius of circle").with_default("10.0000");
+        assert_eq!(
+            prompt.render(&expected),
+            "Specify radius of circle or [Diameter] <10.0000>:"
+        );
+        assert_eq!(
+            Prompt::new("Specify radius")
+                .with_default("5")
+                .render(&ExpectedInput::distance()),
+            "Specify radius <5>:"
+        );
+    }
 }

@@ -181,6 +181,27 @@ impl Drawing {
         Some(self.apply(&transaction))
     }
 
+    /// Starts an undo group. Transactions committed until [`Drawing::end_group`]
+    /// are undone and redone together, as one step. Commands use this so that
+    /// one invocation is one undo step however many transactions it commits.
+    pub fn begin_group(&mut self) {
+        self.history.begin_group();
+    }
+
+    /// Ends the open undo group. A no-op when none is open.
+    pub fn end_group(&mut self) {
+        self.history.end_group();
+    }
+
+    /// Reverts the latest transaction committed inside the open undo group
+    /// and forgets it: unlike [`Drawing::undo`] it cannot be redone. This is
+    /// the "Undo" option *inside* a command. Returns `None` when the group
+    /// holds nothing to roll back.
+    pub fn rollback_last_in_group(&mut self) -> Option<ApplyReport> {
+        let inverse = self.history.take_last_in_group()?.inverse();
+        Some(self.apply(&inverse))
+    }
+
     /// The single place where canonical state changes. Keeps the store and the
     /// derived spatial index in step, then takes a new revision.
     fn apply(&mut self, transaction: &Transaction) -> ApplyReport {
@@ -593,6 +614,99 @@ mod tests {
                 Point2::new(1.0, 8.0)
             ))
         );
+    }
+
+    #[test]
+    fn a_group_is_undone_and_redone_as_one_step() {
+        let mut drawing = Drawing::new();
+        let before = create(&mut drawing, line(0.0, 0.0, 1.0, 0.0));
+
+        drawing.begin_group();
+        let a = create(&mut drawing, line(0.0, 1.0, 1.0, 1.0));
+        let b = create(&mut drawing, line(0.0, 2.0, 1.0, 2.0));
+        let mut tx = drawing.transaction();
+        tx.replace(a, line(0.0, 1.0, 9.0, 1.0)).unwrap();
+        tx.commit();
+        drawing.end_group();
+
+        let undone = drawing.undo().unwrap();
+        assert_eq!(live_ids(&drawing), vec![before]);
+        assert_eq!(sorted(undone.removed), vec![a, b]);
+
+        drawing.redo().unwrap();
+        assert_eq!(live_ids(&drawing), vec![before, a, b]);
+        assert_eq!(
+            drawing.entity(a),
+            Some(&Entity::Line(line(0.0, 1.0, 9.0, 1.0)))
+        );
+
+        drawing.undo().unwrap();
+        drawing.undo().unwrap();
+        assert!(drawing.is_empty() && !drawing.can_undo());
+    }
+
+    #[test]
+    fn a_group_with_one_or_no_transactions_changes_nothing() {
+        let mut drawing = Drawing::new();
+        drawing.begin_group();
+        drawing.end_group();
+        assert!(!drawing.can_undo());
+
+        drawing.begin_group();
+        let id = create(&mut drawing, line(0.0, 0.0, 1.0, 0.0));
+        drawing.end_group();
+        drawing.end_group(); // closing twice is harmless
+        drawing.undo().unwrap();
+        assert_eq!(drawing.entity(id), None);
+        assert!(!drawing.can_undo());
+    }
+
+    #[test]
+    fn rolling_back_inside_a_group_is_not_redoable() {
+        let mut drawing = Drawing::new();
+        let outside = create(&mut drawing, line(0.0, 0.0, 1.0, 0.0));
+        assert_eq!(drawing.rollback_last_in_group(), None, "no group is open");
+
+        drawing.begin_group();
+        assert_eq!(drawing.rollback_last_in_group(), None, "the group is empty");
+        let kept = create(&mut drawing, line(0.0, 1.0, 1.0, 1.0));
+        let dropped = create(&mut drawing, line(0.0, 2.0, 1.0, 2.0));
+
+        let report = drawing.rollback_last_in_group().unwrap();
+        assert_eq!(report.removed, vec![dropped]);
+        assert!(
+            !drawing.can_redo(),
+            "a rolled-back step is forgotten, not redoable"
+        );
+        drawing.end_group();
+
+        assert_eq!(live_ids(&drawing), vec![outside, kept]);
+        // Rolling back never reaches transactions from before the group.
+        drawing.begin_group();
+        assert_eq!(drawing.rollback_last_in_group(), None);
+        assert_eq!(live_ids(&drawing), vec![outside, kept]);
+    }
+
+    #[test]
+    fn undo_and_redo_inside_a_group_do_not_confuse_it() {
+        let mut drawing = Drawing::new();
+        let a = create(&mut drawing, line(0.0, 0.0, 1.0, 0.0));
+        let b = create(&mut drawing, line(0.0, 1.0, 1.0, 1.0));
+
+        // What the UNDO command does: it runs inside its own group.
+        drawing.begin_group();
+        drawing.undo().unwrap();
+        drawing.end_group();
+        assert_eq!(live_ids(&drawing), vec![a]);
+
+        drawing.begin_group();
+        drawing.redo().unwrap();
+        drawing.end_group();
+        assert_eq!(live_ids(&drawing), vec![a, b]);
+
+        // Still two separate steps.
+        drawing.undo().unwrap();
+        assert_eq!(live_ids(&drawing), vec![a]);
     }
 
     #[derive(Clone, Debug)]

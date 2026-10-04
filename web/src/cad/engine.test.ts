@@ -126,10 +126,7 @@ describe("commands", () => {
     enter(cad, "L");
     const seen = cad.uiState().logTotal;
     enter(cad, "banana");
-    expect(cad.logSince(seen)).toEqual([
-      "Specify first point: banana",
-      "A point is required, as x,y.",
-    ]);
+    expect(cad.logSince(seen)).toEqual(["Specify first point: banana", "A point is required."]);
     expect(cad.logSince(0)).toHaveLength(3);
   });
 
