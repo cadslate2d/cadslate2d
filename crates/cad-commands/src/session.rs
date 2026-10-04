@@ -1,10 +1,11 @@
 //! The session facade.
 
-use cad_core::{Aabb, EntityId, PixelTolerance, Point2, ScreenPoint, Vec2, View};
+use cad_core::{Aabb, EntityId, PixelTolerance, Point2, ScreenPoint, View};
 use cad_document::{Drawing, Revision};
 use cad_input::{ExpectedInput, Input, InputKind};
 
 use crate::aids::{self, POLAR_APERTURE, Track, TrackKind};
+use crate::command::angle_degrees;
 use crate::history::InputHistory;
 use crate::log::CommandLog;
 use crate::snap::find_snap;
@@ -789,11 +790,6 @@ fn is_crossing(start: ScreenPoint, end: ScreenPoint) -> bool {
 
 const NO_DIRECTION: &str = "Point the cursor in a direction, then enter the distance.";
 
-/// The direction of `offset` in degrees, counter-clockwise from +X, in `[0, 360)`.
-fn angle_degrees(offset: Vec2) -> f64 {
-    offset.y.atan2(offset.x).to_degrees().rem_euclid(360.0)
-}
-
 trait ReplaceIfSome<T> {
     /// Replaces the value only when one is present, returning the old one.
     fn replace_if_some(&mut self, value: T) -> Option<T>;
@@ -1048,22 +1044,6 @@ mod tests {
         clicked.session.invoke_from_ui("LINE");
         assert_eq!(clicked.session.ui_state().command, Some("LINE"));
         assert!(clicked.log().contains(&"*Cancel*".to_owned()));
-    }
-
-    #[test]
-    fn angles_are_measured_counter_clockwise_from_x_in_degrees() {
-        for (x, y, expected) in [
-            (1.0, 0.0, 0.0),
-            (0.0, 2.0, 90.0),
-            (-3.0, 0.0, 180.0),
-            (0.0, -1.0, 270.0),
-            (1.0, 1.0, 45.0),
-        ] {
-            assert!(
-                (angle_degrees(Vec2::new(x, y)) - expected).abs() < 1e-9,
-                "({x}, {y})"
-            );
-        }
     }
 
     #[test]

@@ -72,7 +72,8 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 | You are adding… | It belongs in… | And needs… |
 | --- | --- | --- |
 | A command | `crates/cad-commands/src/commands/`, registered in `registry.rs` | Headless tests using `cad_commands::testing::Harness` |
-| An entity type | `cad-document` (`Entity`), then every `match` the compiler points at: rendering, picking, DXF | Bounds and hit-test property tests; DXF fixtures |
+| A command that moves, turns, scales, or reflects a selection | An `Operation` of `TransformCommand`, or a state machine built on `TransientEdit` and `cad_geometry::Transform` | Headless tests per entity type; preview leaves the revision unchanged; one undo |
+| An entity type | `cad-document` (`Entity`), then every `match` the compiler points at: rendering, picking, snapping, `transformed`, DXF | Bounds and hit-test property tests; DXF fixtures |
 | Geometry maths | `cad-geometry`, as pure functions | Unit and property tests; a regression case per fixed bug |
 | Input syntax | `cad-input` | Table-driven tests and a never-panics property test |
 | Something drawn transiently | An `OverlayItem` in `cad-commands`, turned into segments in `cad-render` | A render-boundary test that the scene revision is unchanged |

@@ -2,7 +2,8 @@
 
 use cad_core::{Aabb, Point2, Vec2};
 use cad_geometry::{
-    Arc, Circle, Primitive, Segment, bounds_of, polyline_distance_to_point, polyline_segments,
+    Arc, Circle, Primitive, Segment, Transform, bounds_of, polyline_distance_to_point,
+    polyline_segments,
 };
 
 /// A straight line between two points.
@@ -171,23 +172,45 @@ impl Entity {
         }
     }
 
-    /// A copy of the entity moved by `offset`.
+    /// A copy of the entity moved by `offset`. Exact: coordinates are added
+    /// to, and nothing else changes.
     pub fn translated(&self, offset: Vec2) -> Self {
+        self.transformed(&Transform::translation(offset))
+    }
+
+    /// A copy of the entity moved, rotated, uniformly scaled, or mirrored.
+    /// Every kind of entity stays its kind (DESIGN §22).
+    pub fn transformed(&self, transform: &Transform) -> Self {
         match self {
-            Entity::Line(line) => LineEntity::new(line.start + offset, line.end + offset).into(),
-            Entity::Circle(circle) => {
-                CircleEntity::new(circle.center + offset, circle.radius).into()
+            Entity::Line(line) => {
+                LineEntity::new(transform.apply(line.start), transform.apply(line.end)).into()
             }
-            Entity::Arc(arc) => ArcEntity {
-                center: arc.center + offset,
-                ..*arc
-            }
+            Entity::Circle(circle) => CircleEntity::new(
+                transform.apply(circle.center),
+                circle.radius * transform.scale_factor(),
+            )
             .into(),
+            Entity::Arc(arc) => {
+                // Arcs run counter-clockwise from start to end. A mirror
+                // reverses direction, so the two ends trade places.
+                let (start, end) = if transform.reverses_orientation() {
+                    (arc.end_angle, arc.start_angle)
+                } else {
+                    (arc.start_angle, arc.end_angle)
+                };
+                ArcEntity::new(
+                    transform.apply(arc.center),
+                    arc.radius * transform.scale_factor(),
+                    transform.apply_angle(start),
+                    transform.apply_angle(end),
+                )
+                .into()
+            }
             Entity::Polyline(polyline) => PolylineEntity::new(
                 polyline
                     .vertices
                     .iter()
-                    .map(|vertex| *vertex + offset)
+                    .map(|vertex| transform.apply(*vertex))
                     .collect(),
                 polyline.closed,
             )
@@ -233,6 +256,8 @@ pub type SharedEntity = std::sync::Arc<Entity>;
 
 #[cfg(test)]
 mod tests {
+    use std::f64::consts::{FRAC_PI_2, PI};
+
     use super::*;
 
     fn line() -> Entity {
@@ -268,7 +293,6 @@ mod tests {
 
     #[test]
     fn an_arc_runs_counter_clockwise_between_its_angles() {
-        use std::f64::consts::{FRAC_PI_2, PI};
         let arc = ArcEntity::new(Point2::ORIGIN, 10.0, 0.0, FRAC_PI_2);
         let entity: Entity = arc.into();
         assert!(entity.distance_to(Point2::new(0.0, 12.0)) - 2.0 < 1e-12);
@@ -324,6 +348,133 @@ mod tests {
             )
             .into(),
         ]
+    }
+
+    /// Sample points along an entity: enough to tell whether two entities
+    /// trace the same curve.
+    fn samples(entity: &Entity) -> Vec<Point2> {
+        match entity {
+            Entity::Line(line) => vec![line.start, line.end],
+            Entity::Circle(circle) => vec![circle.center],
+            Entity::Arc(arc) => {
+                let arc = arc.arc();
+                vec![arc.start_point(), arc.mid_point(), arc.end_point()]
+            }
+            Entity::Polyline(polyline) => polyline.vertices.clone(),
+        }
+    }
+
+    fn same_curve(a: &Entity, b: &Entity) -> bool {
+        std::mem::discriminant(a) == std::mem::discriminant(b)
+            && samples(a)
+                .iter()
+                .zip(samples(b))
+                .all(|(a, b)| a.distance_to(b) < 1e-9)
+            && (a.bounds().max().distance_to(b.bounds().max()) < 1e-9)
+    }
+
+    #[test]
+    fn every_kind_keeps_its_kind_under_every_transform() {
+        let about = Point2::new(3.0, -2.0);
+        let transforms = [
+            Transform::translation(Vec2::new(7.0, 1.0)),
+            Transform::rotation(about, 37.0),
+            Transform::scaling(about, 2.5).unwrap(),
+            Transform::mirror(about, Point2::new(8.0, 5.0)).unwrap(),
+        ];
+        for entity in one_of_each() {
+            for transform in &transforms {
+                let image = entity.transformed(transform);
+                assert_eq!(
+                    std::mem::discriminant(&image),
+                    std::mem::discriminant(&entity)
+                );
+                // Every sample point of the original maps onto the image.
+                for point in samples(&entity) {
+                    if matches!(entity, Entity::Circle(_)) {
+                        continue; // the centre is not on the curve
+                    }
+                    let distance = image.distance_to(transform.apply(point));
+                    assert!(
+                        distance < 1e-9,
+                        "{entity:?} under {transform:?}: {distance}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// #93: rotating by 360° reproduces the original geometry within tolerance.
+    #[test]
+    fn a_full_turn_reproduces_every_entity() {
+        let about = Point2::new(-4.0, 9.0);
+        for entity in one_of_each() {
+            let full = entity.transformed(&Transform::rotation(about, 360.0));
+            assert!(same_curve(&full, &entity), "{entity:?} became {full:?}");
+            let mut stepped = entity.clone();
+            for _ in 0..8 {
+                stepped = stepped.transformed(&Transform::rotation(about, 45.0));
+            }
+            assert!(
+                same_curve(&stepped, &entity),
+                "{entity:?} became {stepped:?}"
+            );
+        }
+    }
+
+    /// #95: mirroring twice across the same line reproduces the original.
+    #[test]
+    fn mirroring_twice_reproduces_every_entity() {
+        let mirror = Transform::mirror(Point2::new(1.0, 2.0), Point2::new(6.0, -3.0)).unwrap();
+        for entity in one_of_each() {
+            let twice = entity.transformed(&mirror).transformed(&mirror);
+            assert!(same_curve(&twice, &entity), "{entity:?} became {twice:?}");
+        }
+    }
+
+    #[test]
+    fn a_rotated_arc_turns_both_angles() {
+        let arc: Entity = ArcEntity::new(Point2::new(10.0, 0.0), 5.0, 0.0, FRAC_PI_2).into();
+        let Entity::Arc(image) = arc.transformed(&Transform::rotation(Point2::ORIGIN, 90.0)) else {
+            panic!("an arc stays an arc");
+        };
+        assert_eq!(image.center, Point2::new(0.0, 10.0));
+        assert_eq!(image.radius, 5.0);
+        assert!((image.start_angle - FRAC_PI_2).abs() < 1e-15);
+        assert!((image.end_angle - PI).abs() < 1e-15);
+    }
+
+    /// #95: a mirrored arc keeps a valid counter-clockwise representation.
+    #[test]
+    fn a_mirrored_arc_swaps_its_ends_and_stays_counter_clockwise() {
+        // A quarter arc from (10,0) up to (0,10), mirrored across the Y axis.
+        let arc: Entity = ArcEntity::new(Point2::ORIGIN, 10.0, 0.0, FRAC_PI_2).into();
+        let mirror = Transform::mirror(Point2::ORIGIN, Point2::new(0.0, 1.0)).unwrap();
+        let Entity::Arc(image) = arc.transformed(&mirror) else {
+            panic!("an arc stays an arc");
+        };
+        // Counter-clockwise from (0,10) to (-10,0): the second quadrant.
+        assert!((image.start_angle - FRAC_PI_2).abs() < 1e-15);
+        assert!((image.end_angle - PI).abs() < 1e-15);
+        assert!(
+            (image.arc().sweep - FRAC_PI_2).abs() < 1e-15,
+            "not the three-quarter arc"
+        );
+    }
+
+    #[test]
+    fn scaling_scales_radii_and_keeps_arc_angles() {
+        let scale = Transform::scaling(Point2::ORIGIN, 3.0).unwrap();
+        let circle: Entity = CircleEntity::new(Point2::new(1.0, 2.0), 4.0).into();
+        assert_eq!(
+            circle.transformed(&scale),
+            CircleEntity::new(Point2::new(3.0, 6.0), 12.0).into()
+        );
+        let arc: Entity = ArcEntity::new(Point2::new(1.0, 2.0), 4.0, 0.3, 2.1).into();
+        assert_eq!(
+            arc.transformed(&scale),
+            ArcEntity::new(Point2::new(3.0, 6.0), 12.0, 0.3, 2.1).into()
+        );
     }
 
     #[test]

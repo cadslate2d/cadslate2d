@@ -10,8 +10,10 @@ mod crossing;
 pub mod intersect;
 mod polyline;
 mod segment;
+mod transform;
 
 pub use arc::{Arc, Circle, normalize_angle};
 pub use intersect::{Hits, Orientation, Primitive, orientation};
 pub use polyline::{bounds_of, polyline_distance_to_point, polyline_segments};
 pub use segment::Segment;
+pub use transform::{Transform, unit_at_degrees};

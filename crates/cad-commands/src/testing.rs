@@ -12,7 +12,7 @@
 //! ```
 
 use cad_core::{EntityId, Point2, ScreenPoint};
-use cad_document::{Entity, LineEntity};
+use cad_document::{Drawing, Entity, LineEntity};
 
 use crate::{Dirty, KeyAction, Modifiers, PointerButton, Session, Toggle, Toggles};
 
@@ -34,6 +34,15 @@ impl Harness {
         // No grid: overlay assertions then see only what the test put there.
         // Tests about the grid switch it on.
         let mut session = Session::new().with_toggles(Toggles::only(&[Toggle::Osnap]));
+        session.resize(800.0, 600.0);
+        Self { session }
+    }
+
+    /// A harness on a drawing that already holds `entities`.
+    pub fn with_entities(entities: impl IntoIterator<Item = Entity>) -> Self {
+        let drawing = Drawing::from_entities(entities);
+        let mut session =
+            Session::with_drawing(drawing).with_toggles(Toggles::only(&[Toggle::Osnap]));
         session.resize(800.0, 600.0);
         Self { session }
     }

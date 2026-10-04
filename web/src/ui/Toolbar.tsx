@@ -56,6 +56,31 @@ const MODIFY: readonly Tool[] = [
     ),
   },
   {
+    command: "ROTATE",
+    label: "Rotate",
+    icon: icon(<path d="M19 12a7 7 0 1 1-2.5-5.4M17 3v4h-4" strokeLinejoin="round" />),
+  },
+  {
+    command: "SCALE",
+    label: "Scale",
+    icon: icon(
+      <>
+        <rect x="4" y="12" width="8" height="8" />
+        <path d="M4 8V4h16v16h-4M13 11l5-5M14 6h4v4" strokeLinejoin="round" />
+      </>,
+    ),
+  },
+  {
+    command: "MIRROR",
+    label: "Mirror",
+    icon: icon(
+      <>
+        <path d="M12 3v18" strokeDasharray="2 3" />
+        <path d="M9 7 4 17h5zM15 7l5 10h-5z" strokeLinejoin="round" />
+      </>,
+    ),
+  },
+  {
     command: "ERASE",
     label: "Erase",
     icon: icon(<path d="M5 19h14M7 15 15 5l4 3-8 10H8z" strokeLinejoin="round" />),

@@ -11,10 +11,8 @@
 //!
 //! ORTHO and POLAR are never on together: both claim the same rubber band.
 
-use std::f64::consts::FRAC_PI_2;
-
-use cad_core::tolerance::AngularTolerance;
-use cad_core::{PixelTolerance, Point2, Vec2};
+use cad_core::{PixelTolerance, Point2};
+use cad_geometry::unit_at_degrees;
 
 /// How close, on screen, the cursor must be to a polar direction to lock
 /// onto it. A display tolerance, like the snap aperture (§18.3).
@@ -58,19 +56,6 @@ impl Track {
     }
 }
 
-/// The unit vector at `degrees`. Multiples of a quarter turn are exact, so a
-/// vertical track keeps exactly the base point's X.
-fn direction(degrees: f64) -> Vec2 {
-    let quarters = degrees / 90.0;
-    let nearest = quarters.round();
-    if AngularTolerance::DEFAULT.is_zero((quarters - nearest) * FRAC_PI_2) {
-        const AXES: [(f64, f64); 4] = [(1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)];
-        let (x, y) = AXES[nearest.rem_euclid(4.0) as usize];
-        return Vec2::new(x, y);
-    }
-    Vec2::from_polar(1.0, degrees.to_radians())
-}
-
 /// ORTHO: the cursor constrained to horizontal or vertical from `base`,
 /// whichever it is further along.
 pub fn ortho(base: Point2, cursor: Point2) -> Track {
@@ -102,7 +87,7 @@ pub fn polar(base: Point2, cursor: Point2, increment: f64, reach: f64) -> Option
     }
     let steps = (offset.y.atan2(offset.x).to_degrees() / increment).round();
     let angle = (steps * increment).rem_euclid(360.0);
-    let along = direction(angle);
+    let along = unit_at_degrees(angle);
     let distance = offset.x * along.x + offset.y * along.y;
     let aside = (offset.x * along.y - offset.y * along.x).abs();
     (distance > 0.0 && aside <= reach).then(|| Track {

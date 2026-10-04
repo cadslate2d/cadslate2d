@@ -102,10 +102,10 @@ impl OverlayFrame {
                 OverlayItem::PreviewEntity(entity) => {
                     self.frame.push_entity(StyleRole::Preview, entity)
                 }
-                OverlayItem::PreviewTranslated { ids, offset } => {
+                OverlayItem::PreviewTransformed { ids, transform } => {
                     for entity in ids.iter().filter_map(|id| drawing.entity(*id)) {
                         self.frame
-                            .push_entity(StyleRole::Preview, &entity.translated(*offset));
+                            .push_entity(StyleRole::Preview, &entity.transformed(transform));
                     }
                 }
                 OverlayItem::SelectionBox { from, to, crossing } => {

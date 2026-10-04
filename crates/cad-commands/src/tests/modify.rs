@@ -2,6 +2,7 @@
 
 use cad_core::{EntityId, Point2};
 use cad_document::{CircleEntity, Entity, LineEntity};
+use cad_geometry::Transform;
 
 use crate::testing::Harness;
 use crate::{Dirty, OverlayItem};
@@ -247,9 +248,9 @@ fn move_previews_transiently_and_names_its_sources() {
     }
     h.move_to(450.0, 300.0); // 50 to the right
     let overlay = h.session.overlay();
-    assert!(overlay.contains(&OverlayItem::PreviewTranslated {
+    assert!(overlay.contains(&OverlayItem::PreviewTransformed {
         ids: vec![line],
-        offset: cad_core::Vec2::new(50.0, 0.0)
+        transform: Transform::translation(cad_core::Vec2::new(50.0, 0.0))
     }));
     assert_eq!(
         h.session.drawing().revision(),
@@ -277,7 +278,7 @@ fn cancelling_a_move_changes_nothing() {
         !h.session
             .overlay()
             .iter()
-            .any(|item| matches!(item, OverlayItem::PreviewTranslated { .. }))
+            .any(|item| matches!(item, OverlayItem::PreviewTransformed { .. }))
     );
 }
 

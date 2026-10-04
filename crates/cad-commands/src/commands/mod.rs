@@ -28,11 +28,13 @@ mod files;
 mod grid;
 mod history;
 mod line;
+mod mirror;
 mod modify;
 mod osnap;
 mod pline;
 mod polarang;
 mod rectang;
+mod transform;
 
 /// Option keywords shared by more than one command.
 mod keywords {
@@ -48,8 +50,10 @@ pub(crate) use files::{ExportCommand, OpenCommand};
 pub(crate) use grid::GridCommand;
 pub(crate) use history::{RedoCommand, UndoCommand};
 pub(crate) use line::LineCommand;
-pub(crate) use modify::{EraseCommand, PlaceCommand};
+pub(crate) use mirror::MirrorCommand;
+pub(crate) use modify::EraseCommand;
 pub(crate) use osnap::OsnapCommand;
 pub(crate) use pline::PlineCommand;
 pub(crate) use polarang::PolarAngleCommand;
 pub(crate) use rectang::RectangCommand;
+pub(crate) use transform::TransformCommand;

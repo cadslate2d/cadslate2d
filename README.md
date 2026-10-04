@@ -10,7 +10,7 @@ CadSlate2D is a free, browser-native, local-first 2D CAD application inspired by
 
 ## Status
 
-Milestones **M0 — The Line** and **M1 — Input and Basic Entities** are complete. **M2 — OSNAP, Grips, and Basic Modify** is in progress: object snaps, ORTHO, POLAR, and the grid work; grips and more modify commands follow. You can draw lines, circles, arcs, polylines, and rectangles by command or pointer, snap exactly to existing geometry, select with clicks and boxes, move, copy, and erase, undo and redo whole commands, export DXF, and reopen it — all in a static page with no backend. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
+Milestones **M0 — The Line** and **M1 — Input and Basic Entities** are complete. **M2 — OSNAP, Grips, and Basic Modify** is in progress: object snaps, ORTHO, POLAR, the grid, and ROTATE, SCALE, and MIRROR work; grips and the trimming commands follow. You can draw lines, circles, arcs, polylines, and rectangles by command or pointer, snap exactly to existing geometry, select with clicks and boxes, move, copy, rotate, scale, mirror, and erase, undo and redo whole commands, export DXF, and reopen it — all in a static page with no backend. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
 
 ## What works today
 
@@ -26,6 +26,9 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `ERASE` | `E`, Delete | Erases the selected objects. |
 | `MOVE` | `M` | Moves the selection from a base point to a second point. |
 | `COPY` | `CO`, `CP` | Copies the selection; keeps placing until Enter. |
+| `ROTATE` | `RO` | Rotates the selection about a base point, by a typed angle or towards the pointer. |
+| `SCALE` | `SC` | Scales the selection uniformly about a base point, by a typed factor or the pointer's distance. |
+| `MIRROR` | `MI` | Reflects the selection across a line through two points; asks whether to erase the originals. |
 | `UNDO` | `U`, Ctrl+Z | Reverts the last command. |
 | `REDO` | Ctrl+Y, Ctrl+Shift+Z | Re-applies the last undone command. |
 | `OSNAP` | `OS` | Chooses which object snaps run. Each mode is switched by its keyword; Enter finishes. |

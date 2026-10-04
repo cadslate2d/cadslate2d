@@ -5,8 +5,9 @@
 //! render scene are untouched. On commit, the edit becomes exactly one
 //! transaction. Cancelling needs no cleanup, because nothing was changed.
 
-use cad_core::{EntityId, Vec2};
+use cad_core::EntityId;
 use cad_document::{Drawing, Entity};
+use cad_geometry::Transform;
 
 use crate::{OverlayItem, Selection};
 
@@ -34,21 +35,21 @@ impl TransientEdit {
         self.sources.is_empty()
     }
 
-    /// Shows the sources where a translation by `offset` would put them.
-    pub fn preview_translated(&self, offset: Vec2, out: &mut Vec<OverlayItem>) {
+    /// Shows the sources where `transform` would put them.
+    pub fn preview(&self, transform: Transform, out: &mut Vec<OverlayItem>) {
         if !self.sources.is_empty() {
-            out.push(OverlayItem::PreviewTranslated {
+            out.push(OverlayItem::PreviewTransformed {
                 ids: self.sources.clone(),
-                offset,
+                transform,
             });
         }
     }
 
-    /// Moves the sources by `offset` in one transaction. IDs are unchanged.
-    pub fn commit_translated(&self, drawing: &mut Drawing, offset: Vec2) {
-        let moved = self.translated(drawing, offset);
+    /// Transforms the sources in place, in one transaction. IDs are unchanged.
+    pub fn commit(&self, drawing: &mut Drawing, transform: Transform) {
+        let changed = self.transformed(drawing, transform);
         let mut transaction = drawing.transaction();
-        for (id, entity) in moved {
+        for (id, entity) in changed {
             transaction
                 .replace(id, entity)
                 .expect("sources are live and appear once");
@@ -56,10 +57,10 @@ impl TransientEdit {
         transaction.commit();
     }
 
-    /// Inserts copies of the sources, moved by `offset`, in one transaction.
-    /// Returns the new IDs.
-    pub fn commit_copies(&self, drawing: &mut Drawing, offset: Vec2) -> Vec<EntityId> {
-        let copies = self.translated(drawing, offset);
+    /// Inserts transformed copies of the sources, in one transaction, leaving
+    /// the sources as they are. Returns the new IDs.
+    pub fn commit_copies(&self, drawing: &mut Drawing, transform: Transform) -> Vec<EntityId> {
+        let copies = self.transformed(drawing, transform);
         let mut transaction = drawing.transaction();
         let ids = copies
             .into_iter()
@@ -69,21 +70,25 @@ impl TransientEdit {
         ids
     }
 
-    /// Each live source with its translated geometry.
-    fn translated(&self, drawing: &Drawing, offset: Vec2) -> Vec<(EntityId, Entity)> {
+    /// Each live source with its transformed geometry.
+    fn transformed(&self, drawing: &Drawing, transform: Transform) -> Vec<(EntityId, Entity)> {
         self.sources
             .iter()
-            .filter_map(|&id| Some((id, drawing.entity(id)?.translated(offset))))
+            .filter_map(|&id| Some((id, drawing.entity(id)?.transformed(&transform))))
             .collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use cad_core::Point2;
+    use cad_core::{Point2, Vec2};
     use cad_document::{CircleEntity, LineEntity};
 
     use super::*;
+
+    fn by(x: f64, y: f64) -> Transform {
+        Transform::translation(Vec2::new(x, y))
+    }
 
     fn drawing() -> (Drawing, Selection) {
         let mut drawing = Drawing::new();
@@ -114,14 +119,14 @@ mod tests {
         let mut overlay = Vec::new();
         for step in 0..1000 {
             overlay.clear();
-            edit.preview_translated(Vec2::new(f64::from(step), 1.0), &mut overlay);
+            edit.preview(by(f64::from(step), 1.0), &mut overlay);
         }
 
         assert_eq!(
             overlay,
-            vec![OverlayItem::PreviewTranslated {
+            vec![OverlayItem::PreviewTransformed {
                 ids: edit.sources().to_vec(),
-                offset: Vec2::new(999.0, 1.0)
+                transform: by(999.0, 1.0)
             }]
         );
         assert_eq!(
@@ -137,7 +142,7 @@ mod tests {
         let edit = TransientEdit::of(&selection);
         let ids = edit.sources().to_vec();
 
-        edit.commit_translated(&mut drawing, Vec2::new(100.0, 0.0));
+        edit.commit(&mut drawing, by(100.0, 0.0));
         assert_eq!(
             drawing.entity(ids[0]).unwrap().bounds().min(),
             Point2::new(100.0, 0.0)
@@ -157,11 +162,40 @@ mod tests {
     }
 
     #[test]
+    fn any_transform_commits_as_one_undoable_transaction() {
+        let (mut drawing, selection) = drawing();
+        let edit = TransientEdit::of(&selection);
+        let ids = edit.sources().to_vec();
+        let before = drawing.entity(ids[0]).unwrap().clone();
+
+        edit.commit(&mut drawing, Transform::rotation(Point2::ORIGIN, 90.0));
+        assert_eq!(
+            drawing.entity(ids[0]).unwrap(),
+            &Entity::from(LineEntity::new(Point2::ORIGIN, Point2::new(0.0, 10.0)))
+        );
+        assert_eq!(
+            drawing.entity(ids[1]).unwrap(),
+            &Entity::from(CircleEntity::new(Point2::new(-5.0, 5.0), 2.0))
+        );
+
+        drawing.undo().unwrap();
+        assert_eq!(
+            drawing.entity(ids[0]).unwrap(),
+            &before,
+            "one undo restores both"
+        );
+        assert_eq!(
+            drawing.entity(ids[1]).unwrap(),
+            &Entity::from(CircleEntity::new(Point2::new(5.0, 5.0), 2.0))
+        );
+    }
+
+    #[test]
     fn committing_copies_inserts_new_entities_and_leaves_the_sources() {
         let (mut drawing, selection) = drawing();
         let edit = TransientEdit::of(&selection);
 
-        let copies = edit.commit_copies(&mut drawing, Vec2::new(0.0, 50.0));
+        let copies = edit.commit_copies(&mut drawing, by(0.0, 50.0));
         assert_eq!(copies.len(), 2);
         assert_eq!(drawing.len(), 5);
         assert!(
@@ -188,8 +222,8 @@ mod tests {
         let revision = drawing.revision();
 
         let mut overlay = Vec::new();
-        edit.preview_translated(Vec2::new(1.0, 1.0), &mut overlay);
-        edit.commit_translated(&mut drawing, Vec2::new(1.0, 1.0));
+        edit.preview(by(1.0, 1.0), &mut overlay);
+        edit.commit(&mut drawing, by(1.0, 1.0));
 
         assert!(overlay.is_empty() && edit.is_empty());
         assert_eq!(drawing.revision(), revision);
@@ -203,7 +237,7 @@ mod tests {
         transaction.remove(edit.sources()[0]).unwrap();
         transaction.commit();
 
-        edit.commit_translated(&mut drawing, Vec2::new(1.0, 0.0));
+        edit.commit(&mut drawing, by(1.0, 0.0));
         assert_eq!(drawing.len(), 2);
     }
 }

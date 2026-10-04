@@ -8,7 +8,7 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | --- | --- |
 | M0 — The Line | Complete and closed ([review](reviews/m0-exit-review.md)). |
 | M1 — Input and Basic Entities | Complete ([review](reviews/m1-exit-review.md)). Two carried-over items need a person. |
-| M2 — OSNAP, Grips, and Basic Modify | In progress. Steps 1–3 of the order of work are done: intersections, object snaps, and the drafting aids. Transforms and ROTATE, SCALE, MIRROR are next. |
+| M2 — OSNAP, Grips, and Basic Modify | In progress. Steps 1–4 of the order of work are done: intersections, object snaps, the drafting aids, and the transform commands. Grips are next. |
 | M3–M7 | PROVISIONAL placeholders, to be broken down at the preceding exit review. |
 | M8 | FUTURE. Not planned against. |
 

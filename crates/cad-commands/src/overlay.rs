@@ -3,8 +3,9 @@
 //! Commands and the session say *what* should be shown; `cad-render` turns
 //! that into packed geometry. Nothing here knows about vertices.
 
-use cad_core::{EntityId, Point2, Vec2};
+use cad_core::{EntityId, Point2};
 use cad_document::Entity;
+use cad_geometry::Transform;
 
 use crate::SnapMode;
 
@@ -23,7 +24,10 @@ pub enum OverlayItem {
     PreviewEntity(Entity),
     /// Existing entities shown where an edit would put them. The document is
     /// not touched until the edit is committed (DESIGN §17).
-    PreviewTranslated { ids: Vec<EntityId>, offset: Vec2 },
+    PreviewTransformed {
+        ids: Vec<EntityId>,
+        transform: Transform,
+    },
     /// The rectangle of a window or crossing selection in progress.
     SelectionBox {
         from: Point2,

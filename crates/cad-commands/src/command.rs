@@ -7,7 +7,7 @@
 
 use std::fmt::Debug;
 
-use cad_core::{EntityId, Point2};
+use cad_core::{EntityId, Point2, Vec2};
 use cad_document::Drawing;
 use cad_input::{ExpectedInput, Keyword};
 
@@ -27,6 +27,13 @@ pub enum CommandInput {
     Keyword(Keyword),
     /// Enter or Space on an empty line.
     Accept,
+}
+
+/// The angle, in degrees counter-clockwise from +X in `[0, 360)`, that a
+/// point makes with a base point it is `offset` away from. This is how a
+/// click is read where an angle is expected.
+pub(crate) fn angle_degrees(offset: Vec2) -> f64 {
+    offset.y.atan2(offset.x).to_degrees().rem_euclid(360.0)
 }
 
 /// What a command asks for, before formatting.
@@ -64,7 +71,9 @@ impl Prompt {
                 .iter()
                 .map(|keyword| keyword.name())
                 .collect();
-            line.push_str(&format!(" or [{}]", names.join("/")));
+            // `Specify next point or [Close/Undo]`, but `Erase source objects? [Yes/No]`.
+            let joiner = if line.ends_with('?') { " " } else { " or " };
+            line.push_str(&format!("{joiner}[{}]", names.join("/")));
         }
         if let Some(default) = &self.default {
             line.push_str(&format!(" <{default}>"));
@@ -157,6 +166,34 @@ pub trait Command: Debug {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn angles_are_measured_counter_clockwise_from_x_in_degrees() {
+        for (x, y, expected) in [
+            (1.0, 0.0, 0.0),
+            (0.0, 2.0, 90.0),
+            (-3.0, 0.0, 180.0),
+            (0.0, -1.0, 270.0),
+            (1.0, 1.0, 45.0),
+        ] {
+            assert!(
+                (angle_degrees(Vec2::new(x, y)) - expected).abs() < 1e-9,
+                "({x}, {y})"
+            );
+        }
+    }
+
+    #[test]
+    fn a_question_lists_its_answers_without_or() {
+        let expected = ExpectedInput::new(cad_input::InputKind::Nothing)
+            .with_keywords(&[Keyword::new("Yes"), Keyword::new("No")]);
+        assert_eq!(
+            Prompt::new("Erase source objects?")
+                .with_default("No")
+                .render(&expected),
+            "Erase source objects? [Yes/No] <No>:"
+        );
+    }
 
     #[test]
     fn a_plain_prompt_ends_with_a_colon() {
