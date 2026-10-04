@@ -1,6 +1,6 @@
 # ADR-0001: Crate layering and the interactive session
 
-**Status:** Proposed  
+**Status:** Accepted (2026-10-04)  
 **Date:** 2026-10-04  
 **Kind:** Bootstrap (fills a gap in the baseline; changes no LOCKED decision)  
 **Design refs:** §7.2, §8, §9, §11, §19.5, §41

@@ -11,10 +11,10 @@ There are two kinds:
 
 | ADR | Title | Status | Kind |
 | --- | --- | --- | --- |
-| [0001](0001-crate-layering-and-session.md) | Crate layering and the interactive session | Proposed | Bootstrap |
-| [0002](0002-wasm-boundary-api.md) | WASM boundary: events in, dirty flags out, pulled frames | Proposed | Bootstrap |
-| [0003](0003-view-ownership-and-viewport-independent-scene.md) | View ownership and viewport-independent committed geometry | Proposed | Bootstrap |
-| [0004](0004-wasm-toolchain-and-build.md) | WASM toolchain and build pipeline | Proposed | Bootstrap |
+| [0001](0001-crate-layering-and-session.md) | Crate layering and the interactive session | Accepted | Bootstrap |
+| [0002](0002-wasm-boundary-api.md) | WASM boundary: events in, dirty flags out, pulled frames | Accepted | Bootstrap |
+| [0003](0003-view-ownership-and-viewport-independent-scene.md) | View ownership and viewport-independent committed geometry | Accepted | Bootstrap |
+| [0004](0004-wasm-toolchain-and-build.md) | WASM toolchain and build pipeline | Accepted | Bootstrap |
 
 ## Expected evidence ADRs
 

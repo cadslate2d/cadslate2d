@@ -1,6 +1,6 @@
 # ADR-0004: WASM toolchain and build pipeline
 
-**Status:** Proposed  
+**Status:** Accepted (2026-10-04)  
 **Date:** 2026-10-04  
 **Kind:** Bootstrap (fills a gap in the baseline; changes no LOCKED decision)  
 **Design refs:** §6, §9, §26.3 (criterion 18)

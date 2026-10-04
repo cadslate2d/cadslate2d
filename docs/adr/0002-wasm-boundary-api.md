@@ -1,6 +1,6 @@
 # ADR-0002: WASM boundary — events in, dirty flags out, pulled frames
 
-**Status:** Proposed  
+**Status:** Accepted (2026-10-04)  
 **Date:** 2026-10-04  
 **Kind:** Bootstrap (fills a gap in the baseline; changes no LOCKED decision)  
 **Design refs:** §6, §7, §12.1–12.4, §12.6, §13, §28, §41
@@ -31,7 +31,7 @@ pointer_up(x, y, button, modifiers)
 wheel(x, y, delta, modifiers)
 key(action, modifiers)        non-text keys: Enter, Escape, F-keys, Delete, undo/redo chords
 submit_text(line)             a completed command-line entry
-resize(width, height, dpr)
+resize(width, height)         CSS pixels; device pixel ratio stays in TypeScript (ADR-0003)
 load_dxf(bytes) → ImportReport
 export_dxf() → bytes
 ```

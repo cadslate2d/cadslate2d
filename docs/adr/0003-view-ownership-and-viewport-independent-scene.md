@@ -1,6 +1,6 @@
 # ADR-0003: View ownership and viewport-independent committed geometry
 
-**Status:** Proposed  
+**Status:** Accepted (2026-10-04)  
 **Date:** 2026-10-04  
 **Kind:** Bootstrap (fills a gap in the baseline; changes no LOCKED decision)  
 **Design refs:** §4.1, §7, §12.2–12.5, §18.3, §19.1, §23.1, §23.4, §26.3 (criteria 5–6)
@@ -27,12 +27,13 @@ Three things are left unstated, and a naive reading produces a design that fails
 
 ```rust
 pub struct View {
-    pub center: Point2,   // world, f64
-    pub scale: f64,       // device pixels per world unit
-    pub size_px: (u32, u32),
-    pub dpr: f64,
+    center: Point2,      // world, f64
+    scale: f64,          // CSS pixels per world unit
+    size: (f64, f64),    // viewport size in CSS pixels
 }
 ```
+
+Screen coordinates are CSS pixels throughout the core. The device pixel ratio is the adapter's concern alone: it sizes the canvas backing store and nothing in Rust depends on it. *(Amended on acceptance; the draft carried `dpr` and device pixels in `View`, which no core computation needed.)*
 
 `View` is session state (ADR-0001). It is not part of `Drawing`, not in undo history, and not written to DXF. TypeScript forwards raw pointer, wheel, and resize events and holds no competing camera. All screen↔world conversion — picking tolerance, snap radius, zoom-about-cursor, window selection — goes through this one type.
 
