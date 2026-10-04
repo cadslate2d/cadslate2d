@@ -38,6 +38,7 @@ test.describe("toolbar", () => {
       "Rotate",
       "Scale",
       "Mirror",
+      "Offset",
       "Erase",
     ]) {
       await page.getByRole("button", { name, exact: true }).click();

@@ -80,7 +80,10 @@ impl Command for PlineCommand {
             }
             CommandInput::Keyword(keyword) if keyword == CLOSE => return self.finish(true, ctx),
             CommandInput::Accept => return self.finish(false, ctx),
-            CommandInput::Keyword(_) | CommandInput::Distance(_) | CommandInput::Angle(_) => {}
+            CommandInput::Keyword(_)
+            | CommandInput::Distance(_)
+            | CommandInput::Angle(_)
+            | CommandInput::Pick { .. } => {}
         }
         Step::Continue
     }

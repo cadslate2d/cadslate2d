@@ -74,6 +74,7 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 | --- | --- | --- |
 | A command | `crates/cad-commands/src/commands/`, registered in `registry.rs` | Headless tests using `cad_commands::testing::Harness` |
 | A command that moves, turns, scales, or reflects a selection | An `Operation` of `TransformCommand`, or a state machine built on `TransientEdit` and `cad_geometry::Transform` | Headless tests per entity type; preview leaves the revision unchanged; one undo |
+| A geometry-heavy modify command (offset, trim, extend, fillet, …) | Maths on primitives in `cad-geometry`; the per-entity operation, returning a typed error, in `cad-document/src/editing.rs`; the state machine in `cad-commands` | Every supported combination tested and listed in `docs/modify-matrix.md`; unsupported ones refused with a message |
 | An entity type | `cad-document` (`Entity`), then every `match` the compiler points at: rendering, picking, snapping, `transformed`, grips, DXF | Bounds and hit-test property tests; DXF fixtures |
 | Geometry maths | `cad-geometry`, as pure functions | Unit and property tests; a regression case per fixed bug |
 | Input syntax | `cad-input` | Table-driven tests and a never-panics property test |

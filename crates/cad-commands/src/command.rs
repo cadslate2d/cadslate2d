@@ -23,6 +23,8 @@ pub enum CommandInput {
     Distance(f64),
     /// An angle in degrees, typed or measured from the command's base point.
     Angle(f64),
+    /// One object picked with the pointer, and where on it the pick was.
+    Pick { entity: EntityId, at: Point2 },
     /// One of the option keywords the command offered.
     Keyword(Keyword),
     /// Enter or Space on an empty line.

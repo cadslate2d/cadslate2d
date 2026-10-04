@@ -379,6 +379,19 @@ impl Session {
                     None => self.selection_click(at, modifiers),
                 }
             }
+            // A command asking for one object gets the entity under the cursor.
+            PointerButton::Primary if self.expected().kind == InputKind::Object => {
+                match self.pick(at) {
+                    Some(entity) => self.feed(CommandInput::Pick {
+                        entity,
+                        at: self.view.screen_to_world(at),
+                    }),
+                    None => {
+                        self.log.push("No object there.".to_owned());
+                        Dirty::UI
+                    }
+                }
+            }
             PointerButton::Primary => match self.aim() {
                 Some(aim) => self.feed_point(aim.point).unwrap_or(Dirty::NONE),
                 None => Dirty::NONE,
@@ -602,7 +615,9 @@ impl Session {
         let takes_a_point = match command.expected().kind {
             InputKind::Point => true,
             InputKind::Distance | InputKind::Angle => command.base_point().is_some(),
-            InputKind::Command | InputKind::Selection | InputKind::Nothing => false,
+            InputKind::Command | InputKind::Selection | InputKind::Object | InputKind::Nothing => {
+                false
+            }
         };
         (takes_a_point && self.pan_anchor.is_none()).then_some(command)
     }
@@ -773,6 +788,7 @@ impl Session {
             (InputKind::Distance, Some(offset)) => CommandInput::Distance(offset.length()),
             (InputKind::Angle, Some(offset)) => CommandInput::Angle(angle_degrees(offset)),
             (InputKind::Distance | InputKind::Angle, None) => return Err("A number is required."),
+            (InputKind::Object, _) => return Err("Pick an object with the pointer."),
             (InputKind::Nothing | InputKind::Command | InputKind::Selection, _) => {
                 return Err("An option keyword is required.");
             }

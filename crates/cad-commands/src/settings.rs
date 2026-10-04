@@ -1,7 +1,8 @@
 //! Drafting settings (DESIGN §5, §13.4).
 //!
-//! How the drafting aids behave: which object snaps run, the polar angle,
-//! the grid spacing.
+//! How the drafting aids behave — which object snaps run, the polar angle,
+//! the grid spacing — and the values modify commands remember from one use
+//! to the next.
 //! Like the toggles, these are session state — not part of the drawing, not
 //! saved to DXF, and never undoable.
 
@@ -21,6 +22,8 @@ pub struct DraftingSettings {
     /// The distance between grid lines, in drawing units. The display may
     /// show every 2nd, 5th, 10th… line when zoomed out, never a finer grid.
     pub grid_spacing: f64,
+    /// The distance OFFSET last used, offered as its default.
+    pub offset_distance: Option<f64>,
 }
 
 impl Default for DraftingSettings {
@@ -29,6 +32,7 @@ impl Default for DraftingSettings {
             snap_modes: SnapModes::default(),
             polar_increment: DEFAULT_POLAR_INCREMENT,
             grid_spacing: DEFAULT_GRID_SPACING,
+            offset_distance: None,
         }
     }
 }

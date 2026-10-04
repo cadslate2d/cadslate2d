@@ -92,7 +92,10 @@ impl Command for LineCommand {
                 return Step::Finished;
             }
             CommandInput::Accept => return Step::Finished,
-            CommandInput::Keyword(_) | CommandInput::Distance(_) | CommandInput::Angle(_) => {}
+            CommandInput::Keyword(_)
+            | CommandInput::Distance(_)
+            | CommandInput::Angle(_)
+            | CommandInput::Pick { .. } => {}
         }
         Step::Continue
     }

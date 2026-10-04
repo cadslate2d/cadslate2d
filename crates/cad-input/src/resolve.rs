@@ -24,6 +24,9 @@ pub enum InputKind {
     Angle,
     /// A selection set, built with the pointer; Enter finishes it.
     Selection,
+    /// One object, picked with the pointer. Typed text can only be an option
+    /// keyword or Enter.
+    Object,
     /// Nothing but an option keyword or Enter.
     Nothing,
 }
@@ -63,6 +66,10 @@ impl ExpectedInput {
 
     pub fn angle() -> Self {
         Self::new(InputKind::Angle)
+    }
+
+    pub fn object() -> Self {
+        Self::new(InputKind::Object)
     }
 
     pub fn with_keywords(mut self, keywords: &[Keyword]) -> Self {
@@ -154,7 +161,9 @@ pub fn resolve(
         InputKind::Angle => number()
             .map(Input::Angle)
             .or_else(|_| parse_point(text).map(Input::Point)),
-        InputKind::Nothing | InputKind::Selection => Err(Diagnostic::new("", position)),
+        InputKind::Nothing | InputKind::Selection | InputKind::Object => {
+            Err(Diagnostic::new("", position))
+        }
     };
     result.map_err(|error| Diagnostic::new(requirement(expected), error.position.max(position)))
 }
@@ -164,12 +173,20 @@ fn requirement(expected: &ExpectedInput) -> String {
     if expected.kind == InputKind::Selection {
         return "Select objects by clicking them or with a window, then press Enter.".to_owned();
     }
+    if expected.kind == InputKind::Object {
+        let otherwise = if expected.keywords.is_empty() {
+            "press Enter to finish"
+        } else {
+            "enter an option keyword"
+        };
+        return format!("Pick an object with the pointer, or {otherwise}.");
+    }
     let mut accepted: Vec<&str> = match expected.kind {
         InputKind::Command => vec!["a command"],
         InputKind::Point => vec!["a point"],
         InputKind::Distance => vec!["a distance", "a point"],
         InputKind::Angle => vec!["an angle", "a point"],
-        InputKind::Nothing | InputKind::Selection => vec![],
+        InputKind::Nothing | InputKind::Selection | InputKind::Object => vec![],
     };
     if !expected.keywords.is_empty() || accepted.is_empty() {
         accepted.push("an option keyword");
@@ -216,6 +233,27 @@ mod tests {
 
     fn point(x: f64, y: f64) -> Result<Input, Diagnostic> {
         Ok(Input::Point(PointInput::Absolute(Point2::new(x, y))))
+    }
+
+    #[test]
+    fn an_object_prompt_takes_only_keywords_and_enter_from_the_keyboard() {
+        let plain = ExpectedInput::object();
+        assert_eq!(resolved("", &plain), Ok(Input::Accept));
+        assert_eq!(
+            message("10,20", &plain),
+            "Pick an object with the pointer, or press Enter to finish."
+        );
+        assert_eq!(
+            message("L", &plain),
+            "Pick an object with the pointer, or press Enter to finish."
+        );
+
+        let with_option = ExpectedInput::object().with_keywords(&[UNDO]);
+        assert_eq!(resolved("u", &with_option), Ok(Input::Keyword(UNDO)));
+        assert_eq!(
+            message("5", &with_option),
+            "Pick an object with the pointer, or enter an option keyword."
+        );
     }
 
     /// DESIGN §26.3 criterion 7: `L` and `LINE` invoke the same command.

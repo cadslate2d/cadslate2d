@@ -81,6 +81,11 @@ const MODIFY: readonly Tool[] = [
     ),
   },
   {
+    command: "OFFSET",
+    label: "Offset",
+    icon: icon(<path d="M4 17 14 5M10 20 20 8" />),
+  },
+  {
     command: "ERASE",
     label: "Erase",
     icon: icon(<path d="M5 19h14M7 15 15 5l4 3-8 10H8z" strokeLinejoin="round" />),
