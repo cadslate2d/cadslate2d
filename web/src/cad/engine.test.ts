@@ -50,7 +50,8 @@ describe("CadEngine", () => {
 
   test("middle-button drag pans; an ordinary move does not", () => {
     const cad = engine();
-    expect(cad.pointerMove(10, 10, 0)).toBe(0);
+    // An ordinary move only moves the crosshair and the coordinate readout.
+    expect(cad.pointerMove(10, 10, 0)).toBe(Dirty.Overlay | Dirty.Ui);
 
     cad.pointerDown(100, 100, 1, 0);
     const dirty = cad.pointerMove(140, 100, 0);

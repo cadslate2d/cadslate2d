@@ -7,10 +7,25 @@
 
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
+mod command;
+mod commands;
 mod dirty;
 mod events;
+mod history;
+mod log;
+mod overlay;
+mod registry;
+mod selection;
 mod session;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+mod ui_state;
 
+pub use command::{Command, CommandContext, CommandInput, Step};
 pub use dirty::Dirty;
-pub use events::{Modifiers, PointerButton};
+pub use events::{KeyAction, Modifiers, PointerButton};
+pub use overlay::OverlayItem;
+pub use registry::CommandRegistry;
+pub use selection::Selection;
 pub use session::Session;
+pub use ui_state::UiState;

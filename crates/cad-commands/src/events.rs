@@ -22,3 +22,16 @@ pub enum PointerButton {
     Middle,
     Secondary,
 }
+
+/// Non-text keys. Text entry, including Enter and Space-as-Enter, arrives
+/// through `Session::submit_text` instead, because the in-progress edit
+/// buffer belongs to the UI (ADR-0002 §6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyAction {
+    /// Cancel the active command, or clear the selection when idle.
+    Escape,
+    /// The undo shortcut (Ctrl+Z). Same as invoking `UNDO`.
+    Undo,
+    /// The redo shortcut (Ctrl+Y, Ctrl+Shift+Z). Same as invoking `REDO`.
+    Redo,
+}

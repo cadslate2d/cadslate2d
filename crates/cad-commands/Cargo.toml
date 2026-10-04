@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# Exposes the headless test harness (`cad_commands::testing`) to other crates' tests.
+testing = []
+
 [dependencies]
 cad-core.workspace = true
 cad-geometry.workspace = true
