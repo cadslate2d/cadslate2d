@@ -21,6 +21,7 @@ mod session;
 pub mod testing;
 #[cfg(test)]
 mod tests;
+mod transient;
 mod ui_state;
 
 pub use command::{Command, CommandContext, CommandInput, Prompt, Step};
@@ -30,4 +31,5 @@ pub use overlay::OverlayItem;
 pub use registry::CommandRegistry;
 pub use selection::Selection;
 pub use session::Session;
+pub use transient::TransientEdit;
 pub use ui_state::UiState;

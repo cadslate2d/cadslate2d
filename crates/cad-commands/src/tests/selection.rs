@@ -31,8 +31,11 @@ fn clicking_a_line_selects_it() {
     assert_eq!(selected(&h), vec![lower]);
     assert_eq!(h.session.ui_state().selection_count, 1);
 
+    // A second click adds to the selection, as in classic CAD.
     h.click_world(Point2::new(-60.0, 50.0));
-    assert_eq!(selected(&h), vec![upper], "a click replaces the selection");
+    assert_eq!(selected(&h), vec![lower, upper]);
+    // Clicking a selected entity again changes nothing.
+    assert!(h.click_world(Point2::new(-60.0, 50.0)).is_empty());
 }
 
 #[test]
@@ -43,12 +46,18 @@ fn clicking_near_a_line_selects_it_within_the_pick_tolerance() {
 }
 
 #[test]
-fn clicking_empty_space_changes_nothing() {
+fn clicking_empty_space_keeps_the_selection_and_opens_a_box() {
     let (mut h, lower, _) = two_lines();
     h.click_world(Point2::new(0.0, 0.0));
     let dirty = h.click_world(Point2::new(0.0, 25.0));
-    assert!(dirty.is_empty());
+    assert!(dirty.contains(Dirty::OVERLAY), "the box is shown");
     assert_eq!(selected(&h), vec![lower]);
+
+    // Escape closes the box first and leaves the selection alone.
+    h.escape();
+    assert_eq!(selected(&h), vec![lower]);
+    h.escape();
+    assert!(selected(&h).is_empty());
 }
 
 #[test]
@@ -65,6 +74,7 @@ fn the_nearest_line_wins_and_ties_go_to_the_older_entity() {
         "2 units from the upper line, 4 from the lower"
     );
 
+    h.escape();
     h.click_world(Point2::new(0.0, 3.0));
     assert_eq!(selected(&h), vec![ids[0]], "equidistant: the older entity");
 }

@@ -382,6 +382,7 @@ mod tests {
             h.session.selection().is_empty(),
             "the centre is not on the circle"
         );
+        h.escape(); // the click on empty space opened a selection box
         h.click_world(p(50.0, 2.0));
         assert_eq!(h.session.selection().len(), 1);
     }

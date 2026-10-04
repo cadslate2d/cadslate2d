@@ -1,6 +1,6 @@
 //! The session facade.
 
-use cad_core::{EntityId, PixelTolerance, Point2, ScreenPoint, Vec2, View};
+use cad_core::{Aabb, EntityId, PixelTolerance, Point2, ScreenPoint, Vec2, View};
 use cad_document::{Drawing, Revision};
 use cad_input::{ExpectedInput, Input, InputKind};
 
@@ -44,6 +44,8 @@ pub struct Session {
     cursor: Option<ScreenPoint>,
     /// Last pointer position while a middle-button pan is in progress.
     pan_anchor: Option<ScreenPoint>,
+    /// First corner of a window or crossing selection in progress.
+    selection_box: Option<ScreenPoint>,
     log: CommandLog,
     history: InputHistory,
     /// Set by a command that needs the host; taken by the host afterwards.
@@ -87,6 +89,7 @@ impl Session {
             last_point: Point2::ORIGIN,
             cursor: None,
             pan_anchor: None,
+            selection_box: None,
             log: CommandLog::new(),
             history: InputHistory::default(),
             host_request: None,
@@ -148,6 +151,13 @@ impl Session {
             if let Some(active) = &self.active {
                 active.command.preview(at, &mut items);
             }
+            if let Some(start) = self.selection_box {
+                items.push(OverlayItem::SelectionBox {
+                    from: self.view.screen_to_world(start),
+                    to: at,
+                    crossing: is_crossing(start, self.cursor.unwrap_or(start)),
+                });
+            }
             items.push(OverlayItem::Crosshair { at });
         }
         items
@@ -184,7 +194,7 @@ impl Session {
         &mut self,
         at: ScreenPoint,
         button: PointerButton,
-        _modifiers: Modifiers,
+        modifiers: Modifiers,
     ) -> Dirty {
         self.cursor = Some(at);
         match button {
@@ -193,24 +203,37 @@ impl Session {
                 Dirty::NONE
             }
             // A click during a command is a point, exactly like a typed coordinate.
-            PointerButton::Primary if self.active.is_some() => self
+            // At the idle prompt and at "Select objects:", the pointer builds
+            // the selection set; anywhere else a click is a point.
+            PointerButton::Primary if self.is_selecting() => self.selection_click(at, modifiers),
+            PointerButton::Primary => self
                 .feed_point(self.view.screen_to_world(at))
                 .unwrap_or(Dirty::NONE),
-            PointerButton::Primary => self.select_at(at),
             PointerButton::Secondary => Dirty::NONE,
         }
     }
 
     pub fn pointer_up(
         &mut self,
-        _at: ScreenPoint,
+        at: ScreenPoint,
         button: PointerButton,
-        _modifiers: Modifiers,
+        modifiers: Modifiers,
     ) -> Dirty {
-        if button == PointerButton::Middle {
-            self.pan_anchor = None;
+        match button {
+            PointerButton::Middle => {
+                self.pan_anchor = None;
+                Dirty::NONE
+            }
+            // Releasing after a drag completes the box; a plain click leaves
+            // it open for a second click, as in classic CAD.
+            PointerButton::Primary => match self.selection_box {
+                Some(start) if dragged(start, at) => {
+                    self.finish_selection_box(start, at, modifiers)
+                }
+                _ => Dirty::NONE,
+            },
+            PointerButton::Secondary => Dirty::NONE,
         }
-        Dirty::NONE
     }
 
     /// Wheel input at `at`. Negative `delta_y` (wheel up) zooms in about the cursor.
@@ -279,6 +302,10 @@ impl Session {
             KeyAction::Redo => self.invoke("REDO"),
             KeyAction::Open => self.invoke("OPEN"),
             KeyAction::Save => self.invoke("DXFOUT"),
+            KeyAction::Delete if self.active.is_none() && !self.selection.is_empty() => {
+                self.invoke("ERASE")
+            }
+            KeyAction::Delete => Dirty::NONE,
         }
     }
 
@@ -306,6 +333,7 @@ impl Session {
         self.document_name = Some(name.to_owned());
         self.export_is_lossy = lossy;
         self.active = None;
+        self.selection_box = None;
         self.selection.clear();
         self.last_point = Point2::ORIGIN;
         if let Some(extents) = self.drawing.extents() {
@@ -363,14 +391,85 @@ impl Session {
             .map(|(id, _)| id)
     }
 
-    /// A click at the idle prompt selects the entity under the cursor.
-    fn select_at(&mut self, at: ScreenPoint) -> Dirty {
+    /// True when the pointer is building a selection set: at the idle prompt
+    /// (noun–verb) and while a command asks for objects (verb–noun).
+    fn is_selecting(&self) -> bool {
+        self.active
+            .as_ref()
+            .is_none_or(|active| active.command.expected().kind == InputKind::Selection)
+    }
+
+    /// One click while selecting: finish an open box, pick the entity under
+    /// the cursor, or — on empty space — start a box. Shift removes instead
+    /// of adding.
+    fn selection_click(&mut self, at: ScreenPoint, modifiers: Modifiers) -> Dirty {
+        if let Some(start) = self.selection_box {
+            return self.finish_selection_box(start, at, modifiers);
+        }
         match self.pick(at) {
-            Some(id) => {
-                self.selection.replace_with(id);
-                Dirty::OVERLAY | Dirty::UI
+            Some(id) => self.change_selection(&[id], modifiers.shift),
+            None => {
+                self.selection_box = Some(at);
+                Dirty::OVERLAY
             }
-            None => Dirty::NONE,
+        }
+    }
+
+    /// Completes a selection box. Dragged left to right it is a *window*
+    /// (entities entirely inside); right to left it is a *crossing*
+    /// (entities any part of which is inside) — DESIGN §16.1.
+    fn finish_selection_box(
+        &mut self,
+        start: ScreenPoint,
+        end: ScreenPoint,
+        modifiers: Modifiers,
+    ) -> Dirty {
+        self.selection_box = None;
+        let bounds = Aabb::from_points(
+            self.view.screen_to_world(start),
+            self.view.screen_to_world(end),
+        );
+        let crossing = is_crossing(start, end);
+        let mut hits: Vec<EntityId> = self
+            .drawing
+            .query(&bounds)
+            .into_iter()
+            .filter(|&id| {
+                self.drawing.entity(id).is_some_and(|entity| {
+                    if crossing {
+                        entity.crosses(&bounds)
+                    } else {
+                        entity.is_inside(&bounds)
+                    }
+                })
+            })
+            .collect();
+        hits.sort_unstable();
+        self.change_selection(&hits, modifiers.shift) | Dirty::OVERLAY
+    }
+
+    /// Adds `ids` to the selection, or removes them, and reports the result
+    /// while a command is collecting objects.
+    fn change_selection(&mut self, ids: &[EntityId], remove: bool) -> Dirty {
+        let changed = ids
+            .iter()
+            .filter(|&&id| {
+                if remove {
+                    self.selection.remove(id)
+                } else {
+                    self.selection.insert(id)
+                }
+            })
+            .count();
+        if self.active.is_some() {
+            let verb = if remove { "removed" } else { "found" };
+            self.log
+                .push(format!("{changed} {verb}, {} total", self.selection.len()));
+        }
+        if changed > 0 || self.active.is_some() {
+            Dirty::OVERLAY | Dirty::UI
+        } else {
+            Dirty::NONE
         }
     }
 
@@ -435,7 +534,7 @@ impl Session {
             (InputKind::Distance, Some(offset)) => CommandInput::Distance(offset.length()),
             (InputKind::Angle, Some(offset)) => CommandInput::Angle(angle_degrees(offset)),
             (InputKind::Distance | InputKind::Angle, None) => return Err("A number is required."),
-            (InputKind::Nothing | InputKind::Command, _) => {
+            (InputKind::Nothing | InputKind::Command | InputKind::Selection, _) => {
                 return Err("An option keyword is required.");
             }
         };
@@ -445,6 +544,10 @@ impl Session {
     /// Escape cancels the active command; at the idle prompt it clears the
     /// selection. Two Escapes therefore always reach idle with nothing selected.
     fn escape(&mut self) -> Dirty {
+        // An open selection box is the innermost thing to cancel.
+        if self.selection_box.take().is_some() && self.active.is_none() {
+            return Dirty::OVERLAY;
+        }
         if self.active.is_some() {
             return self.cancel_active();
         }
@@ -456,6 +559,7 @@ impl Session {
     }
 
     fn cancel_active(&mut self) -> Dirty {
+        self.selection_box = None;
         match self.active.take() {
             Some(_) => {
                 self.drawing.end_group();
@@ -511,6 +615,18 @@ impl Session {
         }
         dirty
     }
+}
+
+/// Pointer travel, in pixels, beyond which press-and-release is a drag.
+const DRAG_THRESHOLD: f64 = 4.0;
+
+fn dragged(from: ScreenPoint, to: ScreenPoint) -> bool {
+    (to.x - from.x).hypot(to.y - from.y) > DRAG_THRESHOLD
+}
+
+/// A selection box drawn right to left is a crossing box.
+fn is_crossing(start: ScreenPoint, end: ScreenPoint) -> bool {
+    end.x < start.x
 }
 
 const NO_DIRECTION: &str = "Point the cursor in a direction, then enter the distance.";
@@ -810,11 +926,12 @@ mod tests {
     }
 
     #[test]
-    fn clicking_empty_space_at_the_idle_prompt_does_nothing() {
+    fn clicking_empty_space_at_the_idle_prompt_creates_nothing() {
         let mut h = Harness::new();
-        assert!(h.click(400.0, 300.0).is_empty());
+        h.click(400.0, 300.0);
         assert!(h.lines().is_empty());
         assert_eq!(h.prompt(), "Command:");
+        assert!(h.session.selection().is_empty());
     }
 
     #[test]

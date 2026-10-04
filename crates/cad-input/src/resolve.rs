@@ -22,6 +22,8 @@ pub enum InputKind {
     /// An angle in degrees, counter-clockwise: a number, or a point that the
     /// caller measures from a base point.
     Angle,
+    /// A selection set, built with the pointer; Enter finishes it.
+    Selection,
     /// Nothing but an option keyword or Enter.
     Nothing,
 }
@@ -152,19 +154,22 @@ pub fn resolve(
         InputKind::Angle => number()
             .map(Input::Angle)
             .or_else(|_| parse_point(text).map(Input::Point)),
-        InputKind::Nothing => Err(Diagnostic::new("", position)),
+        InputKind::Nothing | InputKind::Selection => Err(Diagnostic::new("", position)),
     };
     result.map_err(|error| Diagnostic::new(requirement(expected), error.position.max(position)))
 }
 
 /// A one-line reminder of everything the prompt accepts.
 fn requirement(expected: &ExpectedInput) -> String {
+    if expected.kind == InputKind::Selection {
+        return "Select objects by clicking them or with a window, then press Enter.".to_owned();
+    }
     let mut accepted: Vec<&str> = match expected.kind {
         InputKind::Command => vec!["a command"],
         InputKind::Point => vec!["a point"],
         InputKind::Distance => vec!["a distance", "a point"],
         InputKind::Angle => vec!["an angle", "a point"],
-        InputKind::Nothing => vec![],
+        InputKind::Nothing | InputKind::Selection => vec![],
     };
     if !expected.keywords.is_empty() || accepted.is_empty() {
         accepted.push("an option keyword");
@@ -359,6 +364,16 @@ mod tests {
         assert_eq!(
             message("maybe", &expected),
             "An option keyword is required."
+        );
+    }
+
+    #[test]
+    fn a_selection_prompt_takes_only_enter_from_the_keyboard() {
+        let expected = ExpectedInput::new(InputKind::Selection);
+        assert_eq!(resolved("", &expected), Ok(Input::Accept));
+        assert_eq!(
+            message("1,2", &expected),
+            "Select objects by clicking them or with a window, then press Enter."
         );
     }
 

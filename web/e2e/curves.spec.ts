@@ -91,6 +91,7 @@ test.describe("CIRCLE", () => {
     await page.mouse.click(x, y); // the centre is not on the circle
     await settle(page);
     expect(await highlightPixels(canvas)).toBe(0);
+    await page.keyboard.press("Escape"); // the click on empty space opened a selection box
 
     await page.mouse.click(x + 100, y + 2);
     await settle(page);

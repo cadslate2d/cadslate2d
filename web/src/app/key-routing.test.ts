@@ -40,6 +40,11 @@ describe("classifyKey", () => {
     expect(kind(key("s", { metaKey: true }))).toBe("save");
   });
 
+  test("Delete erases the selection only when nothing is being typed", () => {
+    expect(classifyKey(key("Delete"), true, true).kind).toBe("delete");
+    expect(classifyKey(key("Delete"), true, false).kind).toBe("text");
+  });
+
   test("printable characters and editing keys go to the command line", () => {
     for (const name of [
       "L",

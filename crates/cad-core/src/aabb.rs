@@ -34,6 +34,16 @@ impl Aabb {
         )
     }
 
+    /// The four corners, counter-clockwise from the minimum.
+    pub fn corners(&self) -> [Point2; 4] {
+        [
+            self.min,
+            Point2::new(self.max.x, self.min.y),
+            self.max,
+            Point2::new(self.min.x, self.max.y),
+        ]
+    }
+
     /// The smallest box containing both boxes.
     pub fn union(&self, other: &Self) -> Self {
         Self {
@@ -92,6 +102,20 @@ mod tests {
         assert_eq!(b.min(), Point2::new(-2.0, -1.0));
         assert_eq!(b.max(), Point2::new(5.0, 3.0));
         assert_eq!(b.center(), Point2::new(1.5, 1.0));
+    }
+
+    #[test]
+    fn corners_run_counter_clockwise_from_the_minimum() {
+        let b = Aabb::from_points(Point2::new(0.0, 0.0), Point2::new(2.0, 1.0));
+        assert_eq!(
+            b.corners(),
+            [
+                Point2::new(0.0, 0.0),
+                Point2::new(2.0, 0.0),
+                Point2::new(2.0, 1.0),
+                Point2::new(0.0, 1.0)
+            ]
+        );
     }
 
     #[test]

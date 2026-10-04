@@ -23,10 +23,15 @@ Type anywhere on the page; you never need to click the command line first.
 | `ARC` | `A` | Three points; or start, `Center`, end; or start, centre, `Angle`. |
 | `PLINE` | `PL` | One polyline through a chain of points. Options: `Close`, `Undo`. |
 | `RECTANG` | `REC` | A closed rectangle from two corners. |
+| `ERASE` | `E`, Delete | Erases the selected objects. |
+| `MOVE` | `M` | Moves the selection from a base point to a second point. |
+| `COPY` | `CO`, `CP` | Copies the selection; keeps placing until Enter. |
 | `UNDO` | `U`, Ctrl+Z | Reverts the last command. |
 | `REDO` | Ctrl+Y, Ctrl+Shift+Z | Re-applies the last undone command. |
 | `OPEN` | `DXFIN`, Ctrl+O | Opens an ASCII DXF file. Lines, circles, arcs, and straight polylines are imported; everything else is counted and reported. |
 | `DXFOUT` | `SAVE`, `SAVEAS`, `EXPORT`, Ctrl+S | Downloads the drawing as ASCII DXF (R12). |
+
+Modify commands work in either order: select first and then give the command, or give the command and select at `Select objects:`, finishing with Enter.
 
 Options shown in brackets, as in `Specify next point or [Close/Undo]:`, are chosen by their capital letter.
 
@@ -36,7 +41,8 @@ Options shown in brackets, as in `Specify next point or [Close/Undo]:`, are chos
 | `@500,0` | Point relative to the previous one |
 | `@500<45` | Relative polar: distance `<` angle in degrees, counter-clockwise from +X |
 | `500` | At a next-point prompt: that distance towards the cursor (direct distance) |
-| Click | A point while a command asks for one; otherwise selects the line under the cursor |
+| Click | A point while a command asks for one; otherwise adds the object under the cursor to the selection (Shift+click removes it) |
+| Click or drag on empty space | A selection box: left to right selects what is entirely inside (window); right to left selects what it touches (crossing) |
 | Enter / Space | Accept or finish; at the idle prompt, repeat the last command |
 | Escape | Cancel the command; pressed again, clear the selection |
 | Up / Down | Recall earlier input |

@@ -80,6 +80,14 @@ export function litPixels(canvas: Locator): Promise<number> {
   return countPixels(canvas, ([red, green, blue]) => red + green + blue > 3 * 96);
 }
 
+/** Pixels in the crossing-selection colour (green), including antialiased ones. */
+export function crossingPixels(canvas: Locator): Promise<number> {
+  return countPixels(
+    canvas,
+    ([red, green, blue]) => green > 80 && green > red * 1.8 && green > blue * 1.5,
+  );
+}
+
 /** Pixels in the selection accent colour (blue, not white). */
 export function highlightPixels(canvas: Locator): Promise<number> {
   return countPixels(

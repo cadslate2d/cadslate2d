@@ -39,6 +39,7 @@ fn key_action(code: u32) -> Option<KeyAction> {
         2 => Some(KeyAction::Redo),
         3 => Some(KeyAction::Open),
         4 => Some(KeyAction::Save),
+        5 => Some(KeyAction::Delete),
         _ => None,
     }
 }

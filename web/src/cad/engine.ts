@@ -24,7 +24,7 @@ export const Dirty = {
 export const Modifier = { Shift: 1, Ctrl: 1 << 1, Alt: 1 << 2 } as const;
 
 /** Non-text keys. Text, including Enter and Space-as-Enter, goes through `submitText`. */
-export const KeyAction = { Escape: 0, Undo: 1, Redo: 2, Open: 3, Save: 4 } as const;
+export const KeyAction = { Escape: 0, Undo: 1, Redo: 2, Open: 3, Save: 4, Delete: 5 } as const;
 export type KeyAction = (typeof KeyAction)[keyof typeof KeyAction];
 
 /** Something only the host can do, requested by a command. */
@@ -58,7 +58,14 @@ export interface UiState {
 }
 
 /** What a batch of geometry is; the renderer maps each role to a themed style. */
-export const StyleRole = { Entity: 0, Selection: 1, Preview: 2, Crosshair: 3 } as const;
+export const StyleRole = {
+  Entity: 0,
+  Selection: 1,
+  Preview: 2,
+  Crosshair: 3,
+  SelectionWindow: 4,
+  SelectionCrossing: 5,
+} as const;
 export type StyleRole = (typeof StyleRole)[keyof typeof StyleRole];
 
 export const FLOATS_PER_SEGMENT = 4;

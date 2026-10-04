@@ -3,7 +3,7 @@
 //! Commands and the session say *what* should be shown; `cad-render` turns
 //! that into packed geometry. Nothing here knows about vertices.
 
-use cad_core::{EntityId, Point2};
+use cad_core::{EntityId, Point2, Vec2};
 use cad_document::Entity;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -15,6 +15,15 @@ pub enum OverlayItem {
     PreviewSegment { start: Point2, end: Point2 },
     /// The entity a command would create if the next input were the cursor.
     PreviewEntity(Entity),
+    /// Existing entities shown where an edit would put them. The document is
+    /// not touched until the edit is committed (DESIGN §17).
+    PreviewTranslated { ids: Vec<EntityId>, offset: Vec2 },
+    /// The rectangle of a window or crossing selection in progress.
+    SelectionBox {
+        from: Point2,
+        to: Point2,
+        crossing: bool,
+    },
     /// The cursor crosshair at a world position.
     Crosshair { at: Point2 },
 }

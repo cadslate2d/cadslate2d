@@ -20,7 +20,8 @@ export function CommandLine({ app }: { app: CadApp }) {
   // the page drive the command line, without clicking it first.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const intent = classifyKey(event, app.ui.getSnapshot().spaceAccepts);
+      const typed = inputRef.current?.value ?? "";
+      const intent = classifyKey(event, app.ui.getSnapshot().spaceAccepts, typed === "");
       switch (intent.kind) {
         case "ignore":
           return;
@@ -47,6 +48,9 @@ export function CommandLine({ app }: { app: CadApp }) {
           break;
         case "save":
           app.key(KeyAction.Save);
+          break;
+        case "delete":
+          app.key(KeyAction.Delete);
           break;
         case "history-previous":
         case "history-next": {

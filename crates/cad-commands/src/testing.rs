@@ -80,6 +80,28 @@ impl Harness {
                 .pointer_up(at, PointerButton::Primary, Modifiers::NONE)
     }
 
+    /// Clicks with Shift held.
+    pub fn shift_click_world(&mut self, point: Point2) -> Dirty {
+        let at = self.session.view().world_to_screen(point);
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::NONE
+        };
+        let dirty = self.session.pointer_down(at, PointerButton::Primary, shift);
+        dirty | self.session.pointer_up(at, PointerButton::Primary, shift)
+    }
+
+    /// Draws a selection box with two clicks, from `from` to `to` (world).
+    /// Left to right is a window; right to left is a crossing box.
+    pub fn select_box(&mut self, from: Point2, to: Point2) -> Dirty {
+        self.click_world(from) | self.click_world(to)
+    }
+
+    /// Presses the Delete key.
+    pub fn delete(&mut self) -> Dirty {
+        self.session.key(KeyAction::Delete)
+    }
+
     /// Clicks on the screen position that currently shows `point`.
     pub fn click_world(&mut self, point: Point2) -> Dirty {
         let at = self.session.view().world_to_screen(point);

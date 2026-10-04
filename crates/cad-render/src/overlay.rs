@@ -6,7 +6,7 @@
 //! committed scene.
 
 use cad_commands::OverlayItem;
-use cad_core::{Point2, Vec2, View};
+use cad_core::{Aabb, Point2, Vec2, View};
 use cad_document::Drawing;
 
 use crate::{PackedFrame, StyleRole};
@@ -49,6 +49,27 @@ impl OverlayFrame {
                 }
                 OverlayItem::PreviewEntity(entity) => {
                     self.frame.push_entity(StyleRole::Preview, entity)
+                }
+                OverlayItem::PreviewTranslated { ids, offset } => {
+                    for entity in ids.iter().filter_map(|id| drawing.entity(*id)) {
+                        self.frame
+                            .push_entity(StyleRole::Preview, &entity.translated(*offset));
+                    }
+                }
+                OverlayItem::SelectionBox { from, to, crossing } => {
+                    let style = if *crossing {
+                        StyleRole::SelectionCrossing
+                    } else {
+                        StyleRole::SelectionWindow
+                    };
+                    let corners = Aabb::from_points(*from, *to).corners();
+                    for (index, corner) in corners.iter().enumerate() {
+                        self.frame.push_segment(
+                            style,
+                            *corner,
+                            corners[(index + 1) % corners.len()],
+                        );
+                    }
                 }
                 OverlayItem::Crosshair { at } => self.push_crosshair(*at, view),
             }
@@ -237,6 +258,48 @@ mod tests {
         let ghost = OverlayItem::Highlight(cad_core::EntityId::from_raw(999));
         overlay.rebuild(&[ghost], h.session.drawing(), h.session.view());
         assert_eq!(overlay.frame().segment_count(), 0);
+    }
+
+    #[test]
+    fn a_selection_box_is_four_segments_in_the_style_of_its_direction() {
+        let mut h = Harness::new();
+        h.click(300.0, 200.0); // empty space: starts a box
+        h.move_to(500.0, 400.0); // to the right: a window
+        let window = overlay_of(&h);
+        assert_eq!(
+            styles(&window),
+            vec![StyleRole::SelectionWindow, StyleRole::Crosshair]
+        );
+        assert_eq!(window.frame().batches()[0].count, 4);
+
+        h.move_to(100.0, 400.0); // to the left: a crossing box
+        assert_eq!(
+            styles(&overlay_of(&h)),
+            vec![StyleRole::SelectionCrossing, StyleRole::Crosshair]
+        );
+    }
+
+    #[test]
+    fn a_move_preview_draws_the_sources_at_their_new_position_without_touching_the_scene() {
+        let mut h = Harness::new();
+        h.enter_all(&["L", "0,0", "100,0", ""]);
+        h.click(450.0, 300.0);
+        h.enter_all(&["M", "0,0"]);
+        h.move_to(400.0, 250.0); // 50 units up
+
+        let mut scenes = SceneCache::new();
+        let revision = scenes.scene(h.session.drawing()).revision();
+        let overlay = overlay_of(&h);
+        let batches = overlay.frame().batches();
+        let preview = batches
+            .iter()
+            .find(|batch| batch.style == StyleRole::Preview)
+            .unwrap();
+        // The rubber band from the base point, then the line 50 units higher.
+        assert_eq!(preview.count, 2);
+        let moved = &overlay.frame().segments()[(preview.first as usize + 1) * 4..][..4];
+        assert_eq!(moved, &[0.0, 50.0, 100.0, 50.0]);
+        assert_eq!(scenes.scene(h.session.drawing()).revision(), revision);
     }
 
     /// DESIGN §26.3 criteria 5 and 6: the rubber band changes only overlay

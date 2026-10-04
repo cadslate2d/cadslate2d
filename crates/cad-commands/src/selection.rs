@@ -32,6 +32,16 @@ impl Selection {
         self.ids.insert(id);
     }
 
+    /// Adds `id`; returns true when it was not selected before.
+    pub fn insert(&mut self, id: EntityId) -> bool {
+        self.ids.insert(id)
+    }
+
+    /// Removes `id`; returns true when it was selected.
+    pub fn remove(&mut self, id: EntityId) -> bool {
+        self.ids.remove(&id)
+    }
+
     /// Makes `id` the only selected entity.
     pub fn replace_with(&mut self, id: EntityId) {
         self.ids.clear();
@@ -80,6 +90,15 @@ mod tests {
         selection.add(id(2));
         selection.replace_with(id(9));
         assert_eq!(selection.iter().collect::<Vec<_>>(), vec![id(9)]);
+    }
+
+    #[test]
+    fn insert_and_remove_report_whether_anything_changed() {
+        let mut selection = Selection::default();
+        assert!(selection.insert(id(1)));
+        assert!(!selection.insert(id(1)));
+        assert!(selection.remove(id(1)));
+        assert!(!selection.remove(id(1)));
     }
 
     #[test]

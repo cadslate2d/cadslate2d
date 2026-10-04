@@ -7,7 +7,7 @@
 
 use std::fmt::Debug;
 
-use cad_core::Point2;
+use cad_core::{EntityId, Point2};
 use cad_document::Drawing;
 use cad_input::{ExpectedInput, Keyword};
 
@@ -135,6 +135,13 @@ pub trait Command: Debug {
     /// point supplied where a distance or an angle is expected.
     fn base_point(&self) -> Option<Point2> {
         None
+    }
+
+    /// The entities this command is transiently editing. While an edit is in
+    /// progress they must not be offered as snap targets at their old
+    /// positions (DESIGN §18.2).
+    fn transient_sources(&self) -> &[EntityId] {
+        &[]
     }
 }
 

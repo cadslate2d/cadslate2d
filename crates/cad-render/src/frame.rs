@@ -29,14 +29,20 @@ pub enum StyleRole {
     Preview = 2,
     /// The cursor crosshair.
     Crosshair = 3,
+    /// The rectangle of a window selection (entities entirely inside).
+    SelectionWindow = 4,
+    /// The rectangle of a crossing selection (entities touching it).
+    SelectionCrossing = 5,
 }
 
 impl StyleRole {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 6] = [
         Self::Entity,
         Self::Selection,
         Self::Preview,
         Self::Crosshair,
+        Self::SelectionWindow,
+        Self::SelectionCrossing,
     ];
 
     fn from_word(word: u32) -> Option<Self> {

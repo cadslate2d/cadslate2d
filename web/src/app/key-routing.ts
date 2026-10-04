@@ -9,6 +9,8 @@ export type KeyIntent =
   | { kind: "redo" }
   | { kind: "open" }
   | { kind: "save" }
+  /** Delete with nothing typed: erase the selection. */
+  | { kind: "delete" }
   | { kind: "history-previous" }
   | { kind: "history-next" }
   /** A key that edits the command line; make sure it has focus. */
@@ -26,7 +28,11 @@ export interface KeyLike {
 
 const EDITING_KEYS = new Set(["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Home", "End"]);
 
-export function classifyKey(event: KeyLike, spaceAccepts: boolean): KeyIntent {
+/**
+ * @param spaceAccepts whether Space submits like Enter at the current prompt
+ * @param inputEmpty   whether the command line has no text; Delete then acts on the selection
+ */
+export function classifyKey(event: KeyLike, spaceAccepts: boolean, inputEmpty = false): KeyIntent {
   const command = event.ctrlKey || event.metaKey;
   if (command) {
     const key = event.key.toLowerCase();
@@ -50,6 +56,8 @@ export function classifyKey(event: KeyLike, spaceAccepts: boolean): KeyIntent {
       return { kind: "history-previous" };
     case "ArrowDown":
       return { kind: "history-next" };
+    case "Delete":
+      return inputEmpty ? { kind: "delete" } : { kind: "text" };
     default:
       // Printable characters have a one-character `key`.
       return event.key.length === 1 || EDITING_KEYS.has(event.key)

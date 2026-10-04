@@ -1,6 +1,6 @@
 //! Semantic entity types (DESIGN §11).
 
-use cad_core::{Aabb, Point2};
+use cad_core::{Aabb, Point2, Vec2};
 use cad_geometry::{
     Arc, Circle, Segment, bounds_of, polyline_distance_to_point, polyline_segments,
 };
@@ -132,6 +132,48 @@ impl Entity {
         }
     }
 
+    /// True when the whole entity lies within `bounds` (window selection).
+    pub fn is_inside(&self, bounds: &Aabb) -> bool {
+        bounds.contains(&self.bounds())
+    }
+
+    /// True when any part of the entity's geometry lies within `bounds`
+    /// (crossing selection). Interiors do not count.
+    pub fn crosses(&self, bounds: &Aabb) -> bool {
+        match self {
+            Entity::Line(line) => line.segment().intersects_aabb(bounds),
+            Entity::Circle(circle) => circle.circle().intersects_aabb(bounds),
+            Entity::Arc(arc) => arc.arc().intersects_aabb(bounds),
+            Entity::Polyline(polyline) => polyline
+                .segments()
+                .any(|segment| segment.intersects_aabb(bounds)),
+        }
+    }
+
+    /// A copy of the entity moved by `offset`.
+    pub fn translated(&self, offset: Vec2) -> Self {
+        match self {
+            Entity::Line(line) => LineEntity::new(line.start + offset, line.end + offset).into(),
+            Entity::Circle(circle) => {
+                CircleEntity::new(circle.center + offset, circle.radius).into()
+            }
+            Entity::Arc(arc) => ArcEntity {
+                center: arc.center + offset,
+                ..*arc
+            }
+            .into(),
+            Entity::Polyline(polyline) => PolylineEntity::new(
+                polyline
+                    .vertices
+                    .iter()
+                    .map(|vertex| *vertex + offset)
+                    .collect(),
+                polyline.closed,
+            )
+            .into(),
+        }
+    }
+
     pub fn as_line(&self) -> Option<&LineEntity> {
         match self {
             Entity::Line(line) => Some(line),
@@ -244,6 +286,73 @@ mod tests {
             1.0,
             "the closing segment counts"
         );
+    }
+
+    fn one_of_each() -> Vec<Entity> {
+        vec![
+            LineEntity::new(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0)).into(),
+            CircleEntity::new(Point2::new(5.0, 5.0), 3.0).into(),
+            ArcEntity::new(Point2::new(5.0, 5.0), 4.0, 0.0, std::f64::consts::PI).into(),
+            PolylineEntity::new(
+                vec![
+                    Point2::new(0.0, 0.0),
+                    Point2::new(4.0, 0.0),
+                    Point2::new(4.0, 4.0),
+                ],
+                true,
+            )
+            .into(),
+        ]
+    }
+
+    #[test]
+    fn translation_moves_every_kind_and_keeps_its_shape() {
+        let offset = Vec2::new(100.0, -50.0);
+        for entity in one_of_each() {
+            let moved = entity.translated(offset);
+            assert_eq!(
+                moved.bounds().min(),
+                entity.bounds().min() + offset,
+                "{entity:?}"
+            );
+            assert_eq!(
+                moved.bounds().max(),
+                entity.bounds().max() + offset,
+                "{entity:?}"
+            );
+            assert_eq!(
+                moved.translated(-offset),
+                entity,
+                "moving back restores it exactly"
+            );
+        }
+    }
+
+    #[test]
+    fn window_selection_needs_the_whole_entity_and_crossing_any_part() {
+        let around_everything =
+            Aabb::from_points(Point2::new(-50.0, -50.0), Point2::new(50.0, 50.0));
+        let far_away = Aabb::from_points(Point2::new(500.0, 500.0), Point2::new(600.0, 600.0));
+        for entity in one_of_each() {
+            assert!(
+                entity.is_inside(&around_everything) && entity.crosses(&around_everything),
+                "{entity:?}"
+            );
+            assert!(
+                !entity.is_inside(&far_away) && !entity.crosses(&far_away),
+                "{entity:?}"
+            );
+        }
+
+        // A box over the right half of the line: crossing, but not inside.
+        let line = &one_of_each()[0];
+        let right_half = Aabb::from_points(Point2::new(5.0, -1.0), Point2::new(20.0, 1.0));
+        assert!(line.crosses(&right_half) && !line.is_inside(&right_half));
+
+        // A box inside the circle touches nothing.
+        let circle = &one_of_each()[1];
+        let inside_disc = Aabb::from_points(Point2::new(4.5, 4.5), Point2::new(5.5, 5.5));
+        assert!(!circle.crosses(&inside_disc));
     }
 
     #[test]

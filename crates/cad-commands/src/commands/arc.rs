@@ -389,6 +389,7 @@ mod tests {
         h.enter_all(&["A", "50,0", "0,50", "-50,0"]);
         h.click_world(p(0.0, -50.0)); // on the circle, but not on the arc
         assert!(h.session.selection().is_empty());
+        h.escape(); // the click on empty space opened a selection box
         h.click_world(p(0.0, 50.0));
         assert_eq!(h.session.selection().len(), 1);
 

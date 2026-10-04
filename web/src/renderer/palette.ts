@@ -22,6 +22,8 @@ const ROLE_TOKENS: Readonly<Record<StyleRole, string>> = {
   [StyleRole.Selection]: "selection",
   [StyleRole.Preview]: "preview",
   [StyleRole.Crosshair]: "crosshair",
+  [StyleRole.SelectionWindow]: "selection-window",
+  [StyleRole.SelectionCrossing]: "selection-crossing",
 };
 
 /** Parses `#rgb`, `#rrggbb`, or `#rrggbbaa`. */

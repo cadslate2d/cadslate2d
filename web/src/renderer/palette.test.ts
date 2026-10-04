@@ -36,6 +36,10 @@ describe("readPalette", () => {
     "--canvas-lineweight-selection": " 2.5",
     "--canvas-lineweight-preview": "1",
     "--canvas-lineweight-crosshair": "1",
+    "--canvas-selection-window": "#0000ff",
+    "--canvas-selection-crossing": "#00ff00",
+    "--canvas-lineweight-selection-window": "1",
+    "--canvas-lineweight-selection-crossing": "1",
   };
   const read = (property: string) => tokens[property] ?? "";
 

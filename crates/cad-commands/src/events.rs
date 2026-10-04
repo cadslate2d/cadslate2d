@@ -38,6 +38,8 @@ pub enum KeyAction {
     Open,
     /// The save shortcut (Ctrl+S). Same as invoking `DXFOUT`.
     Save,
+    /// Delete: erases the selection when no command is active.
+    Delete,
 }
 
 /// Something only the host can do, requested by a command. Rust never calls
