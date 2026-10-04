@@ -74,6 +74,7 @@ version = "0.0.1"
 dependencies = [
  "cad-core",
  "cad-document",
+ "proptest",
 ]
 
 [[package]]

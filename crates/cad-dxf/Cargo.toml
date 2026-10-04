@@ -10,5 +10,8 @@ publish.workspace = true
 cad-core.workspace = true
 cad-document.workspace = true
 
+[dev-dependencies]
+proptest.workspace = true
+
 [lints]
 workspace = true

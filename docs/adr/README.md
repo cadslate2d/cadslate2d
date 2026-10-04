@@ -15,6 +15,7 @@ There are two kinds:
 | [0002](0002-wasm-boundary-api.md) | WASM boundary: events in, dirty flags out, pulled frames | Accepted | Bootstrap |
 | [0003](0003-view-ownership-and-viewport-independent-scene.md) | View ownership and viewport-independent committed geometry | Accepted | Bootstrap |
 | [0004](0004-wasm-toolchain-and-build.md) | WASM toolchain and build pipeline | Accepted | Bootstrap |
+| [0005](0005-dxf-baseline.md) | DXF baseline: hand-written ASCII reader, R12 writer | Accepted | Evidence |
 
 ## Expected evidence ADRs
 
@@ -25,7 +26,6 @@ These are deliberately **not** written yet. Each is the deliverable of a tracked
 | Render buffer transport (views vs copies, packing, buffer reuse) | §12.6 | M0 transport measurement |
 | Entity store implementation | §10.3 | M0 store benchmark |
 | Spatial-index choice | §20 | M0 index benchmark (revisit with M2 editing workloads) |
-| DXF baseline (target release, parser strategy) | §24.1 | M0 DXF writer work |
 | Curve rendering strategy | §12.5, §23.3 | M1 curve-rendering spike |
 | Local persistence (IndexedDB / OPFS / hybrid) | §25 | M5 |
 | Worker architecture | §37 | M7, profiling-driven |
