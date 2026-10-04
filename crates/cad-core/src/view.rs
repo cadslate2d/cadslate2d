@@ -115,6 +115,25 @@ impl View {
         self.center = fixed - self.offset_from_center(anchor);
     }
 
+    /// Frames `bounds` in the canvas with a margin, like "zoom extents".
+    /// Degenerate bounds (a single point, or a horizontal or vertical line)
+    /// are centred without changing the scale along the collapsed axis.
+    pub fn fit(&mut self, bounds: &Aabb) {
+        /// Fraction of the canvas the framed bounds may occupy.
+        const FILL: f64 = 0.9;
+        let size = bounds.max() - bounds.min();
+        let candidates = [(self.width, size.x), (self.height, size.y)];
+        let scale = candidates
+            .into_iter()
+            .filter(|(_, extent)| *extent > 0.0)
+            .map(|(pixels, extent)| pixels * FILL / extent)
+            .fold(f64::INFINITY, f64::min);
+        if scale.is_finite() {
+            self.scale = scale.clamp(Self::MIN_SCALE, Self::MAX_SCALE);
+        }
+        self.center = bounds.center();
+    }
+
     /// The world-space length of `pixels` on screen.
     pub fn pixels_to_world(&self, pixels: f64) -> f64 {
         pixels / self.scale
@@ -254,6 +273,38 @@ mod tests {
         let bounds = view.visible_bounds();
         assert_eq!(bounds.min(), Point2::new(-200.0, -150.0));
         assert_eq!(bounds.max(), Point2::new(200.0, 150.0));
+    }
+
+    #[test]
+    fn fit_frames_bounds_with_a_margin() {
+        let mut view = View::new(800.0, 600.0);
+        let bounds = Aabb::from_points(Point2::new(100.0, 100.0), Point2::new(300.0, 200.0));
+        view.fit(&bounds);
+
+        assert_eq!(view.center(), Point2::new(200.0, 150.0));
+        // Width is the tighter axis: 800px * 0.9 / 200 units.
+        assert!(close(view.scale(), 3.6, 1e-12));
+        assert!(view.visible_bounds().contains(&bounds));
+    }
+
+    #[test]
+    fn fit_handles_degenerate_bounds() {
+        let mut view = View::new(800.0, 600.0);
+        // A horizontal line: only the width constrains the scale.
+        view.fit(&Aabb::from_points(
+            Point2::new(0.0, 5.0),
+            Point2::new(400.0, 5.0),
+        ));
+        assert!(close(view.scale(), 1.8, 1e-12));
+        assert_eq!(view.center(), Point2::new(200.0, 5.0));
+
+        // A single point: recentre, keep the scale.
+        view.fit(&Aabb::from_points(
+            Point2::new(7.0, 7.0),
+            Point2::new(7.0, 7.0),
+        ));
+        assert!(close(view.scale(), 1.8, 1e-12));
+        assert_eq!(view.center(), Point2::new(7.0, 7.0));
     }
 
     #[test]

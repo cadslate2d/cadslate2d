@@ -7,6 +7,8 @@ export type KeyIntent =
   | { kind: "escape" }
   | { kind: "undo" }
   | { kind: "redo" }
+  | { kind: "open" }
+  | { kind: "save" }
   | { kind: "history-previous" }
   | { kind: "history-next" }
   /** A key that edits the command line; make sure it has focus. */
@@ -30,6 +32,8 @@ export function classifyKey(event: KeyLike, spaceAccepts: boolean): KeyIntent {
     const key = event.key.toLowerCase();
     if (key === "z") return { kind: event.shiftKey ? "redo" : "undo" };
     if (key === "y") return { kind: "redo" };
+    if (key === "o") return { kind: "open" };
+    if (key === "s") return { kind: "save" };
     // Reload, devtools, copy/paste, and every other browser shortcut stay with the browser.
     return { kind: "ignore" };
   }

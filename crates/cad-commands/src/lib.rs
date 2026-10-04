@@ -25,7 +25,7 @@ mod ui_state;
 
 pub use command::{Command, CommandContext, CommandInput, Step};
 pub use dirty::Dirty;
-pub use events::{KeyAction, Modifiers, PointerButton};
+pub use events::{HostRequest, KeyAction, Modifiers, PointerButton};
 pub use overlay::OverlayItem;
 pub use registry::CommandRegistry;
 pub use selection::Selection;

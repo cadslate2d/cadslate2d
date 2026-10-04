@@ -12,7 +12,7 @@ use cad_document::Drawing;
 use cad_input::ExpectedInput;
 
 use crate::log::CommandLog;
-use crate::{OverlayItem, Selection};
+use crate::{HostRequest, OverlayItem, Selection};
 
 /// One resolved input handed to the active command.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -41,12 +41,19 @@ pub struct CommandContext<'a> {
     pub drawing: &'a mut Drawing,
     pub selection: &'a mut Selection,
     pub(crate) log: &'a mut CommandLog,
+    pub(crate) host_request: &'a mut Option<HostRequest>,
 }
 
 impl CommandContext<'_> {
     /// Writes a line to the command log.
     pub fn message(&mut self, text: impl Into<String>) {
         self.log.push(text.into());
+    }
+
+    /// Asks the host to do something a command cannot: show a file picker,
+    /// offer a download. The host picks the request up after this step.
+    pub fn request_host(&mut self, request: HostRequest) {
+        *self.host_request = Some(request);
     }
 }
 

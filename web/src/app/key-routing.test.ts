@@ -35,6 +35,11 @@ describe("classifyKey", () => {
     expect(kind(key("y", { ctrlKey: true }))).toBe("redo");
   });
 
+  test("open and save chords replace the browser's own dialogs", () => {
+    expect(kind(key("o", { ctrlKey: true }))).toBe("open");
+    expect(kind(key("s", { metaKey: true }))).toBe("save");
+  });
+
   test("printable characters and editing keys go to the command line", () => {
     for (const name of [
       "L",

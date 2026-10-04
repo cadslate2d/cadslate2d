@@ -1,6 +1,6 @@
 //! The one exported handle (ADR-0002 §1).
 
-use cad_commands::{Dirty, KeyAction, Modifiers, PointerButton, Session, UiState};
+use cad_commands::{Dirty, HostRequest, KeyAction, Modifiers, PointerButton, Session, UiState};
 use cad_core::{ClipTransform, ScreenPoint};
 use cad_render::{OverlayFrame, SceneCache};
 use js_sys::{Float32Array, Uint32Array};
@@ -37,6 +37,8 @@ fn key_action(code: u32) -> Option<KeyAction> {
         0 => Some(KeyAction::Escape),
         1 => Some(KeyAction::Undo),
         2 => Some(KeyAction::Redo),
+        3 => Some(KeyAction::Open),
+        4 => Some(KeyAction::Save),
         _ => None,
     }
 }
@@ -62,6 +64,9 @@ struct UiStateDto {
     space_accepts: bool,
     can_undo: bool,
     can_redo: bool,
+    document_name: Option<String>,
+    unsaved_changes: bool,
+    export_is_lossy: bool,
 }
 
 impl From<UiState> for UiStateDto {
@@ -75,6 +80,9 @@ impl From<UiState> for UiStateDto {
             space_accepts: state.space_accepts,
             can_undo: state.can_undo,
             can_redo: state.can_redo,
+            document_name: state.document_name,
+            unsaved_changes: state.unsaved_changes,
+            export_is_lossy: state.export_is_lossy,
         }
     }
 }
@@ -200,6 +208,40 @@ impl CadSession {
     /// Recalls a newer submitted line; an empty string means "a new line".
     pub fn history_next(&mut self) -> Option<String> {
         self.session.history_next()
+    }
+
+    // ── files: the host does the I/O, Rust does the format ──
+
+    /// The request behind a `HOST` dirty flag: `0` none, `1` open a file,
+    /// `2` export the drawing. Taking it clears it.
+    pub fn take_host_request(&mut self) -> u32 {
+        match self.session.take_host_request() {
+            None => 0,
+            Some(HostRequest::OpenFile) => 1,
+            Some(HostRequest::ExportFile) => 2,
+        }
+    }
+
+    /// Replaces the drawing with the contents of a DXF file. On failure the
+    /// current drawing is kept and the reason is written to the command log.
+    pub fn load_dxf(&mut self, bytes: &[u8], name: &str) -> u32 {
+        let dirty = match cad_dxf::import(bytes) {
+            Ok(import) => {
+                let lossy = import.report.has_unsupported_content();
+                self.session
+                    .open_drawing(import.drawing, name, lossy, import.report.summary())
+            }
+            Err(error) => self.session.notify(format!("Cannot open {name}: {error}.")),
+        };
+        self.report(dirty)
+    }
+
+    /// The drawing as ASCII DXF. Marks the drawing as saved.
+    pub fn export_dxf(&mut self) -> String {
+        let text = cad_dxf::export(self.session.drawing());
+        let dirty = self.session.mark_exported();
+        self.report(dirty);
+        text
     }
 
     // ── output: pulled in bulk, only when flagged ──

@@ -31,6 +31,17 @@ export function App() {
     };
   }, []);
 
+  // Local-first means the only copy of unexported work is in this tab.
+  const app = core.status === "ready" ? core.app : undefined;
+  useEffect(() => {
+    if (!app) return;
+    const guard = (event: BeforeUnloadEvent) => {
+      if (app.ui.getSnapshot().unsavedChanges) event.preventDefault();
+    };
+    window.addEventListener("beforeunload", guard);
+    return () => window.removeEventListener("beforeunload", guard);
+  }, [app]);
+
   if (core.status !== "ready") {
     const failed = core.status === "failed";
     return (

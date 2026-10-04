@@ -1,6 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const PORT = 4173;
+/** A second copy of the bundle under a sub-path, to prove it is base-path independent. */
+export const NESTED_URL = "http://localhost:4174/nested/app/";
 
 // End-to-end tests run against the production bundle in web/dist, served by a
 // plain static file server. Build first: `pnpm build`.
@@ -25,9 +27,16 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
-    command: `node e2e/static-server.mjs dist ${PORT}`,
-    url: `http://localhost:${PORT}/`,
-    reuseExistingServer: !process.env.CI,
-  },
+  webServer: [
+    {
+      command: `node e2e/static-server.mjs dist ${PORT}`,
+      url: `http://localhost:${PORT}/`,
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      command: "node e2e/static-server.mjs dist 4174 /nested/app/",
+      url: NESTED_URL,
+      reuseExistingServer: !process.env.CI,
+    },
+  ],
 });

@@ -10,7 +10,32 @@ CadSlate2D is a free, browser-native, local-first 2D CAD application inspired by
 
 ## Status
 
-Milestone **M0 — The Line** is in progress: a vertical slice that proves the architecture with a single entity type. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for the plan in implementation order.
+Milestone **M0 — The Line** is functionally complete: a vertical slice that proves the architecture with a single entity type. You can draw lines by command or pointer, select them, undo and redo, export DXF, and reopen it — all in a static page with no backend. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
+
+## What works today
+
+Type anywhere on the page; you never need to click the command line first.
+
+| Command | Aliases | What it does |
+| --- | --- | --- |
+| `LINE` | `L` | Draws a chain of line segments. Enter or Space finishes. |
+| `UNDO` | `U`, Ctrl+Z | Reverts the last change. |
+| `REDO` | Ctrl+Y, Ctrl+Shift+Z | Re-applies the last undone change. |
+| `OPEN` | `DXFIN`, Ctrl+O | Opens an ASCII DXF file. Lines are imported; everything else is counted and reported. |
+| `DXFOUT` | `SAVE`, `SAVEAS`, `EXPORT`, Ctrl+S | Downloads the drawing as ASCII DXF (R12). |
+
+| Input | Meaning |
+| --- | --- |
+| `100,200` | Absolute point |
+| `@500,0` | Point relative to the previous one |
+| `@500<45` | Relative polar: distance `<` angle in degrees, counter-clockwise from +X |
+| Click | A point while a command asks for one; otherwise selects the line under the cursor |
+| Enter / Space | Accept or finish |
+| Escape | Cancel the command; pressed again, clear the selection |
+| Up / Down | Recall earlier input |
+| Wheel / middle-drag | Zoom about the cursor / pan |
+
+Unexported changes exist only in the browser tab until autosave arrives (M5); the page asks before you leave with unexported work.
 
 ## Architecture in one paragraph
 

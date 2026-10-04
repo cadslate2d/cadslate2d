@@ -1,14 +1,14 @@
 //! The session facade.
 
 use cad_core::{EntityId, PixelTolerance, Point2, ScreenPoint, View};
-use cad_document::Drawing;
+use cad_document::{Drawing, Revision};
 use cad_input::{ExpectedInput, Input};
 
 use crate::history::InputHistory;
 use crate::log::CommandLog;
 use crate::{
-    Command, CommandContext, CommandInput, CommandRegistry, Dirty, KeyAction, Modifiers,
-    OverlayItem, PointerButton, Selection, Step, UiState,
+    Command, CommandContext, CommandInput, CommandRegistry, Dirty, HostRequest, KeyAction,
+    Modifiers, OverlayItem, PointerButton, Selection, Step, UiState,
 };
 
 const IDLE_PROMPT: &str = "Command:";
@@ -46,6 +46,14 @@ pub struct Session {
     pan_anchor: Option<ScreenPoint>,
     log: CommandLog,
     history: InputHistory,
+    /// Set by a command that needs the host; taken by the host afterwards.
+    host_request: Option<HostRequest>,
+    /// Name of the file this drawing was opened from, if any.
+    document_name: Option<String>,
+    /// The drawing's revision when it was opened or last exported.
+    saved_revision: Revision,
+    /// The drawing came from a file with content that could not be imported.
+    export_is_lossy: bool,
 }
 
 impl Default for Session {
@@ -68,6 +76,7 @@ impl Session {
     /// A session with a caller-supplied set of commands.
     pub fn with_registry(drawing: Drawing, registry: CommandRegistry) -> Self {
         Self {
+            saved_revision: drawing.revision(),
             drawing,
             view: View::new(1.0, 1.0),
             registry,
@@ -78,6 +87,9 @@ impl Session {
             pan_anchor: None,
             log: CommandLog::new(),
             history: InputHistory::default(),
+            host_request: None,
+            document_name: None,
+            export_is_lossy: false,
         }
     }
 
@@ -112,6 +124,9 @@ impl Session {
             space_accepts: true,
             can_undo: self.drawing.can_undo(),
             can_redo: self.drawing.can_redo(),
+            document_name: self.document_name.clone(),
+            unsaved_changes: self.drawing.revision() != self.saved_revision,
+            export_is_lossy: self.export_is_lossy,
         }
     }
 
@@ -263,7 +278,56 @@ impl Session {
             // Shortcuts are just another way to invoke a command.
             KeyAction::Undo => self.invoke("UNDO"),
             KeyAction::Redo => self.invoke("REDO"),
+            KeyAction::Open => self.invoke("OPEN"),
+            KeyAction::Save => self.invoke("DXFOUT"),
         }
+    }
+
+    // ── host integration ──
+
+    /// The request raised by the last input that reported `Dirty::HOST`.
+    pub fn take_host_request(&mut self) -> Option<HostRequest> {
+        self.host_request.take()
+    }
+
+    /// Replaces the drawing with one the host has loaded.
+    ///
+    /// Opening is not an edit: the new drawing starts with an empty history,
+    /// and all interaction state tied to the old one is dropped. `lossy`
+    /// records that the source file held content that could not be imported.
+    pub fn open_drawing(
+        &mut self,
+        drawing: Drawing,
+        name: &str,
+        lossy: bool,
+        messages: Vec<String>,
+    ) -> Dirty {
+        self.saved_revision = drawing.revision();
+        self.drawing = drawing;
+        self.document_name = Some(name.to_owned());
+        self.export_is_lossy = lossy;
+        self.active = None;
+        self.selection.clear();
+        self.last_point = Point2::ORIGIN;
+        if let Some(extents) = self.drawing.extents() {
+            self.view.fit(&extents);
+        }
+        messages
+            .into_iter()
+            .for_each(|message| self.log.push(message));
+        Dirty::SCENE | Dirty::OVERLAY | Dirty::VIEW | Dirty::UI
+    }
+
+    /// Records that the host has exported the drawing in its current state.
+    pub fn mark_exported(&mut self) -> Dirty {
+        self.saved_revision = self.drawing.revision();
+        self.notify("Drawing exported as DXF.")
+    }
+
+    /// Writes a host-side message, such as a failed import, to the command log.
+    pub fn notify(&mut self, message: impl Into<String>) -> Dirty {
+        self.log.push(message.into());
+        Dirty::UI
     }
 
     /// Recalls the previous submitted line, if any.
@@ -364,6 +428,7 @@ impl Session {
             drawing: &mut self.drawing,
             selection: &mut self.selection,
             log: &mut self.log,
+            host_request: &mut self.host_request,
         };
         if run(active.command.as_mut(), &mut ctx) == Step::Continue {
             self.active = Some(active);
@@ -376,6 +441,9 @@ impl Session {
         let mut dirty = Dirty::OVERLAY | Dirty::UI;
         if self.drawing.revision() != revision {
             dirty |= Dirty::SCENE;
+        }
+        if self.host_request.is_some() {
+            dirty |= Dirty::HOST;
         }
         dirty
     }

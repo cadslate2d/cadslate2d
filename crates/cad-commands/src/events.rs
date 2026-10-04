@@ -34,4 +34,19 @@ pub enum KeyAction {
     Undo,
     /// The redo shortcut (Ctrl+Y, Ctrl+Shift+Z). Same as invoking `REDO`.
     Redo,
+    /// The open shortcut (Ctrl+O). Same as invoking `OPEN`.
+    Open,
+    /// The save shortcut (Ctrl+S). Same as invoking `DXFOUT`.
+    Save,
+}
+
+/// Something only the host can do, requested by a command. Rust never calls
+/// into the host; the host asks for the pending request after an input
+/// reports `Dirty::HOST` (ADR-0002).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostRequest {
+    /// Let the user pick a drawing file, then hand it to `Session::open_drawing`.
+    OpenFile,
+    /// Export the drawing and offer it to the user as a file.
+    ExportFile,
 }

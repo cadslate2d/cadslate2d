@@ -5,8 +5,10 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
 
+// usage: node static-server.mjs <root> <port> [base path, e.g. /nested/app/]
 const root = resolve(process.argv[2] ?? "dist");
 const port = Number(process.argv[3] ?? 4173);
+const base = process.argv[4] ?? "/";
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -19,8 +21,17 @@ const MIME = {
 };
 
 createServer((request, response) => {
+  // Only GET is meaningful for static files; anything else would mean the app expects a backend.
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    response.writeHead(405).end();
+    return;
+  }
   const urlPath = decodeURIComponent(new URL(request.url, "http://localhost").pathname);
-  let file = normalize(join(root, urlPath));
+  if (!urlPath.startsWith(base)) {
+    response.writeHead(404).end("not found");
+    return;
+  }
+  let file = normalize(join(root, urlPath.slice(base.length)));
   if (!file.startsWith(root)) {
     response.writeHead(403).end();
     return;
@@ -32,4 +43,4 @@ createServer((request, response) => {
   }
   response.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream" });
   createReadStream(file).pipe(response);
-}).listen(port, () => console.log(`static: ${root} on http://localhost:${port}`));
+}).listen(port, () => console.log(`static: ${root} on http://localhost:${port}${base}`));

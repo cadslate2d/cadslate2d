@@ -19,4 +19,12 @@ pub struct UiState {
     pub space_accepts: bool,
     pub can_undo: bool,
     pub can_redo: bool,
+    /// Name of the file the drawing was opened from, if any.
+    pub document_name: Option<String>,
+    /// The drawing changed since it was opened or last exported.
+    pub unsaved_changes: bool,
+    /// The drawing was opened from a file with content that could not be
+    /// imported, so exporting it will not reproduce that file. The UI must
+    /// warn before exporting (DESIGN §24.2).
+    pub export_is_lossy: bool,
 }

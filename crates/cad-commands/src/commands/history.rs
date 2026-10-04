@@ -1,25 +1,6 @@
 //! UNDO and REDO: immediate commands that step through the linear history.
 
-use cad_input::ExpectedInput;
-
-use crate::{Command, CommandContext, CommandInput, Step};
-
-/// Immediate commands finish in `start`, so these are never consulted.
-macro_rules! immediate_command_boilerplate {
-    () => {
-        fn prompt(&self) -> String {
-            String::new()
-        }
-
-        fn expected(&self) -> ExpectedInput {
-            ExpectedInput::Command
-        }
-
-        fn step(&mut self, _input: CommandInput, _ctx: &mut CommandContext<'_>) -> Step {
-            Step::Finished
-        }
-    };
-}
+use crate::{Command, CommandContext, Step};
 
 #[derive(Debug)]
 pub(crate) struct UndoCommand;
@@ -39,7 +20,7 @@ impl Command for UndoCommand {
         Step::Finished
     }
 
-    immediate_command_boilerplate!();
+    immediate_command!();
 }
 
 #[derive(Debug)]
@@ -53,7 +34,7 @@ impl Command for RedoCommand {
         Step::Finished
     }
 
-    immediate_command_boilerplate!();
+    immediate_command!();
 }
 
 #[cfg(test)]

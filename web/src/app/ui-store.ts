@@ -15,6 +15,9 @@ export interface UiSnapshot {
   readonly spaceAccepts: boolean;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
+  readonly documentName: string | undefined;
+  readonly unsavedChanges: boolean;
+  readonly exportIsLossy: boolean;
 }
 
 /** What the store reads from the engine. */
@@ -32,6 +35,9 @@ const INITIAL: UiSnapshot = {
   spaceAccepts: true,
   canUndo: false,
   canRedo: false,
+  documentName: undefined,
+  unsavedChanges: false,
+  exportIsLossy: false,
 };
 
 export class UiStore {
@@ -64,6 +70,9 @@ export class UiStore {
       spaceAccepts: state.spaceAccepts,
       canUndo: state.canUndo,
       canRedo: state.canRedo,
+      documentName: state.documentName,
+      unsavedChanges: state.unsavedChanges,
+      exportIsLossy: state.exportIsLossy,
     };
     this.#listeners.forEach((listener) => listener());
   }

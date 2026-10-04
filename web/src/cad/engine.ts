@@ -16,14 +16,20 @@ export const Dirty = {
   View: 1 << 2,
   /** Prompt, log, status, or toggles changed. */
   Ui: 1 << 3,
+  /** A command needs the host to act; call `takeHostRequest()`. */
+  Host: 1 << 4,
 } as const;
 
 /** Keyboard modifier bits passed with pointer and key events. */
 export const Modifier = { Shift: 1, Ctrl: 1 << 1, Alt: 1 << 2 } as const;
 
 /** Non-text keys. Text, including Enter and Space-as-Enter, goes through `submitText`. */
-export const KeyAction = { Escape: 0, Undo: 1, Redo: 2 } as const;
+export const KeyAction = { Escape: 0, Undo: 1, Redo: 2, Open: 3, Save: 4 } as const;
 export type KeyAction = (typeof KeyAction)[keyof typeof KeyAction];
+
+/** Something only the host can do, requested by a command. */
+export const HostRequest = { None: 0, OpenFile: 1, ExportFile: 2 } as const;
+export type HostRequest = (typeof HostRequest)[keyof typeof HostRequest];
 
 /**
  * Presentation state for the shell. It holds nothing from which drawing
@@ -43,6 +49,12 @@ export interface UiState {
   readonly spaceAccepts: boolean;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
+  /** Name of the file the drawing was opened from, if any. */
+  readonly documentName?: string;
+  /** The drawing changed since it was opened or last exported. */
+  readonly unsavedChanges: boolean;
+  /** Exporting will not reproduce the file this drawing came from; warn first. */
+  readonly exportIsLossy: boolean;
 }
 
 /** What a batch of geometry is; the renderer maps each role to a themed style. */
@@ -149,6 +161,26 @@ export class CadEngine {
   /** Recalls a newer submitted line; an empty string means "a new line". */
   historyNext(): string | undefined {
     return this.#session.history_next();
+  }
+
+  // ── files: the host does the I/O, Rust does the format ──
+
+  /** The request behind a `Dirty.Host` flag. Taking it clears it. */
+  takeHostRequest(): HostRequest {
+    return this.#session.take_host_request() as HostRequest;
+  }
+
+  /**
+   * Replaces the drawing with the contents of a DXF file. A file that cannot
+   * be read leaves the drawing untouched and explains why in the command log.
+   */
+  loadDxf(bytes: Uint8Array, name: string): number {
+    return this.#session.load_dxf(bytes, name);
+  }
+
+  /** The drawing as ASCII DXF. Marks the drawing as saved. */
+  exportDxf(): string {
+    return this.#session.export_dxf();
   }
 
   // ── output: pulled in bulk ──

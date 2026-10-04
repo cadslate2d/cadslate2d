@@ -42,6 +42,12 @@ export function CommandLine({ app }: { app: CadApp }) {
         case "redo":
           app.key(KeyAction.Redo);
           break;
+        case "open":
+          app.key(KeyAction.Open);
+          break;
+        case "save":
+          app.key(KeyAction.Save);
+          break;
         case "history-previous":
         case "history-next": {
           const recalled =

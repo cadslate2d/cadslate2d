@@ -11,6 +11,8 @@ class FakeSource implements UiSource {
     spaceAccepts: true,
     canUndo: false,
     canRedo: false,
+    unsavedChanges: false,
+    exportIsLossy: false,
   };
   logReads = 0;
 

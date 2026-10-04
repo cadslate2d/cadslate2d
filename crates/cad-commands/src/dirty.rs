@@ -16,6 +16,9 @@ impl Dirty {
     pub const VIEW: Self = Self(1 << 2);
     /// Prompt, log, status, or toggles changed.
     pub const UI: Self = Self(1 << 3);
+    /// A command needs the host to act (open or save a file). Take the
+    /// request with `Session::take_host_request`.
+    pub const HOST: Self = Self(1 << 4);
 
     pub const fn bits(self) -> u32 {
         self.0

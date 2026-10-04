@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { PNG } from "pngjs";
 
@@ -84,4 +86,42 @@ export function highlightPixels(canvas: Locator): Promise<number> {
     canvas,
     ([red, green, blue]) => blue > 180 && red < 140 && blue - red > 80 && green < 200,
   );
+}
+
+/** Absolute path of a DXF fixture under `test-data/dxf/`. */
+export function fixturePath(relative: string): string {
+  return fileURLToPath(new URL(`../../test-data/dxf/${relative}`, import.meta.url));
+}
+
+/** Runs `action`, which must trigger a download, and returns the downloaded text and file name. */
+export async function downloadFrom(
+  page: Page,
+  action: () => Promise<void>,
+): Promise<{ name: string; text: string }> {
+  const pending = page.waitForEvent("download");
+  await action();
+  const download = await pending;
+  return {
+    name: download.suggestedFilename(),
+    text: await readFile(await download.path(), "utf8"),
+  };
+}
+
+/** Runs `action`, which must open a file picker, and chooses `file` in it. */
+export async function chooseFile(
+  page: Page,
+  action: () => Promise<void>,
+  file: string | { name: string; mimeType: string; buffer: Buffer },
+): Promise<void> {
+  const pending = page.waitForEvent("filechooser");
+  await action();
+  await (await pending).setFiles(file);
+  await settle(page);
+}
+
+/** Records every request the page makes from now on. */
+export function recordRequests(page: Page): { url: string; method: string }[] {
+  const requests: { url: string; method: string }[] = [];
+  page.on("request", (request) => requests.push({ url: request.url(), method: request.method() }));
+  return requests;
 }

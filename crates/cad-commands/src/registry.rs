@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use cad_input::{CommandAliases, DuplicateCommandName};
 
 use crate::Command;
-use crate::commands::{LineCommand, RedoCommand, UndoCommand};
+use crate::commands::{ExportCommand, LineCommand, OpenCommand, RedoCommand, UndoCommand};
 
 type CommandFactory = fn() -> Box<dyn Command>;
 
@@ -44,10 +44,14 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 3] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 5] = [
             ("LINE", &["L"], || Box::new(LineCommand::new())),
             ("UNDO", &["U"], || Box::new(UndoCommand)),
             ("REDO", &[], || Box::new(RedoCommand)),
+            ("OPEN", &["DXFIN"], || Box::new(OpenCommand)),
+            ("DXFOUT", &["SAVE", "SAVEAS", "EXPORT"], || {
+                Box::new(ExportCommand)
+            }),
         ];
         for (name, aliases, factory) in standard {
             registry

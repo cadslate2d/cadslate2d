@@ -103,3 +103,15 @@ Keystrokes typed while the canvas has focus are routed to the command-line input
 - The transport measurement shows view creation or copying dominates frame time.
 - A worker architecture moves the session off the main thread (§37).
 - Dynamic input (§13.5) is scheduled.
+
+## Amendments
+
+### 2026-10-04 — `HOST` flag for file operations
+
+Opening and exporting files need browser facilities (a file picker, a download) that Rust cannot drive and, by decision 3, must not call. A fifth dirty flag covers this without changing the call pattern:
+
+```text
+HOST     a command needs the host to act
+```
+
+When an input reports `HOST`, TypeScript calls `take_host_request()`, performs the operation, and reports back with an ordinary input call (`load_dxf(bytes, name)`), or pulls the result (`export_dxf()`). Rust still never calls into JavaScript, and typed commands (`OPEN`, `DXFOUT`), shortcuts, and future menu items all go through the same command path.

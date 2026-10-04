@@ -1,27 +1,41 @@
 // The application object: one engine session, one UI store, one frame loop.
 // React components and the canvas binding talk to the engine only through it.
-import { Dirty, type CadEngine, type KeyAction } from "../cad/engine";
+import { Dirty, HostRequest, type CadEngine, type KeyAction } from "../cad/engine";
 import { FrameLoop, type ScheduleFrame } from "./frame-loop";
+import { browserHost, type HostServices } from "./host-services";
 import { UiStore } from "./ui-store";
 
 const RENDER_FLAGS = Dirty.Scene | Dirty.Overlay | Dirty.View;
+const DXF_ACCEPT = ".dxf";
+const DXF_MIME_TYPE = "application/dxf";
+const DEFAULT_FILE_NAME = "drawing.dxf";
+
+export const DISCARD_CHANGES_MESSAGE =
+  "The current drawing has changes that have not been exported. Discard them?";
+export const LOSSY_EXPORT_MESSAGE =
+  "This drawing was opened from a file with content CadSlate2D could not import. " +
+  "The exported file will not include that content. Export anyway?";
+
+export interface CadAppOptions {
+  readonly schedule?: ScheduleFrame;
+  readonly host?: HostServices;
+}
 
 export class CadApp {
   readonly engine: CadEngine;
   readonly ui = new UiStore();
   readonly loop: FrameLoop;
+  readonly #host: HostServices;
   /** Draws a frame. Set while a canvas is attached. */
   #render: (() => void) | undefined;
 
-  constructor(
-    engine: CadEngine,
-    schedule: ScheduleFrame = (callback) => requestAnimationFrame(callback),
-  ) {
+  constructor(engine: CadEngine, options: CadAppOptions = {}) {
     this.engine = engine;
+    this.#host = options.host ?? browserHost;
     this.loop = new FrameLoop(
       (sample) => engine.pointerMove(sample.x, sample.y, sample.modifiers),
       (dirty) => this.#onFrame(dirty),
-      schedule,
+      options.schedule ?? ((callback) => requestAnimationFrame(callback)),
     );
     this.ui.refresh(engine);
   }
@@ -38,12 +52,12 @@ export class CadApp {
   /** One completed command-line entry. Rust interprets it. */
   submitText(text: string): void {
     this.loop.flushPointerMove();
-    this.loop.invalidate(this.engine.submitText(text));
+    this.#afterInput(this.engine.submitText(text));
   }
 
   key(action: KeyAction): void {
     this.loop.flushPointerMove();
-    this.loop.invalidate(this.engine.key(action));
+    this.#afterInput(this.engine.key(action));
   }
 
   historyPrevious(): string | undefined {
@@ -62,5 +76,42 @@ export class CadApp {
   #onFrame(dirty: number): void {
     if (dirty & RENDER_FLAGS) this.#render?.();
     if (dirty & Dirty.Ui) this.ui.refresh(this.engine);
+  }
+
+  #afterInput(dirty: number): void {
+    this.loop.invalidate(dirty);
+    // Handled now rather than on the next frame: opening a file picker must
+    // happen while the browser still counts the key press as a user gesture.
+    if (dirty & Dirty.Host) void this.#serveHostRequest(this.engine.takeHostRequest());
+  }
+
+  async #serveHostRequest(request: HostRequest): Promise<void> {
+    switch (request) {
+      case HostRequest.OpenFile:
+        return this.#openFile();
+      case HostRequest.ExportFile:
+        return this.#exportFile();
+      case HostRequest.None:
+        return;
+    }
+  }
+
+  async #openFile(): Promise<void> {
+    if (this.engine.uiState().unsavedChanges && !this.#host.confirm(DISCARD_CHANGES_MESSAGE))
+      return;
+    const file = await this.#host.pickFile(DXF_ACCEPT);
+    if (file) this.loop.invalidate(this.engine.loadDxf(file.bytes, file.name));
+  }
+
+  #exportFile(): void {
+    const state = this.engine.uiState();
+    // DESIGN §24.2: never imply a lossless round trip when content was skipped.
+    if (state.exportIsLossy && !this.#host.confirm(LOSSY_EXPORT_MESSAGE)) return;
+    this.#host.saveFile(
+      state.documentName ?? DEFAULT_FILE_NAME,
+      this.engine.exportDxf(),
+      DXF_MIME_TYPE,
+    );
+    this.loop.invalidate(Dirty.Ui);
   }
 }
