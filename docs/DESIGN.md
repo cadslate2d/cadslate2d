@@ -1069,6 +1069,8 @@ commit point
 ```
 
 > **Resolved in M2:** `cad_commands::snap`. The aperture is 10 CSS pixels. The closest snap point within it wins; ties go to Endpoint, Intersection, Midpoint, Center, Quadrant, in that order. Nearest is a fallback, taken only when no other snap is in reach. Hovering a circle or arc offers its centre, ranked behind any snap point actually under the cursor. Intersections are searched among at most 24 candidate entities. The snap is derived on demand from cursor, view, and drawing, so the marker and the committed point cannot disagree.
+>
+> **Extended in M3:** Perpendicular and Tangent, constructed from the command's base point and offered while the cursor is on the object they land on. Candidates rank in tiers: a snap point under the cursor, then a hovered construction, then a hovered centre, then Nearest; within a tier the closest to the cursor wins.
 
 ## 18.2 Transient-edit exclusion rule
 

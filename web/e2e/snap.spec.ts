@@ -118,6 +118,41 @@ test.describe("object snap", () => {
   });
 });
 
+test.describe("perpendicular and tangent snaps", () => {
+  test("a line is drawn perpendicular to another by hovering it anywhere", async ({ page }) => {
+    const canvas = await openApp(page);
+    await enter(page, ...ONE_LINE, "OSNAP", "P", "", "L", "30,70");
+    await hoverWorld(page, canvas, 75, 1);
+    await expect(snapLabel(page)).toHaveText("Perpendicular");
+    await expect(coordinates(page)).toHaveText("30.0000, 0.0000");
+    await clickWorld(page, canvas, 75, 1);
+    await enter(page, "");
+
+    const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    expect(file.text).toContain("LINE\n  8\n0\n 10\n30.0\n 20\n70.0\n 11\n30.0\n 21\n0.0\n");
+  });
+
+  test("a line is drawn tangent to a circle", async ({ page }) => {
+    const canvas = await openApp(page);
+    await enter(page, "C", "0,0", "60", "OSNAP", "T", "", "L", "100,0");
+    await hoverWorld(page, canvas, 38, 46);
+    await expect(snapLabel(page)).toHaveText("Tangent");
+    await expect(coordinates(page)).toHaveText("36.0000, 48.0000");
+  });
+
+  test("they are off until switched on, and need a point to construct from", async ({ page }) => {
+    const canvas = await openApp(page);
+    await enter(page, ...ONE_LINE, "L", "30,70");
+    await hoverWorld(page, canvas, 75, 1);
+    await expect(snapLabel(page)).toHaveCount(0); // off by default
+    await page.keyboard.press("Escape");
+
+    await enter(page, "OSNAP", "P", "", "L");
+    await hoverWorld(page, canvas, 75, 1);
+    await expect(snapLabel(page)).toHaveCount(0); // no first point yet
+  });
+});
+
 // One baseline image per marker. Rendering differs slightly between browser
 // engines, so the comparison runs in Chromium, the browser CI uses.
 test.describe("snap markers (visual baseline)", () => {
@@ -134,15 +169,33 @@ test.describe("snap markers (visual baseline)", () => {
       at: [50, 50],
     },
     { mode: "Nearest", setup: [...ONE_LINE, "OSNAP", "N", ""], hover: [80, 3], at: [80, 0] },
+    // The two constructions need a point to construct from: the line's first point.
+    {
+      mode: "Perpendicular",
+      setup: [...ONE_LINE, "OSNAP", "P", ""],
+      from: "30,70",
+      hover: [75, 1],
+      at: [30, 0],
+    },
+    // Radius 60 seen from 100 away: a 3-4-5 triangle, touching at (36, 48).
+    {
+      mode: "Tangent",
+      setup: [...CIRCLE, "OSNAP", "T", ""],
+      from: "100,0",
+      hover: [38, 46],
+      at: [36, 48],
+    },
   ] as const;
   /** Half the side of the square compared: the marker and a small margin. */
   const HALF_CLIP = 14;
 
-  for (const { mode, setup, hover, at } of CASES) {
+  for (const testCase of CASES) {
+    const { mode, setup, hover, at } = testCase;
     test(`${mode} marker`, async ({ page, browserName }) => {
       test.skip(browserName !== "chromium", "baselines are recorded in Chromium");
       const canvas = await openApp(page);
       await enter(page, ...setup, "L");
+      if ("from" in testCase) await enter(page, testCase.from);
       await hoverWorld(page, canvas, hover[0], hover[1]);
       await expect(snapLabel(page)).toHaveText(mode);
 

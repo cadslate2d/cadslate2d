@@ -6,6 +6,7 @@
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
 mod arc;
+mod construct;
 mod corner;
 mod crossing;
 mod extend;

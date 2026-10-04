@@ -28,15 +28,21 @@ pub enum SnapMode {
     Quadrant,
     Intersection,
     Nearest,
+    /// The foot of the perpendicular from the point being drawn from.
+    Perpendicular,
+    /// The point of tangency of a line from the point being drawn from.
+    Tangent,
 }
 
 impl SnapMode {
     /// Every mode, in ranking order: when two snap points are equally close,
     /// the earlier mode wins.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::Endpoint,
         Self::Intersection,
         Self::Midpoint,
+        Self::Perpendicular,
+        Self::Tangent,
         Self::Center,
         Self::Quadrant,
         Self::Nearest,
@@ -54,6 +60,8 @@ impl SnapMode {
             Self::Quadrant => "Quadrant",
             Self::Intersection => "Intersection",
             Self::Nearest => "Nearest",
+            Self::Perpendicular => "Perpendicular",
+            Self::Tangent => "Tangent",
         }
     }
 }
@@ -65,8 +73,8 @@ pub struct SnapModes {
 }
 
 impl Default for SnapModes {
-    /// Everything but Nearest, which would otherwise win wherever the cursor
-    /// touches geometry.
+    /// The modes that name a point on an object. Nearest, Perpendicular, and
+    /// Tangent are off: with them on, merely touching an object snaps.
     fn default() -> Self {
         let on = [
             SnapMode::Endpoint,
@@ -116,7 +124,8 @@ pub struct SnapPoint {
 }
 
 /// The exact snap points of one entity for one mode. Intersection needs two
-/// entities and Nearest needs the cursor, so neither is produced here.
+/// entities, Nearest needs the cursor, and Perpendicular and Tangent need
+/// the point being drawn from, so none of those is produced here.
 ///
 /// | Mode | Line | Circle | Arc | Polyline |
 /// | --- | --- | --- | --- | --- |
@@ -124,6 +133,10 @@ pub struct SnapPoint {
 /// | Midpoint | middle | — | middle of the arc | middle of every segment |
 /// | Center | — | centre | centre | — |
 /// | Quadrant | — | 0°, 90°, 180°, 270° | those within the sweep | — |
+///
+/// A polyline's arc segments offer what an arc offers. Perpendicular applies
+/// to every kind (the foot must land on the object); Tangent to circles and
+/// arcs, from a point outside them.
 pub fn entity_snap_points(entity: &Entity, mode: SnapMode) -> Vec<Point2> {
     entity
         .primitives()
@@ -149,11 +162,51 @@ pub fn entity_snap_points(entity: &Entity, mode: SnapMode) -> Vec<Point2> {
         .collect()
 }
 
-/// A snap point with what ranking needs: how far it is from the cursor on
-/// screen, in pixels.
+/// How a candidate came to be offered, from strongest claim to weakest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Tier {
+    /// The snap point itself is under the cursor.
+    UnderCursor,
+    /// A construction from the base point (Perpendicular, Tangent), offered
+    /// because the cursor is on the object it lands on.
+    Construction,
+    /// The centre of a circle or arc whose curve the cursor is on.
+    HoveredCenter,
+    /// The point of the object nearest the cursor: the fallback.
+    Nearest,
+}
+
+/// A snap point with what ranking needs: why it is offered, and how far it
+/// is from the cursor on screen, in pixels.
 struct Ranked {
     snap: SnapPoint,
+    tier: Tier,
     pixels: f64,
+}
+
+impl Ranked {
+    /// A snap point under the cursor.
+    fn at(mode: SnapMode, point: Point2, pixels: f64) -> Self {
+        Self {
+            snap: SnapPoint { mode, point },
+            tier: Tier::UnderCursor,
+            pixels,
+        }
+    }
+
+    /// A snap point offered because the cursor is on its object, wherever
+    /// on the object the point itself is. Under the cursor it is as good as
+    /// any other snap point; elsewhere it ranks in `tier`.
+    fn hovered(mode: SnapMode, point: Point2, pixels: f64, tier: Tier) -> Self {
+        Self {
+            tier: if pixels <= SNAP_APERTURE.0 {
+                Tier::UnderCursor
+            } else {
+                tier
+            },
+            ..Self::at(mode, point, pixels)
+        }
+    }
 }
 
 /// The snap point for a cursor position, if any enabled mode offers one
@@ -167,6 +220,20 @@ pub fn find_snap(
     cursor: ScreenPoint,
     modes: SnapModes,
     excluded: &[EntityId],
+) -> Option<SnapPoint> {
+    find_snap_from(drawing, view, cursor, modes, excluded, None)
+}
+
+/// [`find_snap`], with the point the command is drawing from. Perpendicular
+/// and Tangent are constructions *from* that point, so they are offered only
+/// when there is one.
+pub fn find_snap_from(
+    drawing: &Drawing,
+    view: &View,
+    cursor: ScreenPoint,
+    modes: SnapModes,
+    excluded: &[EntityId],
+    base: Option<Point2>,
 ) -> Option<SnapPoint> {
     if modes == SnapModes::NONE {
         return None;
@@ -194,8 +261,8 @@ pub fn find_snap(
                         .map(|primitive| primitive.closest_point(at))
                         .min_by(|a, b| pixels_to(*a).total_cmp(&pixels_to(*b)));
                     found.extend(nearest.map(|point| Ranked {
-                        snap: SnapPoint { mode, point },
-                        pixels: pixels_to(point),
+                        tier: Tier::Nearest,
+                        ..Ranked::at(mode, point, pixels_to(point))
                     }));
                 }
                 SnapMode::Nearest => {}
@@ -203,19 +270,38 @@ pub fn find_snap(
                 // CAD — but ranked behind any snap point actually under the cursor.
                 SnapMode::Center if on_curve => {
                     found.extend(entity_snap_points(entity, mode).into_iter().map(|point| {
-                        Ranked {
-                            snap: SnapPoint { mode, point },
-                            pixels: pixels_to(point).min(SNAP_APERTURE.0),
-                        }
+                        Ranked::hovered(mode, point, pixels_to(point), Tier::HoveredCenter)
                     }));
+                }
+                // Constructions from the base point: offered while the cursor
+                // is on the piece of the object they land on, or on the point itself.
+                SnapMode::Perpendicular | SnapMode::Tangent => {
+                    let Some(base) = base else { continue };
+                    for primitive in entity.primitives() {
+                        let touching = within(primitive.distance_to_point(at) * view.scale());
+                        let points = match mode {
+                            SnapMode::Perpendicular => primitive.perpendicular_feet(base),
+                            _ => primitive.tangent_points(base),
+                        };
+                        for point in points.as_slice() {
+                            let pixels = pixels_to(*point);
+                            if touching {
+                                found.push(Ranked::hovered(
+                                    mode,
+                                    *point,
+                                    pixels,
+                                    Tier::Construction,
+                                ));
+                            } else if within(pixels) {
+                                found.push(Ranked::at(mode, *point, pixels));
+                            }
+                        }
+                    }
                 }
                 _ => found.extend(
                     entity_snap_points(entity, mode)
                         .into_iter()
-                        .map(|point| Ranked {
-                            snap: SnapPoint { mode, point },
-                            pixels: pixels_to(point),
-                        })
+                        .map(|point| Ranked::at(mode, point, pixels_to(point)))
                         .filter(|ranked| within(ranked.pixels)),
                 ),
             }
@@ -229,21 +315,15 @@ pub fn find_snap(
                     first
                         .intersections(second)
                         .into_iter()
-                        .map(|point| Ranked {
-                            snap: SnapPoint {
-                                mode: SnapMode::Intersection,
-                                point,
-                            },
-                            pixels: pixels_to(point),
-                        })
+                        .map(|point| Ranked::at(SnapMode::Intersection, point, pixels_to(point)))
                         .filter(|ranked| within(ranked.pixels)),
                 );
             }
         }
     }
 
-    // Nearest is the fallback tier; within a tier the closest wins, and ties
-    // go to the earlier mode in `SnapMode::ALL`.
+    // The strongest claim wins; within a tier the closest to the cursor, and
+    // ties go to the earlier mode in `SnapMode::ALL`.
     let rank = |mode: SnapMode| {
         SnapMode::ALL
             .iter()
@@ -253,9 +333,8 @@ pub fn find_snap(
     found
         .into_iter()
         .min_by(|a, b| {
-            let tier = |ranked: &Ranked| ranked.snap.mode == SnapMode::Nearest;
-            tier(a)
-                .cmp(&tier(b))
+            a.tier
+                .cmp(&b.tier)
                 .then(a.pixels.total_cmp(&b.pixels))
                 .then(rank(a.snap.mode).cmp(&rank(b.snap.mode)))
         })
@@ -531,6 +610,210 @@ mod tests {
         );
     }
 
+    // ── perpendicular and tangent (#117) ──
+
+    fn snap_from(
+        drawing: &Drawing,
+        base: Point2,
+        at: Point2,
+        modes: &[SnapMode],
+    ) -> Option<SnapPoint> {
+        let view = view();
+        let cursor = view.world_to_screen(at);
+        find_snap_from(
+            drawing,
+            &view,
+            cursor,
+            SnapModes::only(modes),
+            &[],
+            Some(base),
+        )
+    }
+
+    const PERPENDICULAR: &[SnapMode] = &[SnapMode::Perpendicular];
+    const TANGENT: &[SnapMode] = &[SnapMode::Tangent];
+
+    #[test]
+    fn perpendicular_lands_on_the_foot_wherever_the_line_is_hovered() {
+        let d = drawing(vec![line(0.0, 0.0, 200.0, 0.0)]);
+        let base = p(60.0, 90.0);
+        // Hovering the line far from the foot still offers the foot.
+        assert_eq!(
+            snap_from(&d, base, p(150.0, 2.0), PERPENDICULAR),
+            hit(SnapMode::Perpendicular, 60.0, 0.0)
+        );
+        assert_eq!(
+            snap_from(&d, base, p(61.0, -3.0), PERPENDICULAR),
+            hit(SnapMode::Perpendicular, 60.0, 0.0)
+        );
+        // Off the line: nothing.
+        assert_eq!(snap_from(&d, base, p(150.0, 40.0), PERPENDICULAR), None);
+    }
+
+    #[test]
+    fn perpendicular_needs_a_base_point_and_a_foot_on_the_object() {
+        let d = drawing(vec![line(0.0, 0.0, 200.0, 0.0)]);
+        // No base point: nothing to construct from.
+        assert_eq!(
+            snap_at(&d, p(150.0, 2.0), SnapModes::only(PERPENDICULAR)),
+            None
+        );
+        // The perpendicular from here misses the segment.
+        assert_eq!(
+            snap_from(&d, p(260.0, 90.0), p(150.0, 2.0), PERPENDICULAR),
+            None
+        );
+        // A base point on the line itself has no perpendicular to drop.
+        assert_eq!(
+            snap_from(&d, p(60.0, 0.0), p(150.0, 2.0), PERPENDICULAR),
+            None
+        );
+    }
+
+    #[test]
+    fn perpendicular_to_a_circle_takes_the_foot_on_the_side_that_is_hovered() {
+        let d = drawing(vec![Entity::from(CircleEntity::new(p(0.0, 0.0), 50.0))]);
+        let base = p(200.0, 0.0);
+        // Near side and far side of the line through the centre.
+        let near = snap_from(&d, base, p(48.0, 14.0), PERPENDICULAR).unwrap();
+        assert!(near.point.distance_to(p(50.0, 0.0)) < 1e-9, "{near:?}");
+        let far = snap_from(&d, base, p(-48.0, 14.0), PERPENDICULAR).unwrap();
+        assert!(far.point.distance_to(p(-50.0, 0.0)) < 1e-9, "{far:?}");
+        // From the centre every direction is perpendicular: nothing is offered.
+        assert_eq!(
+            snap_from(&d, p(0.0, 0.0), p(48.0, 14.0), PERPENDICULAR),
+            None
+        );
+    }
+
+    #[test]
+    fn perpendicular_works_on_arcs_and_polyline_segments() {
+        // The upper half circle of radius 50.
+        let arc: Entity = ArcEntity::new(p(0.0, 0.0), 50.0, 0.0, PI).into();
+        let d = drawing(vec![arc]);
+        let found = snap_from(&d, p(0.0, 200.0), p(30.0, 40.0), PERPENDICULAR).unwrap();
+        assert!(found.point.distance_to(p(0.0, 50.0)) < 1e-9);
+        // From below, the near foot would be on the missing lower half.
+        let found = snap_from(&d, p(0.0, -200.0), p(30.0, 40.0), PERPENDICULAR).unwrap();
+        assert!(
+            found.point.distance_to(p(0.0, 50.0)) < 1e-9,
+            "only the far foot exists"
+        );
+
+        let corner: Entity =
+            PolylineEntity::new(vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 100.0)], false).into();
+        let d = drawing(vec![corner]);
+        let base = p(40.0, 60.0);
+        // Hovering the bottom segment offers the foot on it, not on the other one.
+        assert_eq!(
+            snap_from(&d, base, p(80.0, 1.0), PERPENDICULAR),
+            hit(SnapMode::Perpendicular, 40.0, 0.0)
+        );
+        assert_eq!(
+            snap_from(&d, base, p(99.0, 30.0), PERPENDICULAR),
+            hit(SnapMode::Perpendicular, 100.0, 60.0)
+        );
+    }
+
+    #[test]
+    fn tangent_lands_on_the_point_of_tangency_on_the_side_that_is_hovered() {
+        // Radius 30 seen from 50 away: a 3-4-5 triangle, tangent points at (18, ±24).
+        let d = drawing(vec![Entity::from(CircleEntity::new(p(0.0, 0.0), 30.0))]);
+        let base = p(50.0, 0.0);
+        let upper = snap_from(&d, base, p(0.0, 30.0), TANGENT).unwrap();
+        assert_eq!(upper.mode, SnapMode::Tangent);
+        assert!(upper.point.distance_to(p(18.0, 24.0)) < 1e-9, "{upper:?}");
+        let lower = snap_from(&d, base, p(0.0, -30.0), TANGENT).unwrap();
+        assert!(lower.point.distance_to(p(18.0, -24.0)) < 1e-9, "{lower:?}");
+    }
+
+    #[test]
+    fn there_is_no_tangent_from_inside_a_circle_or_to_a_line() {
+        let d = drawing(vec![
+            Entity::from(CircleEntity::new(p(0.0, 0.0), 30.0)),
+            line(-100.0, 80.0, 100.0, 80.0),
+        ]);
+        assert_eq!(
+            snap_from(&d, p(5.0, 5.0), p(0.0, 30.0), TANGENT),
+            None,
+            "base inside the circle"
+        );
+        assert_eq!(
+            snap_from(&d, p(30.0, 0.0), p(0.0, 30.0), TANGENT),
+            None,
+            "base on the circle"
+        );
+        assert_eq!(
+            snap_from(&d, p(0.0, 200.0), p(20.0, 80.0), TANGENT),
+            None,
+            "lines have no tangent"
+        );
+        assert_eq!(
+            snap_at(&d, p(0.0, 30.0), SnapModes::only(TANGENT)),
+            None,
+            "no base point"
+        );
+    }
+
+    #[test]
+    fn tangent_on_an_arc_offers_only_points_that_are_on_the_arc() {
+        // The upper half of the circle; from the right, only the upper tangent point is on it.
+        let arc: Entity = ArcEntity::new(p(0.0, 0.0), 30.0, 0.0, PI).into();
+        let d = drawing(vec![arc]);
+        let found = snap_from(&d, p(50.0, 0.0), p(-20.0, 22.0), TANGENT).unwrap();
+        assert!(found.point.distance_to(p(18.0, 24.0)) < 1e-9);
+        // From straight below, both tangent points are on the lower half: none.
+        assert_eq!(snap_from(&d, p(0.0, -50.0), p(-20.0, 22.0), TANGENT), None);
+    }
+
+    #[test]
+    fn a_snap_point_under_the_cursor_beats_a_hovered_construction() {
+        let d = drawing(vec![line(0.0, 0.0, 200.0, 0.0)]);
+        let modes = &[
+            SnapMode::Endpoint,
+            SnapMode::Midpoint,
+            SnapMode::Perpendicular,
+        ];
+        let base = p(60.0, 90.0);
+        // At the end of the line: the endpoint, although the line is hovered.
+        assert_eq!(
+            snap_from(&d, base, p(198.0, 2.0), modes),
+            hit(SnapMode::Endpoint, 200.0, 0.0)
+        );
+        // Elsewhere on the line: the perpendicular foot.
+        assert_eq!(
+            snap_from(&d, base, p(150.0, 2.0), modes),
+            hit(SnapMode::Perpendicular, 60.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn with_both_constructions_on_the_one_nearer_the_cursor_wins() {
+        let d = drawing(vec![Entity::from(CircleEntity::new(p(0.0, 0.0), 30.0))]);
+        let both = &[SnapMode::Perpendicular, SnapMode::Tangent];
+        let base = p(50.0, 0.0);
+        // Feet at (±30, 0); tangent points at (18, ±24).
+        let near_the_far_foot = snap_from(&d, base, p(-29.0, 7.0), both).unwrap();
+        assert_eq!(near_the_far_foot.mode, SnapMode::Perpendicular);
+        // On the circle at 100°: 37 px from the upper tangent point, 46 px from the far foot.
+        let on_top = snap_from(&d, base, p(-5.21, 29.54), both).unwrap();
+        assert_eq!(on_top.mode, SnapMode::Tangent);
+        assert!(on_top.point.distance_to(p(18.0, 24.0)) < 1e-9);
+    }
+
+    #[test]
+    fn hovering_a_circle_prefers_tangent_to_its_centre() {
+        let d = drawing(vec![Entity::from(CircleEntity::new(p(0.0, 0.0), 30.0))]);
+        let modes = &[SnapMode::Center, SnapMode::Tangent];
+        let found = snap_from(&d, p(50.0, 0.0), p(0.0, 30.0), modes).unwrap();
+        assert_eq!(found.mode, SnapMode::Tangent);
+        // Without a base point there is no tangent, and the centre is offered as before.
+        assert_eq!(
+            snap_at(&d, p(0.0, 30.0), SnapModes::only(modes)),
+            hit(SnapMode::Center, 0.0, 0.0)
+        );
+    }
+
     #[test]
     fn nearest_is_the_fallback_and_lands_exactly_on_the_curve() {
         let d = drawing(vec![line(0.0, 0.0, 100.0, 0.0)]);
@@ -616,6 +899,7 @@ mod tests {
                 SnapMode::Nearest
             ]
         );
+        assert!(!modes.is_on(SnapMode::Perpendicular) && !modes.is_on(SnapMode::Tangent));
     }
 
     #[test]

@@ -36,7 +36,7 @@ impl Hits {
         len: 0,
     };
 
-    fn one(point: Point2) -> Self {
+    pub(crate) fn one(point: Point2) -> Self {
         Self {
             points: [point, Point2::ORIGIN],
             len: 1,
@@ -44,7 +44,7 @@ impl Hits {
     }
 
     /// Two solutions, merged into one when they coincide (tangency).
-    fn pair(a: Point2, b: Point2) -> Self {
+    pub(crate) fn pair(a: Point2, b: Point2) -> Self {
         if LINEAR.coincident(a, b) {
             Self::one(a)
         } else {
@@ -68,7 +68,7 @@ impl Hits {
     }
 
     /// The hits for which `keep` holds.
-    fn filtered(self, keep: impl Fn(Point2) -> bool) -> Self {
+    pub(crate) fn filtered(self, keep: impl Fn(Point2) -> bool) -> Self {
         let mut kept = Self::NONE;
         for point in self.as_slice().iter().copied().filter(|point| keep(*point)) {
             kept.points[kept.len] = point;

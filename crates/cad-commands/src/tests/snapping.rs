@@ -175,6 +175,71 @@ fn nearest_can_be_switched_on_and_lands_on_the_line() {
     assert_eq!(h.lines()[1].start, p(80.0, 0.0));
 }
 
+// ── perpendicular and tangent (#117) through a command ──
+
+fn with_constructions(h: &mut Harness) {
+    h.enter_all(&["OSNAP", "P", "T", ""]);
+}
+
+#[test]
+fn a_line_is_drawn_perpendicular_to_another() {
+    let mut h = one_line();
+    with_constructions(&mut h);
+    h.enter_all(&["L", "30,70"]);
+
+    // Hovering the line anywhere marks the foot of the perpendicular.
+    h.move_to_world(p(75.0, 1.0));
+    assert_eq!(marker(&h), Some((SnapMode::Perpendicular, p(30.0, 0.0))));
+    assert_eq!(h.session.ui_state().snap, Some("Perpendicular"));
+    h.click_world(p(75.0, 1.0));
+    h.enter("");
+    assert_eq!(h.lines()[1], line(30.0, 70.0, 30.0, 0.0));
+}
+
+#[test]
+fn a_line_is_drawn_tangent_to_a_circle() {
+    let mut h = Harness::new();
+    h.enter_all(&["C", "0,0", "30"]);
+    with_constructions(&mut h);
+    h.enter_all(&["L", "50,0"]);
+    // On the upper half of the circle, nearer to the upper tangent point
+    // than to anything else that is offered.
+    h.click_world(p(10.26, 28.19));
+    h.enter("");
+
+    let tangent = h.lines()[0];
+    assert!(tangent.end.distance_to(p(18.0, 24.0)) < 1e-9, "{tangent:?}");
+    // Tangent: the radius to the touching point is perpendicular to the line.
+    let along = tangent.end - tangent.start;
+    assert!((tangent.end.x * along.x + tangent.end.y * along.y).abs() < 1e-9);
+}
+
+#[test]
+fn constructions_are_not_offered_for_the_first_point_of_a_command() {
+    let mut h = one_line();
+    with_constructions(&mut h);
+    h.enter("L");
+    // No point to construct from yet: only the ordinary snaps apply.
+    h.move_to_world(p(75.0, 1.0));
+    assert_eq!(h.session.snap(), None);
+    h.move_to_world(p(99.0, 1.0));
+    assert_eq!(
+        h.session.snap().map(|snap| snap.mode),
+        Some(SnapMode::Endpoint)
+    );
+}
+
+#[test]
+fn a_grip_can_be_dropped_perpendicular_to_another_object() {
+    let mut h = Harness::new();
+    h.enter_all(&["L", "0,0", "100,0", "", "L", "20,80", "60,40", ""]);
+    with_constructions(&mut h);
+    h.click_world(p(40.0, 60.0)); // select the second line, away from its grips
+    h.click_world(p(60.0, 40.0)); // take its lower endpoint
+    h.click_world(p(90.0, 1.0)); // hover the first line: perpendicular from where the grip was
+    assert_eq!(h.lines()[1], line(20.0, 80.0, 60.0, 0.0));
+}
+
 // ── intersection (#78) through a command ──
 
 #[test]

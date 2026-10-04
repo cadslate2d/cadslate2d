@@ -8,13 +8,15 @@ use cad_input::{ExpectedInput, InputKind, Keyword};
 
 use crate::{Command, CommandContext, CommandInput, Prompt, SnapMode, Step};
 
-const MODES: [(Keyword, SnapMode); 6] = [
+const MODES: [(Keyword, SnapMode); 8] = [
     (Keyword::new("Endpoint"), SnapMode::Endpoint),
     (Keyword::new("Midpoint"), SnapMode::Midpoint),
     (Keyword::new("Center"), SnapMode::Center),
     (Keyword::new("Quadrant"), SnapMode::Quadrant),
     (Keyword::new("Intersection"), SnapMode::Intersection),
     (Keyword::new("Nearest"), SnapMode::Nearest),
+    (Keyword::new("Perpendicular"), SnapMode::Perpendicular),
+    (Keyword::new("Tangent"), SnapMode::Tangent),
 ];
 
 #[derive(Debug)]
@@ -76,7 +78,7 @@ mod tests {
         h.enter("OSNAP");
         assert_eq!(
             h.prompt(),
-            "Press Enter to finish or [Endpoint/Midpoint/Center/Quadrant/Intersection/Nearest]:"
+            "Press Enter to finish or [Endpoint/Midpoint/Center/Quadrant/Intersection/Nearest/Perpendicular/Tangent]:"
         );
         assert!(h.log().iter().any(|line| line
             == "Running object snaps: Endpoint, Intersection, Midpoint, Center, Quadrant"));
@@ -88,6 +90,19 @@ mod tests {
         assert!(!modes.is_on(SnapMode::Endpoint));
         assert!(h.log().iter().any(|line| line
             == "Running object snaps: Intersection, Midpoint, Center, Quadrant, Nearest"));
+    }
+
+    #[test]
+    fn perpendicular_and_tangent_are_off_until_asked_for() {
+        let mut h = Harness::new();
+        let modes = h.session.snap_modes();
+        assert!(!modes.is_on(SnapMode::Perpendicular) && !modes.is_on(SnapMode::Tangent));
+
+        h.enter_all(&["OSNAP", "P", "T", ""]);
+        let modes = h.session.snap_modes();
+        assert!(modes.is_on(SnapMode::Perpendicular) && modes.is_on(SnapMode::Tangent));
+        assert!(h.log().iter().any(|line| line
+            == "Running object snaps: Endpoint, Intersection, Midpoint, Perpendicular, Tangent, Center, Quadrant"));
     }
 
     #[test]

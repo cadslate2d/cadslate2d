@@ -75,8 +75,10 @@ While a command asks for a point, the pointer snaps to nearby geometry. A marker
 | Quadrant | diamond | — | 0°, 90°, 180°, 270° | those the arc passes | — |
 | Intersection | cross | where any two entities meet; polylines segment by segment | | | |
 | Nearest | hourglass | the closest point on the entity (off by default) | | | |
+| Perpendicular | right-angle sign | the foot of the perpendicular from the point you are drawing from (off by default) | | | |
+| Tangent | circle under a bar | — | where a line from the point you are drawing from touches it (off by default) | the same, if on the arc | arc segments |
 
-The closest snap point within ten pixels wins. Hovering a circle or arc also offers its centre. Nearest applies only when no other snap is in reach. An entity being moved is not offered as a target at its old position. `OSNAP` chooses the running modes; F3 switches them all off and on.
+The closest snap point within ten pixels wins. Perpendicular and Tangent are constructions from the previous point, so they need one, and they are offered wherever you hover the object — not only at the point itself. Hovering a circle or arc also offers its centre. Nearest applies only when no other snap is in reach. An entity being moved is not offered as a target at its old position. `OSNAP` chooses the running modes; F3 switches them all off and on.
 
 ### Grips
 

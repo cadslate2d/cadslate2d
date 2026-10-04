@@ -29,7 +29,8 @@ const HOT_GRIP_PIXELS: f64 = 5.0;
 const SNAP_MARKER_PIXELS: f64 = 7.0;
 
 /// The glyph of a snap mode as pen strokes, in units of the marker's
-/// half-size with +Y up. The centre snap is a circle and has no strokes.
+/// half-size with +Y up. The centre and tangent snaps also draw a circle
+/// (see [`marker_has_circle`]).
 ///
 /// | Mode | Marker |
 /// | --- | --- |
@@ -39,6 +40,8 @@ const SNAP_MARKER_PIXELS: f64 = 7.0;
 /// | Quadrant | diamond |
 /// | Intersection | cross |
 /// | Nearest | hourglass |
+/// | Perpendicular | right-angle sign |
+/// | Tangent | circle under a bar |
 fn marker_strokes(mode: SnapMode) -> &'static [&'static [(f64, f64)]] {
     const SQUARE: &[(f64, f64)] = &[(-1., -1.), (1., -1.), (1., 1.), (-1., 1.), (-1., -1.)];
     const TRIANGLE: &[(f64, f64)] = &[(-1., -1.), (1., -1.), (0., 1.), (-1., -1.)];
@@ -46,6 +49,9 @@ fn marker_strokes(mode: SnapMode) -> &'static [&'static [(f64, f64)]] {
     const HOURGLASS: &[(f64, f64)] = &[(-1., -1.), (1., -1.), (-1., 1.), (1., 1.), (-1., -1.)];
     const RISING: &[(f64, f64)] = &[(-1., -1.), (1., 1.)];
     const FALLING: &[(f64, f64)] = &[(-1., 1.), (1., -1.)];
+    const CORNER: &[(f64, f64)] = &[(-1., 1.), (-1., -1.), (1., -1.)];
+    const SQUARE_MARK: &[(f64, f64)] = &[(-1., 0.), (0., 0.), (0., -1.)];
+    const BAR: &[(f64, f64)] = &[(-1., 1.), (1., 1.)];
     match mode {
         SnapMode::Endpoint => &[SQUARE],
         SnapMode::Midpoint => &[TRIANGLE],
@@ -53,7 +59,14 @@ fn marker_strokes(mode: SnapMode) -> &'static [&'static [(f64, f64)]] {
         SnapMode::Quadrant => &[DIAMOND],
         SnapMode::Intersection => &[RISING, FALLING],
         SnapMode::Nearest => &[HOURGLASS],
+        SnapMode::Perpendicular => &[CORNER, SQUARE_MARK],
+        SnapMode::Tangent => &[BAR],
     }
+}
+
+/// Whether a snap mode's glyph includes a circle the size of the marker.
+fn marker_has_circle(mode: SnapMode) -> bool {
+    matches!(mode, SnapMode::Center | SnapMode::Tangent)
 }
 
 /// The spacing the grid is drawn at: `spacing` times the smallest of 1, 2,
@@ -211,7 +224,7 @@ impl OverlayFrame {
     /// The marker is sized in pixels here, so it looks the same at any zoom.
     fn push_snap_marker(&mut self, mode: SnapMode, at: Point2, view: &View) {
         let half = view.pixels_to_world(SNAP_MARKER_PIXELS);
-        if mode == SnapMode::Center {
+        if marker_has_circle(mode) {
             let circle = Arc::new(at, half, 0.0, std::f64::consts::TAU);
             self.frame.push_arc(StyleRole::SnapMarker, &circle);
         }
@@ -476,6 +489,21 @@ mod tests {
         .map(|mode| marker_frame(*mode, &view).frame().segment_count())
         .collect();
         assert_eq!(counts, vec![4, 3, 4, 2, 4]);
+
+        // The two constructions: a right-angle sign, and a circle under a bar.
+        let perpendicular = marker_frame(SnapMode::Perpendicular, &view);
+        assert_eq!(
+            (
+                perpendicular.frame().arc_count(),
+                perpendicular.frame().segment_count()
+            ),
+            (0, 4)
+        );
+        let tangent = marker_frame(SnapMode::Tangent, &view);
+        assert_eq!(
+            (tangent.frame().arc_count(), tangent.frame().segment_count()),
+            (1, 1)
+        );
     }
 
     /// Markers are a fixed size on screen: twice the zoom, half the world size.

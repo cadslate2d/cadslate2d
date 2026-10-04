@@ -10,7 +10,7 @@ use crate::commands::{GripEditCommand, grip};
 use crate::grips::{grip_at, grips_of};
 use crate::history::InputHistory;
 use crate::log::CommandLog;
-use crate::snap::find_snap;
+use crate::snap::find_snap_from;
 use crate::{
     Command, CommandContext, CommandInput, CommandRegistry, Dirty, DraftingSettings, Grip,
     HostRequest, KeyAction, Modifiers, OverlayItem, PointerButton, Selection, SnapModes, SnapPoint,
@@ -195,12 +195,13 @@ impl Session {
         if !self.toggles.is_on(Toggle::Osnap) {
             return None;
         }
-        find_snap(
+        find_snap_from(
             &self.drawing,
             &self.view,
             cursor,
             self.settings.snap_modes,
             command.transient_sources(),
+            command.base_point(),
         )
     }
 
