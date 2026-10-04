@@ -1,6 +1,6 @@
 # ADR-0007: Spatial index — rstar R*-tree, grown by insertion only
 
-**Status:** Accepted for M0–M1 (2026-10-04); to be re-measured with editing workloads in M2  
+**Status:** Accepted (2026-10-04); confirmed with editing workloads at the M2 exit — see *Re-measured at the M2 exit* below  
 **Date:** 2026-10-04  
 **Kind:** Evidence (resolves a PROVISIONAL item, in part)  
 **Design refs:** §19.5, §20, §42
@@ -71,3 +71,28 @@ Reading the numbers:
 - M2 adds snapping, hover, and window selection: re-run with those query shapes (this is what §20 means by "real editing workloads").
 - `rstar` fixes bulk loading, or a safe bulk loader is written.
 - Profiling shows index maintenance in transaction commit becoming visible.
+
+## Re-measured at the M2 exit (2026-10-04)
+
+The decision is unchanged. This section adds the evidence §20 asked for: the query shapes that M2 introduced.
+
+`cargo bench -p cad-benchmarks --bench document -- index/` and `--bench snap`, same machine and settings as above. The machine was busy; differences under about 30% are noise, and a two-second run of the window benchmark was misleading enough that these figures come from a six-second run.
+
+| Operation | 10k | 50k | 100k |
+| --- | --- | --- | --- |
+| Window query over 1% of the drawing, R-tree | 1.4 µs | 3.5 µs | 9.3 µs |
+| Window query over 1% of the drawing, brute force | 36 µs | 239 µs | 599 µs |
+| Window query over 25% of the drawing, R-tree | 14 µs | 121 µs | 327 µs |
+| Window query over 25% of the drawing, brute force | 26 µs | 342 µs | 631 µs |
+| 1000 snap queries next to endpoints (index query + exact snap points + ranking) | 0.93 ms | 1.33 ms | 1.21 ms |
+| Update 1000 entries, R-tree | 6.5 ms | 2.4 ms | 3.6 ms |
+| Update 1000 entries, brute force | 4.5 ms | 19 ms | 57 ms |
+
+Reading the numbers:
+
+- **Snapping is index-bound.** About a microsecond per query, the same at 10k and 100k entities. Snapping queries on every pointer move, so this is the workload that mattered most.
+- **Small windows are 25–65× faster with the R-tree.**
+- **Large windows are where an index helps least**, because most of the cost is producing the result. Even so, at a quarter of the drawing the R-tree is about twice as fast as scanning everything. There is no window size in these measurements at which brute force wins.
+- **Updates** — what MOVE, ROTATE, SCALE, and grip edits do — stay within a few microseconds per entry.
+
+Nothing here argues for a different structure. The two follow-ups stand: a safe bulk loader for opening large files, and the upstream report.

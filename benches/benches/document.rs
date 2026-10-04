@@ -6,8 +6,8 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
 
-use cad_benchmarks::{HashMapStore, Rng, SIZES, lines, pick_box};
-use cad_core::{Aabb, EntityId};
+use cad_benchmarks::{HashMapStore, Rng, SIZES, extent, lines, pick_box};
+use cad_core::{Aabb, EntityId, Point2};
 use cad_document::spatial::{LinearIndex, RTreeIndex};
 use cad_document::{Drawing, Entity, EntityStore, LineEntity, SharedEntity, SpatialIndex};
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -189,6 +189,23 @@ fn index(c: &mut Criterion) {
                     .sum::<usize>()
             })
         });
+        group.finish();
+
+        // Window and crossing selection: one box over a real share of the
+        // drawing, returning everything in it. The box covers 1% and then
+        // 25% of the drawing's area.
+        let mut group = c.benchmark_group("index/window_query");
+        for (label, share) in [("1pct", 0.1), ("25pct", 0.5)] {
+            let side = extent(size) * share;
+            let corner = Point2::new(extent(size) * 0.2, extent(size) * 0.2);
+            let window = Aabb::from_points(corner, Point2::new(corner.x + side, corner.y + side));
+            group.bench_function(BenchmarkId::new(format!("rtree_{label}"), size), |b| {
+                b.iter(|| rtree.query(&window).len())
+            });
+            group.bench_function(BenchmarkId::new(format!("linear_{label}"), size), |b| {
+                b.iter(|| linear.query(&window).len())
+            });
+        }
         group.finish();
 
         // Moving entities: the bounds of existing entries change.

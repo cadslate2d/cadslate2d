@@ -28,7 +28,6 @@ These are deliberately **not** written yet. Each is the deliverable of a tracked
 
 | Topic | Design ref | Resolved by |
 | --- | --- | --- |
-| Spatial index, re-measured with snapping and window-selection workloads | §20 | M2 exit (ADR-0007 covers M0–M1) |
 | Local persistence (IndexedDB / OPFS / hybrid) | §25 | M5 |
 | Worker architecture | §37 | M7, profiling-driven |
 
