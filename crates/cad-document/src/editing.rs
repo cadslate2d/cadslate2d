@@ -9,13 +9,21 @@
 use cad_core::tolerance::LinearTolerance;
 use cad_core::{Aabb, Point2};
 use cad_geometry::{
-    Corner, Primitive, extend_arc, extend_segment, offset_circle, offset_segment, trim_arc_parts,
-    trim_circle_parts, trim_segment_parts,
+    Corner, Path, PathTrimError, Primitive, extend_arc, extend_segment, offset_circle,
+    offset_segment, trim_arc_parts, trim_circle_parts, trim_segment_parts,
 };
 
-use crate::{ArcEntity, CircleEntity, Entity, LineEntity};
+use crate::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity};
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
+
+/// Whether `pick` is nearer the last vertex of an open polyline than the first.
+fn polyline_end_is_nearer(polyline: &PolylineEntity, pick: Point2) -> bool {
+    match (polyline.vertices.first(), polyline.vertices.last()) {
+        (Some(first), Some(last)) => pick.distance_to(*last) <= pick.distance_to(*first),
+        _ => true,
+    }
+}
 
 /// Why an entity could not be offset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,8 +73,9 @@ pub enum TrimError {
     /// The cutting edge does not divide the entity: it misses it, or only
     /// touches one of its ends.
     NoIntersection,
-    /// A circle has no ends: the cutting edge must cross it twice.
-    CircleNeedsTwo,
+    /// A closed shape has no ends, so it must be crossed at two distinct
+    /// points to lose anything; carries what it is: `circle`, `closed polyline`.
+    NeedsTwoCrossings(&'static str),
 }
 
 /// An entity after trimming: what replaces it, and the part that was cut away.
@@ -126,10 +135,22 @@ impl Entity {
                         removed: arc(parts.removed),
                     }),
                     None if cuts.is_empty() => Err(TrimError::NoIntersection),
-                    None => Err(TrimError::CircleNeedsTwo),
+                    None => Err(TrimError::NeedsTwoCrossings("circle")),
                 }
             }
-            Entity::Polyline(_) => Err(TrimError::Unsupported(self.kind_name())),
+            Entity::Polyline(entity) => {
+                let polyline = |path: Path| Entity::from(PolylineEntity::from(path));
+                match entity.path().trimmed(cuts, pick, TOLERANCE) {
+                    Ok(parts) => Ok(TrimParts {
+                        kept: parts.kept.into_iter().map(polyline).collect(),
+                        removed: polyline(parts.removed),
+                    }),
+                    Err(PathTrimError::NoCut) => Err(TrimError::NoIntersection),
+                    Err(PathTrimError::NeedsTwoCuts) => {
+                        Err(TrimError::NeedsTwoCrossings("closed polyline"))
+                    }
+                }
+            }
         }
     }
 
@@ -157,9 +178,19 @@ impl Entity {
                     .map(|longer| ArcEntity::from(longer).into())
                     .ok_or(ExtendError::NoMeeting)
             }
-            Entity::Circle(_) | Entity::Polyline(_) => {
-                Err(ExtendError::Unsupported(self.kind_name()))
+            // A closed polyline has no ends, like a circle.
+            Entity::Polyline(polyline) if polyline.closed => {
+                Err(ExtendError::Unsupported("closed polyline"))
             }
+            Entity::Polyline(polyline) => {
+                let from_end = polyline_end_is_nearer(polyline, pick);
+                polyline
+                    .path()
+                    .extended(from_end, boundary, TOLERANCE)
+                    .map(|longer| PolylineEntity::from(longer).into())
+                    .ok_or(ExtendError::NoMeeting)
+            }
+            Entity::Circle(_) => Err(ExtendError::Unsupported(self.kind_name())),
         }
     }
 
@@ -191,6 +222,23 @@ impl Entity {
                 Some(Aabb::from_points(tip, tip + onwards * (reach / length)))
             }
             Entity::Arc(arc) => Some(arc.arc().circle().bounds()),
+            // An open polyline reaches as its first or last segment would alone.
+            Entity::Polyline(polyline) if !polyline.closed => {
+                let segments: Vec<Primitive> = polyline.primitives().collect();
+                let end_segment = if polyline_end_is_nearer(polyline, pick) {
+                    segments.last()
+                } else {
+                    segments.first()
+                };
+                let alone: Entity = match end_segment? {
+                    Primitive::Segment(segment) => {
+                        LineEntity::new(segment.start, segment.end).into()
+                    }
+                    Primitive::Arc(arc) => ArcEntity::from(*arc).into(),
+                    Primitive::Circle(_) => return None,
+                };
+                alone.extension_reach(pick, within)
+            }
             Entity::Circle(_) | Entity::Polyline(_) => None,
         }
     }
@@ -477,6 +525,214 @@ mod tests {
         assert!((removed.arc().sweep - PI).abs() < 1e-9);
     }
 
+    // ── polylines as targets (#120) ──
+
+    fn as_polyline(entity: &Entity) -> &PolylineEntity {
+        match entity {
+            Entity::Polyline(polyline) => polyline,
+            other => panic!("expected a polyline, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_open_polyline_is_trimmed_by_every_kind_of_cutting_edge() {
+        // Along the X axis, then up: every edge crosses the first segment at x = 40.
+        let target: Entity =
+            PolylineEntity::new(vec![p(0.0, 0.0), p(200.0, 0.0), p(200.0, 100.0)], false).into();
+        for (name, edge) in cutting_edges() {
+            let pieces = target.trimmed(&edge, p(10.0, 0.0)).unwrap_or_else(|error| {
+                panic!("polyline trimmed by {name}: {error:?}");
+            });
+            let kept = as_polyline(pieces.last().unwrap());
+            assert!(!kept.closed);
+            assert!(
+                close(*kept.vertices.last().unwrap(), p(200.0, 100.0)),
+                "cut by {name}"
+            );
+            assert!(
+                edge.distance_to(kept.vertices[0]) < 1e-9,
+                "cut by {name}: starts on the edge"
+            );
+            assert!(
+                kept.vertices[0].x > 30.0,
+                "cut by {name}: the picked start is gone"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pick_in_the_middle_of_a_polyline_leaves_two_polylines() {
+        let target: Entity = PolylineEntity::new(
+            vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 100.0), p(200.0, 100.0)],
+            false,
+        )
+        .into();
+        let first: Entity = LineEntity::new(p(50.0, -10.0), p(50.0, 10.0)).into();
+        let second: Entity = LineEntity::new(p(150.0, 90.0), p(150.0, 110.0)).into();
+        let cuts: Vec<Point2> = [first, second]
+            .iter()
+            .flat_map(|edge| target.intersections(edge))
+            .collect();
+        let parts = target.trim_parts_at(&cuts, p(100.0, 50.0)).unwrap();
+        assert_eq!(
+            parts.kept,
+            vec![
+                PolylineEntity::new(vec![p(0.0, 0.0), p(50.0, 0.0)], false).into(),
+                PolylineEntity::new(vec![p(150.0, 100.0), p(200.0, 100.0)], false).into()
+            ]
+        );
+        assert_eq!(
+            parts.removed,
+            PolylineEntity::new(
+                vec![
+                    p(50.0, 0.0),
+                    p(100.0, 0.0),
+                    p(100.0, 100.0),
+                    p(150.0, 100.0)
+                ],
+                false
+            )
+            .into()
+        );
+    }
+
+    #[test]
+    fn a_closed_polyline_opens_and_must_be_crossed_twice() {
+        let square: Entity = PolylineEntity::new(
+            vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 100.0), p(0.0, 100.0)],
+            true,
+        )
+        .into();
+        // A vertical line through the middle crosses the bottom and the top.
+        let through: Entity = LineEntity::new(p(50.0, -20.0), p(50.0, 120.0)).into();
+        let pieces = square.trimmed(&through, p(100.0, 50.0)).unwrap();
+        assert_eq!(
+            pieces,
+            vec![
+                PolylineEntity::new(
+                    vec![p(50.0, 100.0), p(0.0, 100.0), p(0.0, 0.0), p(50.0, 0.0)],
+                    false
+                )
+                .into()
+            ]
+        );
+        // A line that only crosses the bottom edge.
+        let stub: Entity = LineEntity::new(p(50.0, -20.0), p(50.0, 20.0)).into();
+        assert_eq!(
+            square.trimmed(&stub, p(100.0, 50.0)),
+            Err(TrimError::NeedsTwoCrossings("closed polyline"))
+        );
+        let apart: Entity = LineEntity::new(p(500.0, -20.0), p(500.0, 20.0)).into();
+        assert_eq!(
+            square.trimmed(&apart, p(100.0, 50.0)),
+            Err(TrimError::NoIntersection)
+        );
+    }
+
+    #[test]
+    fn trimming_a_bulged_polyline_keeps_its_arcs() {
+        // A slot from (0,0) to (100,40) with semicircular ends of radius 20.
+        let slot: Entity = PolylineEntity::with_bulges(
+            vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 40.0), p(0.0, 40.0)],
+            vec![0.0, 1.0, 0.0, 1.0],
+            true,
+        )
+        .into();
+        // A vertical line through the middle; pick the right end: the left half stays.
+        let through: Entity = LineEntity::new(p(50.0, -20.0), p(50.0, 60.0)).into();
+        let pieces = slot.trimmed(&through, p(120.0, 20.0)).unwrap();
+        let kept = as_polyline(&pieces[0]);
+        assert_eq!(
+            kept.vertices,
+            vec![p(50.0, 40.0), p(0.0, 40.0), p(0.0, 0.0), p(50.0, 0.0)]
+        );
+        assert_eq!(kept.bulges().collect::<Vec<_>>(), vec![0.0, 1.0, 0.0, 0.0]);
+        assert!(
+            pieces[0].distance_to(p(-20.0, 20.0)) < 1e-9,
+            "the left end is still round"
+        );
+
+        // A horizontal line through the middle cuts both round ends in half.
+        let across: Entity = LineEntity::new(p(-50.0, 20.0), p(150.0, 20.0)).into();
+        let pieces = slot.trimmed(&across, p(50.0, 40.0)).unwrap();
+        let kept = as_polyline(&pieces[0]);
+        assert!(close(kept.vertices[0], p(-20.0, 20.0)));
+        assert!(close(*kept.vertices.last().unwrap(), p(120.0, 20.0)));
+        // Two quarter arcs remain, each half of a semicircle.
+        let quarter = (PI / 8.0).tan();
+        let bulges: Vec<f64> = kept.bulges().collect();
+        assert!(
+            (bulges[0] - quarter).abs() < 1e-9 && (bulges[2] - quarter).abs() < 1e-9,
+            "{bulges:?}"
+        );
+        assert!(
+            pieces[0].distance_to(p(50.0, 0.0)) < 1e-9,
+            "the bottom side stays"
+        );
+        assert!(
+            pieces[0].distance_to(p(50.0, 40.0)) > 1.0,
+            "the picked top side is gone"
+        );
+    }
+
+    #[test]
+    fn an_open_polyline_is_extended_to_every_kind_of_boundary() {
+        // Up, then right along the X axis towards the boundaries at x = 100.
+        let target: Entity =
+            PolylineEntity::new(vec![p(0.0, -50.0), p(0.0, 0.0), p(60.0, 0.0)], false).into();
+        for (name, boundary) in boundaries() {
+            let longer = target
+                .extended(&boundary, p(55.0, 0.0))
+                .unwrap_or_else(|error| {
+                    panic!("polyline extended to {name}: {error:?}");
+                });
+            let longer = as_polyline(&longer);
+            assert_eq!(
+                &longer.vertices[..2],
+                &[p(0.0, -50.0), p(0.0, 0.0)],
+                "to {name}"
+            );
+            assert!(
+                close(longer.vertices[2], p(100.0, 0.0)),
+                "to {name}: {:?}",
+                longer.vertices[2]
+            );
+        }
+    }
+
+    #[test]
+    fn a_polyline_is_extended_from_the_end_nearer_the_pick_arc_or_straight() {
+        // A straight run ending in a counter-clockwise quarter arc up to (150, 50).
+        let hook: Entity = PolylineEntity::with_bulges(
+            vec![p(0.0, 0.0), p(100.0, 0.0), p(150.0, 50.0)],
+            vec![0.0, std::f64::consts::SQRT_2 - 1.0],
+            false,
+        )
+        .into();
+        let ceiling: Entity = LineEntity::new(p(-500.0, 100.0), p(500.0, 100.0)).into();
+        let longer = hook.extended(&ceiling, p(149.0, 48.0)).unwrap();
+        let longer = as_polyline(&longer);
+        assert!(
+            close(longer.vertices[2], p(100.0, 100.0)),
+            "round to the top of its circle"
+        );
+        assert!((longer.bulge(1) - 1.0).abs() < 1e-9);
+
+        // The other end is straight and runs back to a wall on the left.
+        let wall: Entity = LineEntity::new(p(-80.0, -50.0), p(-80.0, 50.0)).into();
+        let longer = hook.extended(&wall, p(5.0, 0.0)).unwrap();
+        assert_eq!(as_polyline(&longer).vertices[0], p(-80.0, 0.0));
+
+        // The reach of each end is that of its segment alone.
+        let within = Aabb::from_points(p(-500.0, -500.0), p(500.0, 500.0));
+        let around_the_arc = hook.extension_reach(p(149.0, 48.0), &within).unwrap();
+        assert!(
+            close(around_the_arc.min(), p(50.0, 0.0))
+                && close(around_the_arc.max(), p(150.0, 100.0))
+        );
+        assert!(hook.extension_reach(p(5.0, 0.0), &within).unwrap().min().x <= -500.0);
+    }
+
     #[test]
     fn a_pick_between_two_crossings_splits_the_target_in_two() {
         let target: Entity = LineEntity::new(p(0.0, 0.0), p(200.0, 0.0)).into();
@@ -505,12 +761,6 @@ mod tests {
             circle_apart.trimmed(&edge, p(200.0, 10.0)),
             Err(TrimError::NoIntersection)
         );
-
-        let polyline: Entity = PolylineEntity::new(vec![p(0.0, 0.0), p(100.0, 0.0)], false).into();
-        assert_eq!(
-            polyline.trimmed(&edge, p(10.0, 0.0)),
-            Err(TrimError::Unsupported("polyline"))
-        );
     }
 
     /// Regression: tangent contact.
@@ -534,7 +784,7 @@ mod tests {
         // The circle, touched once by the line: one crossing is not enough.
         assert_eq!(
             circle.trimmed(&tangent, p(0.0, -50.0)),
-            Err(TrimError::CircleNeedsTwo)
+            Err(TrimError::NeedsTwoCrossings("circle"))
         );
     }
 
@@ -742,10 +992,18 @@ mod tests {
             circle.extended(&boundary, p(10.0, 0.0)),
             Err(ExtendError::Unsupported("circle"))
         );
-        let polyline: Entity = PolylineEntity::new(vec![p(0.0, 0.0), p(60.0, 0.0)], false).into();
+        // A closed polyline has no end to extend.
+        let closed: Entity =
+            PolylineEntity::new(vec![p(0.0, 0.0), p(60.0, 0.0), p(60.0, 10.0)], true).into();
         assert_eq!(
-            polyline.extended(&boundary, p(55.0, 0.0)),
-            Err(ExtendError::Unsupported("polyline"))
+            closed.extended(&boundary, p(55.0, 0.0)),
+            Err(ExtendError::Unsupported("closed polyline"))
+        );
+        // An open one that would pass below the boundary never meets it.
+        let open: Entity = PolylineEntity::new(vec![p(0.0, 0.0), p(60.0, 0.0)], false).into();
+        assert_eq!(
+            open.extended(&boundary, p(55.0, 0.0)),
+            Err(ExtendError::NoMeeting)
         );
     }
 

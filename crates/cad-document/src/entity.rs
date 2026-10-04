@@ -1,7 +1,9 @@
 //! Semantic entity types (DESIGN §11).
 
 use cad_core::{Aabb, Point2, Vec2};
-use cad_geometry::{Arc, Circle, Primitive, Segment, Transform, is_straight, polyline_primitives};
+use cad_geometry::{
+    Arc, Circle, Path, Primitive, Segment, Transform, is_straight, polyline_primitives,
+};
 
 /// A straight line between two points.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -133,10 +135,25 @@ impl PolylineEntity {
         !self.bulges.is_empty()
     }
 
+    /// The polyline as a path that can be measured along and cut.
+    pub fn path(&self) -> Path {
+        Path {
+            vertices: self.vertices.clone(),
+            bulges: self.bulges().collect(),
+            closed: self.closed,
+        }
+    }
+
     /// The segments in order — straight segments and arcs — including the
     /// closing one when closed.
     pub fn primitives(&self) -> impl Iterator<Item = Primitive> + '_ {
         polyline_primitives(&self.vertices, |index| self.bulge(index), self.closed)
+    }
+}
+
+impl From<Path> for PolylineEntity {
+    fn from(path: Path) -> Self {
+        Self::with_bulges(path.vertices, path.bulges, path.closed)
     }
 }
 

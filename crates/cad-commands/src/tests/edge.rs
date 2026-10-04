@@ -111,19 +111,13 @@ fn trimming_a_circle_turns_it_into_an_arc_with_the_same_id() {
 
 #[test]
 fn trim_explains_what_it_cannot_do_and_changes_nothing() {
-    let polyline: Entity = PolylineEntity::new(vec![p(0.0, 20.0), p(100.0, 20.0)], false).into();
     let apart = line(60.0, -40.0, 100.0, -40.0);
     let circle: Entity = CircleEntity::new(p(-100.0, 0.0), 20.0).into();
-    let mut h = Harness::with_entities([upright(40.0), polyline, apart, circle]);
+    let mut h = Harness::with_entities([upright(40.0), apart, circle]);
     let before = h.entities();
     let revision = h.session.drawing().revision();
     with_edges(&mut h, "TR", &[p(40.0, 50.0)]);
 
-    h.click_world(p(80.0, 20.0));
-    assert_eq!(
-        h.log().last().unwrap(),
-        "TRIM does not support polylines yet."
-    );
     h.click_world(p(80.0, -40.0));
     assert_eq!(
         h.log().last().unwrap(),
@@ -293,6 +287,144 @@ fn a_selection_made_beforehand_is_not_taken_as_the_edges() {
     h.click_world(p(50.0, 0.0));
     h.enter("");
     assert_eq!(h.entities()[2], line(70.0, 0.0, 100.0, 0.0));
+}
+
+// ── polylines as targets (#120) ──
+
+fn polylines(h: &Harness) -> Vec<PolylineEntity> {
+    h.entities()
+        .into_iter()
+        .filter_map(|entity| match entity {
+            Entity::Polyline(polyline) => Some(polyline),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn trimming_an_open_polyline_can_leave_two_polylines() {
+    let stairs: Entity = PolylineEntity::new(
+        vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 50.0), p(200.0, 50.0)],
+        false,
+    )
+    .into();
+    let mut h = Harness::with_entities([stairs, upright(40.0), line(160.0, 20.0, 160.0, 80.0)]);
+    let id = h.ids()[0];
+    with_edges(&mut h, "TR", &[p(40.0, 30.0), p(160.0, 70.0)]);
+
+    // Hovering shows the stretch between the two edges as what would go.
+    h.move_to_world(p(100.0, 25.0));
+    assert_eq!(
+        removal(&h),
+        Some(
+            PolylineEntity::new(
+                vec![p(40.0, 0.0), p(100.0, 0.0), p(100.0, 50.0), p(160.0, 50.0)],
+                false
+            )
+            .into()
+        )
+    );
+    h.click_world(p(100.0, 25.0));
+    h.enter("");
+
+    assert_eq!(
+        polylines(&h),
+        vec![
+            PolylineEntity::new(vec![p(0.0, 0.0), p(40.0, 0.0)], false),
+            PolylineEntity::new(vec![p(160.0, 50.0), p(200.0, 50.0)], false)
+        ]
+    );
+    assert_eq!(
+        h.ids()[0],
+        id,
+        "the first piece keeps the polyline's identity"
+    );
+    h.undo();
+    assert_eq!(polylines(&h).len(), 1);
+}
+
+#[test]
+fn trimming_a_closed_polyline_opens_it() {
+    let mut h = Harness::new();
+    h.enter_all(&["REC", "0,0", "100,60", "L", "50,-20", "50,80", ""]);
+    with_edges(&mut h, "TR", &[p(50.0, 70.0)]);
+    h.click_world(p(100.0, 30.0)); // the right side
+    h.enter("");
+    assert_eq!(
+        polylines(&h),
+        vec![PolylineEntity::new(
+            vec![p(50.0, 60.0), p(0.0, 60.0), p(0.0, 0.0), p(50.0, 0.0)],
+            false
+        )]
+    );
+}
+
+#[test]
+fn a_closed_polyline_crossed_once_says_it_needs_two_crossings() {
+    let mut h = Harness::new();
+    h.enter_all(&["REC", "0,0", "100,60", "L", "50,-20", "50,20", ""]);
+    with_edges(&mut h, "TR", &[p(50.0, -10.0)]);
+    h.click_world(p(100.0, 30.0));
+    assert_eq!(
+        h.log().last().unwrap(),
+        "A closed polyline must be crossed twice by cutting edges to be trimmed."
+    );
+    assert!(polylines(&h)[0].closed);
+}
+
+/// Regression: a cutting edge that passes exactly through a vertex.
+#[test]
+fn a_cutting_edge_through_a_vertex_cuts_the_polyline_there() {
+    let corner: Entity =
+        PolylineEntity::new(vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 80.0)], false).into();
+    // A diagonal through the corner vertex at (100, 0).
+    let mut h = Harness::with_entities([corner, line(60.0, -40.0, 140.0, 40.0)]);
+    with_edges(&mut h, "TR", &[p(120.0, 20.0)]);
+    h.click_world(p(100.0, 50.0)); // the upright part
+    h.enter("");
+    assert_eq!(
+        polylines(&h),
+        vec![PolylineEntity::new(vec![p(0.0, 0.0), p(100.0, 0.0)], false)]
+    );
+}
+
+#[test]
+fn extend_lengthens_the_end_segment_of_an_open_polyline() {
+    let hook: Entity = PolylineEntity::with_bulges(
+        vec![p(0.0, 0.0), p(100.0, 0.0), p(150.0, 50.0)],
+        vec![0.0, std::f64::consts::SQRT_2 - 1.0],
+        false,
+    )
+    .into();
+    let mut h = Harness::with_entities([
+        hook,
+        line(-200.0, 100.0, 300.0, 100.0), // a ceiling the arc grows up to
+        line(-80.0, -50.0, -80.0, 50.0),   // a wall behind the straight end
+    ]);
+    h.enter_all(&["EX", ""]);
+    h.click_world(p(149.0, 48.0)); // the arc end
+    h.click_world(p(5.0, 0.0)); // the straight end
+    h.enter("");
+
+    let longer = &polylines(&h)[0];
+    assert_eq!(longer.vertices[0], p(-80.0, 0.0));
+    assert!(longer.vertices[2].distance_to(p(100.0, 100.0)) < 1e-9);
+    assert!(
+        (longer.bulge(1) - 1.0).abs() < 1e-9,
+        "the quarter arc is now a semicircle"
+    );
+}
+
+#[test]
+fn a_closed_polyline_cannot_be_extended() {
+    let mut h = Harness::new();
+    h.enter_all(&["REC", "0,0", "100,60", "L", "200,-20", "200,80", ""]);
+    h.enter_all(&["EX", ""]);
+    h.click_world(p(100.0, 30.0));
+    assert_eq!(
+        h.log().last().unwrap(),
+        "EXTEND does not support closed polylines yet."
+    );
 }
 
 // ── hover feedback (#118) ──

@@ -8,7 +8,7 @@ use cad_core::tolerance::LinearTolerance;
 use crate::{Arc, Circle, Segment, normalize_angle};
 
 /// A curve with two ends, which is what trimming works on.
-trait OpenCurve: Sized {
+pub(crate) trait OpenCurve: Sized {
     fn start_point(&self) -> Point2;
     fn end_point(&self) -> Point2;
     /// How far along the curve the closest point to `point` is, from 0 at

@@ -107,6 +107,30 @@ test.describe("several edges", () => {
   });
 });
 
+test.describe("polylines", () => {
+  test("a rectangle is opened by trimming, and a polyline end is extended", async ({ page }) => {
+    const canvas = await openApp(page);
+    await enter(page, "REC", "0,0", "100,60", "L", "50,-20", "50,80", "", "TR");
+    await clickWorld(page, canvas, 50, 70);
+    await enter(page, "");
+    await clickWorld(page, canvas, 100, 30); // the right side goes
+    await enter(page, "");
+
+    let text = await exported(page);
+    expect(text.match(/^VERTEX$/gm)).toHaveLength(4);
+    expect(text).toContain("POLYLINE\n  8\n0\n 66\n1\n 70\n0\n"); // now open
+    expect(text).toContain("VERTEX\n  8\n0\n 10\n50.0\n 20\n60.0\n");
+    expect(text).toContain("VERTEX\n  8\n0\n 10\n50.0\n 20\n0.0\n");
+
+    // Extend the open polyline's lower end to a wall on the right.
+    await enter(page, "L", "150,-40", "150,40", "", "EX", "");
+    await clickWorld(page, canvas, 45, 0);
+    await enter(page, "");
+    text = await exported(page);
+    expect(text).toContain("VERTEX\n  8\n0\n 10\n150.0\n 20\n0.0\n");
+  });
+});
+
 test.describe("hover feedback", () => {
   test("TRIM shows in red what a click would cut away, without committed uploads", async ({
     page,

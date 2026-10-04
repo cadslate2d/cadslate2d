@@ -129,9 +129,10 @@ impl EdgeCommand {
                         TrimError::NoIntersection => {
                             "The object does not cross a cutting edge.".to_owned()
                         }
-                        TrimError::CircleNeedsTwo => {
-                            "A circle must be crossed twice by cutting edges to be trimmed."
-                                .to_owned()
+                        TrimError::NeedsTwoCrossings(kind) => {
+                            format!(
+                                "A {kind} must be crossed twice by cutting edges to be trimmed."
+                            )
                         }
                     })?;
                 Ok(Edit {

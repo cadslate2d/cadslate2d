@@ -21,12 +21,12 @@ Tests: `cad-geometry/src/offset.rs`, `cad-document/src/editing.rs`, `cad-command
 
 Choose the cutting edges like any selection — clicks, a window, a crossing box — and press Enter; or press Enter straight away to make every object an edge. Then each pick removes the part of the picked object around the pick, between the nearest edges on either side.
 
-| Cutting edge ↓ / Object to trim → | Line | Arc | Circle | Polyline |
-| --- | --- | --- | --- | --- |
-| Line | yes | yes | yes, if crossed twice | no |
-| Circle | yes | yes | yes, if crossed twice | no |
-| Arc | yes | yes | yes, if crossed twice | no |
-| Polyline (any of its segments, straight or arc) | yes | yes | yes, if crossed twice | no |
+| Cutting edge ↓ / Object to trim → | Line | Arc | Circle | Open polyline | Closed polyline |
+| --- | --- | --- | --- | --- | --- |
+| Line | yes | yes | yes, if crossed twice | yes | yes, if crossed twice |
+| Circle | yes | yes | yes, if crossed twice | yes | yes, if crossed twice |
+| Arc | yes | yes | yes, if crossed twice | yes | yes, if crossed twice |
+| Polyline (any of its segments, straight or arc) | yes | yes | yes, if crossed twice | yes | yes, if crossed twice |
 
 Rules:
 
@@ -36,36 +36,38 @@ Rules:
 - A crossing at the object's own endpoint divides nothing and is ignored. If no crossing is left: "The object does not cross a cutting edge."
 - An edge tangent to a line or arc divides it at the point of contact. A circle touched once cannot be opened: "A circle must be crossed twice by cutting edges to be trimmed."
 - Only real crossings count; edges are not extended.
-- Polylines cannot be trimmed yet: "TRIM does not support polylines yet."
+- A polyline is trimmed along its whole length, across vertices, with straight and arc segments alike; a cut part-way along an arc segment leaves arcs with the right bulge on both sides. What is left is one or two polylines. A closed polyline opens into one open polyline and, like a circle, must be crossed at two distinct points: "A closed polyline must be crossed twice by cutting edges to be trimmed."
+- A cut exactly at a vertex leaves no segment of zero length.
 - A selection made before the command is not taken as the edges.
 - While you hover, the part a click would remove is shown in red.
 
 Not implemented: trimming to implied (extended) edges; fence and crossing selection of the objects to trim.
 
-Tests: `cad-geometry/src/trim.rs`, `cad-document/src/editing.rs` (one test per target kind, each against all four edge kinds, plus tangent, endpoint, and several-edge cases), `cad-commands/src/tests/edge.rs`, `web/e2e/trim-extend.spec.ts`.
+Tests: `cad-geometry/src/trim.rs`, `cad-geometry/src/path.rs`, `cad-document/src/editing.rs` (one test per target kind, each against all four edge kinds, plus tangent, endpoint, vertex, and several-edge cases), `cad-commands/src/tests/edge.rs`, `web/e2e/trim-extend.spec.ts`.
 
 ## EXTEND
 
 Choose the boundary edges as for TRIM, or press Enter for all. Then each pick lengthens the picked object, from the end nearer the pick, until it meets a boundary.
 
-| Boundary edge ↓ / Object to extend → | Line | Arc | Circle | Polyline |
-| --- | --- | --- | --- | --- |
-| Line | yes | yes | no | no |
-| Circle | yes | yes | no | no |
-| Arc | yes | yes | no | no |
-| Polyline (any of its segments, straight or arc) | yes | yes | no | no |
+| Boundary edge ↓ / Object to extend → | Line | Arc | Open polyline | Circle | Closed polyline |
+| --- | --- | --- | --- | --- | --- |
+| Line | yes | yes | yes | no | no |
+| Circle | yes | yes | yes | no | no |
+| Arc | yes | yes | yes | no | no |
+| Polyline (any of its segments, straight or arc) | yes | yes | yes | no | no |
 
 Rules:
 
 - A line continues straight on; an arc continues along its own circle, counter-clockwise from its end or clockwise from its start.
 - The first meeting with any boundary in that direction is taken. An end already on a boundary goes on to the next meeting, if there is one.
 - If the object would never meet a boundary: "The object does not meet a boundary edge when extended." An arc that would come back round to its own other end first counts as never meeting one.
-- Circles have no ends, and polylines are not supported yet; both are refused by name.
+- An open polyline is extended at its first or last segment, whichever end is nearer the pick: a straight segment straight on, an arc segment along its circle.
+- Circles and closed polylines have no ends and are refused by name.
 - While you hover, the object is shown as a click would leave it.
 
 Not implemented: extending to implied edges.
 
-Tests: `cad-geometry/src/extend.rs`, `cad-document/src/editing.rs`, `cad-commands/src/tests/edge.rs`, `web/e2e/trim-extend.spec.ts`.
+Tests: `cad-geometry/src/extend.rs`, `cad-geometry/src/path.rs`, `cad-document/src/editing.rs`, `cad-commands/src/tests/edge.rs`, `web/e2e/trim-extend.spec.ts`.
 
 ## FILLET and CHAMFER
 
