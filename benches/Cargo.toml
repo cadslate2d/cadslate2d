@@ -28,5 +28,9 @@ harness = false
 name = "snap"
 harness = false
 
+[[bench]]
+name = "grips"
+harness = false
+
 [lints]
 workspace = true

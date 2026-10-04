@@ -21,6 +21,10 @@ const PICK_BOX_PIXELS: f64 = 3.0;
 const MIN_GRID_PIXELS: f64 = 12.0;
 /// Every this-many-th grid line is a major line.
 const GRID_MAJOR_EVERY: i64 = 5;
+/// Half-size of a grip square, in CSS pixels.
+const GRIP_PIXELS: f64 = 4.0;
+/// Half-size of the hovered or dragged grip: a little larger.
+const HOT_GRIP_PIXELS: f64 = 5.0;
 /// Half-size of an object-snap marker, in CSS pixels.
 const SNAP_MARKER_PIXELS: f64 = 7.0;
 
@@ -96,6 +100,22 @@ impl OverlayFrame {
                         self.frame.push_entity(StyleRole::Selection, entity);
                     }
                 }
+                OverlayItem::Grips { at } => {
+                    for grip in at {
+                        self.push_square(StyleRole::Grip, *grip, GRIP_PIXELS, view);
+                    }
+                }
+                OverlayItem::HotGrip { at } => {
+                    self.push_square(StyleRole::GripHot, *at, HOT_GRIP_PIXELS, view);
+                }
+                OverlayItem::PreviewGrip { id, to } => {
+                    let preview = drawing
+                        .entity(id.entity)
+                        .and_then(|entity| entity.grip_preview(id.index, *to));
+                    if let Some(preview) = preview {
+                        self.frame.push_entity(StyleRole::Preview, &preview);
+                    }
+                }
                 OverlayItem::PreviewSegment { start, end } => {
                     self.frame.push_segment(StyleRole::Preview, *start, *end);
                 }
@@ -157,6 +177,21 @@ impl OverlayFrame {
                 self.frame
                     .push_segment(style, Point2::new(min.x, y), Point2::new(max.x, y));
             }
+        }
+    }
+
+    /// An axis-aligned square outline centred on `at`, sized in pixels.
+    fn push_square(&mut self, style: StyleRole, at: Point2, half_pixels: f64, view: &View) {
+        let half = view.pixels_to_world(half_pixels);
+        let corners = [
+            Vec2::new(-half, -half),
+            Vec2::new(half, -half),
+            Vec2::new(half, half),
+            Vec2::new(-half, half),
+        ];
+        for (index, corner) in corners.iter().enumerate() {
+            let next = corners[(index + 1) % corners.len()];
+            self.frame.push_segment(style, at + *corner, at + next);
         }
     }
 
@@ -325,12 +360,12 @@ mod tests {
     fn selected_entities_are_drawn_as_highlights_under_the_crosshair() {
         let mut h = Harness::new();
         h.enter_all(&["L", "-100,0", "100,0", ""]);
-        h.click(400.0, 300.0);
+        h.click(430.0, 300.0);
 
         let overlay = overlay_of(&h);
         assert_eq!(
             styles(&overlay),
-            vec![StyleRole::Selection, StyleRole::Crosshair]
+            vec![StyleRole::Selection, StyleRole::Grip, StyleRole::Crosshair]
         );
         assert_eq!(&overlay.frame().segments()[..4], &[-100.0, 0.0, 100.0, 0.0]);
     }
@@ -651,9 +686,99 @@ mod tests {
                 StyleRole::GridMinor,
                 StyleRole::GridMajor,
                 StyleRole::Selection,
+                StyleRole::Grip,
                 StyleRole::Crosshair
             ]
         );
+    }
+
+    // ── grips ──
+
+    /// The segments of one style, as `[x0, y0, x1, y1]` in world coordinates.
+    fn segments_of(overlay: &OverlayFrame, style: StyleRole) -> Vec<[f64; 4]> {
+        let frame = overlay.frame();
+        let origin = frame.origin();
+        let all = frame.segments().as_chunks::<4>().0;
+        frame
+            .batches()
+            .iter()
+            .filter(|batch| batch.style == style)
+            .flat_map(|batch| &all[batch.first as usize..(batch.first + batch.count) as usize])
+            .map(|segment| {
+                let [x0, y0, x1, y1] = segment.map(f64::from);
+                [origin.x + x0, origin.y + y0, origin.x + x1, origin.y + y1]
+            })
+            .collect()
+    }
+
+    fn width_of(segments: &[[f64; 4]]) -> f64 {
+        let xs = segments.iter().flat_map(|segment| [segment[0], segment[2]]);
+        let (low, high) = xs.fold((f64::MAX, f64::MIN), |(low, high), x| {
+            (low.min(x), high.max(x))
+        });
+        high - low
+    }
+
+    #[test]
+    fn grips_are_squares_of_a_fixed_pixel_size_at_any_zoom() {
+        let item = OverlayItem::Grips {
+            at: vec![Point2::new(10.0, 10.0), Point2::new(50.0, 10.0)],
+        };
+        let mut zoomed = view();
+        zoomed.zoom_about(ScreenPoint::new(400.0, 300.0), 12.5);
+        for view in [view(), zoomed] {
+            let mut overlay = OverlayFrame::new();
+            overlay.rebuild(std::slice::from_ref(&item), &Drawing::new(), &view);
+            let squares = segments_of(&overlay, StyleRole::Grip);
+            assert_eq!(squares.len(), 8, "four sides per grip");
+            let pixels = width_of(&squares[..4]) * view.scale();
+            assert!((pixels - 2.0 * GRIP_PIXELS).abs() < 1e-3, "{pixels}px wide");
+        }
+    }
+
+    #[test]
+    fn the_hot_grip_is_drawn_over_the_others_in_its_own_style_and_a_little_larger() {
+        let mut h = Harness::new();
+        h.enter_all(&["L", "0,0", "100,0", ""]);
+        h.click_world(Point2::new(30.0, 0.0));
+        h.move_to_world(Point2::new(99.0, 1.0));
+
+        let overlay = overlay_of(&h);
+        assert_eq!(
+            styles(&overlay),
+            vec![
+                StyleRole::Selection,
+                StyleRole::Grip,
+                StyleRole::GripHot,
+                StyleRole::Crosshair
+            ]
+        );
+        let hot = segments_of(&overlay, StyleRole::GripHot);
+        assert_eq!(hot.len(), 4);
+        assert!((width_of(&hot) - 2.0 * HOT_GRIP_PIXELS).abs() < 1e-3);
+    }
+
+    /// #90: previewing a vertex drag draws the two segments that change,
+    /// not the polyline again.
+    #[test]
+    fn dragging_a_vertex_of_a_huge_polyline_previews_only_what_changes() {
+        let vertices = (0..10_000).map(|index| {
+            let x = f64::from(index) * 0.05 - 250.0;
+            Point2::new(x, if index % 2 == 0 { 0.0 } else { 5.0 })
+        });
+        let polyline = cad_document::PolylineEntity::new(vertices.collect(), false);
+        let mut h = Harness::with_entities([cad_document::Entity::from(polyline)]);
+        h.click_world(Point2::new(-250.0, 0.0));
+        assert_eq!(h.session.grips().len(), 10_000);
+
+        // Take the first vertex's grip and drag it.
+        h.click_world(Point2::new(-250.0, 0.0));
+        h.move_to_world(Point2::new(-260.0, 40.0));
+        let overlay = overlay_of(&h);
+        // The rubber band from the grip's old position, plus one segment to
+        // the only neighbour.
+        assert_eq!(segments_of(&overlay, StyleRole::Preview).len(), 2);
+        assert_eq!(segments_of(&overlay, StyleRole::Grip).len(), 40_000);
     }
 
     // ── polar tracking ──

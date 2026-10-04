@@ -4,6 +4,7 @@ Small clipped screenshots that end-to-end tests compare against (`toHaveScreensh
 
 | Files | Recorded by | Shows |
 | --- | --- | --- |
+| `grip-idle.png`, `grip-hot.png` | `web/e2e/grips.spec.ts` | A line's endpoint grip, unhovered and under the cursor |
 | `snap-marker-<mode>.png` | `web/e2e/snap.spec.ts` | The object-snap marker of each mode, 28×28 CSS pixels around the snap point, with the crosshair beside it |
 
 Rules:

@@ -20,6 +20,7 @@ There are two kinds:
 | [0007](0007-spatial-index.md) | Spatial index: rstar R*-tree, grown by insertion only | Accepted for M0–M1 | Evidence |
 | [0008](0008-render-buffer-transport.md) | Render buffer transport: views, instanced segments, reused buffers | Accepted | Evidence |
 | [0009](0009-curve-rendering.md) | Curve rendering: analytic arc instances under a covering strip | Accepted | Evidence |
+| [0010](0010-grip-editing-and-arc-grip-semantics.md) | Grip editing as a command, and what arc grips hold fixed | Accepted | Evidence |
 
 ## Expected evidence ADRs
 

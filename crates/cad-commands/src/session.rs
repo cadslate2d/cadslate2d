@@ -6,13 +6,15 @@ use cad_input::{ExpectedInput, Input, InputKind};
 
 use crate::aids::{self, POLAR_APERTURE, Track, TrackKind};
 use crate::command::angle_degrees;
+use crate::commands::{GripEditCommand, grip};
+use crate::grips::{grip_at, grips_of};
 use crate::history::InputHistory;
 use crate::log::CommandLog;
 use crate::snap::find_snap;
 use crate::{
-    Command, CommandContext, CommandInput, CommandRegistry, Dirty, DraftingSettings, HostRequest,
-    KeyAction, Modifiers, OverlayItem, PointerButton, Selection, SnapModes, SnapPoint, Step,
-    Toggle, Toggles, UiState,
+    Command, CommandContext, CommandInput, CommandRegistry, Dirty, DraftingSettings, Grip,
+    HostRequest, KeyAction, Modifiers, OverlayItem, PointerButton, Selection, SnapModes, SnapPoint,
+    Step, Toggle, Toggles, UiState,
 };
 
 const IDLE_PROMPT: &str = "Command:";
@@ -73,6 +75,9 @@ pub struct Session {
     last_command: Option<&'static str>,
     toggles: Toggles,
     settings: DraftingSettings,
+    /// Where the primary button went down on a grip. Releasing it somewhere
+    /// else drops the grip there, so a grip can be dragged as well as clicked.
+    grip_press: Option<ScreenPoint>,
 }
 
 impl Default for Session {
@@ -113,6 +118,7 @@ impl Session {
             last_command: None,
             toggles: Toggles::default(),
             settings: DraftingSettings::default(),
+            grip_press: None,
         }
     }
 
@@ -144,6 +150,39 @@ impl Session {
 
     pub fn settings(&self) -> &DraftingSettings {
         &self.settings
+    }
+
+    /// The grips on screen: those of the selected entities, at the idle
+    /// prompt and while one of them is being dragged.
+    pub fn grips(&self) -> Vec<Grip> {
+        let shown = self
+            .active
+            .as_ref()
+            .is_none_or(|active| active.command.grip().is_some());
+        if shown {
+            grips_of(&self.drawing, &self.selection)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The grip a click would take right now: the one under the cursor at
+    /// the idle prompt. Grips come before entities and before empty space.
+    pub fn hovered_grip(&self) -> Option<Grip> {
+        let cursor = self.cursor?;
+        let idle =
+            self.active.is_none() && self.selection_box.is_none() && self.pan_anchor.is_none();
+        if !idle {
+            return None;
+        }
+        grip_at(&self.grips(), &self.view, cursor)
+    }
+
+    /// The grip being dragged, if a grip edit is in progress.
+    pub fn active_grip(&self) -> Option<Grip> {
+        self.active
+            .as_ref()
+            .and_then(|active| active.command.grip())
     }
 
     /// The object snap under the cursor, if a click would take one.
@@ -248,6 +287,15 @@ impl Session {
             });
         }
         items.extend(self.selection.iter().map(OverlayItem::Highlight));
+        let grips = self.grips();
+        if !grips.is_empty() {
+            items.push(OverlayItem::Grips {
+                at: grips.iter().map(|grip| grip.position).collect(),
+            });
+        }
+        if let Some(hot) = self.active_grip().or_else(|| self.hovered_grip()) {
+            items.push(OverlayItem::HotGrip { at: hot.position });
+        }
         let (Some(cursor), Some(aim)) = (self.cursor_world(), self.aim()) else {
             return items;
         };
@@ -321,7 +369,16 @@ impl Session {
             // A click during a command is a point, exactly like a typed coordinate.
             // At the idle prompt and at "Select objects:", the pointer builds
             // the selection set; anywhere else a click is a point.
-            PointerButton::Primary if self.is_selecting() => self.selection_click(at, modifiers),
+            PointerButton::Primary if self.is_selecting() => {
+                // A grip under the cursor comes before picking and box selection.
+                match self.hovered_grip().filter(|_| !modifiers.shift) {
+                    Some(grip) => {
+                        self.grip_press = Some(at);
+                        self.begin(grip::NAME, Box::new(GripEditCommand::new(grip)))
+                    }
+                    None => self.selection_click(at, modifiers),
+                }
+            }
             PointerButton::Primary => match self.aim() {
                 Some(aim) => self.feed_point(aim.point).unwrap_or(Dirty::NONE),
                 None => Dirty::NONE,
@@ -341,14 +398,28 @@ impl Session {
                 self.pan_anchor = None;
                 Dirty::NONE
             }
-            // Releasing after a drag completes the box; a plain click leaves
-            // it open for a second click, as in classic CAD.
-            PointerButton::Primary => match self.selection_box {
-                Some(start) if dragged(start, at) => {
-                    self.finish_selection_box(start, at, modifiers)
+            PointerButton::Primary => {
+                // A grip that was pressed and dragged is dropped on release;
+                // one that was only clicked stays in hand until the next click.
+                if let Some(press) = self.grip_press.take() {
+                    if dragged(press, at) && self.active_grip().is_some() {
+                        self.cursor = Some(at);
+                        return match self.aim() {
+                            Some(aim) => self.feed_point(aim.point).unwrap_or(Dirty::NONE),
+                            None => Dirty::NONE,
+                        };
+                    }
+                    return Dirty::NONE;
                 }
-                _ => Dirty::NONE,
-            },
+                // Releasing after a drag completes the box; a plain click
+                // leaves it open for a second click, as in classic CAD.
+                match self.selection_box {
+                    Some(start) if dragged(start, at) => {
+                        self.finish_selection_box(start, at, modifiers)
+                    }
+                    _ => Dirty::NONE,
+                }
+            }
             PointerButton::Secondary => Dirty::NONE,
         }
     }
@@ -412,8 +483,13 @@ impl Session {
                 .push(format!("Unknown command \"{}\".", name.trim()));
             return Dirty::UI;
         };
-        let cancelled = self.cancel_active();
         self.last_command = Some(name);
+        self.begin(name, command)
+    }
+
+    /// Makes `command` the active command, cancelling any other first.
+    fn begin(&mut self, name: &'static str, command: Box<dyn Command>) -> Dirty {
+        let cancelled = self.cancel_active();
         // One invocation is one undo step, however many transactions it commits.
         self.drawing.begin_group();
         cancelled
@@ -655,6 +731,11 @@ impl Session {
             Input::Accept if self.active.is_none() => Ok(self
                 .last_command
                 .map_or(Dirty::NONE, |name| self.invoke(name))),
+            // Enter while a grip is in hand drops it where the pointer is.
+            Input::Accept if self.active_grip().is_some() => match self.aim() {
+                Some(aim) => self.feed_point(aim.point),
+                None => Ok(self.feed(CommandInput::Accept)),
+            },
             Input::Accept => Ok(self.feed(CommandInput::Accept)),
         }
     }

@@ -41,10 +41,14 @@ pub enum StyleRole {
     GridMinor = 8,
     /// Every fifth line of the reference grid.
     GridMajor = 9,
+    /// A grip of a selected entity.
+    Grip = 10,
+    /// The grip under the cursor, or the one being dragged.
+    GripHot = 11,
 }
 
 impl StyleRole {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 12] = [
         Self::Entity,
         Self::Selection,
         Self::Preview,
@@ -55,6 +59,8 @@ impl StyleRole {
         Self::Tracking,
         Self::GridMinor,
         Self::GridMajor,
+        Self::Grip,
+        Self::GripHot,
     ];
 
     fn from_word(word: u32) -> Option<Self> {

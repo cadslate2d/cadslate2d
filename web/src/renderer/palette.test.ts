@@ -48,6 +48,10 @@ describe("readPalette", () => {
     "--canvas-grid-major": "#222222",
     "--canvas-lineweight-grid-minor": "1",
     "--canvas-lineweight-grid-major": "1",
+    "--canvas-grip": "#0000ee",
+    "--canvas-grip-hot": "#ee0000",
+    "--canvas-lineweight-grip": "1.5",
+    "--canvas-lineweight-grip-hot": "2",
   };
   const read = (property: string) => tokens[property] ?? "";
 

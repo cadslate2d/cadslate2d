@@ -132,15 +132,22 @@ fn selection_is_session_state_and_never_touches_the_document() {
 }
 
 #[test]
-fn selected_entities_are_described_as_highlights_before_the_crosshair() {
+fn selected_entities_are_described_as_highlights_then_grips_then_the_crosshair() {
     let (mut h, lower, _) = two_lines();
-    h.click_world(Point2::new(0.0, 0.0));
+    h.click_world(Point2::new(30.0, 0.0));
     assert_eq!(
         h.session.overlay(),
         vec![
             OverlayItem::Highlight(lower),
+            OverlayItem::Grips {
+                at: vec![
+                    Point2::new(-100.0, 0.0),
+                    Point2::new(0.0, 0.0),
+                    Point2::new(100.0, 0.0)
+                ]
+            },
             OverlayItem::Crosshair {
-                at: Point2::new(0.0, 0.0)
+                at: Point2::new(30.0, 0.0)
             }
         ]
     );

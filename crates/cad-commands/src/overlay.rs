@@ -7,7 +7,7 @@ use cad_core::{EntityId, Point2};
 use cad_document::Entity;
 use cad_geometry::Transform;
 
-use crate::SnapMode;
+use crate::{GripId, SnapMode};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum OverlayItem {
@@ -17,6 +17,14 @@ pub enum OverlayItem {
     Grid { spacing: f64 },
     /// A selected entity to highlight.
     Highlight(EntityId),
+    /// The grips of the selected entities.
+    Grips { at: Vec<Point2> },
+    /// The grip under the cursor, or the one being dragged (shown where it
+    /// started).
+    HotGrip { at: Point2 },
+    /// The entity a grip edit would produce if the grip were dropped at
+    /// `to` — or, for large entities, just the part of it that changes.
+    PreviewGrip { id: GripId, to: Point2 },
     /// A rubber-band segment that is not itself an entity, such as the
     /// radius line while placing a circle.
     PreviewSegment { start: Point2, end: Point2 },

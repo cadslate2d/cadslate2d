@@ -105,6 +105,14 @@ export function markerPixels(canvas: Locator): Promise<number> {
   );
 }
 
+/** Pixels in the hot-grip colour (red), including antialiased ones. */
+export function hotGripPixels(canvas: Locator): Promise<number> {
+  return countPixels(
+    canvas,
+    ([red, green, blue]) => red > 150 && green < red * 0.6 && blue < red * 0.6,
+  );
+}
+
 /** Pixels in the faint colours of the grid: darker than any geometry, lighter than the background. */
 export function gridPixels(canvas: Locator): Promise<number> {
   return countPixels(canvas, ([red, , blue]) => blue >= 28 && blue <= 70 && red <= 40);

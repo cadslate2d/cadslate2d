@@ -10,6 +10,7 @@
 
 mod drawing;
 mod entity;
+mod grips;
 mod history;
 mod id_alloc;
 mod revision;
@@ -19,6 +20,7 @@ mod transaction;
 
 pub use drawing::{ApplyReport, Drawing, TransactionBuilder, TransactionError};
 pub use entity::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity, SharedEntity};
+pub use grips::{EntityGrip, GripKind};
 pub use revision::Revision;
 pub use spatial::SpatialIndex;
 pub use store::{DuplicateEntityId, EntityStore};

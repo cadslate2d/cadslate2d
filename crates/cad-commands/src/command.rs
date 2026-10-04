@@ -12,7 +12,7 @@ use cad_document::Drawing;
 use cad_input::{ExpectedInput, Keyword};
 
 use crate::log::CommandLog;
-use crate::{DraftingSettings, HostRequest, OverlayItem, Selection};
+use crate::{DraftingSettings, Grip, HostRequest, OverlayItem, Selection};
 
 /// One resolved input handed to the active command.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -153,6 +153,13 @@ pub trait Command: Debug {
     /// reached along such a line — the opposite corner of a rectangle.
     fn tracking_base(&self) -> Option<Point2> {
         self.base_point()
+    }
+
+    /// The grip this command is dragging, if it is a grip edit. The session
+    /// keeps the grips on screen meanwhile, marks this one, and lets Enter
+    /// commit at the pointer.
+    fn grip(&self) -> Option<Grip> {
+        None
     }
 
     /// The entities this command is transiently editing. While an edit is in

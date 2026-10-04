@@ -10,7 +10,7 @@ CadSlate2D is a free, browser-native, local-first 2D CAD application inspired by
 
 ## Status
 
-Milestones **M0 — The Line** and **M1 — Input and Basic Entities** are complete. **M2 — OSNAP, Grips, and Basic Modify** is in progress: object snaps, ORTHO, POLAR, the grid, and ROTATE, SCALE, and MIRROR work; grips and the trimming commands follow. You can draw lines, circles, arcs, polylines, and rectangles by command or pointer, snap exactly to existing geometry, select with clicks and boxes, move, copy, rotate, scale, mirror, and erase, undo and redo whole commands, export DXF, and reopen it — all in a static page with no backend. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
+Milestones **M0 — The Line** and **M1 — Input and Basic Entities** are complete. **M2 — OSNAP, Grips, and Basic Modify** is in progress: object snaps, ORTHO, POLAR, the grid, grips, and ROTATE, SCALE, and MIRROR work; OFFSET, TRIM, EXTEND, FILLET, and CHAMFER follow. You can draw lines, circles, arcs, polylines, and rectangles by command or pointer, snap exactly to existing geometry, select with clicks and boxes, edit by grips, move, copy, rotate, scale, mirror, and erase, undo and redo whole commands, export DXF, and reopen it — all in a static page with no backend. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
 
 ## What works today
 
@@ -47,7 +47,7 @@ Options shown in brackets, as in `Specify next point or [Close/Undo]:`, are chos
 | `@500,0` | Point relative to the previous one |
 | `@500<45` | Relative polar: distance `<` angle in degrees, counter-clockwise from +X |
 | `500` | At a next-point prompt: that distance towards the cursor (direct distance) |
-| Click | A point while a command asks for one; otherwise adds the object under the cursor to the selection (Shift+click removes it) |
+| Click | A point while a command asks for one; on a grip, takes the grip; otherwise adds the object under the cursor to the selection (Shift+click removes it) |
 | Click or drag on empty space | A selection box: left to right selects what is entirely inside (window); right to left selects what it touches (crossing) |
 | Enter / Space | Accept or finish; at the idle prompt, repeat the last command |
 | Escape | Cancel the command; pressed again, clear the selection |
@@ -72,6 +72,19 @@ While a command asks for a point, the pointer snaps to nearby geometry. A marker
 | Nearest | hourglass | the closest point on the entity (off by default) | | | |
 
 The closest snap point within ten pixels wins. Hovering a circle or arc also offers its centre. Nearest applies only when no other snap is in reach. An entity being moved is not offered as a target at its old position. `OSNAP` chooses the running modes; F3 switches them all off and on.
+
+### Grips
+
+Selected objects show grips: small squares you can take hold of. Click a grip (it turns red), then click where it should go — or press, drag, and release. While a grip is in hand you can type coordinates (`@` is relative to where the grip started), use object snaps, ORTHO, and POLAR, press Enter to drop it at the pointer, or Escape to put it back. One grip edit is one undo step, and the object stays selected.
+
+| Object | Grips | Dragging one… |
+| --- | --- | --- |
+| Line | two endpoints, midpoint | an endpoint stretches the line; the midpoint moves it |
+| Circle | centre, four quadrants | the centre moves it; a quadrant sets the radius |
+| Arc | two endpoints, midpoint, centre | an endpoint or the midpoint re-fits the arc through the new point, keeping the other two; the centre moves it |
+| Polyline | every vertex | moves that vertex |
+
+A position that would collapse the object — a line of no length, a circle of no radius, an arc through three points in a line — is refused. Grips are hidden when more than 100 objects are selected.
 
 ### ORTHO and POLAR
 

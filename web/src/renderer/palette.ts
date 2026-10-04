@@ -28,6 +28,8 @@ const ROLE_TOKENS: Readonly<Record<StyleRole, string>> = {
   [StyleRole.Tracking]: "tracking",
   [StyleRole.GridMinor]: "grid-minor",
   [StyleRole.GridMajor]: "grid-major",
+  [StyleRole.Grip]: "grip",
+  [StyleRole.GripHot]: "grip-hot",
 };
 
 /** Parses `#rgb`, `#rrggbb`, or `#rrggbbaa`. */

@@ -946,6 +946,8 @@ Dragging a quadrant grip changes the circle radius.
 
 The exact arc midpoint-edit semantics should match familiar CAD behavior and be validated during M2.
 
+> **Resolved in M2:** dragging an arc's start, midpoint, or end re-fits the arc through the dragged point and the other two; the centre grip moves it. A grip edit runs as a command — [ADR-0010](adr/0010-grip-editing-and-arc-grip-semantics.md).
+
 ### Polyline grips
 
 - vertex grips initially;

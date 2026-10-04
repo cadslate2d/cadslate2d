@@ -380,3 +380,52 @@ describe("grid", () => {
     expect(lines()).toBeGreaterThan(20);
   });
 });
+
+describe("grips", () => {
+  const roles = (cad: CadEngine) =>
+    cad.readOverlay((frame) => Array.from(frame.batches).filter((_, index) => index % 3 === 0));
+
+  /** A line from the origin to (100, 0), selected by a click away from its grips. */
+  function selectedLine(): CadEngine {
+    const cad = engine();
+    enter(cad, "L", "0,0", "100,0", "");
+    cad.pointerDown(430, 300, 0, 0);
+    cad.pointerUp(430, 300, 0, 0);
+    return cad;
+  }
+
+  test("a selected entity shows grips in the overlay; the scene is untouched", () => {
+    const cad = selectedLine();
+    expect(roles(cad)).toEqual([StyleRole.Selection, StyleRole.Grip, StyleRole.Crosshair]);
+    expect(cad.key(KeyAction.Escape) & Dirty.Scene).toBe(0);
+    expect(roles(cad)).not.toContain(StyleRole.Grip);
+  });
+
+  test("the grip under the pointer is hot, and clicking it starts a stretch", () => {
+    const cad = selectedLine();
+    cad.pointerMove(498, 302, 0);
+    expect(roles(cad)).toContain(StyleRole.GripHot);
+
+    cad.pointerDown(498, 302, 0, 0);
+    cad.pointerUp(498, 302, 0, 0);
+    expect(cad.uiState().command).toBe("STRETCH");
+    expect(cad.uiState().prompt).toBe("Specify stretch point:");
+  });
+
+  test("dropping the grip edits the entity in one undoable step", () => {
+    const cad = selectedLine();
+    cad.pointerDown(500, 300, 0, 0);
+    cad.pointerUp(500, 300, 0, 0);
+    const revision = cad.sceneRevision;
+    cad.pointerMove(560, 240, 0);
+    expect(cad.sceneRevision).toBe(revision);
+
+    expect(enter(cad, "150,50") & Dirty.Scene).toBeTruthy();
+    expect(cad.exportDxf()).toContain(" 10\n0.0\n 20\n0.0\n 11\n150.0\n 21\n50.0\n");
+    expect(cad.uiState().selectionCount).toBe(1);
+
+    cad.key(KeyAction.Undo);
+    expect(cad.exportDxf()).toContain(" 11\n100.0\n 21\n0.0\n");
+    expect(cad.uiState().selectionCount).toBe(1);
+  });
+});
