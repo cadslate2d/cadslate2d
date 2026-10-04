@@ -108,6 +108,16 @@ const MODIFY: readonly Tool[] = [
     ),
   },
   {
+    command: "FILLET",
+    label: "Fillet",
+    icon: icon(<path d="M4 4v6a10 10 0 0 0 10 10h6" />),
+  },
+  {
+    command: "CHAMFER",
+    label: "Chamfer",
+    icon: icon(<path d="M4 4v8l8 8h8" strokeLinejoin="round" />),
+  },
+  {
     command: "ERASE",
     label: "Erase",
     icon: icon(<path d="M5 19h14M7 15 15 5l4 3-8 10H8z" strokeLinejoin="round" />),

@@ -41,6 +41,8 @@ test.describe("toolbar", () => {
       "Offset",
       "Trim",
       "Extend",
+      "Fillet",
+      "Chamfer",
       "Erase",
     ]) {
       await page.getByRole("button", { name, exact: true }).click();

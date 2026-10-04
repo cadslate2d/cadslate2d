@@ -10,7 +10,7 @@ CadSlate2D is a free, browser-native, local-first 2D CAD application inspired by
 
 ## Status
 
-Milestones **M0 — The Line** and **M1 — Input and Basic Entities** are complete. **M2 — OSNAP, Grips, and Basic Modify** is in progress: object snaps, ORTHO, POLAR, the grid, grips, ROTATE, SCALE, MIRROR, OFFSET, TRIM, and EXTEND work; FILLET and CHAMFER follow. You can draw lines, circles, arcs, polylines, and rectangles by command or pointer, snap exactly to existing geometry, select with clicks and boxes, edit by grips, move, copy, rotate, scale, mirror, and erase, undo and redo whole commands, export DXF, and reopen it — all in a static page with no backend. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
+Milestones **M0 — The Line** and **M1 — Input and Basic Entities** are complete. **M2 — OSNAP, Grips, and Basic Modify** is in progress: object snaps, ORTHO, POLAR, the grid, grips, and the modify commands ROTATE, SCALE, MIRROR, OFFSET, TRIM, EXTEND, FILLET, and CHAMFER all work; the milestone review is what remains. You can draw lines, circles, arcs, polylines, and rectangles by command or pointer, snap exactly to existing geometry, select with clicks and boxes, edit by grips, move, copy, rotate, scale, mirror, and erase, undo and redo whole commands, export DXF, and reopen it — all in a static page with no backend. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
 
 ## What works today
 
@@ -32,6 +32,8 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `OFFSET` | `O` | A parallel copy of a line, or a concentric copy of a circle, at a set distance on the side you pick. Repeats until Enter. Arcs and polylines are not supported yet. |
 | `TRIM` | `TR` | Pick one cutting edge, then pick objects on the side to remove. Lines, arcs, and circles can be trimmed ([details](docs/modify-matrix.md)). |
 | `EXTEND` | `EX` | Pick one boundary edge, then pick lines or arcs near the end to carry on to it. |
+| `FILLET` | `F` | Joins two lines with a tangent arc, trimming or extending both. `Radius` sets the radius (remembered); zero makes a sharp corner. |
+| `CHAMFER` | `CHA` | Joins two lines with a straight bevel. `Distance` sets the two distances (remembered). |
 | `UNDO` | `U`, Ctrl+Z | Reverts the last command. |
 | `REDO` | Ctrl+Y, Ctrl+Shift+Z | Re-applies the last undone command. |
 | `OSNAP` | `OS` | Chooses which object snaps run. Each mode is switched by its keyword; Enter finishes. |

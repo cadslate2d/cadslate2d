@@ -6,6 +6,7 @@
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
 mod arc;
+mod corner;
 mod crossing;
 mod extend;
 pub mod intersect;
@@ -16,6 +17,7 @@ mod transform;
 mod trim;
 
 pub use arc::{Arc, Circle, normalize_angle};
+pub use corner::{Chamfer, Corner, CornerError, Fillet};
 pub use extend::{extend_arc, extend_segment};
 pub use intersect::{Hits, Orientation, Primitive, orientation};
 pub use offset::{offset_circle, offset_segment};

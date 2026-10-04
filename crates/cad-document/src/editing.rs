@@ -9,7 +9,8 @@
 use cad_core::Point2;
 use cad_core::tolerance::LinearTolerance;
 use cad_geometry::{
-    extend_arc, extend_segment, offset_circle, offset_segment, trim_arc, trim_circle, trim_segment,
+    Corner, extend_arc, extend_segment, offset_circle, offset_segment, trim_arc, trim_circle,
+    trim_segment,
 };
 
 use crate::{ArcEntity, CircleEntity, Entity, LineEntity};
@@ -25,6 +26,35 @@ pub enum OffsetError {
     NoSide,
     /// Offsetting inwards by this much would leave nothing.
     Collapses,
+}
+
+/// Why two entities could not be joined at a corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CornerError {
+    /// Only lines can be joined so far; carries the name of what was picked.
+    Unsupported(&'static str),
+    /// The lines are parallel.
+    Parallel,
+    /// A line is too short for the radius or distances asked for.
+    TooLarge,
+}
+
+impl From<cad_geometry::CornerError> for CornerError {
+    fn from(error: cad_geometry::CornerError) -> Self {
+        match error {
+            cad_geometry::CornerError::Parallel => Self::Parallel,
+            cad_geometry::CornerError::TooLarge => Self::TooLarge,
+        }
+    }
+}
+
+/// Two entities joined at a corner: what each becomes, and the piece that
+/// joins them — a fillet arc or a chamfer line — if there is one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cornered {
+    pub first: Entity,
+    pub second: Entity,
+    pub joint: Option<Entity>,
 }
 
 /// Why an entity could not be trimmed.
@@ -103,6 +133,71 @@ impl Entity {
                 Err(ExtendError::Unsupported(self.kind_name()))
             }
         }
+    }
+
+    /// The corner this line makes with `other`, each picked on the side to
+    /// keep. Only two lines have one so far.
+    fn corner_with(
+        &self,
+        pick: Point2,
+        other: &Entity,
+        other_pick: Point2,
+    ) -> Result<Corner, CornerError> {
+        match (self, other) {
+            (Entity::Line(first), Entity::Line(second)) => Ok(Corner::new(
+                &first.segment(),
+                pick,
+                &second.segment(),
+                other_pick,
+                TOLERANCE,
+            )?),
+            (Entity::Line(_), not_a_line) | (not_a_line, _) => {
+                Err(CornerError::Unsupported(not_a_line.kind_name()))
+            }
+        }
+    }
+
+    /// This line and `other` joined by an arc of `radius` tangent to both,
+    /// each cut back or carried on to meet it. A zero radius makes a sharp
+    /// corner and no arc.
+    pub fn filleted(
+        &self,
+        pick: Point2,
+        other: &Entity,
+        other_pick: Point2,
+        radius: f64,
+    ) -> Result<Cornered, CornerError> {
+        let fillet = self
+            .corner_with(pick, other, other_pick)?
+            .fillet(radius, TOLERANCE)?;
+        let [first, second] = fillet.lines;
+        Ok(Cornered {
+            first: LineEntity::new(first.start, first.end).into(),
+            second: LineEntity::new(second.start, second.end).into(),
+            joint: fillet.arc.map(|arc| ArcEntity::from(arc).into()),
+        })
+    }
+
+    /// This line and `other` cut back by `distances` from where they meet —
+    /// the first distance along this line — and joined by a straight line.
+    pub fn chamfered(
+        &self,
+        pick: Point2,
+        other: &Entity,
+        other_pick: Point2,
+        distances: [f64; 2],
+    ) -> Result<Cornered, CornerError> {
+        let chamfer = self
+            .corner_with(pick, other, other_pick)?
+            .chamfer(distances, TOLERANCE)?;
+        let [first, second] = chamfer.lines;
+        Ok(Cornered {
+            first: LineEntity::new(first.start, first.end).into(),
+            second: LineEntity::new(second.start, second.end).into(),
+            joint: chamfer
+                .bevel
+                .map(|bevel| LineEntity::new(bevel.start, bevel.end).into()),
+        })
     }
 
     /// The kind of entity, as a lower-case noun for messages.
@@ -484,6 +579,116 @@ mod tests {
         assert_eq!(
             polyline.extended(&boundary, p(55.0, 0.0)),
             Err(ExtendError::Unsupported("polyline"))
+        );
+    }
+
+    // ── FILLET (#99) and CHAMFER (#100) ──
+
+    /// Two lines that would meet at the origin at a right angle.
+    fn l_lines() -> (Entity, Entity) {
+        (
+            LineEntity::new(p(10.0, 0.0), p(100.0, 0.0)).into(),
+            LineEntity::new(p(0.0, 10.0), p(0.0, 80.0)).into(),
+        )
+    }
+
+    #[test]
+    fn two_lines_are_filleted_with_a_tangent_arc() {
+        let (first, second) = l_lines();
+        let joined = first
+            .filleted(p(50.0, 0.0), &second, p(0.0, 50.0), 20.0)
+            .unwrap();
+        assert_eq!(
+            joined.first,
+            LineEntity::new(p(20.0, 0.0), p(100.0, 0.0)).into()
+        );
+        assert_eq!(
+            joined.second,
+            LineEntity::new(p(0.0, 20.0), p(0.0, 80.0)).into()
+        );
+        let Some(Entity::Arc(arc)) = &joined.joint else {
+            panic!("a fillet with a radius has an arc");
+        };
+        let arc = arc.arc();
+        assert!(close(arc.center, p(20.0, 20.0)) && (arc.radius - 20.0).abs() < 1e-12);
+        assert!((arc.sweep - FRAC_PI_2).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_zero_radius_fillet_is_a_sharp_corner_without_an_arc() {
+        let (first, second) = l_lines();
+        let joined = first
+            .filleted(p(50.0, 0.0), &second, p(0.0, 50.0), 0.0)
+            .unwrap();
+        assert_eq!(
+            joined.first,
+            LineEntity::new(p(0.0, 0.0), p(100.0, 0.0)).into()
+        );
+        assert_eq!(
+            joined.second,
+            LineEntity::new(p(0.0, 0.0), p(0.0, 80.0)).into()
+        );
+        assert_eq!(joined.joint, None);
+    }
+
+    #[test]
+    fn two_lines_are_chamfered_with_equal_or_unequal_distances() {
+        let (first, second) = l_lines();
+        let equal = first
+            .chamfered(p(50.0, 0.0), &second, p(0.0, 50.0), [15.0, 15.0])
+            .unwrap();
+        assert_eq!(
+            equal.first,
+            LineEntity::new(p(15.0, 0.0), p(100.0, 0.0)).into()
+        );
+        assert_eq!(
+            equal.second,
+            LineEntity::new(p(0.0, 15.0), p(0.0, 80.0)).into()
+        );
+        assert_eq!(
+            equal.joint,
+            Some(LineEntity::new(p(15.0, 0.0), p(0.0, 15.0)).into())
+        );
+
+        let unequal = first
+            .chamfered(p(50.0, 0.0), &second, p(0.0, 50.0), [30.0, 5.0])
+            .unwrap();
+        assert_eq!(
+            unequal.joint,
+            Some(LineEntity::new(p(30.0, 0.0), p(0.0, 5.0)).into())
+        );
+    }
+
+    #[test]
+    fn corners_refuse_parallel_lines_oversized_values_and_anything_but_lines() {
+        let (first, second) = l_lines();
+        let parallel: Entity = LineEntity::new(p(0.0, 30.0), p(100.0, 30.0)).into();
+        assert_eq!(
+            first.filleted(p(50.0, 0.0), &parallel, p(50.0, 30.0), 5.0),
+            Err(CornerError::Parallel)
+        );
+        assert_eq!(
+            first.chamfered(p(50.0, 0.0), &parallel, p(50.0, 30.0), [5.0, 5.0]),
+            Err(CornerError::Parallel)
+        );
+        assert_eq!(
+            first.filleted(p(50.0, 0.0), &second, p(0.0, 50.0), 90.0),
+            Err(CornerError::TooLarge)
+        );
+        assert_eq!(
+            first.chamfered(p(50.0, 0.0), &second, p(0.0, 50.0), [5.0, 80.0]),
+            Err(CornerError::TooLarge)
+        );
+
+        let circle: Entity = CircleEntity::new(p(0.0, 0.0), 10.0).into();
+        let arc: Entity = ArcEntity::new(p(0.0, 0.0), 10.0, 0.0, 1.0).into();
+        assert_eq!(
+            first.filleted(p(50.0, 0.0), &circle, p(10.0, 0.0), 5.0),
+            Err(CornerError::Unsupported("circle"))
+        );
+        assert_eq!(
+            arc.chamfered(p(10.0, 0.0), &first, p(50.0, 0.0), [5.0, 5.0]),
+            Err(CornerError::Unsupported("arc"))
         );
     }
 

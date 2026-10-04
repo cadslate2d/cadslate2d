@@ -24,6 +24,7 @@ macro_rules! immediate_command {
 
 mod arc;
 mod circle;
+mod corner;
 mod edge;
 mod files;
 mod grid;
@@ -49,6 +50,7 @@ mod keywords {
 
 pub(crate) use arc::ArcCommand;
 pub(crate) use circle::CircleCommand;
+pub(crate) use corner::CornerCommand;
 pub(crate) use edge::EdgeCommand;
 pub(crate) use files::{ExportCommand, OpenCommand};
 pub(crate) use grid::GridCommand;

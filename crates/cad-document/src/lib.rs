@@ -20,7 +20,7 @@ mod store;
 mod transaction;
 
 pub use drawing::{ApplyReport, Drawing, TransactionBuilder, TransactionError};
-pub use editing::{ExtendError, OffsetError, TrimError};
+pub use editing::{CornerError, Cornered, ExtendError, OffsetError, TrimError};
 pub use entity::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity, SharedEntity};
 pub use grips::{EntityGrip, GripKind};
 pub use revision::Revision;

@@ -24,6 +24,10 @@ pub struct DraftingSettings {
     pub grid_spacing: f64,
     /// The distance OFFSET last used, offered as its default.
     pub offset_distance: Option<f64>,
+    /// The radius FILLET uses. Zero makes a sharp corner.
+    pub fillet_radius: f64,
+    /// The distances CHAMFER cuts back along the first and the second line.
+    pub chamfer_distances: [f64; 2],
 }
 
 impl Default for DraftingSettings {
@@ -33,6 +37,8 @@ impl Default for DraftingSettings {
             polar_increment: DEFAULT_POLAR_INCREMENT,
             grid_spacing: DEFAULT_GRID_SPACING,
             offset_distance: None,
+            fillet_radius: 0.0,
+            chamfer_distances: [0.0, 0.0],
         }
     }
 }
