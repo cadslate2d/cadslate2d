@@ -55,7 +55,14 @@ export class CanvasController {
     this.#app = app;
     this.#renderer = new WebGlRenderer(canvas, documentPalette());
     this.#renderer.onContextRestored = () => app.loop.invalidate(Dirty.Scene);
-    publishDebugHandle({ renderer: this.#renderer.stats });
+    publishDebugHandle({
+      renderer: this.#renderer.stats,
+      // Loaded on demand so the probe is not part of the normal startup path.
+      probeTransport: async () => {
+        const { probeTransport } = await import("../renderer/webgl/transport-probe");
+        return probeTransport(app.engine);
+      },
+    });
 
     const options = { signal: this.#abort.signal };
     canvas.addEventListener("pointermove", this.#onPointerMove, options);

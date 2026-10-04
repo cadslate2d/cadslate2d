@@ -1,0 +1,27 @@
+[package]
+name = "cad-benchmarks"
+description = "Generated benchmark drawings and the benchmarks that use them (DESIGN §42)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+cad-core.workspace = true
+cad-document.workspace = true
+cad-render.workspace = true
+cad-dxf.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "document"
+harness = false
+
+[[bench]]
+name = "render"
+harness = false
+
+[lints]
+workspace = true

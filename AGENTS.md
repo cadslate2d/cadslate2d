@@ -28,7 +28,9 @@ If code and these documents disagree, fix the code or write an ADR. Do not silen
 - **Two render lifetimes (DESIGN §12).** Committed geometry → `RenderScene`, re-uploaded only when the scene revision changes. Transient geometry → `OverlayFrame`. Pointer movement, pan, and zoom must never regenerate or re-upload committed geometry (ADR-0003).
 - **Transient edits do not touch the document.** Previews live in the session; one committed gesture produces one transaction.
 - **No magic epsilons.** Use the tolerance classes in `cad-core`; they are not interchangeable (DESIGN §21).
-- **Only `web/src/renderer/` touches WebGL; only `web/src/cad/` imports the generated WASM package.**
+- **Only `web/src/renderer/` touches WebGL; only `web/src/cad/` imports the generated WASM package.** ESLint enforces both.
+- **Rust never calls into JavaScript.** When a command needs the browser (a file picker, a download), it raises a `HostRequest`; the host serves it and reports back with an ordinary call.
+- **The WASM API surface is snapshot-tested** (`web/src/cad/render-boundary.test.ts`). Adding an export fails that test on purpose: justify the new call as coarse, then update the list.
 
 ## Engineering principles
 
@@ -60,12 +62,30 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 - **DXF:** fixture files under `test-data/dxf/`; arbitrary bytes must never panic.
 - **Browser:** Vitest for TypeScript units, Playwright for end-to-end flows against the static build.
 
+## Where things go
+
+| You are adding… | It belongs in… | And needs… |
+| --- | --- | --- |
+| A command | `crates/cad-commands/src/commands/`, registered in `registry.rs` | Headless tests using `cad_commands::testing::Harness` |
+| An entity type | `cad-document` (`Entity`), then every `match` the compiler points at: rendering, picking, DXF | Bounds and hit-test property tests; DXF fixtures |
+| Geometry maths | `cad-geometry`, as pure functions | Unit and property tests; a regression case per fixed bug |
+| Input syntax | `cad-input` | Table-driven tests and a never-panics property test |
+| Something drawn transiently | An `OverlayItem` in `cad-commands`, turned into segments in `cad-render` | A render-boundary test that the scene revision is unchanged |
+| A browser capability | `web/src/app/host-services.ts`, behind the `HostServices` interface | A `CadApp` test with a fake host |
+| UI | `web/src/ui/`, styled only through tokens in `theme.css` | No drawing data in React state |
+
 ## Commands
 
 Build, test, and lint commands are listed in [`README.md`](README.md#development). Run the full check before every push:
 
 ```bash
 scripts/check.sh
+```
+
+End-to-end tests run against the production bundle:
+
+```bash
+pnpm --dir web build && pnpm --dir web e2e
 ```
 
 ## Workflow

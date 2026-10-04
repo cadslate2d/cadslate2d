@@ -92,13 +92,14 @@ impl SpatialIndex for RTreeIndex {
     }
 
     fn rebuild(&mut self, entries: &mut dyn Iterator<Item = (EntityId, Aabb)>) {
-        self.bounds = entries.collect();
-        let loaded = self
-            .bounds
-            .iter()
-            .map(|(&id, bounds)| rtree_entry(id, bounds))
-            .collect();
-        self.tree = RTree::bulk_load(loaded);
+        // Deliberately not `RTree::bulk_load`. In rstar 0.13.0 a bulk-loaded
+        // tree can panic ("This is a bug in rstar") on a later insert; it is
+        // reproducible with 100,000 entries (ADR-0007). A tree grown by
+        // insertion keeps the invariants the insertion algorithm relies on.
+        *self = Self::default();
+        for (id, bounds) in entries {
+            self.insert(id, bounds);
+        }
     }
 
     fn len(&self) -> usize {

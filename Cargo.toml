@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "benches"]
 
 [workspace.package]
 version = "0.0.1"
@@ -26,6 +26,7 @@ serde-wasm-bindgen = "0.6"
 console_error_panic_hook = "0.1"
 rstar = "0.13"
 proptest = "1"
+criterion = { version = "0.8", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

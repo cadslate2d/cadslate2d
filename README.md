@@ -81,6 +81,9 @@ pnpm --dir web dev
 | Web typecheck, lint, unit tests | `pnpm --dir web typecheck` / `lint` / `test` |
 | Production bundle | `pnpm --dir web build` → `web/dist/` |
 | End-to-end tests (needs a production bundle) | `pnpm --dir web e2e` |
+| Rust benchmarks (store, index, scene) | `cargo bench -p cad-benchmarks` |
+| Generate a benchmark drawing | `cargo run --release -p cad-benchmarks --bin generate-drawing -- 100000 benches/generated-drawings/lines-100k.dxf` |
+| Render-transport measurement in the browser | `pnpm --dir web bench:transport` (after `build` and generating `lines-1k`, `-10k`, `-100k`) |
 
 First-time Playwright setup: `pnpm --dir web exec playwright install chromium`.
 
@@ -102,13 +105,15 @@ crates/
   cad-wasm/       the JS/WASM boundary (marshalling only)
 web/
   src/cad/        TypeScript wrapper around the WASM package
+  src/app/        CadApp, frame loop, UI store, key routing, host services
   src/renderer/   WebGL2 adapter (the only code that touches WebGL)
-  src/ui/         React shell
+  src/ui/         React shell and theme tokens
   e2e/            Playwright tests and the plain static server they run against
+  bench/          Browser measurements, run on demand
 scripts/          build-wasm.sh, check.sh, check-boundaries.sh
 test-data/        DXF fixtures, geometry regression cases, screenshots
-benches/          generated benchmark drawings
-docs/             DESIGN.md and ADRs
+benches/          cad-benchmarks crate: drawing generator and criterion benchmarks
+docs/             DESIGN.md, ADRs, milestone reviews, roadmap
 ```
 
 ## Contributing
