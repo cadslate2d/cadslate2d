@@ -78,7 +78,17 @@ fn every_valid_fixture_round_trips_stably() {
         assert_eq!(
             lines(&second.drawing),
             lines(&first.drawing),
-            "{name}: geometry changed"
+            "{name}: lines changed"
+        );
+        assert_eq!(
+            polylines(&second.drawing),
+            polylines(&first.drawing),
+            "{name}: polylines changed"
+        );
+        assert_eq!(
+            second.drawing.len(),
+            first.drawing.len(),
+            "{name}: entity count changed"
         );
         assert_eq!(
             export(&second.drawing),
@@ -163,28 +173,25 @@ fn unsupported_content_is_counted_and_reported() {
             line(5.0, 5.0, 6.0, 6.0)
         ]
     );
-    assert_eq!((import.report.circles, import.report.arcs), (2, 1));
+    let report = &import.report;
+    assert_eq!((report.circles, report.arcs, report.polylines), (2, 1, 1));
 
-    let counts: Vec<(&str, usize)> = import
-        .report
+    let counts: Vec<(&str, usize)> = report
         .unsupported
         .iter()
         .map(|(kind, count)| (kind.as_str(), *count))
         .collect();
+    assert_eq!(counts, vec![("BLOCK", 1), ("INSERT", 1), ("TEXT", 1)]);
     assert_eq!(
-        counts,
-        vec![("BLOCK", 1), ("INSERT", 1), ("LWPOLYLINE", 1), ("TEXT", 1)]
-    );
-    assert_eq!(
-        import.report.with_dropped_properties, 2,
+        report.with_dropped_properties, 2,
         "one line on WALLS, one coloured"
     );
-    assert!(import.report.has_unsupported_content());
+    assert!(report.has_unsupported_content());
     assert_eq!(
-        import.report.summary(),
+        report.summary(),
         vec![
-            "Imported 3 lines, 2 circles, 1 arc.",
-            "Not imported (unsupported): 1 BLOCK, 1 INSERT, 1 LWPOLYLINE, 1 TEXT.",
+            "Imported 3 lines, 2 circles, 1 arc, 1 polyline.",
+            "Not imported (unsupported): 1 BLOCK, 1 INSERT, 1 TEXT.",
             "Layer, colour, and linetype were dropped from 2 entities.",
         ]
     );
@@ -198,7 +205,7 @@ fn circles_and_arcs_from_another_writer() {
     let import = load("valid", "ezdxf-r2010-mixed-content.dxf").unwrap();
     let curves: Vec<Entity> = in_file_order(&import.drawing)
         .into_iter()
-        .filter(|entity| entity.as_line().is_none())
+        .filter(|entity| matches!(entity, Entity::Circle(_) | Entity::Arc(_)))
         .collect();
     assert_eq!(
         curves,
@@ -213,6 +220,60 @@ fn circles_and_arcs_from_another_writer() {
             )),
         ]
     );
+}
+
+type PolylineSummary = (Vec<(f64, f64)>, bool);
+
+fn polylines(drawing: &Drawing) -> Vec<PolylineSummary> {
+    in_file_order(drawing)
+        .into_iter()
+        .filter_map(|entity| match entity {
+            Entity::Polyline(polyline) => Some((
+                polyline
+                    .vertices
+                    .iter()
+                    .map(|vertex| (vertex.x, vertex.y))
+                    .collect(),
+                polyline.closed,
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Both polyline encodings, written by an independent library.
+#[test]
+fn polylines_in_both_encodings() {
+    let modern = load("valid", "ezdxf-r2010-polylines.dxf").unwrap();
+    assert_eq!(
+        polylines(&modern.drawing),
+        vec![
+            (vec![(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)], true),
+            (vec![(20.0, 0.0), (25.0, 5.0), (30.0, 0.0)], false),
+            (vec![(40.0, 0.0), (45.0, 5.0), (50.0, 0.0)], false),
+        ]
+    );
+    let skipped: Vec<(&str, usize)> = modern
+        .report
+        .unsupported
+        .iter()
+        .map(|(kind, count)| (kind.as_str(), *count))
+        .collect();
+    assert_eq!(
+        skipped,
+        vec![("POLYLINE", 1), ("POLYLINE (arc segments)", 1)],
+        "a 3D polyline and a bulged one"
+    );
+
+    let classic = load("valid", "ezdxf-r12-polylines.dxf").unwrap();
+    assert_eq!(
+        polylines(&classic.drawing),
+        vec![
+            (vec![(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)], true),
+            (vec![(20.0, 0.0), (25.0, 5.0), (30.0, 0.0)], false),
+        ]
+    );
+    assert!(!classic.report.has_unsupported_content());
 }
 
 #[test]

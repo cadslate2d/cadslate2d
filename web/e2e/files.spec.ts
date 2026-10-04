@@ -88,7 +88,7 @@ test.describe("unsupported content", () => {
     );
 
     await expect(
-      logLines(page).filter({ hasText: "Imported 3 lines, 2 circles, 1 arc." }),
+      logLines(page).filter({ hasText: "Imported 3 lines, 2 circles, 1 arc, 1 polyline." }),
     ).toHaveCount(1);
     await expect(
       logLines(page).filter({ hasText: "Not imported (unsupported): 1 BLOCK" }),
@@ -114,6 +114,8 @@ test.describe("unsupported content", () => {
     expect(file.text.match(/^LINE$/gm)).toHaveLength(3);
     expect(file.text.match(/^CIRCLE$/gm)).toHaveLength(2);
     expect(file.text.match(/^ARC$/gm)).toHaveLength(1);
+    // R12 has no LWPOLYLINE: the imported polyline is written as POLYLINE/VERTEX.
+    expect(file.text.match(/^POLYLINE$/gm)).toHaveLength(1);
     expect(file.text).not.toContain("LWPOLYLINE");
     expect(file.text).not.toContain("TEXT");
   });

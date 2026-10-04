@@ -709,6 +709,40 @@ mod tests {
         assert_eq!(live_ids(&drawing), vec![a]);
     }
 
+    /// DESIGN §19.4: editing a very large entity must not produce copies of it.
+    /// History shares the payload, so undo puts back the very same allocation.
+    #[test]
+    fn undoing_an_edit_to_a_large_polyline_restores_the_original_payload_without_copying() {
+        use crate::PolylineEntity;
+        let vertices: Vec<Point2> = (0..10_000)
+            .map(|i| Point2::new(f64::from(i), f64::from(i % 7)))
+            .collect();
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let id = tx.insert(PolylineEntity::new(vertices.clone(), false));
+        tx.commit();
+        let original: *const Entity = drawing.entity(id).unwrap();
+
+        let mut moved = vertices;
+        moved[5000] = Point2::new(-1.0, -1.0);
+        let mut tx = drawing.transaction();
+        tx.replace(id, PolylineEntity::new(moved, false)).unwrap();
+        tx.commit();
+        let edited: *const Entity = drawing.entity(id).unwrap();
+        assert!(!std::ptr::eq(original, edited));
+
+        drawing.undo().unwrap();
+        assert!(
+            std::ptr::eq(original, drawing.entity(id).unwrap()),
+            "undo must reuse the stored payload"
+        );
+        drawing.redo().unwrap();
+        assert!(
+            std::ptr::eq(edited, drawing.entity(id).unwrap()),
+            "redo must reuse the stored payload"
+        );
+    }
+
     #[derive(Clone, Debug)]
     enum Op {
         Create(f64, f64, f64, f64),

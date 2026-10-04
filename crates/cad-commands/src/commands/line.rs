@@ -4,12 +4,11 @@ use cad_core::tolerance::LinearTolerance;
 use cad_core::{EntityId, Point2};
 use cad_document::LineEntity;
 use cad_geometry::Segment;
-use cad_input::{ExpectedInput, Keyword};
+use cad_input::ExpectedInput;
 
+use super::keywords::{CLOSE, UNDO};
 use crate::{Command, CommandContext, CommandInput, OverlayItem, Prompt, Step};
 
-const CLOSE: Keyword = Keyword::new("Close");
-const UNDO: Keyword = Keyword::new("Undo");
 /// Segments needed before the chain can be closed back to its first point.
 const SEGMENTS_TO_CLOSE: usize = 2;
 

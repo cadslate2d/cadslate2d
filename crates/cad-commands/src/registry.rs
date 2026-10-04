@@ -10,7 +10,8 @@ use cad_input::{CommandAliases, DuplicateCommandName};
 
 use crate::Command;
 use crate::commands::{
-    ArcCommand, CircleCommand, ExportCommand, LineCommand, OpenCommand, RedoCommand, UndoCommand,
+    ArcCommand, CircleCommand, ExportCommand, LineCommand, OpenCommand, PlineCommand,
+    RectangCommand, RedoCommand, UndoCommand,
 };
 
 type CommandFactory = fn() -> Box<dyn Command>;
@@ -46,7 +47,11 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 7] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 9] = [
+            ("PLINE", &["PL"], || Box::new(PlineCommand::new())),
+            ("RECTANG", &["REC", "RECTANGLE"], || {
+                Box::new(RectangCommand::new())
+            }),
             ("CIRCLE", &["C"], || Box::new(CircleCommand::new())),
             ("ARC", &["A"], || Box::new(ArcCommand::new())),
             ("LINE", &["L"], || Box::new(LineCommand::new())),

@@ -1,11 +1,11 @@
 //! DXF import: a tolerant, defensive ASCII reader.
 //!
 //! The reader accepts any DXF release, because it only looks at the ENTITIES
-//! section and at LINE, CIRCLE, and ARC records, which have not changed since
-//! R12. Everything else is counted and reported.
+//! section and at LINE, CIRCLE, ARC, and polyline records. Everything else is
+//! counted and reported.
 
 use cad_core::Point2;
-use cad_document::{ArcEntity, CircleEntity, Drawing, Entity, LineEntity};
+use cad_document::{ArcEntity, CircleEntity, Drawing, Entity, LineEntity, PolylineEntity};
 
 use crate::{DxfError, ImportReport};
 
@@ -13,7 +13,13 @@ use crate::{DxfError, ImportReport};
 const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF";
 /// Records that belong to the entity before them (POLYLINE vertices, INSERT
 /// attributes) and are not counted on their own.
-const SUBORDINATE_RECORDS: [&str; 3] = ["VERTEX", "SEQEND", "ATTRIB"];
+const SUBORDINATE_RECORDS: [&str; 1] = ["ATTRIB"];
+/// Report key for polylines with arc segments (bulge), which arrive in M3.
+const POLYLINE_WITH_ARCS: &str = "POLYLINE (arc segments)";
+/// POLYLINE flag bits for 3D polylines, meshes, and polyface meshes.
+const POLYLINE_NOT_2D: i64 = 8 | 16 | 32 | 64;
+/// Polyline flag bit: closed.
+const POLYLINE_CLOSED: i64 = 1;
 /// Report key for supported entity types with geometry the drawing cannot hold.
 const INVALID: &str = "(invalid geometry)";
 /// Longest type name kept in the report.
@@ -67,6 +73,7 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
         limits,
         entities: Vec::new(),
         report: ImportReport::default(),
+        open_polyline: None,
     };
     reader.read_file()?;
     Ok(Import {
@@ -136,6 +143,20 @@ struct Reader<'a> {
     limits: &'a ImportLimits,
     entities: Vec<Entity>,
     report: ImportReport,
+    /// An R12-style POLYLINE whose VERTEX records are still being read.
+    open_polyline: Option<PolylineBuilder>,
+}
+
+/// Collects a polyline that may span several records.
+#[derive(Debug, Default)]
+struct PolylineBuilder {
+    vertices: Vec<Point2>,
+    closed: bool,
+    has_arc_segments: bool,
+    /// Not a 2D polyline at all (mesh, 3D polyline): already reported; its
+    /// vertices are swallowed.
+    unsupported: bool,
+    has_dropped_properties: bool,
 }
 
 impl<'a> Reader<'a> {
@@ -213,6 +234,49 @@ impl<'a> Reader<'a> {
                 }
                 None => self.report.count_unsupported(INVALID),
             },
+            (RecordContext::Entities, "LWPOLYLINE") => {
+                let builder = PolylineBuilder {
+                    vertices: body.points(record.line, "LWPOLYLINE")?,
+                    closed: body.flags & POLYLINE_CLOSED != 0,
+                    has_arc_segments: body.has_bulge,
+                    unsupported: false,
+                    has_dropped_properties: body.has_dropped_properties,
+                };
+                self.finish_polyline(builder)?;
+            }
+            (RecordContext::Entities, "POLYLINE") => {
+                let unsupported = body.flags & POLYLINE_NOT_2D != 0;
+                if unsupported {
+                    self.report.count_unsupported("POLYLINE");
+                }
+                self.open_polyline = Some(PolylineBuilder {
+                    closed: body.flags & POLYLINE_CLOSED != 0,
+                    unsupported,
+                    has_dropped_properties: body.has_dropped_properties,
+                    ..Default::default()
+                });
+            }
+            (RecordContext::Entities, "VERTEX") => {
+                let open = self
+                    .open_polyline
+                    .as_mut()
+                    .filter(|polyline| !polyline.unsupported);
+                if let Some(polyline) = open {
+                    polyline
+                        .vertices
+                        .extend(body.points(record.line, "VERTEX")?);
+                    polyline.has_arc_segments |= body.has_bulge;
+                }
+            }
+            (RecordContext::Entities, "SEQEND") => {
+                let finished = self
+                    .open_polyline
+                    .take()
+                    .filter(|polyline| !polyline.unsupported);
+                if let Some(polyline) = finished {
+                    self.finish_polyline(polyline)?;
+                }
+            }
             (RecordContext::Entities, kind) if !SUBORDINATE_RECORDS.contains(&kind) => {
                 self.report.count_unsupported(&kind_name(kind));
             }
@@ -227,14 +291,31 @@ impl<'a> Reader<'a> {
     }
 
     fn import(&mut self, entity: Entity, body: &RecordBody) -> Result<(), DxfError> {
+        self.push(entity, body.has_dropped_properties)
+    }
+
+    fn push(&mut self, entity: Entity, has_dropped_properties: bool) -> Result<(), DxfError> {
         if self.entities.len() >= self.limits.max_entities {
             return Err(DxfError::TooManyEntities {
                 limit: self.limits.max_entities,
             });
         }
         self.entities.push(entity);
-        if body.has_dropped_properties {
+        if has_dropped_properties {
             self.report.with_dropped_properties += 1;
+        }
+        Ok(())
+    }
+
+    fn finish_polyline(&mut self, polyline: PolylineBuilder) -> Result<(), DxfError> {
+        if polyline.has_arc_segments {
+            self.report.count_unsupported(POLYLINE_WITH_ARCS);
+        } else if polyline.vertices.len() < 2 {
+            self.report.count_unsupported(INVALID);
+        } else {
+            self.report.polylines += 1;
+            let entity = Entity::Polyline(PolylineEntity::new(polyline.vertices, polyline.closed));
+            self.push(entity, polyline.has_dropped_properties)?;
         }
         Ok(())
     }
@@ -249,6 +330,14 @@ enum RecordContext {
 /// The groups of one record that matter to this reader.
 #[derive(Debug, Default)]
 struct RecordBody {
+    /// Every group 10 and 20 of the record, in order: one point for most
+    /// entities, one per vertex for an LWPOLYLINE.
+    xs: Vec<f64>,
+    ys: Vec<f64>,
+    /// Group 70: entity flags.
+    flags: i64,
+    /// A non-zero group 42: an arc segment in a polyline.
+    has_bulge: bool,
     x0: Option<f64>,
     y0: Option<f64>,
     x1: Option<f64>,
@@ -263,8 +352,20 @@ struct RecordBody {
 impl RecordBody {
     fn absorb(&mut self, group: Group<'_>) -> Result<(), DxfError> {
         match group.code {
-            10 => self.x0 = Some(real(group)?),
-            20 => self.y0 = Some(real(group)?),
+            10 => {
+                let x = real(group)?;
+                self.x0.get_or_insert(x);
+                self.xs.push(x);
+            }
+            20 => {
+                let y = real(group)?;
+                self.y0.get_or_insert(y);
+                self.ys.push(y);
+            }
+            42 => self.has_bulge |= real(group)? != 0.0,
+            // Constant width of an LWPOLYLINE: dropped.
+            43 => self.has_dropped_properties |= real(group)? != 0.0,
+            70 => self.flags = group.value.parse().unwrap_or(0),
             11 => self.x1 = Some(real(group)?),
             21 => self.y1 = Some(real(group)?),
             40 => self.radius = Some(real(group)?),
@@ -288,6 +389,30 @@ impl RecordBody {
             Point2::new(need(self.x0, 10)?, need(self.y0, 20)?),
             Point2::new(need(self.x1, 11)?, need(self.y1, 21)?),
         ))
+    }
+
+    /// Every point of the record. Each X must have its Y.
+    fn points(&self, at: usize, entity: &'static str) -> Result<Vec<Point2>, DxfError> {
+        if self.ys.len() < self.xs.len() {
+            return Err(DxfError::MissingCoordinate {
+                line: at,
+                entity,
+                group: 20,
+            });
+        }
+        if self.xs.len() < self.ys.len() {
+            return Err(DxfError::MissingCoordinate {
+                line: at,
+                entity,
+                group: 10,
+            });
+        }
+        Ok(self
+            .xs
+            .iter()
+            .zip(&self.ys)
+            .map(|(x, y)| Point2::new(*x, *y))
+            .collect())
     }
 
     /// `None` for a circle the drawing cannot hold: a radius that is not positive.
@@ -459,9 +584,10 @@ mod tests {
         let mut body = vec![(0, "ELLIPSE"), (10, "0"), (20, "0"), (40, "5")];
         body.extend_from_slice(&LINE_0_0_TO_10_5);
         body.extend_from_slice(&[(0, "TEXT"), (1, "hello"), (0, "ELLIPSE"), (40, "1")]);
-        // A polyline's vertices belong to it and are not counted separately.
+        // A 3D polyline is unsupported; its vertices belong to it and are not counted separately.
         body.extend_from_slice(&[
             (0, "POLYLINE"),
+            (70, "8"),
             (0, "VERTEX"),
             (10, "1"),
             (0, "VERTEX"),
@@ -518,6 +644,155 @@ mod tests {
         };
         assert_eq!((arc.center, arc.radius), (Point2::ORIGIN, 10.0));
         assert!((arc.start_angle - FRAC_PI_2).abs() < 1e-12 && (arc.end_angle - PI).abs() < 1e-12);
+    }
+
+    fn polylines_of(import: &Import) -> Vec<PolylineEntity> {
+        entities_of(import)
+            .into_iter()
+            .filter_map(|entity| match entity {
+                Entity::Polyline(polyline) => Some(polyline),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn p(x: f64, y: f64) -> Point2 {
+        Point2::new(x, y)
+    }
+
+    #[test]
+    fn imports_r12_polylines_from_their_vertex_records() {
+        let body = [
+            (0, "POLYLINE"),
+            (8, "0"),
+            (66, "1"),
+            (70, "1"),
+            (0, "VERTEX"),
+            (8, "0"),
+            (10, "0"),
+            (20, "0"),
+            (0, "VERTEX"),
+            (8, "0"),
+            (10, "4"),
+            (20, "0"),
+            (0, "VERTEX"),
+            (8, "0"),
+            (10, "4"),
+            (20, "3"),
+            (0, "SEQEND"),
+        ];
+        let import =
+            import(entities(&[body.as_slice(), &LINE_0_0_TO_10_5].concat()).as_bytes()).unwrap();
+        assert_eq!((import.report.polylines, import.report.lines), (1, 1));
+        assert!(!import.report.has_unsupported_content());
+        assert_eq!(
+            polylines_of(&import),
+            vec![PolylineEntity::new(
+                vec![p(0.0, 0.0), p(4.0, 0.0), p(4.0, 3.0)],
+                true
+            )]
+        );
+    }
+
+    #[test]
+    fn imports_lwpolylines_from_their_repeated_coordinates() {
+        let open = [
+            (0, "LWPOLYLINE"),
+            (90, "3"),
+            (70, "0"),
+            (10, "0"),
+            (20, "0"),
+            (10, "1"),
+            (20, "0"),
+            (10, "1"),
+            (20, "1"),
+        ];
+        let import = import(entities(&open).as_bytes()).unwrap();
+        assert_eq!(
+            polylines_of(&import),
+            vec![PolylineEntity::new(
+                vec![p(0.0, 0.0), p(1.0, 0.0), p(1.0, 1.0)],
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn polylines_with_arc_segments_are_reported_not_flattened() {
+        let lightweight = [
+            (0, "LWPOLYLINE"),
+            (70, "0"),
+            (10, "0"),
+            (20, "0"),
+            (42, "0.5"),
+            (10, "1"),
+            (20, "0"),
+        ];
+        let classic = [
+            (0, "POLYLINE"),
+            (70, "0"),
+            (0, "VERTEX"),
+            (10, "0"),
+            (20, "0"),
+            (42, "1.0"),
+            (0, "VERTEX"),
+            (10, "2"),
+            (20, "0"),
+            (0, "SEQEND"),
+        ];
+        let import =
+            import(entities(&[lightweight.as_slice(), &classic].concat()).as_bytes()).unwrap();
+        assert!(import.drawing.is_empty());
+        assert_eq!(import.report.unsupported.get(POLYLINE_WITH_ARCS), Some(&2));
+    }
+
+    #[test]
+    fn a_zero_bulge_is_a_straight_segment() {
+        let body = [
+            (0, "LWPOLYLINE"),
+            (70, "1"),
+            (10, "0"),
+            (20, "0"),
+            (42, "0.0"),
+            (10, "1"),
+            (20, "0"),
+            (10, "1"),
+            (20, "1"),
+        ];
+        let import = import(entities(&body).as_bytes()).unwrap();
+        assert_eq!(import.report.polylines, 1);
+        assert!(polylines_of(&import)[0].closed);
+    }
+
+    #[test]
+    fn degenerate_and_malformed_polylines() {
+        let one_vertex = [(0, "LWPOLYLINE"), (10, "0"), (20, "0")];
+        let import_one = import(entities(&one_vertex).as_bytes()).unwrap();
+        assert_eq!(import_one.report.unsupported.get(INVALID), Some(&1));
+
+        let missing_y = entities(&[(0, "LWPOLYLINE"), (10, "0"), (20, "0"), (10, "1")]);
+        assert_eq!(
+            import(missing_y.as_bytes()).unwrap_err(),
+            DxfError::MissingCoordinate {
+                line: 5,
+                entity: "LWPOLYLINE",
+                group: 20
+            }
+        );
+    }
+
+    #[test]
+    fn a_polyline_survives_a_round_trip_exactly() {
+        let original = PolylineEntity::new(
+            vec![p(0.1, 0.2), p(707.1067811865476, -3.5), p(1e6, 2.5e-3)],
+            true,
+        );
+        let text = export(&Drawing::from_entities([Entity::Polyline(
+            original.clone(),
+        )]));
+        let reread = import(text.as_bytes()).unwrap();
+        assert_eq!(polylines_of(&reread), vec![original]);
+        assert_eq!(export(&reread.drawing), text);
     }
 
     #[test]

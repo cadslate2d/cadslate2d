@@ -11,6 +11,8 @@ pub struct ImportReport {
     pub circles: usize,
     /// ARC entities imported.
     pub arcs: usize,
+    /// POLYLINE and LWPOLYLINE entities imported.
+    pub polylines: usize,
     /// Entities that were skipped, by DXF type name, in name order.
     pub unsupported: BTreeMap<String, usize>,
     /// Imported entities that carried properties the drawing cannot hold yet
@@ -36,7 +38,7 @@ impl ImportReport {
 
     /// Entities brought into the drawing.
     pub fn imported_total(&self) -> usize {
-        self.lines + self.circles + self.arcs
+        self.lines + self.circles + self.arcs + self.polylines
     }
 
     pub(crate) fn count_unsupported(&mut self, kind: &str) {
@@ -53,6 +55,7 @@ impl ImportReport {
             (self.lines, "line", "lines"),
             (self.circles, "circle", "circles"),
             (self.arcs, "arc", "arcs"),
+            (self.polylines, "polyline", "polylines"),
         ];
         let imported: Vec<String> = kinds
             .into_iter()
@@ -110,12 +113,13 @@ mod tests {
             lines: 3,
             circles: 1,
             arcs: 2,
+            polylines: 1,
             ..Default::default()
         };
-        assert_eq!(report.imported_total(), 6);
+        assert_eq!(report.imported_total(), 7);
         assert_eq!(
             report.summary(),
-            vec!["Imported 3 lines, 1 circle, 2 arcs."]
+            vec!["Imported 3 lines, 1 circle, 2 arcs, 1 polyline."]
         );
     }
 

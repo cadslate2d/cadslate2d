@@ -18,7 +18,10 @@ Files with specific expectations (entity counts, report contents, exact coordina
 | `cadslate-m0-line.dxf` | written by `cad_dxf::export` (golden file) | The M0 user-story line, `0,0` to `@1000<45`. Regenerate with `UPDATE_GOLDEN=1 cargo test -p cad-dxf`. |
 | `ezdxf-r12-three-lines.dxf` | ezdxf 1.4.4, `ezdxf.new("R12")` | A complete R12 file: header, tables, blocks, three lines. |
 | `ezdxf-r2018-two-lines.dxf` | ezdxf 1.4.4, `ezdxf.new("R2018")` | A modern file (AC1032) with handles, subclass markers, objects, and structural `*Model_Space` blocks. Coordinates chosen to need all 17 significant digits. |
-| `ezdxf-r2010-mixed-content.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | Mixed content: lines, circles, and an arc (imported), plus a polyline, text, a user block and its insert (unsupported), and lines carrying a layer and a colour (properties dropped). |
+| `ezdxf-r2010-mixed-content.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | Mixed content: lines, circles, an arc, and a polyline (imported), plus text, a user block and its insert (unsupported), and lines carrying a layer and a colour (properties dropped). |
+
+| `ezdxf-r2010-polylines.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | `LWPOLYLINE` open and closed, an old-style `POLYLINE`, plus two that are reported: one with an arc segment (bulge) and a 3D polyline. |
+| `ezdxf-r12-polylines.dxf` | ezdxf 1.4.4, `ezdxf.new("R12")` | R12 `POLYLINE`/`VERTEX`/`SEQEND`, open and closed — the encoding our own writer uses. |
 
 ## malformed/
 

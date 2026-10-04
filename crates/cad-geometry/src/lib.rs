@@ -6,7 +6,9 @@
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
 mod arc;
+mod polyline;
 mod segment;
 
 pub use arc::{Arc, Circle, normalize_angle};
+pub use polyline::{bounds_of, polyline_distance_to_point, polyline_segments};
 pub use segment::Segment;

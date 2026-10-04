@@ -18,7 +18,7 @@ mod store;
 mod transaction;
 
 pub use drawing::{ApplyReport, Drawing, TransactionBuilder, TransactionError};
-pub use entity::{ArcEntity, CircleEntity, Entity, LineEntity, SharedEntity};
+pub use entity::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity, SharedEntity};
 pub use revision::Revision;
 pub use spatial::SpatialIndex;
 pub use store::{DuplicateEntityId, EntityStore};

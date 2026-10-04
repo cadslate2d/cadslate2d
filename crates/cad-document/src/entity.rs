@@ -1,7 +1,9 @@
 //! Semantic entity types (DESIGN §11).
 
 use cad_core::{Aabb, Point2};
-use cad_geometry::{Arc, Circle, Segment};
+use cad_geometry::{
+    Arc, Circle, Segment, bounds_of, polyline_distance_to_point, polyline_segments,
+};
 
 /// A straight line between two points.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -69,6 +71,28 @@ impl From<Arc> for ArcEntity {
     }
 }
 
+/// A chain of straight segments through at least two vertices, optionally
+/// closed back to the first.
+///
+/// Arc segments (bulge) are not modelled yet; when they are (M3) each vertex
+/// gains a bulge and this type keeps its shape.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PolylineEntity {
+    pub vertices: Vec<Point2>,
+    pub closed: bool,
+}
+
+impl PolylineEntity {
+    pub fn new(vertices: Vec<Point2>, closed: bool) -> Self {
+        Self { vertices, closed }
+    }
+
+    /// The straight segments, including the closing one when closed.
+    pub fn segments(&self) -> impl Iterator<Item = Segment> + '_ {
+        polyline_segments(&self.vertices, self.closed)
+    }
+}
+
 /// Every kind of entity a drawing can hold.
 ///
 /// Deliberately *not* `#[non_exhaustive]`: when a later milestone adds a
@@ -80,6 +104,7 @@ pub enum Entity {
     Line(LineEntity),
     Circle(CircleEntity),
     Arc(ArcEntity),
+    Polyline(PolylineEntity),
 }
 
 impl Entity {
@@ -89,6 +114,9 @@ impl Entity {
             Entity::Line(line) => line.segment().bounds(),
             Entity::Circle(circle) => circle.circle().bounds(),
             Entity::Arc(arc) => arc.arc().bounds(),
+            // Every polyline in a drawing has vertices; an empty one bounds nothing useful.
+            Entity::Polyline(polyline) => bounds_of(&polyline.vertices)
+                .unwrap_or_else(|| Aabb::from_points(Point2::ORIGIN, Point2::ORIGIN)),
         }
     }
 
@@ -98,6 +126,9 @@ impl Entity {
             Entity::Line(line) => line.segment().distance_to_point(point),
             Entity::Circle(circle) => circle.circle().distance_to_point(point),
             Entity::Arc(arc) => arc.arc().distance_to_point(point),
+            Entity::Polyline(polyline) => {
+                polyline_distance_to_point(&polyline.vertices, polyline.closed, point)
+            }
         }
     }
 
@@ -118,6 +149,12 @@ impl From<LineEntity> for Entity {
 impl From<CircleEntity> for Entity {
     fn from(circle: CircleEntity) -> Self {
         Entity::Circle(circle)
+    }
+}
+
+impl From<PolylineEntity> for Entity {
+    fn from(polyline: PolylineEntity) -> Self {
+        Entity::Polyline(polyline)
     }
 }
 
@@ -179,6 +216,34 @@ mod tests {
         // The geometry type and the entity agree in both directions.
         let back: ArcEntity = Arc::new(Point2::ORIGIN, 10.0, PI, FRAC_PI_2).into();
         assert!((back.start_angle - PI).abs() < 1e-12 && (back.end_angle - 1.5 * PI).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_polyline_is_bounded_by_its_vertices_and_picked_on_its_segments() {
+        let rectangle: Entity = PolylineEntity::new(
+            vec![
+                Point2::new(0.0, 0.0),
+                Point2::new(10.0, 0.0),
+                Point2::new(10.0, 5.0),
+                Point2::new(0.0, 5.0),
+            ],
+            true,
+        )
+        .into();
+        assert_eq!(
+            rectangle.bounds(),
+            Aabb::from_points(Point2::new(0.0, 0.0), Point2::new(10.0, 5.0))
+        );
+        assert_eq!(
+            rectangle.distance_to(Point2::new(5.0, 2.5)),
+            2.5,
+            "the interior is not the polyline"
+        );
+        assert_eq!(
+            rectangle.distance_to(Point2::new(-1.0, 2.5)),
+            1.0,
+            "the closing segment counts"
+        );
     }
 
     #[test]

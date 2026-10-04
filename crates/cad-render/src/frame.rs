@@ -183,6 +183,13 @@ impl PackedFrame {
                 );
             }
             Entity::Arc(arc) => self.push_arc(style, &arc.arc()),
+            // Round caps on every segment meet at the vertices, so joints have
+            // neither gaps nor spikes at any angle.
+            Entity::Polyline(polyline) => {
+                for segment in polyline.segments() {
+                    self.push_segment(style, segment.start, segment.end);
+                }
+            }
         }
     }
 }
@@ -316,6 +323,38 @@ mod tests {
         frame.reset(p(0.0, 0.0));
         assert_eq!(frame.arc_count(), 0);
         assert!(frame.arc_batch_words().is_empty());
+    }
+
+    #[test]
+    fn a_polyline_becomes_one_segment_per_edge_in_a_single_batch() {
+        use cad_document::PolylineEntity;
+        let corners = vec![p(0.0, 0.0), p(4.0, 0.0), p(4.0, 3.0)];
+        let mut frame = PackedFrame::default();
+        frame.push_entity(
+            StyleRole::Entity,
+            &PolylineEntity::new(corners.clone(), false).into(),
+        );
+        assert_eq!(frame.segments(), &[0.0, 0.0, 4.0, 0.0, 4.0, 0.0, 4.0, 3.0]);
+
+        frame.reset(p(0.0, 0.0));
+        frame.push_entity(
+            StyleRole::Entity,
+            &PolylineEntity::new(corners, true).into(),
+        );
+        assert_eq!(frame.segment_count(), 3);
+        assert_eq!(
+            &frame.segments()[8..],
+            &[4.0, 3.0, 0.0, 0.0],
+            "the closing edge"
+        );
+        assert_eq!(
+            frame.batches(),
+            vec![DrawBatch {
+                style: StyleRole::Entity,
+                first: 0,
+                count: 3
+            }]
+        );
     }
 
     #[test]

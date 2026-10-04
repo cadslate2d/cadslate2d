@@ -127,6 +127,50 @@ test.describe("ARC", () => {
   });
 });
 
+test.describe("polylines", () => {
+  test("RECTANG draws a closed rectangle as one entity", async ({ page }) => {
+    const canvas = await openApp(page);
+    const { x, y } = await centerOf(canvas);
+    await page.mouse.move(0, 0);
+    const empty = await litPixels(canvas);
+
+    await enter(page, "REC", "-100,-50", "@200,100");
+    await expect(prompt(page)).toHaveText("Command:");
+    // Perimeter 600 px.
+    expect((await litPixels(canvas)) - empty).toBeGreaterThan(500);
+
+    // One click on any edge selects all four.
+    await page.mouse.click(x - 100, y);
+    await settle(page);
+    expect(await highlightPixels(canvas)).toBeGreaterThan(1000);
+
+    const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    expect(file.text.match(/^POLYLINE$/gm)).toHaveLength(1);
+    expect(file.text.match(/^VERTEX$/gm)).toHaveLength(4);
+    expect(file.text).toContain("POLYLINE\n  8\n0\n 66\n1\n 70\n1\n");
+  });
+
+  test("PLINE commits one polyline when it ends, and nothing if cancelled", async ({ page }) => {
+    const canvas = await openApp(page);
+    await page.mouse.move(0, 0);
+    const empty = await litPixels(canvas);
+
+    await enter(page, "PL", "-100,0", "0,80", "100,0");
+    await expect(prompt(page)).toHaveText("Specify next point or [Close/Undo]:");
+    await page.keyboard.press("Escape");
+    await settle(page);
+    expect(await litPixels(canvas)).toBe(empty);
+
+    await enter(page, "PL", "-100,0", "0,80", "100,0", "C");
+    await expect(prompt(page)).toHaveText("Command:");
+    expect(await litPixels(canvas)).toBeGreaterThan(empty + 400);
+
+    await page.keyboard.press("Control+z");
+    await settle(page);
+    expect(await litPixels(canvas)).toBe(empty);
+  });
+});
+
 test("circles and arcs survive export, refresh, and reopen", async ({ page }) => {
   let canvas = await openApp(page);
   await enter(page, "C", "0,0", "80", "A", "120,0", "0,120", "-120,0", "L", "-50,-50", "50,50", "");

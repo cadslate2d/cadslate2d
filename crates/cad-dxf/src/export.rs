@@ -3,7 +3,7 @@
 use std::fmt::Write;
 
 use cad_core::EntityId;
-use cad_document::{ArcEntity, CircleEntity, Drawing, Entity, LineEntity};
+use cad_document::{ArcEntity, CircleEntity, Drawing, Entity, LineEntity, PolylineEntity};
 
 /// The DXF release written, as stored in `$ACADVER`. R12 is the simplest
 /// release every CAD tool reads and needs no handles or subclass markers.
@@ -31,6 +31,7 @@ pub fn export(drawing: &Drawing) -> String {
                 Entity::Line(line) => write_line(out, line),
                 Entity::Circle(circle) => write_circle(out, circle),
                 Entity::Arc(arc) => write_arc(out, arc),
+                Entity::Polyline(polyline) => write_polyline(out, polyline),
             }
         }
     });
@@ -65,6 +66,28 @@ fn write_arc(out: &mut String, arc: &ArcEntity) {
     real(out, 40, arc.radius);
     real(out, 50, arc.start_angle.to_degrees());
     real(out, 51, arc.end_angle.to_degrees());
+}
+
+/// R12 has no LWPOLYLINE: a polyline is a POLYLINE header, one VERTEX per
+/// point, and a closing SEQEND (ADR-0005).
+fn write_polyline(out: &mut String, polyline: &PolylineEntity) {
+    /// "Vertices follow" — required on every R12 polyline.
+    const VERTICES_FOLLOW: &str = "1";
+    /// Bit 1 of the polyline flags: closed.
+    const CLOSED: &str = "1";
+    const OPEN: &str = "0";
+
+    group(out, 0, "POLYLINE");
+    group(out, 8, DEFAULT_LAYER);
+    group(out, 66, VERTICES_FOLLOW);
+    group(out, 70, if polyline.closed { CLOSED } else { OPEN });
+    for vertex in &polyline.vertices {
+        group(out, 0, "VERTEX");
+        group(out, 8, DEFAULT_LAYER);
+        real(out, 10, vertex.x);
+        real(out, 20, vertex.y);
+    }
+    group(out, 0, "SEQEND");
 }
 
 fn section(out: &mut String, name: &str, body: impl FnOnce(&mut String)) {
@@ -135,6 +158,26 @@ mod tests {
             ),
             "{dxf}"
         );
+    }
+
+    #[test]
+    fn a_polyline_is_written_as_polyline_vertex_seqend() {
+        let triangle = PolylineEntity::new(
+            vec![
+                Point2::new(0.0, 0.0),
+                Point2::new(4.0, 0.0),
+                Point2::new(4.0, 3.0),
+            ],
+            true,
+        );
+        let dxf = export(&Drawing::from_entities([Entity::Polyline(triangle)]));
+        let expected = "  0\nPOLYLINE\n  8\n0\n 66\n1\n 70\n1\n\
+                        \x20 0\nVERTEX\n  8\n0\n 10\n0.0\n 20\n0.0\n\
+                        \x20 0\nVERTEX\n  8\n0\n 10\n4.0\n 20\n0.0\n\
+                        \x20 0\nVERTEX\n  8\n0\n 10\n4.0\n 20\n3.0\n\
+                        \x20 0\nSEQEND\n";
+        assert!(dxf.contains(expected), "{dxf}");
+        assert!(!dxf.contains("LWPOLYLINE"), "R12 has no LWPOLYLINE");
     }
 
     #[test]
