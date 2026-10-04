@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds cad-wasm and generates JS bindings into web/src/cad/pkg (ADR-0004).
 # Usage: scripts/build-wasm.sh [--release]
+# Set CAD_WASM_FEATURES (e.g. "demo-scene") to enable cad-wasm cargo features in a debug build.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -9,6 +10,8 @@ cargo_flags=()
 if [[ "${1:-}" == "--release" ]]; then
   profile_dir=release
   cargo_flags+=(--release)
+elif [[ -n "${CAD_WASM_FEATURES:-}" ]]; then
+  cargo_flags+=(--features "$CAD_WASM_FEATURES")
 fi
 
 if ! command -v wasm-bindgen >/dev/null; then
