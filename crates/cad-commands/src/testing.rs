@@ -107,10 +107,19 @@ impl Harness {
         ids
     }
 
+    /// Every entity in the drawing, in allocation order.
+    pub fn entities(&self) -> Vec<Entity> {
+        let drawing = self.session.drawing();
+        self.ids()
+            .into_iter()
+            .filter_map(|id| drawing.entity(id).cloned())
+            .collect()
+    }
+
     /// Every line in the drawing, in allocation order.
     pub fn lines(&self) -> Vec<LineEntity> {
         let drawing = self.session.drawing();
-        let line = |id| drawing.entity(id).map(|Entity::Line(line)| *line);
+        let line = |id| drawing.entity(id).and_then(Entity::as_line).copied();
         self.ids().into_iter().filter_map(line).collect()
     }
 }

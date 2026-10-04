@@ -25,8 +25,8 @@ const mixedFile = dxf(
   [0, "SECTION"],
   [2, "ENTITIES"],
   ...LINE,
-  [0, "CIRCLE"],
-  [40, "5"],
+  [0, "TEXT"],
+  [1, "hello"],
   [0, "ENDSEC"],
   [0, "EOF"],
 );
@@ -230,7 +230,7 @@ describe("unsupported content", () => {
     expect(app.ui.getSnapshot().exportIsLossy).toBe(true);
     expect(app.ui.getSnapshot().log.slice(-2)).toEqual([
       "Imported 1 line.",
-      "Not imported (unsupported): 1 CIRCLE.",
+      "Not imported (unsupported): 1 TEXT.",
     ]);
 
     host.confirmAnswer = false;
@@ -243,6 +243,6 @@ describe("unsupported content", () => {
     enter("DXFOUT");
     await tick();
     expect(host.saved).toHaveLength(1);
-    expect(host.saved[0]?.text).not.toContain("CIRCLE");
+    expect(host.saved[0]?.text).not.toContain("TEXT");
   });
 });

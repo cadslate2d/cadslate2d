@@ -1,10 +1,16 @@
 // The WebGL2 adapter (DESIGN §12.1). TypeScript owns the context, the GPU
 // buffers, and the draw calls; it never reads or writes CAD state.
-import type { ClipTransform, FrameBuffers } from "../../cad/engine";
+import {
+  FLOATS_PER_ARC,
+  FLOATS_PER_SEGMENT,
+  type ClipTransform,
+  type FrameBuffers,
+} from "../../cad/engine";
 import type { CanvasPalette } from "../palette";
 import type { FrameSink } from "../render-frame";
+import { ARC_FRAGMENT_SHADER, ARC_STRIP_VERTICES, ARC_VERTEX_SHADER } from "./arc-shaders";
+import { InstanceLayer, type InstanceLayout, type StrokeUniforms } from "./instance-layer";
 import { linkProgram } from "./program";
-import { SegmentLayer, type StrokeUniforms } from "./segment-layer";
 import { STROKE_FRAGMENT_SHADER, STROKE_VERTEX_SHADER } from "./shaders";
 
 /** Counters that let tests prove what the renderer did and did not do. */
@@ -15,18 +21,52 @@ export interface RendererStats {
   sceneUploads: number;
   /** Uploads of transient geometry. */
   overlayUploads: number;
-  /** GPU buffer reallocations, for either layer. */
+  /** GPU buffer reallocations, for either lifetime. */
   bufferReallocations: number;
 }
 
-interface GpuResources {
+/** One kind of primitive: its program and where its uniforms live. */
+interface Pipeline {
   readonly program: WebGLProgram;
   readonly uniforms: StrokeUniforms;
+  readonly layout: InstanceLayout;
+}
+
+/** The GPU buffers of one render lifetime: one layer per kind of primitive. */
+class FrameLayers {
+  readonly segments: InstanceLayer;
+  readonly arcs: InstanceLayer;
+
+  constructor(gl: WebGL2RenderingContext, pipelines: Pipelines, usage: number) {
+    this.segments = new InstanceLayer(gl, pipelines.segments.layout, usage);
+    this.arcs = new InstanceLayer(gl, pipelines.arcs.layout, usage);
+  }
+
+  /** Returns how many of the buffers had to be reallocated. */
+  upload(frame: FrameBuffers): number {
+    const segments = this.segments.upload(frame.segments, frame.batches);
+    const arcs = this.arcs.upload(frame.arcs, frame.arcBatches);
+    return Number(segments) + Number(arcs);
+  }
+
+  dispose(): void {
+    this.segments.dispose();
+    this.arcs.dispose();
+  }
+}
+
+interface Pipelines {
+  readonly segments: Pipeline;
+  readonly arcs: Pipeline;
+}
+
+interface GpuResources {
+  readonly pipelines: Pipelines;
   readonly quad: WebGLBuffer;
   /** Committed geometry: uploaded rarely, drawn often. */
-  readonly scene: SegmentLayer;
+  readonly scene: FrameLayers;
   /** Transient geometry: small, rewritten on most frames. */
-  readonly overlay: SegmentLayer;
+  readonly overlay: FrameLayers;
 }
 
 export class WebGlRenderer implements FrameSink {
@@ -76,44 +116,55 @@ export class WebGlRenderer implements FrameSink {
   }
 
   updateScene(revision: number, frame: FrameBuffers): void {
-    if (this.#resources.scene.upload(frame)) this.stats.bufferReallocations += 1;
+    this.stats.bufferReallocations += this.#resources.scene.upload(frame);
     this.#sceneRevision = revision;
     this.stats.sceneUploads += 1;
   }
 
   updateOverlay(frame: FrameBuffers): void {
-    if (this.#resources.overlay.upload(frame)) this.stats.bufferReallocations += 1;
+    this.stats.bufferReallocations += this.#resources.overlay.upload(frame);
     this.stats.overlayUploads += 1;
   }
 
   draw(sceneTransform: ClipTransform, overlayTransform: ClipTransform): void {
     const gl = this.#gl;
-    const { program, uniforms, scene, overlay } = this.#resources;
+    const { pipelines, scene, overlay } = this.#resources;
     const [red, green, blue] = this.#palette.background;
 
     gl.viewport(0, 0, this.#canvas.width, this.#canvas.height);
     gl.clearColor(red, green, blue, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
-
-    gl.useProgram(program);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied alpha
-    gl.uniform2f(uniforms.viewport, this.#canvas.width, this.#canvas.height);
 
-    const ratio = this.#devicePixelRatio;
-    this.stats.drawCalls += scene.draw(uniforms, sceneTransform, this.#palette, ratio);
-    this.stats.drawCalls += overlay.draw(uniforms, overlayTransform, this.#palette, ratio);
+    // Committed geometry first, transient geometry on top.
+    const passes: [FrameLayers, ClipTransform][] = [
+      [scene, sceneTransform],
+      [overlay, overlayTransform],
+    ];
+    for (const [layers, transform] of passes) {
+      this.stats.drawCalls += this.#drawLayer(pipelines.segments, layers.segments, transform);
+      this.stats.drawCalls += this.#drawLayer(pipelines.arcs, layers.arcs, transform);
+    }
     this.stats.frames += 1;
   }
 
   dispose(): void {
     this.#canvas.removeEventListener("webglcontextlost", this.#onContextLost);
     this.#canvas.removeEventListener("webglcontextrestored", this.#onContextRestored);
-    const { program, quad, scene, overlay } = this.#resources;
+    const { pipelines, quad, scene, overlay } = this.#resources;
     scene.dispose();
     overlay.dispose();
     this.#gl.deleteBuffer(quad);
-    this.#gl.deleteProgram(program);
+    this.#gl.deleteProgram(pipelines.segments.program);
+    this.#gl.deleteProgram(pipelines.arcs.program);
+  }
+
+  #drawLayer(pipeline: Pipeline, layer: InstanceLayer, transform: ClipTransform): number {
+    const gl = this.#gl;
+    gl.useProgram(pipeline.program);
+    gl.uniform2f(pipeline.uniforms.viewport, this.#canvas.width, this.#canvas.height);
+    return layer.draw(pipeline.uniforms, transform, this.#palette, this.#devicePixelRatio);
   }
 
   readonly #onContextLost = (event: Event): void => {
@@ -130,22 +181,21 @@ export class WebGlRenderer implements FrameSink {
   };
 }
 
-function createResources(gl: WebGL2RenderingContext): GpuResources {
-  const program = linkProgram(gl, STROKE_VERTEX_SHADER, STROKE_FRAGMENT_SHADER);
+function createPipeline(
+  gl: WebGL2RenderingContext,
+  vertexShader: string,
+  fragmentShader: string,
+  layout: InstanceLayout,
+): Pipeline {
+  const program = linkProgram(gl, vertexShader, fragmentShader);
   const uniform = (name: string): WebGLUniformLocation => {
     const location = gl.getUniformLocation(program, name);
-    if (!location) throw new Error(`stroke shader is missing uniform ${name}`);
+    if (!location) throw new Error(`shader is missing uniform ${name}`);
     return location;
   };
-
-  const quad = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
-  // Triangle strip corners: (end selector, side).
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, -1, 0, 1, 1, -1, 1, 1]), gl.STATIC_DRAW);
-
   return {
     program,
-    quad,
+    layout,
     uniforms: {
       scale: uniform("u_scale"),
       translate: uniform("u_translate"),
@@ -153,7 +203,38 @@ function createResources(gl: WebGL2RenderingContext): GpuResources {
       halfWidth: uniform("u_half_width"),
       color: uniform("u_color"),
     },
-    scene: new SegmentLayer(gl, quad, gl.STATIC_DRAW),
-    overlay: new SegmentLayer(gl, quad, gl.DYNAMIC_DRAW),
+  };
+}
+
+function createResources(gl: WebGL2RenderingContext): GpuResources {
+  const quad = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+  // Triangle strip corners: (end selector, side).
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, -1, 0, 1, 1, -1, 1, 1]), gl.STATIC_DRAW);
+
+  const pipelines: Pipelines = {
+    // A segment is extruded from a four-corner quad (ADR-0003).
+    segments: createPipeline(gl, STROKE_VERTEX_SHADER, STROKE_FRAGMENT_SHADER, {
+      floatsPerInstance: FLOATS_PER_SEGMENT,
+      attributes: [{ location: 1, size: 4, offset: 0 }],
+      verticesPerInstance: 4,
+      perVertex: { buffer: quad, size: 2 },
+    }),
+    // An arc generates its own covering strip from gl_VertexID (ADR-0009).
+    arcs: createPipeline(gl, ARC_VERTEX_SHADER, ARC_FRAGMENT_SHADER, {
+      floatsPerInstance: FLOATS_PER_ARC,
+      attributes: [
+        { location: 0, size: 4, offset: 0 },
+        { location: 1, size: 1, offset: 4 },
+      ],
+      verticesPerInstance: ARC_STRIP_VERTICES,
+    }),
+  };
+
+  return {
+    pipelines,
+    quad,
+    scene: new FrameLayers(gl, pipelines, gl.STATIC_DRAW),
+    overlay: new FrameLayers(gl, pipelines, gl.DYNAMIC_DRAW),
   };
 }

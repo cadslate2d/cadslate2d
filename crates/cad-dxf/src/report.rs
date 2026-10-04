@@ -7,6 +7,10 @@ use std::collections::BTreeMap;
 pub struct ImportReport {
     /// LINE entities imported.
     pub lines: usize,
+    /// CIRCLE entities imported.
+    pub circles: usize,
+    /// ARC entities imported.
+    pub arcs: usize,
     /// Entities that were skipped, by DXF type name, in name order.
     pub unsupported: BTreeMap<String, usize>,
     /// Imported entities that carried properties the drawing cannot hold yet
@@ -30,44 +34,60 @@ impl ImportReport {
         self.unsupported.values().sum()
     }
 
+    /// Entities brought into the drawing.
+    pub fn imported_total(&self) -> usize {
+        self.lines + self.circles + self.arcs
+    }
+
     pub(crate) fn count_unsupported(&mut self, kind: &str) {
         let known = self.unsupported.contains_key(kind);
-        let key = if known || self.unsupported.len() < Self::MAX_UNSUPPORTED_KINDS {
-            kind
-        } else {
-            Self::OTHER
-        };
+        let room = self.unsupported.len() < Self::MAX_UNSUPPORTED_KINDS;
+        let key = if known || room { kind } else { Self::OTHER };
         *self.unsupported.entry(key.to_owned()).or_default() += 1;
     }
 
     /// A short, user-facing summary: one line for what was imported and, when
     /// relevant, one line each for what was not.
     pub fn summary(&self) -> Vec<String> {
-        let mut lines = vec![format!("Imported {}.", plural(self.lines, "line"))];
+        let kinds = [
+            (self.lines, "line", "lines"),
+            (self.circles, "circle", "circles"),
+            (self.arcs, "arc", "arcs"),
+        ];
+        let imported: Vec<String> = kinds
+            .into_iter()
+            .filter(|(count, ..)| *count > 0)
+            .map(|(count, one, many)| counted(count, one, many))
+            .collect();
+
+        let mut lines = vec![if imported.is_empty() {
+            "Imported nothing: the file has no supported entities.".to_owned()
+        } else {
+            format!("Imported {}.", imported.join(", "))
+        }];
         if !self.unsupported.is_empty() {
-            let kinds: Vec<String> = self
+            let skipped: Vec<String> = self
                 .unsupported
                 .iter()
                 .map(|(kind, count)| format!("{count} {kind}"))
                 .collect();
-            lines.push(format!("Not imported (unsupported): {}.", kinds.join(", ")));
+            lines.push(format!(
+                "Not imported (unsupported): {}.",
+                skipped.join(", ")
+            ));
         }
         if self.with_dropped_properties > 0 {
+            let entities = counted(self.with_dropped_properties, "entity", "entities");
             lines.push(format!(
-                "Layer, colour, and linetype were dropped from {}.",
-                plural(self.with_dropped_properties, "line")
+                "Layer, colour, and linetype were dropped from {entities}."
             ));
         }
         lines
     }
 }
 
-fn plural(count: usize, noun: &str) -> String {
-    if count == 1 {
-        format!("1 {noun}")
-    } else {
-        format!("{count} {noun}s")
-    }
+fn counted(count: usize, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
 }
 
 #[cfg(test)]
@@ -85,14 +105,38 @@ mod tests {
     }
 
     #[test]
+    fn every_imported_kind_is_named() {
+        let report = ImportReport {
+            lines: 3,
+            circles: 1,
+            arcs: 2,
+            ..Default::default()
+        };
+        assert_eq!(report.imported_total(), 6);
+        assert_eq!(
+            report.summary(),
+            vec!["Imported 3 lines, 1 circle, 2 arcs."]
+        );
+    }
+
+    #[test]
+    fn an_import_with_nothing_supported_says_so() {
+        let summary = ImportReport::default().summary();
+        assert_eq!(
+            summary,
+            vec!["Imported nothing: the file has no supported entities."]
+        );
+    }
+
+    #[test]
     fn skipped_entities_are_listed_by_kind() {
         let mut report = ImportReport {
             lines: 12,
             ..Default::default()
         };
         report.count_unsupported("TEXT");
-        report.count_unsupported("CIRCLE");
-        report.count_unsupported("CIRCLE");
+        report.count_unsupported("HATCH");
+        report.count_unsupported("HATCH");
 
         assert!(report.has_unsupported_content());
         assert_eq!(report.unsupported_total(), 3);
@@ -100,7 +144,7 @@ mod tests {
             report.summary(),
             vec![
                 "Imported 12 lines.",
-                "Not imported (unsupported): 2 CIRCLE, 1 TEXT."
+                "Not imported (unsupported): 2 HATCH, 1 TEXT."
             ]
         );
     }
@@ -113,9 +157,20 @@ mod tests {
             ..Default::default()
         };
         assert!(report.has_unsupported_content());
+        let summary = report.summary();
         assert_eq!(
-            report.summary()[1],
-            "Layer, colour, and linetype were dropped from 2 lines."
+            summary[1],
+            "Layer, colour, and linetype were dropped from 2 entities."
+        );
+
+        let one = ImportReport {
+            circles: 1,
+            with_dropped_properties: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            one.summary()[1],
+            "Layer, colour, and linetype were dropped from 1 entity."
         );
     }
 
@@ -130,9 +185,7 @@ mod tests {
             ImportReport::MAX_UNSUPPORTED_KINDS + 1
         );
         assert_eq!(report.unsupported_total(), 1000);
-        assert_eq!(
-            report.unsupported[ImportReport::OTHER],
-            1000 - ImportReport::MAX_UNSUPPORTED_KINDS
-        );
+        let pooled = 1000 - ImportReport::MAX_UNSUPPORTED_KINDS;
+        assert_eq!(report.unsupported[ImportReport::OTHER], pooled);
     }
 }

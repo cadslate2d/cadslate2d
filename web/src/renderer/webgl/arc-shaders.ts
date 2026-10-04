@@ -10,8 +10,6 @@
 /** Quads in the covering strip. More means less overdraw on large circles. */
 export const ARC_STRIP_SEGMENTS = 32;
 export const ARC_STRIP_VERTICES = 2 * (ARC_STRIP_SEGMENTS + 1);
-/** `cx, cy, radius, start, sweep` — angles in radians, sweep counter-clockwise. */
-export const FLOATS_PER_ARC = 5;
 
 export const ARC_VERTEX_SHADER = `#version 300 es
 precision highp float;

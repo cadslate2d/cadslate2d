@@ -1,5 +1,13 @@
 import { beforeAll, describe, expect, test } from "vitest";
-import { CadEngine, coreVersion, Dirty, KeyAction, StyleRole, wasmMemory } from "./engine";
+import {
+  CadEngine,
+  coreVersion,
+  Dirty,
+  KeyAction,
+  StyleRole,
+  wasmMemory,
+  type FrameBuffers,
+} from "./engine";
 import { loadEngineForTests } from "./test-support";
 
 beforeAll(loadEngineForTests);
@@ -14,17 +22,15 @@ function enter(cad: CadEngine, ...lines: string[]): number {
   return lines.reduce((dirty, line) => dirty | cad.submitText(line), 0);
 }
 
-const copyScene = (cad: CadEngine) =>
-  cad.readScene((frame) => ({
-    segments: Array.from(frame.segments),
-    batches: Array.from(frame.batches),
-  }));
-
-const copyOverlay = (cad: CadEngine) =>
-  cad.readOverlay((frame) => ({
-    segments: Array.from(frame.segments),
-    batches: Array.from(frame.batches),
-  }));
+const copy = (frame: FrameBuffers) => ({
+  segments: Array.from(frame.segments),
+  batches: Array.from(frame.batches),
+  arcs: Array.from(frame.arcs),
+  arcBatches: Array.from(frame.arcBatches),
+});
+const copyScene = (cad: CadEngine) => cad.readScene(copy);
+const copyOverlay = (cad: CadEngine) => cad.readOverlay(copy);
+const EMPTY = { segments: [], batches: [], arcs: [], arcBatches: [] };
 
 describe("view", () => {
   test("reports the core version", () => {
@@ -82,7 +88,7 @@ describe("view", () => {
 
 describe("commands", () => {
   test("a new drawing has an empty scene", () => {
-    expect(copyScene(engine())).toEqual({ segments: [], batches: [] });
+    expect(copyScene(engine())).toEqual(EMPTY);
   });
 
   test("typed LINE input commits a segment and bumps the scene revision", () => {
@@ -97,6 +103,7 @@ describe("commands", () => {
 
     // One segment, stored relative to the scene origin (the middle of the line).
     expect(copyScene(cad)).toEqual({
+      ...EMPTY,
       segments: [-50, 0, 50, 0],
       batches: [StyleRole.Entity, 0, 1],
     });
@@ -156,9 +163,53 @@ describe("commands", () => {
   });
 });
 
+describe("curves", () => {
+  test("a circle crosses the boundary as one arc instance with a full sweep", () => {
+    const cad = engine();
+    enter(cad, "C", "100,50", "25");
+    const scene = copyScene(cad);
+    // Relative to the scene origin, which is the circle's centre here.
+    expect(scene.arcs).toEqual([0, 0, 25, 0, Math.fround(2 * Math.PI)]);
+    expect(scene.arcBatches).toEqual([StyleRole.Entity, 0, 1]);
+    expect(scene.segments).toEqual([]);
+  });
+
+  test("a three-point arc is stored counter-clockwise", () => {
+    const cad = engine();
+    enter(cad, "A", "10,0", "0,10", "-10,0");
+    const [, , radius, start, sweep] = copyScene(cad).arcs;
+    expect(radius).toBeCloseTo(10, 5);
+    expect(start).toBeCloseTo(0, 5);
+    expect(sweep).toBeCloseTo(Math.PI, 5);
+  });
+
+  test("the circle preview is transient: overlay only, no scene change", () => {
+    const cad = engine();
+    enter(cad, "C", "0,0");
+    const revision = cad.sceneRevision;
+    cad.pointerMove(430, 260, 0); // world (30, 40): radius 50
+
+    const overlay = copyOverlay(cad);
+    expect(overlay.arcBatches).toEqual([StyleRole.Preview, 0, 1]);
+    expect(overlay.arcs[2]).toBeCloseTo(50, 4);
+    expect(cad.sceneRevision).toBe(revision);
+    expect(copyScene(cad)).toEqual(EMPTY);
+  });
+
+  test("C is CIRCLE at the idle prompt and Close inside LINE", () => {
+    const cad = engine();
+    enter(cad, "L", "0,0", "10,0", "10,10", "C");
+    expect(cad.uiState().prompt).toBe("Command:");
+    expect(copyScene(cad).segments).toHaveLength(12);
+
+    enter(cad, "C");
+    expect(cad.uiState().command).toBe("CIRCLE");
+  });
+});
+
 describe("overlay", () => {
   test("is empty until the pointer is over the canvas", () => {
-    expect(copyOverlay(engine())).toEqual({ segments: [], batches: [] });
+    expect(copyOverlay(engine())).toEqual(EMPTY);
   });
 
   test("shows a crosshair, and a rubber band during LINE", () => {
@@ -173,7 +224,7 @@ describe("overlay", () => {
     expect(overlay.segments.slice(0, 4)).toEqual([0, 0, 50, 0]);
 
     expect(cad.pointerLeave() & Dirty.Overlay).toBeTruthy();
-    expect(copyOverlay(cad)).toEqual({ segments: [], batches: [] });
+    expect(copyOverlay(cad)).toEqual(EMPTY);
   });
 
   // DESIGN §26.3 criteria 5 and 6.
@@ -209,10 +260,7 @@ describe("views into WASM memory", () => {
     const cad = engine();
     enter(cad, "L", "0,0", "100,0", "");
     cad.pointerMove(10, 10, 0);
-    const sizes = (frame: { segments: Float32Array; batches: Uint32Array }) => [
-      frame.segments.length,
-      frame.batches.length,
-    ];
+    const sizes = (frame: FrameBuffers) => [frame.segments.length, frame.batches.length];
     expect(cad.readScene(sizes)).toEqual([4, 3]);
     expect(cad.readOverlay(sizes)).toEqual([24, 3]); // the crosshair
   });

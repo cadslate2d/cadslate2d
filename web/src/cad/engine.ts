@@ -62,6 +62,7 @@ export const StyleRole = { Entity: 0, Selection: 1, Preview: 2, Crosshair: 3 } a
 export type StyleRole = (typeof StyleRole)[keyof typeof StyleRole];
 
 export const FLOATS_PER_SEGMENT = 4;
+export const FLOATS_PER_ARC = 5;
 export const WORDS_PER_BATCH = 3;
 
 /**
@@ -74,8 +75,12 @@ export const WORDS_PER_BATCH = 3;
 export interface FrameBuffers {
   /** `x0, y0, x1, y1` per segment instance, relative to the frame origin. */
   readonly segments: Float32Array;
-  /** `style, first, count` per batch. */
+  /** `style, first, count` per segment batch. */
   readonly batches: Uint32Array;
+  /** `cx, cy, radius, start, sweep` per arc instance (ADR-0009); angles in radians. */
+  readonly arcs: Float32Array;
+  /** `style, first, count` per arc batch. */
+  readonly arcBatches: Uint32Array;
 }
 
 /** `[scaleX, scaleY, translateX, translateY]`: `clip = position * scale + translate`. */
@@ -196,6 +201,8 @@ export class CadEngine {
     return consume({
       segments: this.#session.scene_segments(),
       batches: this.#session.scene_batches(),
+      arcs: this.#session.scene_arcs(),
+      arcBatches: this.#session.scene_arc_batches(),
     });
   }
 
@@ -209,6 +216,8 @@ export class CadEngine {
     return consume({
       segments: this.#session.overlay_segments(),
       batches: this.#session.overlay_batches(),
+      arcs: this.#session.overlay_arcs(),
+      arcBatches: this.#session.overlay_arc_batches(),
     });
   }
 

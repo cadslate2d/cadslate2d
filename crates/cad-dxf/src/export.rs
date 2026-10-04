@@ -3,7 +3,7 @@
 use std::fmt::Write;
 
 use cad_core::EntityId;
-use cad_document::{Drawing, Entity, LineEntity};
+use cad_document::{ArcEntity, CircleEntity, Drawing, Entity, LineEntity};
 
 /// The DXF release written, as stored in `$ACADVER`. R12 is the simplest
 /// release every CAD tool reads and needs no handles or subclass markers.
@@ -29,6 +29,8 @@ pub fn export(drawing: &Drawing) -> String {
         for (_, entity) in entities {
             match entity {
                 Entity::Line(line) => write_line(out, line),
+                Entity::Circle(circle) => write_circle(out, circle),
+                Entity::Arc(arc) => write_arc(out, arc),
             }
         }
     });
@@ -43,6 +45,26 @@ fn write_line(out: &mut String, line: &LineEntity) {
     real(out, 20, line.start.y);
     real(out, 11, line.end.x);
     real(out, 21, line.end.y);
+}
+
+fn write_circle(out: &mut String, circle: &CircleEntity) {
+    group(out, 0, "CIRCLE");
+    group(out, 8, DEFAULT_LAYER);
+    real(out, 10, circle.center.x);
+    real(out, 20, circle.center.y);
+    real(out, 40, circle.radius);
+}
+
+/// DXF arcs run counter-clockwise from the start angle to the end angle, in
+/// degrees — the same convention as the document, in different units.
+fn write_arc(out: &mut String, arc: &ArcEntity) {
+    group(out, 0, "ARC");
+    group(out, 8, DEFAULT_LAYER);
+    real(out, 10, arc.center.x);
+    real(out, 20, arc.center.y);
+    real(out, 40, arc.radius);
+    real(out, 50, arc.start_angle.to_degrees());
+    real(out, 51, arc.end_angle.to_degrees());
 }
 
 fn section(out: &mut String, name: &str, body: impl FnOnce(&mut String)) {
@@ -94,6 +116,25 @@ mod tests {
         let dxf = export(&Drawing::from_entities([line(0.0, 0.0, 100.0, 50.5)]));
         let entity = "  0\nLINE\n  8\n0\n 10\n0.0\n 20\n0.0\n 11\n100.0\n 21\n50.5\n";
         assert!(dxf.contains(entity), "{dxf}");
+    }
+
+    #[test]
+    fn circles_and_arcs_are_written_with_angles_in_degrees() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        let dxf = export(&Drawing::from_entities([
+            Entity::Circle(CircleEntity::new(Point2::new(1.0, 2.0), 3.5)),
+            Entity::Arc(ArcEntity::new(Point2::new(0.0, 0.0), 10.0, FRAC_PI_2, PI)),
+        ]));
+        assert!(
+            dxf.contains("  0\nCIRCLE\n  8\n0\n 10\n1.0\n 20\n2.0\n 40\n3.5\n"),
+            "{dxf}"
+        );
+        assert!(
+            dxf.contains(
+                "  0\nARC\n  8\n0\n 10\n0.0\n 20\n0.0\n 40\n10.0\n 50\n90.0\n 51\n180.0\n"
+            ),
+            "{dxf}"
+        );
     }
 
     #[test]

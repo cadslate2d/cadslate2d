@@ -141,6 +141,7 @@ dependencies = [
  "cad-commands",
  "cad-core",
  "cad-document",
+ "cad-geometry",
 ]
 
 [[package]]

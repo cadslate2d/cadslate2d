@@ -37,12 +37,19 @@ fn load(kind: &str, name: &str) -> Result<Import, DxfError> {
 
 /// Lines in file order (entity IDs are allocated in the order entities are read).
 fn lines(drawing: &Drawing) -> Vec<LineEntity> {
-    let mut lines: Vec<(u64, LineEntity)> = drawing
+    in_file_order(drawing)
+        .iter()
+        .filter_map(|entity| entity.as_line().copied())
+        .collect()
+}
+
+fn in_file_order(drawing: &Drawing) -> Vec<Entity> {
+    let mut entities: Vec<_> = drawing
         .entities()
-        .map(|(id, Entity::Line(line))| (id.raw(), *line))
+        .map(|(id, entity)| (id, entity.clone()))
         .collect();
-    lines.sort_by_key(|(id, _)| *id);
-    lines.into_iter().map(|(_, line)| line).collect()
+    entities.sort_by_key(|(id, _)| *id);
+    entities.into_iter().map(|(_, entity)| entity).collect()
 }
 
 fn line(x0: f64, y0: f64, x1: f64, y1: f64) -> LineEntity {
@@ -156,6 +163,7 @@ fn unsupported_content_is_counted_and_reported() {
             line(5.0, 5.0, 6.0, 6.0)
         ]
     );
+    assert_eq!((import.report.circles, import.report.arcs), (2, 1));
 
     let counts: Vec<(&str, usize)> = import
         .report
@@ -165,14 +173,7 @@ fn unsupported_content_is_counted_and_reported() {
         .collect();
     assert_eq!(
         counts,
-        vec![
-            ("ARC", 1),
-            ("BLOCK", 1),
-            ("CIRCLE", 2),
-            ("INSERT", 1),
-            ("LWPOLYLINE", 1),
-            ("TEXT", 1)
-        ]
+        vec![("BLOCK", 1), ("INSERT", 1), ("LWPOLYLINE", 1), ("TEXT", 1)]
     );
     assert_eq!(
         import.report.with_dropped_properties, 2,
@@ -182,9 +183,34 @@ fn unsupported_content_is_counted_and_reported() {
     assert_eq!(
         import.report.summary(),
         vec![
-            "Imported 3 lines.",
-            "Not imported (unsupported): 1 ARC, 1 BLOCK, 2 CIRCLE, 1 INSERT, 1 LWPOLYLINE, 1 TEXT.",
-            "Layer, colour, and linetype were dropped from 2 lines.",
+            "Imported 3 lines, 2 circles, 1 arc.",
+            "Not imported (unsupported): 1 BLOCK, 1 INSERT, 1 LWPOLYLINE, 1 TEXT.",
+            "Layer, colour, and linetype were dropped from 2 entities.",
+        ]
+    );
+}
+
+/// Curves written by an independent DXF library: checks our reading of the
+/// CIRCLE and ARC conventions (centre, radius, counter-clockwise degrees).
+#[test]
+fn circles_and_arcs_from_another_writer() {
+    use cad_document::{ArcEntity, CircleEntity};
+    let import = load("valid", "ezdxf-r2010-mixed-content.dxf").unwrap();
+    let curves: Vec<Entity> = in_file_order(&import.drawing)
+        .into_iter()
+        .filter(|entity| entity.as_line().is_none())
+        .collect();
+    assert_eq!(
+        curves,
+        vec![
+            Entity::Circle(CircleEntity::new(Point2::new(0.0, 0.0), 5.0)),
+            Entity::Circle(CircleEntity::new(Point2::new(10.0, 10.0), 2.0)),
+            Entity::Arc(ArcEntity::new(
+                Point2::new(0.0, 0.0),
+                3.0,
+                0.0,
+                std::f64::consts::FRAC_PI_2
+            )),
         ]
     );
 }

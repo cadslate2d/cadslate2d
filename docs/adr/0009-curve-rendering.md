@@ -55,7 +55,22 @@ Reading the numbers:
 - **Analytic data is 20 bytes per arc at every zoom** and is uploaded once.
 - **Analytic draws 11–20× faster here.** This is software rasterisation, where cost follows shaded pixels: thousands of short capped segments overlap each other at every joint, while the ring strip shades each pixel of the curve about once. The ratio on a real GPU is not established.
 - **The shapes agree.** There is no hard disagreement at working or deep zoom, and at most 43 pixels in a million where circles are about a pixel across. The reference is the less exact of the two there: its segment joints blend twice.
-- **Precision holds at a radius of 80,000 pixels.** Beyond roughly 10⁶ pixels, single-precision arithmetic in the shader is expected to wobble; that was not measured.
+- **Precision holds at a radius of 80,000 pixels,** and degrades gradually beyond it (measured below).
+
+### Precision limit, measured in the application
+
+After the arc layer was integrated, a circle of radius 100 was drawn with the CIRCLE command and zoomed in on its edge, counting lit pixels on a 580-pixel-high canvas. A correct result is a near-vertical stroke of about 930 pixels.
+
+| On-screen radius | Lit pixels | What is seen |
+| --- | --- | --- |
+| 7×10² – 1.5×10⁴ px | 920–940 | Correct |
+| 4×10⁴ px | 974 | Correct to the eye |
+| 1×10⁵ px | 1074 | Stroke about 15% heavier |
+| 3×10⁵ – 2×10⁶ px | 1160 | Stroke about 25% heavier, edges no longer antialiased |
+| 6×10⁶ px | 580 | One aliased pixel wide |
+| 1.6×10⁷ px | 0 | The curve disappears |
+
+So the analytic path is exact up to an on-screen radius of roughly 10⁵ pixels, visibly coarser from there, and fails near 10⁷ — the limit of single-precision arithmetic, where one unit in the last place is about a pixel.
 
 ## Assessment against §23.3
 
@@ -82,7 +97,7 @@ Reading the numbers:
 - Draw order is segments, then arcs, within each lifetime. Only overlapping geometry of different styles could tell.
 - Polyline arc segments (bulge, M3) can reuse the arc instance; joins between lines and arcs rely on round caps.
 - Linetypes on arcs need shader work of their own when linetypes arrive (M4).
-- Very large on-screen radii are bounded by `f32`. If real drawings hit that, the remedy is a small per-view pass that tessellates only the visible span of such arcs in `f64` — a hybrid for the extreme case, added on evidence.
+- Very large on-screen radii are bounded by `f32`: strokes coarsen above about 10⁵ pixels and vanish near 10⁷ (measured above). Lines have a comparable limit from the single scene origin (ADR-0003). The remedy for curves is a small per-view pass that tessellates only the visible span of such arcs in `f64` — a hybrid for the extreme case — tracked as a follow-up.
 - Overdraw grows with on-screen radius: the covering strip of a circle 80,000 px in radius is hundreds of pixels wide where it crosses the view. Fine for a few such arcs; worth measuring if a drawing has many.
 
 ## Revisit when

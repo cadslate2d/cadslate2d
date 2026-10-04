@@ -38,16 +38,19 @@ impl OverlayFrame {
         // The overlay is rebuilt freely, so it can always sit on the view centre.
         self.frame.reset(view.center());
         for item in items {
-            match *item {
+            match item {
                 OverlayItem::Highlight(id) => {
-                    if let Some(entity) = drawing.entity(id) {
+                    if let Some(entity) = drawing.entity(*id) {
                         self.frame.push_entity(StyleRole::Selection, entity);
                     }
                 }
                 OverlayItem::PreviewSegment { start, end } => {
-                    self.frame.push_segment(StyleRole::Preview, start, end);
+                    self.frame.push_segment(StyleRole::Preview, *start, *end);
                 }
-                OverlayItem::Crosshair { at } => self.push_crosshair(at, view),
+                OverlayItem::PreviewEntity(entity) => {
+                    self.frame.push_entity(StyleRole::Preview, entity)
+                }
+                OverlayItem::Crosshair { at } => self.push_crosshair(*at, view),
             }
         }
     }

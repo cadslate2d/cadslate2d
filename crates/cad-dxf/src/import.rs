@@ -1,11 +1,11 @@
 //! DXF import: a tolerant, defensive ASCII reader.
 //!
 //! The reader accepts any DXF release, because it only looks at the ENTITIES
-//! section and at LINE records, which have not changed since R12. Everything
-//! else is counted and reported.
+//! section and at LINE, CIRCLE, and ARC records, which have not changed since
+//! R12. Everything else is counted and reported.
 
 use cad_core::Point2;
-use cad_document::{Drawing, Entity, LineEntity};
+use cad_document::{ArcEntity, CircleEntity, Drawing, Entity, LineEntity};
 
 use crate::{DxfError, ImportReport};
 
@@ -14,6 +14,8 @@ const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF";
 /// Records that belong to the entity before them (POLYLINE vertices, INSERT
 /// attributes) and are not counted on their own.
 const SUBORDINATE_RECORDS: [&str; 3] = ["VERTEX", "SEQEND", "ATTRIB"];
+/// Report key for supported entity types with geometry the drawing cannot hold.
+const INVALID: &str = "(invalid geometry)";
 /// Longest type name kept in the report.
 const MAX_KIND_LENGTH: usize = 32;
 
@@ -193,17 +195,24 @@ impl<'a> Reader<'a> {
     ) -> Result<(), DxfError> {
         match (context, record.value) {
             (RecordContext::Entities, "LINE") => {
-                if self.entities.len() >= self.limits.max_entities {
-                    return Err(DxfError::TooManyEntities {
-                        limit: self.limits.max_entities,
-                    });
-                }
-                self.entities.push(Entity::Line(body.line(record.line)?));
+                let line = body.line(record.line)?;
                 self.report.lines += 1;
-                if body.has_dropped_properties {
-                    self.report.with_dropped_properties += 1;
-                }
+                self.import(Entity::Line(line), body)?;
             }
+            (RecordContext::Entities, "CIRCLE") => match body.circle(record.line)? {
+                Some(circle) => {
+                    self.report.circles += 1;
+                    self.import(Entity::Circle(circle), body)?;
+                }
+                None => self.report.count_unsupported(INVALID),
+            },
+            (RecordContext::Entities, "ARC") => match body.arc(record.line)? {
+                Some(arc) => {
+                    self.report.arcs += 1;
+                    self.import(Entity::Arc(arc), body)?;
+                }
+                None => self.report.count_unsupported(INVALID),
+            },
             (RecordContext::Entities, kind) if !SUBORDINATE_RECORDS.contains(&kind) => {
                 self.report.count_unsupported(&kind_name(kind));
             }
@@ -213,6 +222,19 @@ impl<'a> Reader<'a> {
                 self.report.count_unsupported("BLOCK");
             }
             _ => {}
+        }
+        Ok(())
+    }
+
+    fn import(&mut self, entity: Entity, body: &RecordBody) -> Result<(), DxfError> {
+        if self.entities.len() >= self.limits.max_entities {
+            return Err(DxfError::TooManyEntities {
+                limit: self.limits.max_entities,
+            });
+        }
+        self.entities.push(entity);
+        if body.has_dropped_properties {
+            self.report.with_dropped_properties += 1;
         }
         Ok(())
     }
@@ -231,6 +253,9 @@ struct RecordBody {
     y0: Option<f64>,
     x1: Option<f64>,
     y1: Option<f64>,
+    radius: Option<f64>,
+    start_degrees: Option<f64>,
+    end_degrees: Option<f64>,
     has_dropped_properties: bool,
     name_is_reserved: bool,
 }
@@ -242,6 +267,9 @@ impl RecordBody {
             20 => self.y0 = Some(real(group)?),
             11 => self.x1 = Some(real(group)?),
             21 => self.y1 = Some(real(group)?),
+            40 => self.radius = Some(real(group)?),
+            50 => self.start_degrees = Some(real(group)?),
+            51 => self.end_degrees = Some(real(group)?),
             2 => self.name_is_reserved = is_structural_block(group.value),
             // Layer: only the default layer can be represented.
             8 => self.has_dropped_properties |= group.value != "0",
@@ -255,18 +283,43 @@ impl RecordBody {
     }
 
     fn line(&self, at: usize) -> Result<LineEntity, DxfError> {
-        let need = |value: Option<f64>, group| {
-            value.ok_or(DxfError::MissingCoordinate {
-                line: at,
-                entity: "LINE",
-                group,
-            })
-        };
+        let need = |value, group| required(value, at, "LINE", group);
         Ok(LineEntity::new(
             Point2::new(need(self.x0, 10)?, need(self.y0, 20)?),
             Point2::new(need(self.x1, 11)?, need(self.y1, 21)?),
         ))
     }
+
+    /// `None` for a circle the drawing cannot hold: a radius that is not positive.
+    fn circle(&self, at: usize) -> Result<Option<CircleEntity>, DxfError> {
+        let need = |value, group| required(value, at, "CIRCLE", group);
+        let center = Point2::new(need(self.x0, 10)?, need(self.y0, 20)?);
+        let radius = need(self.radius, 40)?;
+        Ok((radius > 0.0).then(|| CircleEntity::new(center, radius)))
+    }
+
+    /// DXF arcs run counter-clockwise from group 50 to group 51, in degrees.
+    fn arc(&self, at: usize) -> Result<Option<ArcEntity>, DxfError> {
+        let need = |value, group| required(value, at, "ARC", group);
+        let center = Point2::new(need(self.x0, 10)?, need(self.y0, 20)?);
+        let radius = need(self.radius, 40)?;
+        let start = need(self.start_degrees, 50)?.to_radians();
+        let end = need(self.end_degrees, 51)?.to_radians();
+        Ok((radius > 0.0).then(|| ArcEntity::new(center, radius, start, end)))
+    }
+}
+
+fn required(
+    value: Option<f64>,
+    line: usize,
+    entity: &'static str,
+    group: i32,
+) -> Result<f64, DxfError> {
+    value.ok_or(DxfError::MissingCoordinate {
+        line,
+        entity,
+        group,
+    })
 }
 
 /// Block names that are part of the file's structure rather than user
@@ -337,8 +390,19 @@ mod tests {
         import
             .drawing
             .entities()
-            .map(|(_, Entity::Line(line))| *line)
+            .filter_map(|(_, entity)| entity.as_line().copied())
             .collect()
+    }
+
+    /// Every imported entity, in file order.
+    fn entities_of(import: &Import) -> Vec<Entity> {
+        let mut entities: Vec<_> = import
+            .drawing
+            .entities()
+            .map(|(id, entity)| (id, entity.clone()))
+            .collect();
+        entities.sort_by_key(|(id, _)| *id);
+        entities.into_iter().map(|(_, entity)| entity).collect()
     }
 
     fn line(x0: f64, y0: f64, x1: f64, y1: f64) -> LineEntity {
@@ -392,9 +456,9 @@ mod tests {
 
     #[test]
     fn unsupported_entities_are_counted_by_kind_and_supported_ones_still_import() {
-        let mut body = vec![(0, "CIRCLE"), (10, "0"), (20, "0"), (40, "5")];
+        let mut body = vec![(0, "ELLIPSE"), (10, "0"), (20, "0"), (40, "5")];
         body.extend_from_slice(&LINE_0_0_TO_10_5);
-        body.extend_from_slice(&[(0, "TEXT"), (1, "hello"), (0, "CIRCLE"), (40, "1")]);
+        body.extend_from_slice(&[(0, "TEXT"), (1, "hello"), (0, "ELLIPSE"), (40, "1")]);
         // A polyline's vertices belong to it and are not counted separately.
         body.extend_from_slice(&[
             (0, "POLYLINE"),
@@ -410,10 +474,119 @@ mod tests {
             .report
             .unsupported
             .iter()
-            .map(|(k, v)| (k.as_str(), *v))
+            .map(|(kind, count)| (kind.as_str(), *count))
             .collect();
-        assert_eq!(counts, vec![("CIRCLE", 2), ("POLYLINE", 1), ("TEXT", 1)]);
+        assert_eq!(counts, vec![("ELLIPSE", 2), ("POLYLINE", 1), ("TEXT", 1)]);
         assert!(import.report.has_unsupported_content());
+    }
+
+    #[test]
+    fn imports_circles_and_arcs_with_angles_converted_from_degrees() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        let body = [
+            (0, "CIRCLE"),
+            (8, "0"),
+            (10, "1.5"),
+            (20, "-2"),
+            (40, "3"),
+            (0, "ARC"),
+            (8, "0"),
+            (10, "0"),
+            (20, "0"),
+            (40, "10"),
+            (50, "90"),
+            (51, "180"),
+        ];
+        let import = import(entities(&body).as_bytes()).unwrap();
+
+        assert_eq!(
+            (
+                import.report.lines,
+                import.report.circles,
+                import.report.arcs
+            ),
+            (0, 1, 1)
+        );
+        assert!(!import.report.has_unsupported_content());
+        let imported = entities_of(&import);
+        assert_eq!(
+            imported[0],
+            Entity::Circle(CircleEntity::new(Point2::new(1.5, -2.0), 3.0))
+        );
+        let Entity::Arc(arc) = &imported[1] else {
+            panic!("expected an arc, got {:?}", imported[1])
+        };
+        assert_eq!((arc.center, arc.radius), (Point2::ORIGIN, 10.0));
+        assert!((arc.start_angle - FRAC_PI_2).abs() < 1e-12 && (arc.end_angle - PI).abs() < 1e-12);
+    }
+
+    #[test]
+    fn curves_with_a_radius_that_is_not_positive_are_reported_not_imported() {
+        let body = [
+            (0, "CIRCLE"),
+            (10, "0"),
+            (20, "0"),
+            (40, "0"),
+            (0, "ARC"),
+            (10, "0"),
+            (20, "0"),
+            (40, "-1"),
+            (50, "0"),
+            (51, "90"),
+        ];
+        let import = import(entities(&body).as_bytes()).unwrap();
+        assert!(import.drawing.is_empty());
+        assert_eq!(import.report.unsupported.get(INVALID), Some(&2));
+    }
+
+    #[test]
+    fn curves_missing_required_groups_are_malformed() {
+        let no_radius = entities(&[(0, "CIRCLE"), (10, "0"), (20, "0")]);
+        assert_eq!(
+            import(no_radius.as_bytes()).unwrap_err(),
+            DxfError::MissingCoordinate {
+                line: 5,
+                entity: "CIRCLE",
+                group: 40
+            }
+        );
+        let no_end = entities(&[(0, "ARC"), (10, "0"), (20, "0"), (40, "1"), (50, "0")]);
+        assert_eq!(
+            import(no_end.as_bytes()).unwrap_err(),
+            DxfError::MissingCoordinate {
+                line: 5,
+                entity: "ARC",
+                group: 51
+            }
+        );
+    }
+
+    /// Angles pass through degrees, so they come back within floating-point
+    /// rounding rather than bit for bit; everything else is exact.
+    #[test]
+    fn circles_and_arcs_survive_a_round_trip() {
+        let original = vec![
+            Entity::Circle(CircleEntity::new(Point2::new(12.5, -7.25), 0.1)),
+            Entity::Arc(ArcEntity::new(
+                Point2::new(-3.0, 4.0),
+                707.1067811865476,
+                0.3,
+                5.9,
+            )),
+            Entity::Arc(ArcEntity::new(Point2::ORIGIN, 1.0, 6.0, 0.25)),
+        ];
+        let text = export(&Drawing::from_entities(original.clone()));
+        let reread = entities_of(&import(text.as_bytes()).unwrap());
+
+        assert_eq!(reread[0], original[0]);
+        for (read, written) in reread.iter().zip(&original).skip(1) {
+            let (Entity::Arc(read), Entity::Arc(written)) = (read, written) else {
+                panic!("expected arcs")
+            };
+            assert_eq!((read.center, read.radius), (written.center, written.radius));
+            assert!((read.start_angle - written.start_angle).abs() < 1e-12);
+            assert!((read.end_angle - written.end_angle).abs() < 1e-12);
+        }
     }
 
     #[test]
@@ -654,7 +827,11 @@ mod tests {
             let imported = import(text.as_bytes()).unwrap();
 
             let mut reread: Vec<(u64, LineEntity)> =
-                imported.drawing.entities().map(|(id, Entity::Line(line))| (id.raw(), *line)).collect();
+                imported
+                    .drawing
+                    .entities()
+                    .filter_map(|(id, entity)| Some((id.raw(), *entity.as_line()?)))
+                    .collect();
             reread.sort_by_key(|(id, _)| *id);
             let reread: Vec<LineEntity> = reread.into_iter().map(|(_, line)| line).collect();
             prop_assert_eq!(reread, original);

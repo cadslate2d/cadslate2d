@@ -87,9 +87,11 @@ test.describe("unsupported content", () => {
       fixturePath("valid/ezdxf-r2010-mixed-content.dxf"),
     );
 
-    await expect(logLines(page).filter({ hasText: "Imported 3 lines." })).toHaveCount(1);
     await expect(
-      logLines(page).filter({ hasText: "Not imported (unsupported): 1 ARC" }),
+      logLines(page).filter({ hasText: "Imported 3 lines, 2 circles, 1 arc." }),
+    ).toHaveCount(1);
+    await expect(
+      logLines(page).filter({ hasText: "Not imported (unsupported): 1 BLOCK" }),
     ).toHaveCount(1);
 
     // Declining the warning exports nothing.
@@ -110,7 +112,10 @@ test.describe("unsupported content", () => {
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
     expect(file.name).toBe("ezdxf-r2010-mixed-content.dxf");
     expect(file.text.match(/^LINE$/gm)).toHaveLength(3);
-    expect(file.text).not.toContain("CIRCLE");
+    expect(file.text.match(/^CIRCLE$/gm)).toHaveLength(2);
+    expect(file.text.match(/^ARC$/gm)).toHaveLength(1);
+    expect(file.text).not.toContain("LWPOLYLINE");
+    expect(file.text).not.toContain("TEXT");
   });
 });
 

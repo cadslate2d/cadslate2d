@@ -57,7 +57,7 @@ macro_rules! immediate {
 
 immediate!(EraseSelection, |_| None);
 immediate!(NudgeSelection, |entity| {
-    let Entity::Line(line) = entity;
+    let line = entity.as_line()?;
     let offset = Vec2::new(0.0, 10.0);
     Some(Entity::Line(LineEntity::new(
         line.start + offset,

@@ -283,6 +283,23 @@ impl CadSession {
         )
     }
 
+    /// Committed arc instances: `cx, cy, radius, start, sweep` per arc, relative
+    /// to the scene origin. A view into WASM memory — consume before the next call.
+    pub fn scene_arcs(&mut self) -> Float32Array {
+        f32_view(self.scene.scene(self.session.drawing()).frame().arcs())
+    }
+
+    /// Committed arc batches: `style, first, count` per batch. A view into WASM
+    /// memory — consume before the next call.
+    pub fn scene_arc_batches(&mut self) -> Uint32Array {
+        u32_view(
+            self.scene
+                .scene(self.session.drawing())
+                .frame()
+                .arc_batch_words(),
+        )
+    }
+
     /// Clip transform for the committed scene: `[scale_x, scale_y, translate_x,
     /// translate_y]`, a copy. Changes with the view; the scene does not.
     pub fn scene_transform(&mut self) -> Vec<f32> {
@@ -301,6 +318,18 @@ impl CadSession {
     pub fn overlay_batches(&mut self) -> Uint32Array {
         self.sync_overlay();
         u32_view(self.overlay.frame().batch_words())
+    }
+
+    /// Transient arc instances. A view into WASM memory — consume before the next call.
+    pub fn overlay_arcs(&mut self) -> Float32Array {
+        self.sync_overlay();
+        f32_view(self.overlay.frame().arcs())
+    }
+
+    /// Transient arc batches. A view into WASM memory — consume before the next call.
+    pub fn overlay_arc_batches(&mut self) -> Uint32Array {
+        self.sync_overlay();
+        u32_view(self.overlay.frame().arc_batch_words())
     }
 
     /// Clip transform for the overlay frame, a copy.

@@ -5,6 +5,8 @@ import { renderFrame, type FrameSink, type FrameSource } from "./render-frame";
 const emptyFrame = (): FrameBuffers => ({
   segments: new Float32Array(4),
   batches: new Uint32Array(3),
+  arcs: new Float32Array(5),
+  arcBatches: new Uint32Array(3),
 });
 
 class FakeSource implements FrameSource {

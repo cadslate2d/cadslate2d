@@ -5,11 +5,16 @@
 //! (`x0, y0, x1, y1`), each an offset from the frame's `f64` origin. Stroke
 //! width is applied in the vertex shader, so the data is independent of zoom.
 //!
-//! Both buffers are stored exactly as they cross the WASM boundary, so
+//! Curves are *arc instances* (ADR-0009): five `f32`s, `cx, cy, radius,
+//! start, sweep`, evaluated exactly in the shader. They travel in their own
+//! buffer with their own batches.
+//!
+//! All buffers are stored exactly as they cross the WASM boundary, so
 //! handing a frame to JavaScript needs no conversion and no allocation.
 
 use cad_core::Point2;
 use cad_document::Entity;
+use cad_geometry::Arc;
 
 /// What a batch of geometry *is*. TypeScript resolves each role to a colour
 /// and lineweight from the theme, so Rust never hard-codes theme colours.
@@ -39,13 +44,13 @@ impl StyleRole {
     }
 }
 
-/// A contiguous run of segment instances drawn with one style.
+/// A contiguous run of instances (segments or arcs) drawn with one style.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DrawBatch {
     pub style: StyleRole,
-    /// Index of the first segment instance.
+    /// Index of the first instance.
     pub first: u32,
-    /// Number of segment instances.
+    /// Number of instances.
     pub count: u32,
 }
 
@@ -54,13 +59,39 @@ pub struct DrawBatch {
 pub struct PackedFrame {
     origin: Point2,
     segments: Vec<f32>,
-    /// `style, first, count` per batch.
+    /// `style, first, count` per segment batch.
     batch_words: Vec<u32>,
+    /// `cx, cy, radius, start, sweep` per arc instance.
+    arcs: Vec<f32>,
+    /// `style, first, count` per arc batch.
+    arc_batch_words: Vec<u32>,
+}
+
+/// Appends one instance to a batch list, extending the last batch when the
+/// style is unchanged.
+fn extend_batches(words: &mut Vec<u32>, style: StyleRole, index: u32) {
+    match words.rchunks_exact_mut(PackedFrame::WORDS_PER_BATCH).next() {
+        Some(last) if last[0] == style as u32 => last[2] += 1,
+        _ => words.extend([style as u32, index, 1]),
+    }
+}
+
+fn decode_batches(words: &[u32]) -> Vec<DrawBatch> {
+    let (batches, _) = words.as_chunks::<{ PackedFrame::WORDS_PER_BATCH }>();
+    batches
+        .iter()
+        .map(|&[style, first, count]| DrawBatch {
+            style: StyleRole::from_word(style).expect("frames only contain known style roles"),
+            first,
+            count,
+        })
+        .collect()
 }
 
 impl PackedFrame {
     pub const FLOATS_PER_SEGMENT: usize = 4;
     pub const WORDS_PER_BATCH: usize = 3;
+    pub const FLOATS_PER_ARC: usize = 5;
 
     /// Empties the frame and sets a new origin. Buffer capacity is kept, so
     /// rebuilding a frame of similar size does not allocate.
@@ -68,6 +99,8 @@ impl PackedFrame {
         self.origin = origin;
         self.segments.clear();
         self.batch_words.clear();
+        self.arcs.clear();
+        self.arc_batch_words.clear();
     }
 
     /// The `f64` world position that segment coordinates are relative to.
@@ -89,17 +122,28 @@ impl PackedFrame {
         &self.batch_words
     }
 
-    /// The batches, decoded.
+    /// The segment batches, decoded.
     pub fn batches(&self) -> Vec<DrawBatch> {
-        let (batches, _) = self.batch_words.as_chunks::<{ Self::WORDS_PER_BATCH }>();
-        batches
-            .iter()
-            .map(|&[style, first, count]| DrawBatch {
-                style: StyleRole::from_word(style).expect("frames only contain known style roles"),
-                first,
-                count,
-            })
-            .collect()
+        decode_batches(&self.batch_words)
+    }
+
+    /// Flat `cx, cy, radius, start, sweep` per arc instance.
+    pub fn arcs(&self) -> &[f32] {
+        &self.arcs
+    }
+
+    pub fn arc_count(&self) -> u32 {
+        (self.arcs.len() / Self::FLOATS_PER_ARC) as u32
+    }
+
+    /// Flat `style, first, count` per arc batch.
+    pub fn arc_batch_words(&self) -> &[u32] {
+        &self.arc_batch_words
+    }
+
+    /// The arc batches, decoded.
+    pub fn arc_batches(&self) -> Vec<DrawBatch> {
+        decode_batches(&self.arc_batch_words)
     }
 
     /// Appends one segment. Consecutive segments of the same style share a batch.
@@ -110,14 +154,21 @@ impl PackedFrame {
         self.segments
             .extend([a.x as f32, a.y as f32, b.x as f32, b.y as f32]);
 
-        match self
-            .batch_words
-            .rchunks_exact_mut(Self::WORDS_PER_BATCH)
-            .next()
-        {
-            Some(last) if last[0] == style as u32 => last[2] += 1,
-            _ => self.batch_words.extend([style as u32, first, 1]),
-        }
+        extend_batches(&mut self.batch_words, style, first);
+    }
+
+    /// Appends one arc instance. A full circle is an arc with a sweep of 2π.
+    pub fn push_arc(&mut self, style: StyleRole, arc: &Arc) {
+        let index = self.arc_count();
+        let center = arc.center - self.origin;
+        self.arcs.extend([
+            center.x as f32,
+            center.y as f32,
+            arc.radius as f32,
+            arc.start as f32,
+            arc.sweep as f32,
+        ]);
+        extend_batches(&mut self.arc_batch_words, style, index);
     }
 
     /// Appends the stroke geometry of one entity. The single place that knows
@@ -125,6 +176,13 @@ impl PackedFrame {
     pub fn push_entity(&mut self, style: StyleRole, entity: &Entity) {
         match entity {
             Entity::Line(line) => self.push_segment(style, line.start, line.end),
+            Entity::Circle(circle) => {
+                self.push_arc(
+                    style,
+                    &Arc::new(circle.center, circle.radius, 0.0, std::f64::consts::TAU),
+                );
+            }
+            Entity::Arc(arc) => self.push_arc(style, &arc.arc()),
         }
     }
 }
@@ -207,6 +265,57 @@ mod tests {
         assert!(frame.batches().is_empty());
         assert_eq!(frame.origin(), p(5.0, 5.0));
         assert_eq!(frame.segments.capacity(), capacity);
+    }
+
+    #[test]
+    fn circles_and_arcs_become_arc_instances_relative_to_the_origin() {
+        use std::f64::consts::{FRAC_PI_2, PI, TAU};
+
+        use cad_document::{ArcEntity, CircleEntity};
+
+        let mut frame = PackedFrame::default();
+        frame.reset(p(100.0, 100.0));
+        frame.push_entity(
+            StyleRole::Entity,
+            &CircleEntity::new(p(110.0, 95.0), 4.0).into(),
+        );
+        frame.push_entity(
+            StyleRole::Entity,
+            &ArcEntity::new(p(100.0, 100.0), 2.0, FRAC_PI_2, PI).into(),
+        );
+        frame.push_entity(
+            StyleRole::Preview,
+            &CircleEntity::new(p(0.0, 0.0), 1.0).into(),
+        );
+
+        assert_eq!(frame.arc_count(), 3);
+        assert_eq!(&frame.arcs()[..5], &[10.0, -5.0, 4.0, 0.0, TAU as f32]);
+        assert_eq!(
+            &frame.arcs()[5..10],
+            &[0.0, 0.0, 2.0, FRAC_PI_2 as f32, FRAC_PI_2 as f32]
+        );
+        assert_eq!(
+            frame.arc_batches(),
+            vec![
+                DrawBatch {
+                    style: StyleRole::Entity,
+                    first: 0,
+                    count: 2
+                },
+                DrawBatch {
+                    style: StyleRole::Preview,
+                    first: 2,
+                    count: 1
+                },
+            ]
+        );
+        // Arcs and segments are independent buffers.
+        assert_eq!(frame.segment_count(), 0);
+        assert!(frame.batches().is_empty());
+
+        frame.reset(p(0.0, 0.0));
+        assert_eq!(frame.arc_count(), 0);
+        assert!(frame.arc_batch_words().is_empty());
     }
 
     #[test]

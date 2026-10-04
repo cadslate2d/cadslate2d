@@ -8,13 +8,8 @@
 //   B. analytic arcs: one instance per arc, evaluated exactly in the shader.
 //
 // Loaded on demand under `?debug`; not part of the application's render path.
-import { FLOATS_PER_SEGMENT } from "../../cad/engine";
-import {
-  ARC_FRAGMENT_SHADER,
-  ARC_STRIP_VERTICES,
-  ARC_VERTEX_SHADER,
-  FLOATS_PER_ARC,
-} from "./arc-shaders";
+import { FLOATS_PER_ARC, FLOATS_PER_SEGMENT } from "../../cad/engine";
+import { ARC_FRAGMENT_SHADER, ARC_STRIP_VERTICES, ARC_VERTEX_SHADER } from "./arc-shaders";
 import { linkProgram } from "./program";
 import { STROKE_FRAGMENT_SHADER, STROKE_VERTEX_SHADER } from "./shaders";
 

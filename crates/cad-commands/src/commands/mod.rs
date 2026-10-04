@@ -22,10 +22,14 @@ macro_rules! immediate_command {
     };
 }
 
+mod arc;
+mod circle;
 mod files;
 mod history;
 mod line;
 
+pub(crate) use arc::ArcCommand;
+pub(crate) use circle::CircleCommand;
 pub(crate) use files::{ExportCommand, OpenCommand};
 pub(crate) use history::{RedoCommand, UndoCommand};
 pub(crate) use line::LineCommand;
