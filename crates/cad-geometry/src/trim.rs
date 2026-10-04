@@ -88,7 +88,7 @@ fn trim_open<C: OpenCurve>(
     cuts: &[Point2],
     pick: Point2,
     tolerance: LinearTolerance,
-) -> Option<Vec<C>> {
+) -> Option<Trimmed<C>> {
     let (start, end) = (curve.start_point(), curve.end_point());
     let at = curve.parameter_of(pick);
     let dividing = cuts
@@ -111,40 +111,73 @@ fn trim_open<C: OpenCurve>(
     if before.is_none() && after.is_none() {
         return None;
     }
-    let head = before.map(|(_, cut)| curve.between(start, cut));
-    let tail = after.map(|(_, cut)| curve.between(cut, end));
-    Some(head.into_iter().chain(tail).collect())
+    let from = before.map_or(start, |(_, cut)| cut);
+    let to = after.map_or(end, |(_, cut)| cut);
+    let head = before.map(|_| curve.between(start, from));
+    let tail = after.map(|_| curve.between(to, end));
+    Some(Trimmed {
+        kept: head.into_iter().chain(tail).collect(),
+        removed: curve.between(from, to),
+    })
 }
 
-/// See [`trim_open`]: the pieces of a segment left after trimming at `pick`.
+/// A curve after trimming: the one or two pieces that stay, and the piece
+/// that goes — which is what a preview shows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Trimmed<C> {
+    pub kept: Vec<C>,
+    pub removed: C,
+}
+
+/// See [`trim_open`]: a segment trimmed at `pick`, as what stays and what goes.
+pub fn trim_segment_parts(
+    segment: &Segment,
+    cuts: &[Point2],
+    pick: Point2,
+    tolerance: LinearTolerance,
+) -> Option<Trimmed<Segment>> {
+    trim_open(segment, cuts, pick, tolerance)
+}
+
+/// The pieces of a segment left after trimming at `pick`.
 pub fn trim_segment(
     segment: &Segment,
     cuts: &[Point2],
     pick: Point2,
     tolerance: LinearTolerance,
 ) -> Option<Vec<Segment>> {
-    trim_open(segment, cuts, pick, tolerance)
+    trim_segment_parts(segment, cuts, pick, tolerance).map(|parts| parts.kept)
 }
 
-/// See [`trim_open`]: the pieces of an arc left after trimming at `pick`.
+/// See [`trim_open`]: an arc trimmed at `pick`, as what stays and what goes.
+pub fn trim_arc_parts(
+    arc: &Arc,
+    cuts: &[Point2],
+    pick: Point2,
+    tolerance: LinearTolerance,
+) -> Option<Trimmed<Arc>> {
+    trim_open(arc, cuts, pick, tolerance)
+}
+
+/// The pieces of an arc left after trimming at `pick`.
 pub fn trim_arc(
     arc: &Arc,
     cuts: &[Point2],
     pick: Point2,
     tolerance: LinearTolerance,
 ) -> Option<Vec<Arc>> {
-    trim_open(arc, cuts, pick, tolerance)
+    trim_arc_parts(arc, cuts, pick, tolerance).map(|parts| parts.kept)
 }
 
-/// The arc left of a circle when the stretch containing `pick`, between two
-/// neighbouring cuts, is removed. A circle has no ends, so it takes two
-/// distinct cuts to remove anything: `None` with fewer.
-pub fn trim_circle(
+/// A circle trimmed at `pick`: the stretch containing the pick, between two
+/// neighbouring cuts, goes; the rest stays as one arc. A circle has no ends,
+/// so it takes two distinct cuts to remove anything: `None` with fewer.
+pub fn trim_circle_parts(
     circle: &Circle,
     cuts: &[Point2],
     pick: Point2,
     tolerance: LinearTolerance,
-) -> Option<Arc> {
+) -> Option<Trimmed<Arc>> {
     let mut distinct: Vec<Point2> = Vec::new();
     for cut in cuts {
         if !distinct
@@ -168,12 +201,21 @@ pub fn trim_circle(
     let at = normalize_angle(angle_about(circle.center, pick));
     let next = angles.iter().position(|angle| *angle > at).unwrap_or(0);
     let previous = (next + angles.len() - 1) % angles.len();
-    Some(Arc::from_angles(
-        circle.center,
-        circle.radius,
-        angles[next],
-        angles[previous],
-    ))
+    let arc = |from: f64, to: f64| Arc::from_angles(circle.center, circle.radius, from, to);
+    Some(Trimmed {
+        kept: vec![arc(angles[next], angles[previous])],
+        removed: arc(angles[previous], angles[next]),
+    })
+}
+
+/// The arc left of a circle after trimming at `pick`.
+pub fn trim_circle(
+    circle: &Circle,
+    cuts: &[Point2],
+    pick: Point2,
+    tolerance: LinearTolerance,
+) -> Option<Arc> {
+    trim_circle_parts(circle, cuts, pick, tolerance).and_then(|parts| parts.kept.into_iter().next())
 }
 
 #[cfg(test)]
@@ -219,6 +261,39 @@ mod tests {
         assert_eq!(
             trim_segment(&segment(), &cuts, p(95.0, 0.0), TOLERANCE),
             Some(vec![Segment::new(p(0.0, 0.0), p(70.0, 0.0))])
+        );
+    }
+
+    /// What goes and what stays always add up to the original.
+    #[test]
+    fn the_removed_part_is_the_complement_of_what_is_kept() {
+        let cuts = [p(70.0, 0.0), p(30.0, 0.0)];
+        let middle = trim_segment_parts(&segment(), &cuts, p(50.0, 0.0), TOLERANCE).unwrap();
+        assert_eq!(middle.removed, Segment::new(p(30.0, 0.0), p(70.0, 0.0)));
+        assert_eq!(middle.kept.len(), 2);
+
+        let tail = trim_segment_parts(&segment(), &cuts, p(95.0, 0.0), TOLERANCE).unwrap();
+        assert_eq!(tail.removed, Segment::new(p(70.0, 0.0), p(100.0, 0.0)));
+        let head = trim_segment_parts(&segment(), &cuts, p(5.0, 0.0), TOLERANCE).unwrap();
+        assert_eq!(head.removed, Segment::new(p(0.0, 0.0), p(30.0, 0.0)));
+
+        // An arc: the two sweeps add up.
+        let parts = trim_arc_parts(&arc(), &[p(0.0, 10.0)], p(-7.0, 7.0), TOLERANCE).unwrap();
+        assert!((parts.kept[0].sweep + parts.removed.sweep - PI).abs() < 1e-12);
+        assert!(parts.removed.end_point().distance_to(p(-10.0, 0.0)) < 1e-12);
+
+        // A circle: the kept arc and the removed arc make the full turn.
+        let circle = Circle::new(p(0.0, 0.0), 10.0);
+        let cuts = [p(10.0, 0.0), p(0.0, 10.0)];
+        let parts = trim_circle_parts(&circle, &cuts, p(7.0, 7.0), TOLERANCE).unwrap();
+        assert!((parts.removed.sweep - FRAC_PI_2).abs() < 1e-12);
+        assert!((parts.kept[0].sweep + parts.removed.sweep - 2.0 * PI).abs() < 1e-12);
+        assert!(
+            parts
+                .removed
+                .mid_point()
+                .distance_to(p(50f64.sqrt(), 50f64.sqrt()))
+                < 1e-9
         );
     }
 

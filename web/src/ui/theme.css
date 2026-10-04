@@ -41,6 +41,9 @@
   /* Grips of selected entities; the one under the cursor or in hand is hot. */
   --canvas-grip: #58a6ff;
   --canvas-grip-hot: #ff6b5e;
+  /* The object a click would pick, and what an edit would cut away. */
+  --canvas-hover: #a9cdff;
+  --canvas-removal: #ff6b5e;
   /* The marker of the object snap under the cursor. */
   --canvas-snap-marker: #ffb224;
   /* The direction polar tracking has locked onto. */
@@ -55,6 +58,8 @@
   --canvas-lineweight-selection-crossing: 1;
   --canvas-lineweight-grip: 1.5;
   --canvas-lineweight-grip-hot: 2;
+  --canvas-lineweight-hover: 2.25;
+  --canvas-lineweight-removal: 2.25;
   --canvas-lineweight-snap-marker: 1.5;
   --canvas-lineweight-tracking: 1;
 

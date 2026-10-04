@@ -45,10 +45,14 @@ pub enum StyleRole {
     Grip = 10,
     /// The grip under the cursor, or the one being dragged.
     GripHot = 11,
+    /// The object a click would pick, while a command asks for one.
+    Hover = 12,
+    /// Geometry an edit would remove.
+    Removal = 13,
 }
 
 impl StyleRole {
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 14] = [
         Self::Entity,
         Self::Selection,
         Self::Preview,
@@ -61,6 +65,8 @@ impl StyleRole {
         Self::GridMajor,
         Self::Grip,
         Self::GripHot,
+        Self::Hover,
+        Self::Removal,
     ];
 
     fn from_word(word: u32) -> Option<Self> {

@@ -30,8 +30,8 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `SCALE` | `SC` | Scales the selection uniformly about a base point, by a typed factor or the pointer's distance. |
 | `MIRROR` | `MI` | Reflects the selection across a line through two points; asks whether to erase the originals. |
 | `OFFSET` | `O` | A parallel copy of a line, or a concentric copy of a circle, at a set distance on the side you pick. Repeats until Enter. Arcs and polylines are not supported yet. |
-| `TRIM` | `TR` | Pick one cutting edge, then pick objects on the side to remove. Lines, arcs, and circles can be trimmed ([details](docs/modify-matrix.md)). |
-| `EXTEND` | `EX` | Pick one boundary edge, then pick lines or arcs near the end to carry on to it. |
+| `TRIM` | `TR` | Pick one cutting edge, then pick objects on the side to remove. Lines, arcs, and circles can be trimmed ([details](docs/modify-matrix.md)). The part a click would remove is shown in red as you hover. |
+| `EXTEND` | `EX` | Pick one boundary edge, then pick lines or arcs near the end to carry on to it. The extension is previewed as you hover. |
 | `FILLET` | `F` | Joins two lines with a tangent arc, trimming or extending both. `Radius` sets the radius (remembered); zero makes a sharp corner. |
 | `CHAMFER` | `CHA` | Joins two lines with a straight bevel. `Distance` sets the two distances (remembered). |
 | `UNDO` | `U`, Ctrl+Z | Reverts the last command. |
@@ -41,6 +41,8 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `POLARANG` | | Sets the angle between polar tracking directions (90° at start). |
 | `OPEN` | `DXFIN`, Ctrl+O | Opens an ASCII DXF file. Lines, circles, arcs, and polylines — including their arc segments — are imported; everything else is counted and reported. |
 | `DXFOUT` | `SAVE`, `SAVEAS`, `EXPORT`, Ctrl+S | Downloads the drawing as ASCII DXF (R12). Polyline arc segments are written as bulges. |
+
+Whenever a command asks you to pick one object — OFFSET, TRIM, EXTEND, FILLET, CHAMFER — the object under the pointer is highlighted before you click.
 
 Modify commands work in either order: select first and then give the command, or give the command and select at `Select objects:`, finishing with Enter.
 

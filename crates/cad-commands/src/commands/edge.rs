@@ -10,7 +10,7 @@ use cad_core::{EntityId, Point2};
 use cad_document::{Entity, ExtendError, TrimError};
 use cad_input::ExpectedInput;
 
-use crate::{Command, CommandContext, CommandInput, OverlayItem, Prompt, Step};
+use crate::{Command, CommandContext, CommandInput, HoveredObject, OverlayItem, Prompt, Step};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Operation {
@@ -149,6 +149,29 @@ impl Command for EdgeCommand {
             _ => {}
         }
         Step::Continue
+    }
+
+    /// What a click on the hovered object would do: the part TRIM would cut
+    /// away, or the object as EXTEND would lengthen it.
+    fn preview_pick(&self, hovered: &HoveredObject<'_>, out: &mut Vec<OverlayItem>) {
+        let State::Target { edge } = self.state else {
+            return;
+        };
+        let Some(edge) = hovered.drawing.entity(edge).filter(|_| hovered.id != edge) else {
+            return;
+        };
+        match self.operation {
+            Operation::Trim => {
+                if let Ok(parts) = hovered.entity.trim_parts(edge, hovered.at) {
+                    out.push(OverlayItem::PreviewRemoval(parts.removed));
+                }
+            }
+            Operation::Extend => {
+                if let Ok(longer) = hovered.entity.extended(edge, hovered.at) {
+                    out.push(OverlayItem::PreviewEntity(longer));
+                }
+            }
+        }
     }
 
     fn preview(&self, _cursor: Point2, out: &mut Vec<OverlayItem>) {

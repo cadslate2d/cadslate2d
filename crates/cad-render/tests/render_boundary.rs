@@ -164,6 +164,43 @@ fn snap_markers_cause_no_committed_upload() {
     assert_eq!(cache.build_count(), builds, "the scene was rebuilt");
 }
 
+/// #118: hover feedback and pick previews are overlay work only. Hovering
+/// objects while a command asks for one changes the overlay and never the
+/// committed scene.
+#[test]
+fn hovering_objects_for_a_pick_causes_no_committed_upload() {
+    let mut h = drawing();
+    h.enter("TR");
+    h.click(450.0, 300.0); // the bottom edge of the rectangle is the cutting edge
+    let mut cache = SceneCache::new();
+    let revision = cache.scene(h.session.drawing()).revision();
+    let builds = cache.build_count();
+
+    let (mut hovers, mut removals) = (0, 0);
+    for step in 0..200 {
+        // Straight across at world y = 20: over the rectangle's sides and
+        // the slanted line, which crosses the cutting edge.
+        let (x, y) = (350.0 + f64::from(step), 280.0);
+        let dirty = h.move_to(x, y);
+        assert!(dirty.contains(Dirty::OVERLAY) && !dirty.contains(Dirty::SCENE));
+        let overlay = overlay_of(&h);
+        assert_frame_is_consistent(overlay.frame(), "hover overlay");
+        let has = |style: StyleRole| {
+            overlay
+                .frame()
+                .batches()
+                .iter()
+                .any(|batch| batch.style == style)
+        };
+        hovers += usize::from(has(StyleRole::Hover));
+        removals += usize::from(has(StyleRole::Removal));
+        assert_eq!(cache.scene(h.session.drawing()).revision(), revision);
+    }
+    assert!(hovers > 0, "the sweep never crossed an object");
+    assert!(removals > 0, "the sweep never previewed a trim");
+    assert_eq!(cache.build_count(), builds, "the scene was rebuilt");
+}
+
 /// #82: the grid is view-dependent overlay geometry. Showing it, and
 /// panning and zooming under it, never rebuilds the committed scene.
 #[test]

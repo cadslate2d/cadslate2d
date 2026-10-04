@@ -8,7 +8,7 @@
 use std::fmt::Debug;
 
 use cad_core::{EntityId, Point2, Vec2};
-use cad_document::Drawing;
+use cad_document::{Drawing, Entity};
 use cad_input::{ExpectedInput, Keyword};
 
 use crate::log::CommandLog;
@@ -121,6 +121,17 @@ impl CommandContext<'_> {
     }
 }
 
+/// The object under the cursor while a command asks for one, for previews.
+#[derive(Clone, Copy, Debug)]
+pub struct HoveredObject<'a> {
+    pub id: EntityId,
+    pub entity: &'a Entity,
+    /// Where on it the cursor is: the point a click would report.
+    pub at: Point2,
+    /// The drawing, read-only, to look up what the command already holds.
+    pub drawing: &'a Drawing,
+}
+
 /// An interactive command.
 pub trait Command: Debug {
     /// Called once when the command is invoked. Commands that need no input
@@ -142,6 +153,12 @@ pub trait Command: Debug {
     /// point were `cursor`. The preview is transient: it lives in the overlay
     /// and never touches the document (§17).
     fn preview(&self, _cursor: Point2, _out: &mut Vec<OverlayItem>) {}
+
+    /// Describes what picking the hovered object would do, for commands that
+    /// ask for an object. Like [`Command::preview`], it is transient: the
+    /// document is not touched, and the description must be what the pick
+    /// would then commit.
+    fn preview_pick(&self, _hovered: &HoveredObject<'_>, _out: &mut Vec<OverlayItem>) {}
 
     /// The point the current input is measured from, if any: the anchor of
     /// the rubber band. It gives meaning to direct-distance entry, and to a

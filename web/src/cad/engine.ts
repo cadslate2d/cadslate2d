@@ -91,6 +91,8 @@ export const StyleRole = {
   GridMajor: 9,
   Grip: 10,
   GripHot: 11,
+  Hover: 12,
+  Removal: 13,
 } as const;
 export type StyleRole = (typeof StyleRole)[keyof typeof StyleRole];
 

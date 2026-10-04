@@ -13,8 +13,8 @@ use crate::log::CommandLog;
 use crate::snap::find_snap_from;
 use crate::{
     Command, CommandContext, CommandInput, CommandRegistry, Dirty, DraftingSettings, Grip,
-    HostRequest, KeyAction, Modifiers, OverlayItem, PointerButton, Selection, SnapModes, SnapPoint,
-    Step, Toggle, Toggles, UiState,
+    HostRequest, HoveredObject, KeyAction, Modifiers, OverlayItem, PointerButton, Selection,
+    SnapModes, SnapPoint, Step, Toggle, Toggles, UiState,
 };
 
 const IDLE_PROMPT: &str = "Command:";
@@ -178,6 +178,17 @@ impl Session {
         grip_at(&self.grips(), &self.view, cursor)
     }
 
+    /// The entity a click would pick right now, while a command asks for one
+    /// object. Found through the spatial index, like every pick.
+    pub fn hovered_object(&self) -> Option<EntityId> {
+        let cursor = self.cursor?;
+        let asks_for_object = self.active.is_some() && self.expected().kind == InputKind::Object;
+        if !asks_for_object || self.pan_anchor.is_some() {
+            return None;
+        }
+        self.pick(cursor)
+    }
+
     /// The grip being dragged, if a grip edit is in progress.
     pub fn active_grip(&self) -> Option<Grip> {
         self.active
@@ -309,6 +320,20 @@ impl Session {
         if let Some(active) = &self.active {
             // Previews follow the point a click would give, not the raw cursor.
             active.command.preview(aim.point, &mut items);
+            // Where a click would pick an object, show which, and what for.
+            let hovered = self
+                .hovered_object()
+                .and_then(|id| Some((id, self.drawing.entity(id)?)));
+            if let Some((id, entity)) = hovered {
+                items.push(OverlayItem::Hover(id));
+                let hovered = HoveredObject {
+                    id,
+                    entity,
+                    at: cursor,
+                    drawing: &self.drawing,
+                };
+                active.command.preview_pick(&hovered, &mut items);
+            }
         }
         if let Some(start) = self.selection_box {
             items.push(OverlayItem::SelectionBox {

@@ -80,6 +80,36 @@ export function litPixels(canvas: Locator): Promise<number> {
   return countPixels(canvas, ([red, green, blue]) => red + green + blue > 3 * 96);
 }
 
+/**
+ * Lit pixels in a small rectangle of world space, `halfWidth` × `halfHeight`
+ * around a world point, in a view that has not been panned or zoomed.
+ */
+export async function litPixelsAround(
+  page: Page,
+  canvas: Locator,
+  at: { x: number; y: number },
+  half: { width: number; height: number },
+): Promise<number> {
+  const center = await centerOf(canvas);
+  const image = PNG.sync.read(
+    await page.screenshot({
+      clip: {
+        x: Math.round(center.x + at.x) - half.width,
+        y: Math.round(center.y - at.y) - half.height,
+        width: 2 * half.width,
+        height: 2 * half.height,
+      },
+    }),
+  );
+  let count = 0;
+  for (let offset = 0; offset < image.data.length; offset += 4) {
+    const sum =
+      (image.data[offset] ?? 0) + (image.data[offset + 1] ?? 0) + (image.data[offset + 2] ?? 0);
+    if (sum > 3 * 96) count += 1;
+  }
+  return count;
+}
+
 /** Pixels in the crossing-selection colour (green), including antialiased ones. */
 export function crossingPixels(canvas: Locator): Promise<number> {
   return countPixels(
@@ -105,7 +135,10 @@ export function markerPixels(canvas: Locator): Promise<number> {
   );
 }
 
-/** Pixels in the hot-grip colour (red), including antialiased ones. */
+/**
+ * Pixels in the warning red shared by the hot grip and by geometry an edit
+ * would remove, including antialiased ones.
+ */
 export function hotGripPixels(canvas: Locator): Promise<number> {
   return countPixels(
     canvas,

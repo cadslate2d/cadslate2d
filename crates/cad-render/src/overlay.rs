@@ -113,6 +113,14 @@ impl OverlayFrame {
                         self.frame.push_entity(StyleRole::Selection, entity);
                     }
                 }
+                OverlayItem::Hover(id) => {
+                    if let Some(entity) = drawing.entity(*id) {
+                        self.frame.push_entity(StyleRole::Hover, entity);
+                    }
+                }
+                OverlayItem::PreviewRemoval(entity) => {
+                    self.frame.push_entity(StyleRole::Removal, entity);
+                }
                 OverlayItem::Grips { at } => {
                     for grip in at {
                         self.push_square(StyleRole::Grip, *grip, GRIP_PIXELS, view);

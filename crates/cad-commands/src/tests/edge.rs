@@ -168,6 +168,123 @@ fn the_chosen_edge_stays_highlighted_while_objects_are_picked() {
     assert!(!h.session.overlay().contains(&OverlayItem::Highlight(edge)));
 }
 
+// ── hover feedback (#118) ──
+
+fn hovered(h: &Harness) -> Option<cad_core::EntityId> {
+    h.session.overlay().into_iter().find_map(|item| match item {
+        OverlayItem::Hover(id) => Some(id),
+        _ => None,
+    })
+}
+
+fn removal(h: &Harness) -> Option<Entity> {
+    h.session.overlay().into_iter().find_map(|item| match item {
+        OverlayItem::PreviewRemoval(entity) => Some(entity),
+        _ => None,
+    })
+}
+
+#[test]
+fn the_object_under_the_cursor_is_marked_while_a_command_asks_for_one() {
+    let mut h = crossing();
+    let ids = h.ids();
+    // Not at the idle prompt, and not at a point prompt.
+    h.move_to_world(p(40.0, 30.0));
+    assert_eq!(hovered(&h), None);
+    h.enter_all(&["L", "200,200"]);
+    h.move_to_world(p(40.0, 30.0));
+    assert_eq!(hovered(&h), None);
+    h.escape();
+
+    h.enter("TR");
+    let revision = h.session.drawing().revision();
+    h.move_to_world(p(40.0, 30.0));
+    assert_eq!(hovered(&h), Some(ids[0]));
+    assert_eq!(h.session.hovered_object(), Some(ids[0]));
+    h.move_to_world(p(80.0, 1.0));
+    assert_eq!(hovered(&h), Some(ids[1]));
+    h.move_to_world(p(150.0, 150.0));
+    assert_eq!(hovered(&h), None);
+    assert_eq!(
+        h.session.drawing().revision(),
+        revision,
+        "hovering changes nothing"
+    );
+}
+
+/// The previewed result equals what the click commits.
+#[test]
+fn trim_previews_the_part_a_click_would_remove() {
+    let mut h = crossing();
+    h.enter("TR");
+    h.click_world(p(40.0, 30.0));
+    let revision = h.session.drawing().revision();
+
+    h.move_to_world(p(80.0, 1.0));
+    assert_eq!(removal(&h), Some(line(40.0, 0.0, 100.0, 0.0)));
+    h.move_to_world(p(10.0, 1.0));
+    assert_eq!(removal(&h), Some(line(0.0, 0.0, 40.0, 0.0)));
+    assert_eq!(h.session.drawing().revision(), revision);
+
+    // What was previewed as removed is exactly what the click removes.
+    h.click_world(p(10.0, 1.0));
+    assert_eq!(h.entities()[1], line(40.0, 0.0, 100.0, 0.0));
+}
+
+#[test]
+fn trim_previews_nothing_where_a_click_would_do_nothing() {
+    let mut h = Harness::with_entities([
+        line(40.0, -60.0, 40.0, 60.0),
+        line(0.0, 0.0, 100.0, 0.0),
+        line(60.0, -40.0, 100.0, -40.0),
+    ]);
+    let edge = h.ids()[0];
+    h.enter("TR");
+    // Before an edge is chosen there is nothing to preview, only the hover.
+    h.move_to_world(p(80.0, 1.0));
+    assert!(hovered(&h).is_some() && removal(&h).is_none());
+
+    h.click_world(p(40.0, 30.0));
+    h.move_to_world(p(80.0, -40.0)); // does not cross the edge
+    assert!(hovered(&h).is_some() && removal(&h).is_none());
+    h.move_to_world(p(40.0, -30.0)); // the edge itself
+    assert_eq!(hovered(&h), Some(edge));
+    assert_eq!(removal(&h), None);
+}
+
+#[test]
+fn extend_previews_the_object_as_a_click_would_leave_it() {
+    let mut h = short_of_the_boundary();
+    h.enter("EX");
+    h.click_world(p(100.0, 40.0));
+    let revision = h.session.drawing().revision();
+
+    h.move_to_world(p(55.0, 1.0));
+    let previewed = h.session.overlay().into_iter().find_map(|item| match item {
+        OverlayItem::PreviewEntity(entity) => Some(entity),
+        _ => None,
+    });
+    assert_eq!(previewed, Some(line(0.0, 0.0, 100.0, 0.0)));
+    assert_eq!(h.session.drawing().revision(), revision);
+
+    h.click_world(p(55.0, 1.0));
+    assert_eq!(Some(h.entities()[1].clone()), previewed);
+}
+
+#[test]
+fn other_commands_that_pick_objects_mark_what_they_would_pick() {
+    let mut h = crossing();
+    let ids = h.ids();
+    h.enter_all(&["O", "10"]);
+    h.move_to_world(p(80.0, 1.0));
+    assert_eq!(hovered(&h), Some(ids[1]));
+    h.escape();
+
+    h.enter("F");
+    h.move_to_world(p(40.0, 30.0));
+    assert_eq!(hovered(&h), Some(ids[0]));
+}
+
 // ── EXTEND ──
 
 /// A vertical boundary at x = 100 and a horizontal line that stops short of it.

@@ -17,6 +17,11 @@ pub enum OverlayItem {
     Grid { spacing: f64 },
     /// A selected entity to highlight.
     Highlight(EntityId),
+    /// The entity under the cursor while a command asks for one object: what
+    /// a click would pick.
+    Hover(EntityId),
+    /// Geometry an edit would remove if the hovered object were picked.
+    PreviewRemoval(Entity),
     /// The grips of the selected entities.
     Grips { at: Vec<Point2> },
     /// The grip under the cursor, or the one being dragged (shown where it

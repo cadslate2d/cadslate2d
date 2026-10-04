@@ -9,8 +9,8 @@
 use cad_core::Point2;
 use cad_core::tolerance::LinearTolerance;
 use cad_geometry::{
-    Corner, extend_arc, extend_segment, offset_circle, offset_segment, trim_arc, trim_circle,
-    trim_segment,
+    Corner, extend_arc, extend_segment, offset_circle, offset_segment, trim_arc_parts,
+    trim_circle_parts, trim_segment_parts,
 };
 
 use crate::{ArcEntity, CircleEntity, Entity, LineEntity};
@@ -69,6 +69,13 @@ pub enum TrimError {
     CircleNeedsTwo,
 }
 
+/// An entity after trimming: what replaces it, and the part that was cut away.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TrimParts {
+    pub kept: Vec<Entity>,
+    pub removed: Entity,
+}
+
 /// Why an entity could not be extended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExtendError {
@@ -83,29 +90,39 @@ impl Entity {
     /// `cutting`: one piece, or two when the pick was between two crossings.
     /// A trimmed circle becomes an arc.
     pub fn trimmed(&self, cutting: &Entity, pick: Point2) -> Result<Vec<Entity>, TrimError> {
+        self.trim_parts(cutting, pick).map(|parts| parts.kept)
+    }
+
+    /// [`Entity::trimmed`], together with the part that is cut away — which
+    /// is what a preview of the trim shows.
+    pub fn trim_parts(&self, cutting: &Entity, pick: Point2) -> Result<TrimParts, TrimError> {
         let cuts = self.intersections(cutting);
+        let line =
+            |piece: cad_geometry::Segment| Entity::from(LineEntity::new(piece.start, piece.end));
+        let arc = |piece: cad_geometry::Arc| Entity::from(ArcEntity::from(piece));
         match self {
-            Entity::Line(line) => trim_segment(&line.segment(), &cuts, pick, TOLERANCE)
-                .map(|pieces| {
-                    pieces
-                        .into_iter()
-                        .map(|piece| LineEntity::new(piece.start, piece.end).into())
-                        .collect()
+            Entity::Line(entity) => trim_segment_parts(&entity.segment(), &cuts, pick, TOLERANCE)
+                .map(|parts| TrimParts {
+                    kept: parts.kept.into_iter().map(line).collect(),
+                    removed: line(parts.removed),
                 })
                 .ok_or(TrimError::NoIntersection),
-            Entity::Arc(arc) => trim_arc(&arc.arc(), &cuts, pick, TOLERANCE)
-                .map(|pieces| {
-                    pieces
-                        .into_iter()
-                        .map(|piece| ArcEntity::from(piece).into())
-                        .collect()
+            Entity::Arc(entity) => trim_arc_parts(&entity.arc(), &cuts, pick, TOLERANCE)
+                .map(|parts| TrimParts {
+                    kept: parts.kept.into_iter().map(arc).collect(),
+                    removed: arc(parts.removed),
                 })
                 .ok_or(TrimError::NoIntersection),
-            Entity::Circle(circle) => match trim_circle(&circle.circle(), &cuts, pick, TOLERANCE) {
-                Some(arc) => Ok(vec![ArcEntity::from(arc).into()]),
-                None if cuts.is_empty() => Err(TrimError::NoIntersection),
-                None => Err(TrimError::CircleNeedsTwo),
-            },
+            Entity::Circle(entity) => {
+                match trim_circle_parts(&entity.circle(), &cuts, pick, TOLERANCE) {
+                    Some(parts) => Ok(TrimParts {
+                        kept: parts.kept.into_iter().map(arc).collect(),
+                        removed: arc(parts.removed),
+                    }),
+                    None if cuts.is_empty() => Err(TrimError::NoIntersection),
+                    None => Err(TrimError::CircleNeedsTwo),
+                }
+            }
             Entity::Polyline(_) => Err(TrimError::Unsupported(self.kind_name())),
         }
     }
@@ -386,6 +403,35 @@ mod tests {
                     && edge.distance_to(kept.end_point()) < 1e-9
             );
         }
+    }
+
+    /// #118: the removed part is what the preview shows; with what is kept
+    /// it makes up the original.
+    #[test]
+    fn trim_parts_name_what_goes_as_well_as_what_stays() {
+        let edge: Entity = LineEntity::new(p(40.0, -60.0), p(40.0, 60.0)).into();
+        let target: Entity = LineEntity::new(p(0.0, 0.0), p(100.0, 0.0)).into();
+        let parts = target.trim_parts(&edge, p(80.0, 0.0)).unwrap();
+        assert_eq!(
+            parts.kept,
+            vec![LineEntity::new(p(0.0, 0.0), p(40.0, 0.0)).into()]
+        );
+        assert_eq!(
+            parts.removed,
+            LineEntity::new(p(40.0, 0.0), p(100.0, 0.0)).into()
+        );
+        assert_eq!(target.trimmed(&edge, p(80.0, 0.0)).unwrap(), parts.kept);
+
+        let circle: Entity = CircleEntity::new(p(40.0, 0.0), 30.0).into();
+        let parts = circle.trim_parts(&edge, p(10.0, 0.0)).unwrap();
+        let Entity::Arc(removed) = &parts.removed else {
+            panic!("the removed part of a circle is an arc");
+        };
+        assert!(
+            removed.arc().distance_to_point(p(10.0, 0.0)) < 1e-9,
+            "the picked side goes"
+        );
+        assert!((removed.arc().sweep - PI).abs() < 1e-9);
     }
 
     #[test]

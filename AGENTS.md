@@ -79,6 +79,7 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 | An entity type | `cad-document` (`Entity`), then every `match` the compiler points at: rendering, picking, snapping, `transformed`, grips, DXF | Bounds and hit-test property tests; DXF fixtures |
 | Geometry maths | `cad-geometry`, as pure functions | Unit and property tests; a regression case per fixed bug |
 | Input syntax | `cad-input` | Table-driven tests and a never-panics property test |
+| A preview of what picking an object would do | `Command::preview_pick`, computed by the same function the pick then commits | A test that the previewed result equals the committed one |
 | Something drawn transiently | An `OverlayItem` in `cad-commands`, turned into segments in `cad-render` | A render-boundary test that the scene revision is unchanged |
 | A snap mode | `SnapMode` and its points in `crates/cad-commands/src/snap.rs`; its marker glyph in `cad-render` | Headless tests per entity type; a marker baseline in `test-data/screenshots/` |
 | A drafting aid or its setting | Pure functions in `crates/cad-commands/src/aids.rs`; state in `Toggles` or `DraftingSettings`; applied in `Session::aim` | Unit tests for the function; headless precedence tests |
