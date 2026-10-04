@@ -30,6 +30,7 @@ mod line;
 mod modify;
 mod osnap;
 mod pline;
+mod polarang;
 mod rectang;
 
 /// Option keywords shared by more than one command.
@@ -48,4 +49,5 @@ pub(crate) use line::LineCommand;
 pub(crate) use modify::{EraseCommand, PlaceCommand};
 pub(crate) use osnap::OsnapCommand;
 pub(crate) use pline::PlineCommand;
+pub(crate) use polarang::PolarAngleCommand;
 pub(crate) use rectang::RectangCommand;

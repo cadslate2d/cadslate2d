@@ -312,3 +312,31 @@ describe("object snap", () => {
     expect(cad.exportDxf()).toContain(" 10\n100.0\n 20\n0.0\n");
   });
 });
+
+describe("drafting aids", () => {
+  test("ORTHO constrains the pointer and reports a readout", () => {
+    const cad = engine();
+    cad.key(KeyAction.ToggleOrtho);
+    enter(cad, "L", "0,0");
+    cad.pointerMove(480, 280, 0); // world (80, 20)
+    const state = cad.uiState();
+    expect(state.cursor).toEqual([80, 0]);
+    expect(state.tracking).toBe("Ortho: 80.0000 < 0°");
+  });
+
+  test("POLAR draws its tracking line in the overlay only while locked", () => {
+    const cad = engine();
+    cad.key(KeyAction.TogglePolar);
+    enter(cad, "L", "0,0");
+    const styles = () =>
+      cad.readOverlay((frame) => Array.from(frame.batches).filter((_, index) => index % 3 === 0));
+
+    cad.pointerMove(480, 296, 0); // four pixels off the horizontal
+    expect(styles()).toContain(StyleRole.Tracking);
+    expect(cad.uiState().tracking).toBe("Polar: 80.0000 < 0°");
+
+    cad.pointerMove(480, 260, 0);
+    expect(styles()).not.toContain(StyleRole.Tracking);
+    expect(cad.uiState().tracking).toBeUndefined();
+  });
+});

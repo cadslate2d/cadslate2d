@@ -102,9 +102,25 @@ impl OverlayFrame {
                         );
                     }
                 }
+                OverlayItem::TrackingLine { from, through } => {
+                    self.push_tracking_line(*from, *through, view)
+                }
                 OverlayItem::SnapMarker { mode, at } => self.push_snap_marker(*mode, *at, view),
                 OverlayItem::Crosshair { at } => self.push_crosshair(*at, view),
             }
+        }
+    }
+
+    /// A ray from `from` through `through`, long enough to leave the view
+    /// from wherever it starts.
+    fn push_tracking_line(&mut self, from: Point2, through: Point2, view: &View) {
+        let direction = through - from;
+        let length = direction.length();
+        if length > 0.0 {
+            let visible = view.visible_bounds();
+            let reach = from.distance_to(view.center()) + visible.min().distance_to(visible.max());
+            let end = from + direction * (reach / length);
+            self.frame.push_segment(StyleRole::Tracking, from, end);
         }
     }
 
@@ -414,6 +430,57 @@ mod tests {
         assert_eq!(
             styles(&overlay_of(&h)),
             vec![StyleRole::SnapMarker, StyleRole::Crosshair]
+        );
+    }
+
+    // ── polar tracking ──
+
+    #[test]
+    fn a_tracking_line_runs_from_its_base_past_the_edge_of_the_view() {
+        let view = view();
+        let mut overlay = OverlayFrame::new();
+        let item = OverlayItem::TrackingLine {
+            from: Point2::new(-350.0, -250.0),
+            through: Point2::new(-340.0, -240.0),
+        };
+        overlay.rebuild(&[item], &Drawing::new(), &view);
+
+        assert_eq!(styles(&overlay), vec![StyleRole::Tracking]);
+        let ends = overlay.frame().segments();
+        let origin = overlay.frame().origin();
+        let start = origin + Vec2::new(f64::from(ends[0]), f64::from(ends[1]));
+        let end = origin + Vec2::new(f64::from(ends[2]), f64::from(ends[3]));
+        assert_eq!(start, Point2::new(-350.0, -250.0));
+        // Along the 45° direction, and beyond the far corner of an 800×600 view.
+        assert!((end.x - start.x - (end.y - start.y)).abs() < 1e-3);
+        assert!(!view.visible_bounds().contains_point(end));
+    }
+
+    #[test]
+    fn a_tracking_line_without_a_direction_is_skipped() {
+        let mut overlay = OverlayFrame::new();
+        let at = Point2::new(5.0, 5.0);
+        let item = OverlayItem::TrackingLine {
+            from: at,
+            through: at,
+        };
+        overlay.rebuild(&[item], &Drawing::new(), &view());
+        assert_eq!(overlay.frame().segment_count(), 0);
+    }
+
+    #[test]
+    fn polar_tracking_draws_under_the_rubber_band() {
+        let mut h = Harness::new();
+        h.toggle(cad_commands::Toggle::Polar);
+        h.enter_all(&["L", "0,0"]);
+        h.move_to_world(Point2::new(90.0, 4.0));
+        assert_eq!(
+            styles(&overlay_of(&h)),
+            vec![
+                StyleRole::Tracking,
+                StyleRole::Preview,
+                StyleRole::Crosshair
+            ]
         );
     }
 

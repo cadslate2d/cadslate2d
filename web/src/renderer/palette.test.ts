@@ -42,6 +42,8 @@ describe("readPalette", () => {
     "--canvas-lineweight-selection-crossing": "1",
     "--canvas-snap-marker": "#ffaa00",
     "--canvas-lineweight-snap-marker": "1.5",
+    "--canvas-tracking": "#00aaaa",
+    "--canvas-lineweight-tracking": "1",
   };
   const read = (property: string) => tokens[property] ?? "";
 

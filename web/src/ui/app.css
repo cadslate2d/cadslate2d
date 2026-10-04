@@ -257,6 +257,12 @@ body {
   color: var(--color-snap);
 }
 
+.status__tracking {
+  border-color: var(--color-tracking);
+  color: var(--color-tracking);
+  font-family: var(--font-mono);
+}
+
 .status__coordinates {
   min-width: 22ch;
   font-family: var(--font-mono);

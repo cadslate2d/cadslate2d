@@ -10,7 +10,7 @@ CadSlate2D is a free, browser-native, local-first 2D CAD application inspired by
 
 ## Status
 
-Milestones **M0 — The Line** and **M1 — Input and Basic Entities** are complete. **M2 — OSNAP, Grips, and Basic Modify** is in progress: object snaps work; drafting aids, grips, and more modify commands follow. You can draw lines, circles, arcs, polylines, and rectangles by command or pointer, snap exactly to existing geometry, select with clicks and boxes, move, copy, and erase, undo and redo whole commands, export DXF, and reopen it — all in a static page with no backend. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
+Milestones **M0 — The Line** and **M1 — Input and Basic Entities** are complete. **M2 — OSNAP, Grips, and Basic Modify** is in progress: object snaps, ORTHO, and POLAR work; the grid, grips, and more modify commands follow. You can draw lines, circles, arcs, polylines, and rectangles by command or pointer, snap exactly to existing geometry, select with clicks and boxes, move, copy, and erase, undo and redo whole commands, export DXF, and reopen it — all in a static page with no backend. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
 
 ## What works today
 
@@ -29,6 +29,7 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `UNDO` | `U`, Ctrl+Z | Reverts the last command. |
 | `REDO` | Ctrl+Y, Ctrl+Shift+Z | Re-applies the last undone command. |
 | `OSNAP` | `OS` | Chooses which object snaps run. Each mode is switched by its keyword; Enter finishes. |
+| `POLARANG` | | Sets the angle between polar tracking directions (90° at start). |
 | `OPEN` | `DXFIN`, Ctrl+O | Opens an ASCII DXF file. Lines, circles, arcs, and straight polylines are imported; everything else is counted and reported. |
 | `DXFOUT` | `SAVE`, `SAVEAS`, `EXPORT`, Ctrl+S | Downloads the drawing as ASCII DXF (R12). |
 
@@ -49,7 +50,9 @@ Options shown in brackets, as in `Specify next point or [Close/Undo]:`, are chos
 | Up / Down | Recall earlier input |
 | Wheel / middle-drag | Zoom about the cursor / pan |
 | F3 | Object snaps on or off (on at start) |
-| F7 / F8 / F10 | Toggle GRID / ORTHO / POLAR. The switches work; the drafting behaviour behind them arrives later in M2 |
+| F8 | ORTHO on or off: the pointer draws horizontally or vertically from the previous point |
+| F10 | POLAR on or off: the pointer locks onto angles at a fixed increment from the previous point |
+| F7 | Toggle GRID. The switch works; the grid itself arrives later in M2 |
 
 ### Object snaps
 
@@ -65,6 +68,16 @@ While a command asks for a point, the pointer snaps to nearby geometry. A marker
 | Nearest | hourglass | the closest point on the entity (off by default) | | | |
 
 The closest snap point within ten pixels wins. Hovering a circle or arc also offers its centre. Nearest applies only when no other snap is in reach. An entity being moved is not offered as a target at its old position. `OSNAP` chooses the running modes; F3 switches them all off and on.
+
+### ORTHO and POLAR
+
+Both constrain the pointer's direction from the previous point, and both show a readout such as `Polar: 50.0000 < 45°` in the status bar. A typed distance then runs exactly along that direction.
+
+- **ORTHO** always constrains to horizontal or vertical.
+- **POLAR** locks only while the pointer is within a few pixels of a tracked direction, shows that direction as a line, and lets go when the pointer moves away.
+- They are never on together: switching one on switches the other off.
+
+The order of precedence for a point is fixed: **typed coordinates, then an object snap, then ORTHO or POLAR, then the free cursor.**
 
 Unexported changes exist only in the browser tab until autosave arrives (M5); the page asks before you leave with unexported work.
 

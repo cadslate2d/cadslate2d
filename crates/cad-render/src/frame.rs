@@ -35,10 +35,12 @@ pub enum StyleRole {
     SelectionCrossing = 5,
     /// The marker of the object snap under the cursor.
     SnapMarker = 6,
+    /// The direction polar tracking has locked onto.
+    Tracking = 7,
 }
 
 impl StyleRole {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Entity,
         Self::Selection,
         Self::Preview,
@@ -46,6 +48,7 @@ impl StyleRole {
         Self::SelectionWindow,
         Self::SelectionCrossing,
         Self::SnapMarker,
+        Self::Tracking,
     ];
 
     fn from_word(word: u32) -> Option<Self> {

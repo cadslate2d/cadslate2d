@@ -15,6 +15,9 @@ pub struct UiState {
     /// The object snap the cursor is on, by name; `cursor` is then the exact
     /// snap point — what a click would give.
     pub snap: Option<&'static str>,
+    /// The readout of ORTHO or POLAR while it constrains the pointer, such as
+    /// `Polar: 50.0000 < 45°`.
+    pub tracking: Option<String>,
     /// Number of selected entities.
     pub selection_count: usize,
     /// Whether Space submits the command line like Enter. False only while a

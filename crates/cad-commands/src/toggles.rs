@@ -25,6 +25,16 @@ impl Toggle {
         1 << self as u32
     }
 
+    /// The toggle that cannot be on at the same time as this one. ORTHO and
+    /// POLAR both claim the direction of the rubber band.
+    pub const fn rival(self) -> Option<Self> {
+        match self {
+            Self::Ortho => Some(Self::Polar),
+            Self::Polar => Some(Self::Ortho),
+            Self::Osnap | Self::Grid => None,
+        }
+    }
+
     /// The label on the status bar.
     pub const fn label(self) -> &'static str {
         match self {

@@ -7,6 +7,7 @@
 
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
+pub mod aids;
 mod command;
 mod commands;
 mod dirty;
@@ -17,6 +18,7 @@ mod overlay;
 mod registry;
 mod selection;
 mod session;
+mod settings;
 pub mod snap;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
@@ -26,13 +28,15 @@ mod toggles;
 mod transient;
 mod ui_state;
 
+pub use aids::{Track, TrackKind};
 pub use command::{Command, CommandContext, CommandInput, Prompt, Step};
 pub use dirty::Dirty;
 pub use events::{HostRequest, KeyAction, Modifiers, PointerButton};
 pub use overlay::OverlayItem;
 pub use registry::CommandRegistry;
 pub use selection::Selection;
-pub use session::Session;
+pub use session::{Aim, Session};
+pub use settings::DraftingSettings;
 pub use snap::{SnapMode, SnapModes, SnapPoint};
 pub use toggles::{Toggle, Toggles};
 pub use transient::TransientEdit;

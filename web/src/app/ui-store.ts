@@ -13,6 +13,8 @@ export interface UiSnapshot {
   readonly cursor: readonly [number, number] | undefined;
   /** Name of the object snap under the cursor, if any. */
   readonly snap: string | undefined;
+  /** Readout of ORTHO or POLAR while it constrains the pointer. */
+  readonly tracking: string | undefined;
   readonly selectionCount: number;
   readonly spaceAccepts: boolean;
   readonly canUndo: boolean;
@@ -36,6 +38,7 @@ const INITIAL: UiSnapshot = {
   log: [],
   cursor: undefined,
   snap: undefined,
+  tracking: undefined,
   selectionCount: 0,
   spaceAccepts: true,
   canUndo: false,
@@ -78,6 +81,7 @@ export class UiStore {
       log,
       cursor: state.cursor,
       snap: state.snap,
+      tracking: state.tracking,
       selectionCount: state.selectionCount,
       spaceAccepts: state.spaceAccepts,
       canUndo: state.canUndo,

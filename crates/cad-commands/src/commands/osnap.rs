@@ -21,7 +21,12 @@ const MODES: [(Keyword, SnapMode); 6] = [
 pub(crate) struct OsnapCommand;
 
 fn report(ctx: &mut CommandContext<'_>) {
-    let on: Vec<&str> = ctx.snap_modes.enabled().map(SnapMode::label).collect();
+    let on: Vec<&str> = ctx
+        .settings
+        .snap_modes
+        .enabled()
+        .map(SnapMode::label)
+        .collect();
     let list = if on.is_empty() {
         "none".to_owned()
     } else {
@@ -49,7 +54,7 @@ impl Command for OsnapCommand {
         match input {
             CommandInput::Keyword(keyword) => {
                 if let Some((_, mode)) = MODES.iter().find(|(candidate, _)| *candidate == keyword) {
-                    ctx.snap_modes.flip(*mode);
+                    ctx.settings.snap_modes.flip(*mode);
                     report(ctx);
                 }
                 Step::Continue

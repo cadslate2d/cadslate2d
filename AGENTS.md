@@ -28,6 +28,7 @@ If code and these documents disagree, fix the code or write an ADR. Do not silen
 - **Two render lifetimes (DESIGN §12).** Committed geometry → `RenderScene`, re-uploaded only when the scene revision changes. Transient geometry → `OverlayFrame`. Pointer movement, pan, and zoom must never regenerate or re-upload committed geometry (ADR-0003).
 - **Transient edits do not touch the document.** Previews live in the session; one committed gesture produces one transaction.
 - **Entities being transiently edited are never snap targets** (DESIGN §18.2). A command that moves existing geometry reports it through `Command::transient_sources`.
+- **One pipeline turns the pointer into a point:** `Session::aim` — object snap, then ORTHO or POLAR, then the free cursor. Previews, the status-bar readout, direct-distance entry, and the click all use it. Typed coordinates bypass it. Do not add a second path.
 - **Pixel tolerances are not geometric tolerances.** Pick and snap apertures are `PixelTolerance`s converted through the `View` at the moment of use (§18.3).
 - **No magic epsilons.** Use the tolerance classes in `cad-core`; they are not interchangeable (DESIGN §21).
 - **Only `web/src/renderer/` touches WebGL; only `web/src/cad/` imports the generated WASM package.** ESLint enforces both.
@@ -75,6 +76,7 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 | Input syntax | `cad-input` | Table-driven tests and a never-panics property test |
 | Something drawn transiently | An `OverlayItem` in `cad-commands`, turned into segments in `cad-render` | A render-boundary test that the scene revision is unchanged |
 | A snap mode | `SnapMode` and its points in `crates/cad-commands/src/snap.rs`; its marker glyph in `cad-render` | Headless tests per entity type; a marker baseline in `test-data/screenshots/` |
+| A drafting aid or its setting | Pure functions in `crates/cad-commands/src/aids.rs`; state in `Toggles` or `DraftingSettings`; applied in `Session::aim` | Unit tests for the function; headless precedence tests |
 | A browser capability | `web/src/app/host-services.ts`, behind the `HostServices` interface | A `CadApp` test with a fake host |
 | UI | `web/src/ui/`, styled only through tokens in `theme.css` | No drawing data in React state |
 

@@ -105,6 +105,14 @@ export function markerPixels(canvas: Locator): Promise<number> {
   );
 }
 
+/** Pixels in the polar-tracking colour (teal), including antialiased ones. */
+export function trackingPixels(canvas: Locator): Promise<number> {
+  return countPixels(
+    canvas,
+    ([red, green, blue]) => green > 60 && blue > 55 && red < green * 0.6 && blue > green * 0.7,
+  );
+}
+
 /** Moves the pointer to a world position, in a view that has not been panned or zoomed. */
 export async function hoverWorld(page: Page, canvas: Locator, x: number, y: number): Promise<void> {
   const center = await centerOf(canvas);

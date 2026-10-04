@@ -12,7 +12,7 @@ use cad_document::Drawing;
 use cad_input::{ExpectedInput, Keyword};
 
 use crate::log::CommandLog;
-use crate::{HostRequest, OverlayItem, Selection, SnapModes};
+use crate::{DraftingSettings, HostRequest, OverlayItem, Selection};
 
 /// One resolved input handed to the active command.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -91,8 +91,8 @@ pub enum Step {
 pub struct CommandContext<'a> {
     pub drawing: &'a mut Drawing,
     pub selection: &'a mut Selection,
-    /// The running object snaps; session state, never undoable.
-    pub snap_modes: &'a mut SnapModes,
+    /// How the drafting aids behave; session state, never undoable.
+    pub settings: &'a mut DraftingSettings,
     pub(crate) log: &'a mut CommandLog,
     pub(crate) host_request: &'a mut Option<HostRequest>,
 }
@@ -137,6 +137,13 @@ pub trait Command: Debug {
     /// point supplied where a distance or an angle is expected.
     fn base_point(&self) -> Option<Point2> {
         None
+    }
+
+    /// The point ORTHO and POLAR constrain the pointer from: the anchor of a
+    /// rubber-band line. It is the base point unless the next point is not
+    /// reached along such a line — the opposite corner of a rectangle.
+    fn tracking_base(&self) -> Option<Point2> {
+        self.base_point()
     }
 
     /// The entities this command is transiently editing. While an edit is in

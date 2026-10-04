@@ -801,6 +801,8 @@ F8         ORTHO
 F10        POLAR
 ```
 
+> **Resolved in M2:** a pointer-derived point is decided in a fixed order — object snap, then ORTHO or POLAR, then the free cursor — and typed coordinates bypass all three. ORTHO and POLAR are mutually exclusive: switching one on switches the other off. OSNAP is on in a new session; the others are off. POLAR locks within 8 CSS pixels of a tracked direction; its increment is set with `POLARANG` (90° at start). The readout is shown in the status bar, since text in the drawing area arrives with M4.
+
 Right-click-as-Enter is PROVISIONAL and may become a preference.
 
 ## 13.5 Dynamic input

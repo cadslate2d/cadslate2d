@@ -15,6 +15,11 @@ export function StatusBar({ app }: { app: CadApp }) {
     <footer className="status" aria-label="Status bar">
       <span className="status__chip status__chip--active">Model</span>
       <span className="status__spacer" />
+      {ui.tracking && (
+        <span className="status__chip status__tracking" data-testid="tracking">
+          {ui.tracking}
+        </span>
+      )}
       {ui.snap && (
         <span className="status__chip status__snap" data-testid="snap">
           {ui.snap}

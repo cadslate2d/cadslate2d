@@ -69,6 +69,12 @@ impl Command for RectangCommand {
     fn base_point(&self) -> Option<Point2> {
         self.first
     }
+
+    /// The opposite corner is not at the end of a rubber-band line: ORTHO
+    /// would flatten the rectangle.
+    fn tracking_base(&self) -> Option<Point2> {
+        None
+    }
 }
 
 #[cfg(test)]

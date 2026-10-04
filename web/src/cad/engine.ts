@@ -60,6 +60,8 @@ export interface UiState {
   readonly cursor?: readonly [number, number];
   /** Name of the object snap the cursor is on; `cursor` is then the exact snap point. */
   readonly snap?: string;
+  /** Readout of ORTHO or POLAR while it constrains the pointer, e.g. `Polar: 50.0000 < 45°`. */
+  readonly tracking?: string;
   readonly selectionCount: number;
   /** Whether Space submits the command line like Enter. */
   readonly spaceAccepts: boolean;
@@ -84,6 +86,7 @@ export const StyleRole = {
   SelectionWindow: 4,
   SelectionCrossing: 5,
   SnapMarker: 6,
+  Tracking: 7,
 } as const;
 export type StyleRole = (typeof StyleRole)[keyof typeof StyleRole];
 

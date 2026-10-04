@@ -32,7 +32,7 @@ export const TOGGLES: readonly ToggleSpec[] = [
     key: "F8",
     bit: ToggleBit.Ortho,
     action: KeyAction.ToggleOrtho,
-    hint: NOT_YET,
+    hint: "The pointer draws horizontally or vertically from the previous point. Switches POLAR off.",
   },
   {
     id: "polar",
@@ -40,7 +40,7 @@ export const TOGGLES: readonly ToggleSpec[] = [
     key: "F10",
     bit: ToggleBit.Polar,
     action: KeyAction.TogglePolar,
-    hint: NOT_YET,
+    hint: "The pointer locks onto angles at a fixed increment from the previous point. Type POLARANG to set it. Switches ORTHO off.",
   },
   {
     id: "osnap",
