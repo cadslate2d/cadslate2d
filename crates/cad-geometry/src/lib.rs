@@ -39,6 +39,6 @@ pub use polyline::{
 pub use segment::Segment;
 pub use transform::{Transform, unit_at_degrees};
 pub use trim::{
-    Trimmed, trim_arc, trim_arc_parts, trim_circle, trim_circle_parts, trim_segment,
-    trim_segment_parts,
+    Trimmed, break_arc, break_circle, break_segment, trim_arc, trim_arc_parts, trim_circle,
+    trim_circle_parts, trim_segment, trim_segment_parts,
 };

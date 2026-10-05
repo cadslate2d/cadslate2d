@@ -16,6 +16,8 @@ pub(crate) trait OpenCurve: Sized {
     fn parameter_of(&self, point: Point2) -> f64;
     /// The part of the curve between two points on it, in curve order.
     fn between(&self, from: Point2, to: Point2) -> Self;
+    /// The point of the curve nearest to `point`.
+    fn nearest(&self, point: Point2) -> Point2;
 }
 
 impl OpenCurve for Segment {
@@ -39,6 +41,10 @@ impl OpenCurve for Segment {
 
     fn between(&self, from: Point2, to: Point2) -> Self {
         Segment::new(from, to)
+    }
+
+    fn nearest(&self, point: Point2) -> Point2 {
+        self.closest_point(point)
     }
 }
 
@@ -69,6 +75,10 @@ impl OpenCurve for Arc {
         let start = angle(from, self.start, Arc::start_point(self));
         let end = angle(to, self.end(), Arc::end_point(self));
         Arc::from_angles(self.center, self.radius, start, end)
+    }
+
+    fn nearest(&self, point: Point2) -> Point2 {
+        self.closest_point(point)
     }
 }
 
@@ -118,6 +128,76 @@ fn trim_open<C: OpenCurve>(
     Some(Trimmed {
         kept: head.into_iter().chain(tail).collect(),
         removed: curve.between(from, to),
+    })
+}
+
+/// What is left of an open curve broken between two points on it: up to
+/// two pieces, one before the earlier point and one after the later. With
+/// the two points the same, the curve is split there and nothing is removed.
+///
+/// `None` when nothing would change — a split at one of the curve's own
+/// ends — or when nothing would be left.
+fn break_open<C: OpenCurve>(
+    curve: &C,
+    first: Point2,
+    second: Point2,
+    tolerance: LinearTolerance,
+) -> Option<Vec<C>> {
+    let (start, end) = (curve.start_point(), curve.end_point());
+    let (a, b) = (curve.nearest(first), curve.nearest(second));
+    let (from, to) = if curve.parameter_of(a) <= curve.parameter_of(b) {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    let head = (!tolerance.coincident(from, start)).then(|| curve.between(start, from));
+    let tail = (!tolerance.coincident(to, end)).then(|| curve.between(to, end));
+    let split_only = tolerance.coincident(from, to);
+    match (head, tail) {
+        (None, None) => None,
+        // One break point, at an end: there is nothing to split off.
+        (None, Some(_)) | (Some(_), None) if split_only => None,
+        (head, tail) => Some(head.into_iter().chain(tail).collect()),
+    }
+}
+
+/// See [`break_open`]: a segment broken between two points.
+pub fn break_segment(
+    segment: &Segment,
+    first: Point2,
+    second: Point2,
+    tolerance: LinearTolerance,
+) -> Option<Vec<Segment>> {
+    break_open(segment, first, second, tolerance)
+}
+
+/// See [`break_open`]: an arc broken between two points.
+pub fn break_arc(
+    arc: &Arc,
+    first: Point2,
+    second: Point2,
+    tolerance: LinearTolerance,
+) -> Option<Vec<Arc>> {
+    break_open(arc, first, second, tolerance)
+}
+
+/// A circle broken between two points on it: the part counter-clockwise
+/// from the first to the second goes, and the rest stays as one arc. `None`
+/// when the two points are the same: a circle has no ends to split at.
+pub fn break_circle(
+    circle: &Circle,
+    first: Point2,
+    second: Point2,
+    tolerance: LinearTolerance,
+) -> Option<Arc> {
+    let (a, b) = (circle.closest_point(first), circle.closest_point(second));
+    (!tolerance.coincident(a, b)).then(|| {
+        Arc::from_angles(
+            circle.center,
+            circle.radius,
+            angle_about(circle.center, b),
+            angle_about(circle.center, a),
+        )
     })
 }
 
@@ -294,6 +374,103 @@ mod tests {
                 .mid_point()
                 .distance_to(p(50f64.sqrt(), 50f64.sqrt()))
                 < 1e-9
+        );
+    }
+
+    // ── BREAK (#126) ──
+
+    #[test]
+    fn a_segment_broken_between_two_points_loses_what_lies_between() {
+        // The points need not be on the segment: their nearest points count.
+        assert_eq!(
+            break_segment(&segment(), p(30.0, 4.0), p(70.0, -2.0), TOLERANCE),
+            Some(vec![
+                Segment::new(p(0.0, 0.0), p(30.0, 0.0)),
+                Segment::new(p(70.0, 0.0), p(100.0, 0.0))
+            ])
+        );
+        // The order of the two points does not matter.
+        assert_eq!(
+            break_segment(&segment(), p(70.0, 0.0), p(30.0, 0.0), TOLERANCE),
+            break_segment(&segment(), p(30.0, 0.0), p(70.0, 0.0), TOLERANCE)
+        );
+        // A second point beyond the end takes the end off.
+        assert_eq!(
+            break_segment(&segment(), p(60.0, 0.0), p(500.0, 0.0), TOLERANCE),
+            Some(vec![Segment::new(p(0.0, 0.0), p(60.0, 0.0))])
+        );
+    }
+
+    #[test]
+    fn the_same_point_twice_splits_without_removing_anything() {
+        assert_eq!(
+            break_segment(&segment(), p(40.0, 0.0), p(40.0, 0.0), TOLERANCE),
+            Some(vec![
+                Segment::new(p(0.0, 0.0), p(40.0, 0.0)),
+                Segment::new(p(40.0, 0.0), p(100.0, 0.0))
+            ])
+        );
+    }
+
+    #[test]
+    fn breaking_at_an_end_or_away_everything_is_refused() {
+        // A split at an endpoint splits nothing off.
+        assert_eq!(
+            break_segment(&segment(), p(0.0, 0.0), p(0.0, 0.0), TOLERANCE),
+            None
+        );
+        assert_eq!(
+            break_segment(&segment(), p(100.0, 0.0), p(100.0, 0.0), TOLERANCE),
+            None
+        );
+        // From end to end, nothing would be left.
+        assert_eq!(
+            break_segment(&segment(), p(0.0, 0.0), p(100.0, 0.0), TOLERANCE),
+            None
+        );
+        assert_eq!(
+            break_segment(&segment(), p(-50.0, 0.0), p(500.0, 0.0), TOLERANCE),
+            None
+        );
+    }
+
+    #[test]
+    fn an_arc_is_broken_along_its_sweep() {
+        let diagonal = 10.0 / 2f64.sqrt();
+        let pieces = break_arc(
+            &arc(),
+            p(diagonal, diagonal),
+            p(-diagonal, diagonal),
+            TOLERANCE,
+        )
+        .unwrap();
+        assert_eq!(pieces.len(), 2);
+        assert!((pieces[0].sweep - PI / 4.0).abs() < 1e-12 && pieces[0].start == 0.0);
+        assert!((pieces[1].sweep - PI / 4.0).abs() < 1e-12);
+        assert!(pieces[1].end_point().distance_to(p(-10.0, 0.0)) < 1e-12);
+
+        let split = break_arc(&arc(), p(0.0, 10.0), p(0.0, 10.0), TOLERANCE).unwrap();
+        assert!(
+            (split[0].sweep - FRAC_PI_2).abs() < 1e-12
+                && (split[1].sweep - FRAC_PI_2).abs() < 1e-12
+        );
+    }
+
+    #[test]
+    fn a_circle_loses_the_part_counter_clockwise_from_the_first_point_to_the_second() {
+        let circle = Circle::new(p(0.0, 0.0), 10.0);
+        // From east to north: the first quadrant goes, three quarters stay.
+        let kept = break_circle(&circle, p(10.0, 0.0), p(0.0, 10.0), TOLERANCE).unwrap();
+        assert!(
+            (kept.start - FRAC_PI_2).abs() < 1e-12 && (kept.sweep - 3.0 * FRAC_PI_2).abs() < 1e-12
+        );
+        // From north to east: the other way round, only the first quadrant stays.
+        let kept = break_circle(&circle, p(0.0, 10.0), p(10.0, 0.0), TOLERANCE).unwrap();
+        assert!(kept.start.abs() < 1e-12 && (kept.sweep - FRAC_PI_2).abs() < 1e-12);
+        // One point cannot open a circle.
+        assert_eq!(
+            break_circle(&circle, p(10.0, 0.0), p(20.0, 0.0), TOLERANCE),
+            None
         );
     }
 

@@ -132,3 +132,27 @@ Rules:
 Not implemented: chamfers between a polyline and another object; the `Angle`, `Trim`, and `Multiple` options.
 
 Tests: `cad-geometry/src/corner.rs`, `cad-geometry/src/path_corner.rs`, `cad-document/src/editing.rs`, `cad-commands/src/tests/corner.rs`, `web/e2e/fillet-chamfer.spec.ts`.
+
+## BREAK
+
+One pick and one point; the part of the object between them is removed. The same point twice — typed as `@` — splits the object there and removes nothing.
+
+| Object | Two different points | The same point twice (`@`) |
+| --- | --- | --- |
+| Line | Two lines; one if a point is at or past an end | Two lines meeting at the point |
+| Arc | Two arcs; one if a point is at or past an end | Two arcs meeting at the point |
+| Circle | An arc: the part counter-clockwise from the first point to the second is removed | Refused |
+| Open polyline | Two polylines; one if a point is at or past an end. Arc segments are cut as arcs | Two polylines meeting at the point |
+| Closed polyline | One open polyline: the part from the first point to the second, in the polyline's own direction, is removed | Refused |
+
+Rules:
+
+- The first break point is where the object was picked, unless the `First` option is used to name another.
+- A break point need not be on the object: the nearest point of the object is used. A point past an end therefore takes that end off.
+- The first piece is the object itself, edited; a second piece is a new object. One break is one transaction.
+- Breaking at one point that is an end of the object is refused: "That is an end of the object: there is nothing to break off."
+- Two points that span the whole object are refused: "That would remove the whole object; use ERASE for that."
+- A circle or a closed polyline has no ends, so one point cannot break it: "A circle has no ends: it needs two different break points."
+- After a refusal the command asks for the second point again.
+
+Tests: `cad-geometry/src/trim.rs` (`break_*`), `cad-geometry/src/path.rs` (`Path::broken`), `cad-document/src/editing.rs`, `cad-commands/src/tests/break_.rs`, `cad-input/src/point.rs` (the bare `@`), `web/e2e/break.spec.ts`.

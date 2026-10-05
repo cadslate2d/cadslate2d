@@ -118,6 +118,16 @@ const MODIFY: readonly Tool[] = [
     icon: icon(<path d="M4 4v8l8 8h8" strokeLinejoin="round" />),
   },
   {
+    command: "BREAK",
+    label: "Break",
+    icon: icon(
+      <>
+        <path d="M3 12h6M15 12h6" />
+        <path d="M11 7l-2 10M15 7l-2 10" />
+      </>,
+    ),
+  },
+  {
     command: "ERASE",
     label: "Erase",
     icon: icon(<path d="M5 19h14M7 15 15 5l4 3-8 10H8z" strokeLinejoin="round" />),

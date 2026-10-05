@@ -273,6 +273,64 @@ impl Path {
         })
     }
 
+    /// What is left of the path broken between two points on it.
+    ///
+    /// An open path loses what lies between them and leaves up to two paths;
+    /// with the two points the same it is split there. A closed path loses
+    /// the part from the first point onwards, in its own direction, to the
+    /// second, and what stays is one open path.
+    ///
+    /// `None` when nothing would change or nothing would be left: a split at
+    /// an end, a break from end to end, one point on a closed path.
+    pub fn broken(
+        &self,
+        first: Point2,
+        second: Point2,
+        tolerance: LinearTolerance,
+    ) -> Option<Vec<Path>> {
+        let (start, end) = (self.start()?, self.end()?);
+        let (a, b) = (
+            self.locate(first, tolerance)?,
+            self.locate(second, tolerance)?,
+        );
+        // The points themselves may be off the path: use where they land on it.
+        let on_path = |location: Location| Location {
+            point: self.point_of(location),
+            ..location
+        };
+        let (a, b) = (on_path(a), on_path(b));
+        let same = tolerance.coincident(a.point, b.point);
+        if self.closed {
+            return (!same).then(|| vec![self.between(b, a, tolerance)]);
+        }
+        let (from, to) = if a.along() <= b.along() {
+            (a, b)
+        } else {
+            (b, a)
+        };
+        let head = (!tolerance.coincident(from.point, start.point))
+            .then(|| self.between(start, from, tolerance));
+        let tail =
+            (!tolerance.coincident(to.point, end.point)).then(|| self.between(to, end, tolerance));
+        match (head, tail) {
+            (None, None) => None,
+            (None, Some(_)) | (Some(_), None) if same => None,
+            (head, tail) => Some(head.into_iter().chain(tail).collect()),
+        }
+    }
+
+    /// The point of the path at a location: the fraction along its segment.
+    fn point_of(&self, location: Location) -> Point2 {
+        let spans = self.spans();
+        let (from, to) = spans[location.segment];
+        crate::PathSpan {
+            start: self.vertices[from],
+            end: self.vertices[to],
+            bulge: self.bulge(from),
+        }
+        .point_at(location.t)
+    }
+
     /// The open path with its last segment (or, with `from_end` false, its
     /// first) lengthened until it meets `boundary`: a straight segment
     /// straight on, an arc along its circle. `None` for a closed path, which
@@ -613,6 +671,92 @@ mod tests {
         assert_eq!(kept.vertices, vec![p(0.0, 0.0), top]);
         assert!(kept.bulges[0] < 0.0, "still clockwise");
         assert!(lies_on(kept, &hump) && lies_on(&parts.removed, &hump));
+    }
+
+    // ── BREAK (#126) ──
+
+    #[test]
+    fn an_open_path_broken_between_two_points_leaves_two_paths() {
+        let parts = steps()
+            .broken(p(50.0, 3.0), p(150.0, 97.0), TOLERANCE)
+            .unwrap();
+        assert_eq!(
+            parts,
+            vec![
+                straight(vec![p(0.0, 0.0), p(50.0, 0.0)], false),
+                straight(vec![p(150.0, 100.0), p(200.0, 100.0)], false)
+            ]
+        );
+        // The same point twice splits it; at a vertex, cleanly.
+        let split = steps()
+            .broken(p(100.0, 0.0), p(100.0, 0.0), TOLERANCE)
+            .unwrap();
+        assert_eq!(
+            split,
+            vec![
+                straight(vec![p(0.0, 0.0), p(100.0, 0.0)], false),
+                straight(vec![p(100.0, 0.0), p(100.0, 100.0), p(200.0, 100.0)], false)
+            ]
+        );
+    }
+
+    #[test]
+    fn an_open_path_is_not_broken_at_its_ends_or_away_entirely() {
+        assert_eq!(steps().broken(p(0.0, 0.0), p(0.0, 0.0), TOLERANCE), None);
+        assert_eq!(
+            steps().broken(p(200.0, 100.0), p(200.0, 100.0), TOLERANCE),
+            None
+        );
+        assert_eq!(
+            steps().broken(p(0.0, 0.0), p(200.0, 100.0), TOLERANCE),
+            None
+        );
+        // From a point to the end is fine: the tail goes.
+        assert_eq!(
+            steps().broken(p(100.0, 50.0), p(200.0, 100.0), TOLERANCE),
+            Some(vec![straight(
+                vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 50.0)],
+                false
+            )])
+        );
+    }
+
+    #[test]
+    fn a_closed_path_opens_from_the_first_point_onwards_to_the_second() {
+        // The square runs counter-clockwise. From the bottom to the right
+        // side: the bottom-right corner goes.
+        let parts = square()
+            .broken(p(50.0, 0.0), p(100.0, 50.0), TOLERANCE)
+            .unwrap();
+        assert_eq!(
+            parts,
+            vec![straight(
+                vec![
+                    p(100.0, 50.0),
+                    p(100.0, 100.0),
+                    p(0.0, 100.0),
+                    p(0.0, 0.0),
+                    p(50.0, 0.0)
+                ],
+                false
+            )]
+        );
+        // The other way round, only that corner stays.
+        let parts = square()
+            .broken(p(100.0, 50.0), p(50.0, 0.0), TOLERANCE)
+            .unwrap();
+        assert_eq!(
+            parts,
+            vec![straight(
+                vec![p(50.0, 0.0), p(100.0, 0.0), p(100.0, 50.0)],
+                false
+            )]
+        );
+        assert_eq!(
+            square().broken(p(50.0, 0.0), p(50.0, 0.0), TOLERANCE),
+            None,
+            "one point"
+        );
     }
 
     fn wall(x: f64) -> Primitive {

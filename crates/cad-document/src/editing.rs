@@ -10,8 +10,9 @@ use cad_core::tolerance::LinearTolerance;
 use cad_core::{Aabb, Point2};
 use cad_geometry::{
     Corner, CornerJoin, Path, PathCornerError, PathOffsetError, PathTrimError, Primitive,
-    distance_to_line, extend_arc, extend_segment, fillet_curves, offset_arc, offset_circle,
-    offset_segment, trim_arc_parts, trim_circle_parts, trim_segment_parts,
+    break_arc, break_circle, break_segment, distance_to_line, extend_arc, extend_segment,
+    fillet_curves, offset_arc, offset_circle, offset_segment, trim_arc_parts, trim_circle_parts,
+    trim_segment_parts,
 };
 
 use crate::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity};
@@ -83,6 +84,18 @@ pub enum TrimError {
     NeedsTwoCrossings(&'static str),
 }
 
+/// Why an entity could not be broken.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BreakError {
+    /// A single break point at an end of the entity splits nothing off.
+    AtEndpoint,
+    /// The two points span the whole entity: nothing would be left.
+    NothingLeft,
+    /// A closed shape has no ends, so one point cannot break it; carries
+    /// what it is: `circle`, `closed polyline`.
+    NeedsTwoPoints(&'static str),
+}
+
 /// An entity after trimming: what replaces it, and the part that was cut away.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TrimParts {
@@ -100,6 +113,92 @@ pub enum ExtendError {
 }
 
 impl Entity {
+    /// What is left of this entity broken between two points: the part
+    /// between them goes, or — with the two points the same — the entity is
+    /// split there. The points need not be on the entity; where each lands
+    /// on it is what counts.
+    ///
+    /// A circle, and a closed polyline, lose the part from the first point
+    /// onwards to the second — counter-clockwise for a circle, in its own
+    /// direction for a polyline — and so need two different points.
+    pub fn broken(&self, first: Point2, second: Point2) -> Result<Vec<Entity>, BreakError> {
+        // Tell the two ways an open entity can fail apart.
+        let open_failure = |start: Point2, end: Point2, a: Point2, b: Point2| {
+            let at_end = |point: Point2| {
+                TOLERANCE.coincident(point, start) || TOLERANCE.coincident(point, end)
+            };
+            if TOLERANCE.coincident(a, b) && at_end(a) {
+                BreakError::AtEndpoint
+            } else {
+                BreakError::NothingLeft
+            }
+        };
+        match self {
+            Entity::Line(line) => {
+                let segment = line.segment();
+                break_segment(&segment, first, second, TOLERANCE)
+                    .map(|pieces| {
+                        pieces
+                            .into_iter()
+                            .map(|piece| LineEntity::new(piece.start, piece.end).into())
+                            .collect()
+                    })
+                    .ok_or_else(|| {
+                        let (a, b) = (segment.closest_point(first), segment.closest_point(second));
+                        open_failure(segment.start, segment.end, a, b)
+                    })
+            }
+            Entity::Arc(entity) => {
+                let arc = entity.arc();
+                break_arc(&arc, first, second, TOLERANCE)
+                    .map(|pieces| {
+                        pieces
+                            .into_iter()
+                            .map(|piece| ArcEntity::from(piece).into())
+                            .collect()
+                    })
+                    .ok_or_else(|| {
+                        let (a, b) = (arc.closest_point(first), arc.closest_point(second));
+                        open_failure(arc.start_point(), arc.end_point(), a, b)
+                    })
+            }
+            Entity::Circle(circle) => break_circle(&circle.circle(), first, second, TOLERANCE)
+                .map(|arc| vec![ArcEntity::from(arc).into()])
+                .ok_or(BreakError::NeedsTwoPoints("circle")),
+            Entity::Polyline(polyline) => {
+                let path = polyline.path();
+                path.broken(first, second, TOLERANCE)
+                    .map(|pieces| {
+                        pieces
+                            .into_iter()
+                            .map(|piece| PolylineEntity::from(piece).into())
+                            .collect()
+                    })
+                    .ok_or_else(|| {
+                        if polyline.closed {
+                            return BreakError::NeedsTwoPoints("closed polyline");
+                        }
+                        let nearest = |point: Point2| {
+                            self.primitives()
+                                .iter()
+                                .map(|primitive| primitive.closest_point(point))
+                                .min_by(|x, y| {
+                                    x.distance_to(point).total_cmp(&y.distance_to(point))
+                                })
+                                .unwrap_or(point)
+                        };
+                        let ends = (polyline.vertices.first(), polyline.vertices.last());
+                        match ends {
+                            (Some(start), Some(end)) => {
+                                open_failure(*start, *end, nearest(first), nearest(second))
+                            }
+                            _ => BreakError::NothingLeft,
+                        }
+                    })
+            }
+        }
+    }
+
     /// What is left of this entity when the part at `pick` is cut away at
     /// `cutting`: one piece, or two when the pick was between two crossings.
     /// A trimmed circle becomes an arc.
@@ -1018,6 +1117,129 @@ mod tests {
                 longer.start_point()
             );
         }
+    }
+
+    // ── BREAK (#126): every kind of entity ──
+
+    #[test]
+    fn a_line_and_an_arc_are_broken_between_two_points_or_split_at_one() {
+        let line: Entity = LineEntity::new(p(0.0, 0.0), p(100.0, 0.0)).into();
+        assert_eq!(
+            line.broken(p(30.0, 2.0), p(70.0, -1.0)),
+            Ok(vec![
+                LineEntity::new(p(0.0, 0.0), p(30.0, 0.0)).into(),
+                LineEntity::new(p(70.0, 0.0), p(100.0, 0.0)).into()
+            ])
+        );
+        assert_eq!(
+            line.broken(p(40.0, 0.0), p(40.0, 0.0)),
+            Ok(vec![
+                LineEntity::new(p(0.0, 0.0), p(40.0, 0.0)).into(),
+                LineEntity::new(p(40.0, 0.0), p(100.0, 0.0)).into()
+            ])
+        );
+
+        let arc: Entity = ArcEntity::new(p(0.0, 0.0), 50.0, 0.0, PI).into();
+        let pieces = arc.broken(p(0.0, 50.0), p(0.0, 50.0)).unwrap();
+        assert_eq!(pieces.len(), 2);
+        let Entity::Arc(second) = &pieces[1] else {
+            panic!("an arc breaks into arcs");
+        };
+        assert!(close(second.arc().start_point(), p(0.0, 50.0)));
+        assert!(close(second.arc().end_point(), p(-50.0, 0.0)));
+    }
+
+    /// Breaking at an endpoint is refused.
+    #[test]
+    fn breaking_at_an_endpoint_or_away_the_whole_object_is_refused() {
+        let line: Entity = LineEntity::new(p(0.0, 0.0), p(100.0, 0.0)).into();
+        assert_eq!(
+            line.broken(p(0.0, 0.0), p(0.0, 0.0)),
+            Err(BreakError::AtEndpoint)
+        );
+        assert_eq!(
+            line.broken(p(100.0, 0.0), p(100.0, 0.0)),
+            Err(BreakError::AtEndpoint)
+        );
+        assert_eq!(
+            line.broken(p(-5.0, 0.0), p(-9.0, 3.0)),
+            Err(BreakError::AtEndpoint),
+            "both land on the start"
+        );
+        assert_eq!(
+            line.broken(p(0.0, 0.0), p(100.0, 0.0)),
+            Err(BreakError::NothingLeft)
+        );
+
+        let arc: Entity = ArcEntity::new(p(0.0, 0.0), 50.0, 0.0, PI).into();
+        assert_eq!(
+            arc.broken(p(50.0, 0.0), p(50.0, 0.0)),
+            Err(BreakError::AtEndpoint)
+        );
+        let open: Entity =
+            PolylineEntity::new(vec![p(0.0, 0.0), p(50.0, 0.0), p(50.0, 50.0)], false).into();
+        assert_eq!(
+            open.broken(p(50.0, 50.0), p(50.0, 50.0)),
+            Err(BreakError::AtEndpoint)
+        );
+        assert_eq!(
+            open.broken(p(0.0, 0.0), p(50.0, 50.0)),
+            Err(BreakError::NothingLeft)
+        );
+    }
+
+    #[test]
+    fn a_circle_needs_two_points_and_becomes_an_arc() {
+        let circle: Entity = CircleEntity::new(p(0.0, 0.0), 50.0).into();
+        // East to north: the first quadrant goes.
+        let pieces = circle.broken(p(50.0, 0.0), p(0.0, 50.0)).unwrap();
+        let Entity::Arc(kept) = &pieces[0] else {
+            panic!("a broken circle is an arc");
+        };
+        assert!((kept.arc().sweep - 3.0 * FRAC_PI_2).abs() < 1e-12);
+        assert!(close(kept.arc().start_point(), p(0.0, 50.0)));
+        assert_eq!(
+            circle.broken(p(50.0, 0.0), p(80.0, 0.0)),
+            Err(BreakError::NeedsTwoPoints("circle"))
+        );
+    }
+
+    #[test]
+    fn polylines_are_broken_open_or_closed() {
+        let open: Entity =
+            PolylineEntity::new(vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 100.0)], false).into();
+        assert_eq!(
+            open.broken(p(50.0, 0.0), p(100.0, 50.0)),
+            Ok(vec![
+                PolylineEntity::new(vec![p(0.0, 0.0), p(50.0, 0.0)], false).into(),
+                PolylineEntity::new(vec![p(100.0, 50.0), p(100.0, 100.0)], false).into()
+            ])
+        );
+        let square: Entity = PolylineEntity::new(
+            vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 100.0), p(0.0, 100.0)],
+            true,
+        )
+        .into();
+        assert_eq!(
+            square.broken(p(50.0, 0.0), p(100.0, 50.0)),
+            Ok(vec![
+                PolylineEntity::new(
+                    vec![
+                        p(100.0, 50.0),
+                        p(100.0, 100.0),
+                        p(0.0, 100.0),
+                        p(0.0, 0.0),
+                        p(50.0, 0.0)
+                    ],
+                    false
+                )
+                .into()
+            ])
+        );
+        assert_eq!(
+            square.broken(p(50.0, 0.0), p(50.0, 0.0)),
+            Err(BreakError::NeedsTwoPoints("closed polyline"))
+        );
     }
 
     // ── several edges at once (#119) ──

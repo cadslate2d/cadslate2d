@@ -50,6 +50,11 @@ pub fn parse_point(text: &str) -> Result<PointInput, Diagnostic> {
         span
     };
 
+    // A bare `@` is the previous point again: no offset at all.
+    if relative && body.text.trim().is_empty() {
+        return Ok(PointInput::RelativeCartesian(Vec2::new(0.0, 0.0)));
+    }
+
     if let Some(separator) = body.text.find('<') {
         if !relative {
             return Err(Diagnostic::new(
@@ -99,6 +104,19 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_at_sign_is_the_previous_point_again() {
+        for text in ["@", " @ ", "@  "] {
+            assert_eq!(
+                parse_point(text),
+                Ok(PointInput::RelativeCartesian(Vec2::new(0.0, 0.0))),
+                "{text:?}"
+            );
+        }
+        let previous = Point2::new(12.5, -3.0);
+        assert_eq!(parse_point("@").unwrap().resolve(previous), previous);
+    }
+
+    #[test]
     fn parses_each_syntax() {
         let cases = [
             ("100,200", PointInput::Absolute(Point2::new(100.0, 200.0))),
@@ -145,7 +163,6 @@ mod tests {
             ("", "A point is required.", 0),
             ("   ", "A point is required.", 3),
             ("100", "A point is required, as x,y.", 0),
-            ("@", "A point is required, as x,y.", 1),
             ("100,", "A number is missing.", 4),
             (",200", "A number is missing.", 0),
             ("1,2,3", "Only 2D points are supported: enter x,y.", 3),
