@@ -35,7 +35,7 @@ fn fillet_with_the_default_zero_radius_makes_a_sharp_corner() {
     let ids = h.ids();
     h.enter("F");
     assert_eq!(h.log().last().unwrap(), "Current fillet radius: 0");
-    assert_eq!(h.prompt(), "Select first object or [Radius]:");
+    assert_eq!(h.prompt(), "Select first object or [Radius/Polyline]:");
     h.click_world(p(50.0, 0.0));
     assert_eq!(h.prompt(), "Select second object:");
     h.click_world(p(0.0, 50.0));
@@ -55,7 +55,7 @@ fn fillet_with_a_radius_adds_a_tangent_arc_and_trims_both_lines() {
     h.enter_all(&["FILLET", "R"]);
     assert_eq!(h.prompt(), "Specify fillet radius <0>:");
     h.enter("20");
-    assert_eq!(h.prompt(), "Select first object or [Radius]:");
+    assert_eq!(h.prompt(), "Select first object or [Radius/Polyline]:");
     pick_both(&mut h);
 
     let entities = h.entities();
@@ -111,7 +111,7 @@ fn fillet_refuses_parallel_lines_and_radii_that_are_too_large() {
     );
     assert_eq!(
         h.prompt(),
-        "Select first object or [Radius]:",
+        "Select first object or [Radius/Polyline]:",
         "start again"
     );
 
@@ -127,7 +127,7 @@ fn fillet_refuses_parallel_lines_and_radii_that_are_too_large() {
 }
 
 #[test]
-fn fillet_needs_two_different_objects_and_declines_polylines() {
+fn fillet_needs_two_different_objects_and_joins_a_polyline_only_to_itself() {
     let mut h = Harness::new();
     h.enter_all(&[
         "L", "10,0", "100,0", "", "PL", "-100,50", "-50,80", "0,50", "",
@@ -143,7 +143,7 @@ fn fillet_needs_two_different_objects_and_declines_polylines() {
     h.click_world(p(-50.0, 80.0));
     assert_eq!(
         h.log().last().unwrap(),
-        "FILLET does not support polylines yet."
+        "Pick two segments of the same polyline, or use the Polyline option."
     );
     assert_eq!(h.entities().len(), 2);
 }
@@ -272,7 +272,7 @@ fn chamfer_cuts_each_line_back_and_joins_them_with_a_line() {
     let mut h = l_shape();
     h.enter("CHA");
     assert_eq!(h.log().last().unwrap(), "Current chamfer distances: 0, 0");
-    assert_eq!(h.prompt(), "Select first line or [Distance]:");
+    assert_eq!(h.prompt(), "Select first line or [Distance/Polyline]:");
     h.enter("D");
     assert_eq!(h.prompt(), "Specify first chamfer distance <0>:");
     h.enter("15");
@@ -347,4 +347,153 @@ fn chamfer_distances_are_remembered_and_a_chamfer_is_one_undo_step() {
 
     h.enter("CHA");
     assert_eq!(h.log().last().unwrap(), "Current chamfer distances: 12, 8");
+}
+
+// ── corners of a polyline (#125) ──
+
+use cad_document::PolylineEntity;
+
+/// A 100 × 60 rectangle drawn with RECTANG: one closed polyline.
+fn rectangle() -> Harness {
+    let mut h = Harness::new();
+    h.enter_all(&["REC", "0,0", "100,60"]);
+    h
+}
+
+fn polyline_of(h: &Harness) -> PolylineEntity {
+    match &h.entities()[0] {
+        Entity::Polyline(polyline) => polyline.clone(),
+        other => panic!("expected a polyline, got {other:?}"),
+    }
+}
+
+/// One corner: the arc becomes part of the polyline, which keeps its ID.
+#[test]
+fn two_picks_on_one_polyline_fillet_the_corner_between_them() {
+    let mut h = rectangle();
+    let id = h.ids()[0];
+    h.enter_all(&["F", "R", "10"]);
+    h.click_world(p(50.0, 0.0)); // the bottom side
+    h.click_world(p(100.0, 30.0)); // the right side
+
+    assert_eq!(h.prompt(), "Command:");
+    assert_eq!(h.ids(), vec![id], "still one entity, the same one");
+    let rounded = polyline_of(&h);
+    assert!(rounded.closed);
+    assert_eq!(rounded.vertices.len(), 5);
+    assert!(rounded.vertices.contains(&p(90.0, 0.0)) && rounded.vertices.contains(&p(100.0, 10.0)));
+    assert!(
+        Entity::Polyline(rounded).distance_to(p(100.0, 0.0)) > 4.0,
+        "the sharp corner is gone"
+    );
+
+    h.undo();
+    assert_eq!(polyline_of(&h).vertices.len(), 4);
+    assert!(!h.session.ui_state().can_undo || h.entities().len() == 1);
+}
+
+#[test]
+fn two_picks_on_one_polyline_chamfer_the_corner_first_distance_first() {
+    let mut h = rectangle();
+    h.enter_all(&["CHA", "D", "30", "10"]);
+    h.click_world(p(100.0, 30.0)); // the right side first: it loses 30
+    h.click_world(p(50.0, 0.0));
+    let bevelled = polyline_of(&h);
+    assert_eq!(bevelled.vertices.len(), 5);
+    assert!(
+        bevelled.vertices.contains(&p(90.0, 0.0)) && bevelled.vertices.contains(&p(100.0, 30.0))
+    );
+    assert!(!bevelled.has_arcs());
+}
+
+#[test]
+fn picks_that_do_not_share_a_corner_are_explained() {
+    let mut h = rectangle();
+    let before = h.entities();
+    h.enter_all(&["F", "R", "10"]);
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(50.0, 60.0)); // the opposite side
+    assert_eq!(
+        h.log().last().unwrap(),
+        "Pick two segments that meet at a corner of the polyline."
+    );
+    h.click_world(p(20.0, 0.0));
+    h.click_world(p(80.0, 0.0)); // the same side
+    assert_eq!(
+        h.log().last().unwrap(),
+        "Pick two segments that meet at a corner of the polyline."
+    );
+    h.enter_all(&["R", "200"]);
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(100.0, 30.0));
+    assert_eq!(
+        h.log().last().unwrap(),
+        "The radius is too large for these lines."
+    );
+    h.escape();
+    assert_eq!(h.entities(), before);
+}
+
+/// The whole polyline, closed and open.
+#[test]
+fn the_polyline_option_fillets_every_corner_at_once() {
+    let mut h = rectangle();
+    let id = h.ids()[0];
+    h.enter_all(&["F", "R", "10", "P"]);
+    assert_eq!(h.prompt(), "Select polyline:");
+    h.click_world(p(50.0, 0.0));
+
+    assert_eq!(h.log().last().unwrap(), "4 corners filleted, 0 skipped.");
+    assert_eq!(h.prompt(), "Command:");
+    assert_eq!(h.ids(), vec![id]);
+    let rounded = polyline_of(&h);
+    assert_eq!(rounded.vertices.len(), 8);
+    assert_eq!(
+        rounded.bulges().filter(|bulge| bulge.abs() > 0.0).count(),
+        4
+    );
+    h.undo();
+    assert_eq!(
+        polyline_of(&h).vertices.len(),
+        4,
+        "one undo for all four corners"
+    );
+
+    // Open: the ends are not corners.
+    let mut h = Harness::new();
+    h.enter_all(&[
+        "PL", "0,0", "100,0", "100,60", "", "CHA", "D", "5", "5", "P",
+    ]);
+    h.click_world(p(50.0, 0.0));
+    assert_eq!(h.log().last().unwrap(), "1 corner chamfered, 0 skipped.");
+    assert_eq!(polyline_of(&h).vertices.len(), 4);
+}
+
+#[test]
+fn the_polyline_option_skips_and_counts_corners_that_do_not_fit() {
+    let mut h = Harness::new();
+    // A short jog of 5 between two long runs.
+    h.enter_all(&["PL", "0,0", "100,0", "100,5", "200,5", "200,100", ""]);
+    let before = h.entities();
+    h.enter_all(&["F", "R", "10", "P"]);
+    h.click_world(p(50.0, 0.0));
+    assert_eq!(h.log().last().unwrap(), "1 corner filleted, 2 skipped.");
+    assert_eq!(polyline_of(&h).vertices.len(), 6);
+
+    // When nothing fits, nothing changes and there is no undo step.
+    let mut h = Harness::with_entities(before.clone());
+    h.enter_all(&["F", "R", "500", "P"]);
+    h.click_world(p(50.0, 0.0));
+    assert_eq!(h.log().last().unwrap(), "0 corners filleted, 3 skipped.");
+    assert_eq!(h.entities(), before);
+    assert!(!h.session.ui_state().can_undo);
+}
+
+#[test]
+fn the_polyline_option_wants_a_polyline() {
+    let mut h = l_shape();
+    h.enter_all(&["F", "P"]);
+    h.click_world(p(50.0, 0.0));
+    assert_eq!(h.log().last().unwrap(), "That is not a polyline.");
+    assert_eq!(h.prompt(), "Select polyline:");
 }

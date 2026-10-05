@@ -8,12 +8,14 @@
 
 use cad_core::{EntityId, Point2};
 use cad_document::{CornerError, Cornered, Entity};
+use cad_geometry::CornerJoin;
 use cad_input::{ExpectedInput, Keyword};
 
 use crate::{Command, CommandContext, CommandInput, DraftingSettings, OverlayItem, Prompt, Step};
 
 const RADIUS: Keyword = Keyword::new("Radius");
 const DISTANCE: Keyword = Keyword::new("Distance");
+const POLYLINE: Keyword = Keyword::new("Polyline");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
@@ -115,8 +117,28 @@ impl Kind {
         }
     }
 
+    /// What this command puts at a corner of a polyline.
+    fn corner_join(self, settings: &DraftingSettings) -> CornerJoin {
+        match self {
+            Self::Fillet => CornerJoin::Fillet(settings.fillet_radius),
+            Self::Chamfer => CornerJoin::Chamfer(settings.chamfer_distances),
+        }
+    }
+
+    /// `filleted` or `chamfered`, for messages.
+    fn done(self) -> &'static str {
+        match self {
+            Self::Fillet => "filleted",
+            Self::Chamfer => "chamfered",
+        }
+    }
+
     fn explain(self, error: CornerError) -> String {
         match (error, self) {
+            // A polyline is joined only to itself.
+            (CornerError::Unsupported("polyline"), _) => {
+                "Pick two segments of the same polyline, or use the Polyline option.".to_owned()
+            }
             (CornerError::Unsupported(kind), Self::Fillet) => {
                 format!("FILLET does not support {kind}s yet.")
             }
@@ -133,6 +155,9 @@ impl Kind {
             (CornerError::NoSolution, _) => {
                 "No fillet of that radius fits these objects.".to_owned()
             }
+            (CornerError::NotAdjacent, _) => {
+                "Pick two segments that meet at a corner of the polyline.".to_owned()
+            }
         }
     }
 }
@@ -144,6 +169,8 @@ enum State {
         first: EntityId,
         pick: Point2,
     },
+    /// The Polyline option: waiting for the polyline whose every corner is done.
+    WholePolyline,
     /// Entering value `index` of the setting; `current` is its default.
     Setting {
         index: usize,
@@ -187,19 +214,31 @@ impl CornerCommand {
         };
     }
 
-    /// Joins the two picked lines in one transaction.
+    /// Joins the two picked objects in one transaction. Two picks on one
+    /// polyline round or bevel the corner between the picked segments.
     fn join(
         &self,
         first: (EntityId, Point2),
         second: (EntityId, Point2),
         ctx: &mut CommandContext<'_>,
     ) -> Result<(), String> {
-        if first.0 == second.0 {
-            return Err("Pick a different object for the second one.".to_owned());
-        }
         let (Some(a), Some(b)) = (ctx.drawing.entity(first.0), ctx.drawing.entity(second.0)) else {
             return Err("One of the objects no longer exists.".to_owned());
         };
+        if first.0 == second.0 {
+            if !matches!(a, Entity::Polyline(_)) {
+                return Err("Pick a different object for the second one.".to_owned());
+            }
+            let cornered = a
+                .with_corner_between(first.1, second.1, self.kind.corner_join(ctx.settings))
+                .map_err(|error| self.kind.explain(error))?;
+            let mut transaction = ctx.drawing.transaction();
+            transaction
+                .replace(first.0, cornered)
+                .expect("the polyline was just read");
+            transaction.commit();
+            return Ok(());
+        }
         let joined = self
             .kind
             .join(ctx.settings, (a, first.1), (b, second.1))
@@ -208,15 +247,40 @@ impl CornerCommand {
         let mut transaction = ctx.drawing.transaction();
         transaction
             .replace(first.0, joined.first)
-            .expect("the first line was just read");
+            .expect("the first object was just read");
         transaction
             .replace(second.0, joined.second)
-            .expect("the second line was just read");
+            .expect("the second object was just read");
         if let Some(joint) = joined.joint {
             transaction.insert(joint);
         }
         transaction.commit();
         Ok(())
+    }
+
+    /// The Polyline option: every corner of one polyline, in one transaction.
+    fn every_corner(&self, id: EntityId, ctx: &mut CommandContext<'_>) -> Result<String, String> {
+        let entity = ctx
+            .drawing
+            .entity(id)
+            .ok_or_else(|| "That object no longer exists.".to_owned())?;
+        let (cornered, done, skipped) = entity
+            .with_every_corner(self.kind.corner_join(ctx.settings))
+            .map_err(|_| "That is not a polyline.".to_owned())?;
+        let corners = |count: usize| if count == 1 { "corner" } else { "corners" };
+        let summary = format!(
+            "{done} {} {}, {skipped} skipped.",
+            corners(done),
+            self.kind.done()
+        );
+        if done > 0 {
+            let mut transaction = ctx.drawing.transaction();
+            transaction
+                .replace(id, cornered)
+                .expect("the polyline was just read");
+            transaction.commit();
+        }
+        Ok(summary)
     }
 }
 
@@ -230,6 +294,7 @@ impl Command for CornerCommand {
         match self.state {
             State::First => Prompt::new(self.kind.first_prompt()),
             State::Second { .. } => Prompt::new(self.kind.second_prompt()),
+            State::WholePolyline => Prompt::new("Select polyline"),
             State::Setting { index, current } => {
                 Prompt::new(self.kind.value_prompt(index)).with_default(display(current))
             }
@@ -238,14 +303,26 @@ impl Command for CornerCommand {
 
     fn expected(&self) -> ExpectedInput {
         match self.state {
-            State::First => ExpectedInput::object().with_keywords(&[self.kind.option()]),
-            State::Second { .. } => ExpectedInput::object(),
+            State::First => ExpectedInput::object().with_keywords(&[self.kind.option(), POLYLINE]),
+            State::Second { .. } | State::WholePolyline => ExpectedInput::object(),
             State::Setting { .. } => ExpectedInput::distance(),
         }
     }
 
     fn step(&mut self, input: CommandInput, ctx: &mut CommandContext<'_>) -> Step {
         match (&self.state, input) {
+            (State::First, CommandInput::Keyword(keyword)) if keyword == POLYLINE => {
+                self.state = State::WholePolyline;
+            }
+            (State::WholePolyline, CommandInput::Pick { entity, .. }) => {
+                match self.every_corner(entity, ctx) {
+                    Ok(summary) => {
+                        ctx.message(summary);
+                        return Step::Finished;
+                    }
+                    Err(message) => ctx.message(message),
+                }
+            }
             (State::First, CommandInput::Keyword(_)) => {
                 self.state = State::Setting {
                     index: 0,
@@ -281,7 +358,9 @@ impl Command for CornerCommand {
                     }
                 }
             }
-            (State::First | State::Second { .. }, CommandInput::Accept) => return Step::Finished,
+            (State::First | State::Second { .. } | State::WholePolyline, CommandInput::Accept) => {
+                return Step::Finished;
+            }
             _ => {}
         }
         Step::Continue

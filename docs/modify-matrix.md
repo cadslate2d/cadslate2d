@@ -89,7 +89,7 @@ Two picks; the two objects are cut back or carried on to meet a tangent arc of t
 | Line | yes | yes | yes | no |
 | Arc | yes | yes | yes | no |
 | Circle | yes | yes | yes | no |
-| Polyline | no | no | no | no |
+| Polyline | no | no | no | the same polyline: yes |
 
 Rules:
 
@@ -100,12 +100,14 @@ Rules:
 - With a curve involved, when no arc of the radius is tangent to both: "No fillet of that radius fits these objects."
 - Radius zero makes a sharp corner and no arc: two lines meet at their corner; a line and an arc, or two arcs, meet where their line or circle cross, nearest the picks.
 - Both objects keep their identity; the arc is a new object. One fillet is one transaction.
-- Polylines are refused by name. Picking the same object twice is refused.
+- **Within one polyline:** pick two of its segments that meet at a corner, and that corner is rounded; the arc becomes part of the polyline, which stays one object. Both segments must be straight. Picks on segments that do not share a corner: "Pick two segments that meet at a corner of the polyline."
+- **The `Polyline` option** rounds every corner of one polyline in one go and reports how many were done and how many skipped — because a segment was too short for the radius, or an arc. With nothing done, nothing changes.
+- A polyline is joined only to itself, not to another object. Picking the same line, arc, or circle twice is refused.
 - The radius cannot be negative and is remembered for the session.
 
-Not implemented: fillets on polylines; the `Polyline`, `Trim`, and `Multiple` options.
+Not implemented: fillets between a polyline and another object, or at a polyline corner next to an arc segment; the `Trim` and `Multiple` options.
 
-Tests: `cad-geometry/src/corner.rs` and `cad-geometry/src/curve_fillet.rs` (each with a property test that the fillet arc is tangent to both objects), `cad-document/src/editing.rs`, `cad-commands/src/tests/corner.rs`, `web/e2e/fillet-chamfer.spec.ts`.
+Tests: `cad-geometry/src/corner.rs` and `cad-geometry/src/curve_fillet.rs` (each with a property test that the fillet arc is tangent to both objects), `cad-geometry/src/path_corner.rs`, `cad-document/src/editing.rs`, `cad-commands/src/tests/corner.rs`, `web/e2e/fillet-chamfer.spec.ts`.
 
 ## CHAMFER
 
@@ -114,7 +116,8 @@ Two picks; two lines are cut back or carried on to a corner and joined by a stra
 | First ↓ / Second → | Line | Arc | Circle | Polyline |
 | --- | --- | --- | --- | --- |
 | Line | yes | no | no | no |
-| Arc, Circle, Polyline | no | no | no | no |
+| Arc, Circle | no | no | no | no |
+| Polyline | no | no | no | the same polyline: yes |
 
 Rules:
 
@@ -123,8 +126,9 @@ Rules:
 - Both lines keep their identity and direction; the bevel is a new object. One chamfer is one transaction.
 - Parallel lines are refused: "The lines are parallel." Distances that would use up a whole line: "The distances are too large for these lines."
 - A chamfer is a cut across a corner of two straight lines; an arc or a circle has no such corner. They are refused by name: "CHAMFER joins two straight lines, not arcs."
+- **Within one polyline:** pick two straight segments that meet at a corner; the bevel becomes part of the polyline. The first distance belongs to the segment picked first. **The `Polyline` option** bevels every corner, the first distance going to the segment that arrives at each corner in the polyline's own direction; it reports how many were done and how many skipped.
 - Distances cannot be negative and are remembered for the session.
 
-Not implemented: chamfers on polylines; the `Angle`, `Polyline`, `Trim`, and `Multiple` options.
+Not implemented: chamfers between a polyline and another object; the `Angle`, `Trim`, and `Multiple` options.
 
-Tests: `cad-geometry/src/corner.rs`, `cad-document/src/editing.rs`, `cad-commands/src/tests/corner.rs`, `web/e2e/fillet-chamfer.spec.ts`.
+Tests: `cad-geometry/src/corner.rs`, `cad-geometry/src/path_corner.rs`, `cad-document/src/editing.rs`, `cad-commands/src/tests/corner.rs`, `web/e2e/fillet-chamfer.spec.ts`.

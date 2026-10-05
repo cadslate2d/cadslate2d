@@ -14,6 +14,7 @@ mod extend;
 pub mod intersect;
 mod offset;
 mod path;
+mod path_corner;
 mod path_offset;
 mod polyline;
 mod segment;
@@ -27,6 +28,7 @@ pub use extend::{extend_arc, extend_segment};
 pub use intersect::{Hits, Orientation, Primitive, orientation};
 pub use offset::{distance_to_line, offset_arc, offset_circle, offset_segment};
 pub use path::{Location, Path, PathTrimError};
+pub use path_corner::{CornerJoin, PathCornerError};
 pub use path_offset::{
     PathOffsetError, PathSpan, offset_path, path_spans, raw_offset, stitch_spans,
 };

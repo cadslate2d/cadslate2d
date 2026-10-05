@@ -19,7 +19,7 @@ test.describe("FILLET", () => {
   test("joins two lines with a tangent arc of the set radius", async ({ page }) => {
     const canvas = await lShape(page);
     await enter(page, "F");
-    await expect(prompt(page)).toHaveText("Select first object or [Radius]:");
+    await expect(prompt(page)).toHaveText("Select first object or [Radius/Polyline]:");
     await enter(page, "R");
     await expect(prompt(page)).toHaveText("Specify fillet radius <0>:");
     await enter(page, "20");
@@ -58,7 +58,7 @@ test.describe("FILLET", () => {
     await enter(page, "F", "R", "500");
     await pickBoth(page, canvas);
     await expect(logLines(page).last()).toHaveText("The radius is too large for these lines.");
-    await expect(prompt(page)).toHaveText("Select first object or [Radius]:");
+    await expect(prompt(page)).toHaveText("Select first object or [Radius/Polyline]:");
   });
 });
 
@@ -87,6 +87,28 @@ test.describe("FILLET with curves", () => {
     await clickWorld(page, canvas, -50, 30);
     await clickWorld(page, canvas, 50, 30);
     await expect(logLines(page).last()).toHaveText("No fillet of that radius fits these objects.");
+  });
+});
+
+test.describe("corners of a polyline", () => {
+  test("two picks round one corner; the Polyline option rounds them all", async ({ page }) => {
+    const canvas = await openApp(page);
+    await enter(page, "REC", "0,0", "100,60", "F", "R", "10");
+    await clickWorld(page, canvas, 50, 0);
+    await clickWorld(page, canvas, 100, 30);
+    let text = await exported(page);
+    expect(text.match(/^POLYLINE$/gm)).toHaveLength(1);
+    expect(text.match(/^VERTEX$/gm)).toHaveLength(5);
+    expect(text.match(/^ 42$/gm)).toHaveLength(1);
+
+    await page.keyboard.press("Control+z");
+    await enter(page, "F", "P");
+    await expect(prompt(page)).toHaveText("Select polyline:");
+    await clickWorld(page, canvas, 50, 0);
+    await expect(logLines(page).last()).toHaveText("4 corners filleted, 0 skipped.");
+    text = await exported(page);
+    expect(text.match(/^VERTEX$/gm)).toHaveLength(8);
+    expect(text.match(/^ 42$/gm)).toHaveLength(4);
   });
 });
 

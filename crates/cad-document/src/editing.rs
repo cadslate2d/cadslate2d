@@ -9,9 +9,9 @@
 use cad_core::tolerance::LinearTolerance;
 use cad_core::{Aabb, Point2};
 use cad_geometry::{
-    Corner, Path, PathOffsetError, PathTrimError, Primitive, distance_to_line, extend_arc,
-    extend_segment, fillet_curves, offset_arc, offset_circle, offset_segment, trim_arc_parts,
-    trim_circle_parts, trim_segment_parts,
+    Corner, CornerJoin, Path, PathCornerError, PathOffsetError, PathTrimError, Primitive,
+    distance_to_line, extend_arc, extend_segment, fillet_curves, offset_arc, offset_circle,
+    offset_segment, trim_arc_parts, trim_circle_parts, trim_segment_parts,
 };
 
 use crate::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity};
@@ -47,6 +47,8 @@ pub enum CornerError {
     /// No arc of that radius is tangent to both objects — or, with a radius
     /// of zero, they never meet.
     NoSolution,
+    /// The two picks on a polyline are not on segments that meet at a corner.
+    NotAdjacent,
 }
 
 impl From<cad_geometry::CornerError> for CornerError {
@@ -321,6 +323,52 @@ impl Entity {
             second: rebuilt(other, fillet.second),
             joint: fillet.arc.map(|arc| ArcEntity::from(arc).into()),
         })
+    }
+
+    /// This polyline with the corner between the two picked segments rounded
+    /// or bevelled: the arc or bevel becomes part of the polyline. For a
+    /// chamfer, the first distance belongs to the segment picked first.
+    pub fn with_corner_between(
+        &self,
+        pick: Point2,
+        other_pick: Point2,
+        join: CornerJoin,
+    ) -> Result<Entity, CornerError> {
+        let Entity::Polyline(polyline) = self else {
+            return Err(CornerError::Unsupported(self.kind_name()));
+        };
+        let path = polyline.path();
+        let (vertex, first_arrives) = path
+            .corner_between(pick, other_pick, TOLERANCE)
+            .ok_or(CornerError::NotAdjacent)?;
+        // The path's order of the two segments may be the reverse of the picks'.
+        let join = match join {
+            CornerJoin::Chamfer([first, second]) if !first_arrives => {
+                CornerJoin::Chamfer([second, first])
+            }
+            other => other,
+        };
+        path.with_corner(vertex, join, TOLERANCE)
+            .map(|path| PolylineEntity::from(path).into())
+            .map_err(|error| match error {
+                PathCornerError::NotACorner => CornerError::NotAdjacent,
+                PathCornerError::Curved => CornerError::Unsupported("arc segment"),
+                PathCornerError::Straight => CornerError::Parallel,
+                PathCornerError::TooLarge => CornerError::TooLarge,
+            })
+    }
+
+    /// This polyline with every corner rounded or bevelled that can be, and
+    /// how many were done and how many skipped.
+    pub fn with_every_corner(
+        &self,
+        join: CornerJoin,
+    ) -> Result<(Entity, usize, usize), CornerError> {
+        let Entity::Polyline(polyline) = self else {
+            return Err(CornerError::Unsupported(self.kind_name()));
+        };
+        let (path, done, skipped) = polyline.path().with_every_corner(join, TOLERANCE);
+        Ok((PolylineEntity::from(path).into(), done, skipped))
     }
 
     /// This line and `other` cut back by `distances` from where they meet —
@@ -1213,6 +1261,135 @@ mod tests {
             panic!("an arc stays an arc");
         };
         assert!(close(grown.arc().end_point(), p(30.0, 40.0)));
+    }
+
+    // ── corners within a polyline (#125) ──
+
+    fn l_polyline(closed: bool) -> Entity {
+        PolylineEntity::new(
+            vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 60.0), p(0.0, 60.0)],
+            closed,
+        )
+        .into()
+    }
+
+    #[test]
+    fn a_corner_of_a_polyline_is_filleted_between_two_picked_segments() {
+        let rounded = l_polyline(false)
+            .with_corner_between(p(50.0, 0.0), p(100.0, 30.0), CornerJoin::Fillet(10.0))
+            .unwrap();
+        let Entity::Polyline(rounded) = rounded else {
+            panic!("a polyline stays a polyline");
+        };
+        assert_eq!(
+            rounded.vertices,
+            vec![
+                p(0.0, 0.0),
+                p(90.0, 0.0),
+                p(100.0, 10.0),
+                p(100.0, 60.0),
+                p(0.0, 60.0)
+            ]
+        );
+        assert!((rounded.bulge(1) - (2f64.sqrt() - 1.0)).abs() < 1e-12);
+        assert!(!rounded.closed);
+    }
+
+    #[test]
+    fn a_chamfer_within_a_polyline_gives_the_first_distance_to_the_first_pick() {
+        let join = CornerJoin::Chamfer([30.0, 10.0]);
+        let bottom_first = l_polyline(false)
+            .with_corner_between(p(50.0, 0.0), p(100.0, 30.0), join)
+            .unwrap();
+        assert_eq!(
+            bottom_first,
+            PolylineEntity::new(
+                vec![
+                    p(0.0, 0.0),
+                    p(70.0, 0.0),
+                    p(100.0, 10.0),
+                    p(100.0, 60.0),
+                    p(0.0, 60.0)
+                ],
+                false
+            )
+            .into()
+        );
+        let right_first = l_polyline(false)
+            .with_corner_between(p(100.0, 30.0), p(50.0, 0.0), join)
+            .unwrap();
+        assert_eq!(
+            right_first,
+            PolylineEntity::new(
+                vec![
+                    p(0.0, 0.0),
+                    p(90.0, 0.0),
+                    p(100.0, 30.0),
+                    p(100.0, 60.0),
+                    p(0.0, 60.0)
+                ],
+                false
+            )
+            .into()
+        );
+    }
+
+    #[test]
+    fn polyline_corners_explain_what_cannot_be_done() {
+        let join = CornerJoin::Fillet(10.0);
+        let open = l_polyline(false);
+        // The same segment twice; opposite sides; the open ends.
+        assert_eq!(
+            open.with_corner_between(p(20.0, 0.0), p(80.0, 0.0), join),
+            Err(CornerError::NotAdjacent)
+        );
+        assert_eq!(
+            open.with_corner_between(p(50.0, 0.0), p(50.0, 60.0), join),
+            Err(CornerError::NotAdjacent)
+        );
+        assert_eq!(
+            open.with_corner_between(p(50.0, 0.0), p(100.0, 30.0), CornerJoin::Fillet(70.0)),
+            Err(CornerError::TooLarge)
+        );
+        // Closed, the last segment and the first do meet.
+        assert!(
+            l_polyline(true)
+                .with_corner_between(p(0.0, 30.0), p(50.0, 0.0), join)
+                .is_ok()
+        );
+        // An arc segment at the corner.
+        let curved: Entity = PolylineEntity::with_bulges(
+            vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 60.0)],
+            vec![0.0, 0.5],
+            false,
+        )
+        .into();
+        assert_eq!(
+            curved.with_corner_between(p(50.0, 0.0), p(105.0, 30.0), join),
+            Err(CornerError::Unsupported("arc segment"))
+        );
+        let line: Entity = LineEntity::new(p(0.0, 0.0), p(10.0, 0.0)).into();
+        assert_eq!(
+            line.with_every_corner(join),
+            Err(CornerError::Unsupported("line"))
+        );
+    }
+
+    #[test]
+    fn every_corner_of_a_polyline_is_done_and_counted() {
+        let (rounded, done, skipped) = l_polyline(true)
+            .with_every_corner(CornerJoin::Fillet(10.0))
+            .unwrap();
+        assert_eq!((done, skipped), (4, 0));
+        let Entity::Polyline(rounded) = rounded else {
+            panic!("a polyline stays a polyline");
+        };
+        assert!(rounded.closed && rounded.vertices.len() == 8);
+        // Open: the two ends are not corners.
+        let (_, done, skipped) = l_polyline(false)
+            .with_every_corner(CornerJoin::Chamfer([5.0, 5.0]))
+            .unwrap();
+        assert_eq!((done, skipped), (2, 0));
     }
 
     #[test]
