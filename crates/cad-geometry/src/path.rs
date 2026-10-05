@@ -13,6 +13,19 @@ use crate::polyline::{arc_from_bulge, is_straight, polyline_spans};
 use crate::trim::{OpenCurve, Trimmed};
 use crate::{Arc, Primitive, Segment, extend_arc, extend_segment};
 
+/// The bulge of a `share` of a segment with this bulge: the same turn rate
+/// over that share of the included angle. A whole segment keeps its bulge
+/// to the last bit.
+pub(crate) fn partial_bulge(bulge: f64, share: f64) -> f64 {
+    if is_straight(bulge) {
+        0.0
+    } else if ParametricTolerance::DEFAULT.eq(share, 1.0) {
+        bulge
+    } else {
+        (bulge.atan() * share).tan()
+    }
+}
+
 /// The vertices of a polyline, the bulge of the segment starting at each,
 /// and whether it closes back to its first vertex.
 #[derive(Clone, Debug, PartialEq)]
@@ -52,7 +65,7 @@ pub enum PathTrimError {
 
 impl Path {
     fn spans(&self) -> Vec<(usize, usize)> {
-        polyline_spans(self.vertices.len(), self.closed).collect()
+        polyline_spans(self.vertices.len(), self.closed, |index| self.bulge(index)).collect()
     }
 
     fn bulge(&self, vertex: usize) -> f64 {
@@ -145,16 +158,7 @@ impl Path {
         // (start point, bulge of the piece that starts there), then the last point.
         let mut pieces: Vec<(Point2, f64)> = Vec::new();
         let mut push = |start: Point2, bulge: f64, share: f64| {
-            // The bulge of part of an arc: the same turn rate over a share of the angle.
-            // A whole segment keeps its bulge to the last bit.
-            let partial = if is_straight(bulge) {
-                0.0
-            } else if ParametricTolerance::DEFAULT.eq(share, 1.0) {
-                bulge
-            } else {
-                (bulge.atan() * share).tan()
-            };
-            pieces.push((start, partial));
+            pieces.push((start, partial_bulge(bulge, share)));
         };
 
         let mut segment = from.segment;

@@ -101,7 +101,8 @@ impl PolylineEntity {
     /// Missing bulges are zero; so are those of segments that do not exist
     /// (the last vertex of an open polyline) and any that are not numbers.
     pub fn with_bulges(vertices: Vec<Point2>, mut bulges: Vec<f64>, closed: bool) -> Self {
-        let segments = cad_geometry::polyline_spans(vertices.len(), closed).count();
+        let given = |index: usize| bulges.get(index).copied().unwrap_or(0.0);
+        let segments = cad_geometry::polyline_spans(vertices.len(), closed, given).count();
         bulges.truncate(segments);
         for bulge in &mut bulges {
             if is_straight(*bulge) {
@@ -609,6 +610,33 @@ mod tests {
             PolylineEntity::with_bulges(corners(), vec![0.5, 0.0, 0.0], true),
             PolylineEntity::with_bulges(corners(), vec![0.5], true)
         );
+    }
+
+    /// Regression: a circle drawn as two arcs — a closed polyline of two
+    /// vertices — keeps both arcs. (Found by the polyline offset corpus.)
+    #[test]
+    fn a_two_vertex_closed_polyline_with_arcs_is_a_whole_loop() {
+        let ends = || vec![Point2::new(0.0, 0.0), Point2::new(100.0, 0.0)];
+        let circle = PolylineEntity::with_bulges(ends(), vec![1.0, 1.0], true);
+        assert_eq!(circle.bulges().collect::<Vec<_>>(), vec![1.0, 1.0]);
+        let entity = Entity::from(circle);
+        assert_eq!(entity.primitives().len(), 2);
+        assert_eq!(
+            entity.bounds(),
+            Aabb::from_points(Point2::new(0.0, -50.0), Point2::new(100.0, 50.0))
+        );
+        assert!(
+            entity.distance_to(Point2::new(50.0, 50.0)) < 1e-12,
+            "the closing arc is there"
+        );
+        assert!(entity.distance_to(Point2::new(50.0, -50.0)) < 1e-12);
+
+        // Without an arc, two vertices are one line, closed or not.
+        let line = Entity::from(PolylineEntity::new(ends(), true));
+        assert_eq!(line.primitives().len(), 1);
+        // A bulge on the closing segment alone is enough.
+        let lens = Entity::from(PolylineEntity::with_bulges(ends(), vec![0.0, 0.5], true));
+        assert_eq!(lens.primitives().len(), 2);
     }
 
     #[test]

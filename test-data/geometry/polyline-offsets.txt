@@ -1,0 +1,70 @@
+# Polyline offset corpus (DESIGN §21.3, §22; ADR-0011).
+#
+# The hard cases of offsetting: corners, segments that disappear, shapes
+# that fall apart, arcs that collapse. One case per line:
+#
+#   <name> : open|closed : <vertex> <vertex> ... : <distance> => <paths> <total length>
+#
+# A vertex is x,y or x,y,bulge — the bulge of the segment that starts there
+# (tan of a quarter of the included angle, positive counter-clockwise).
+# The distance is signed: positive to the left of the direction of travel,
+# negative to the right. For a counter-clockwise closed shape, left is in.
+#
+# The runner checks the number of paths and their total length, and — for
+# every case — that each point of the result is the offset distance from
+# the source. Lengths marked (exact) follow from the geometry; the others
+# were recorded from the implementation after that property held.
+#
+# Blank lines and lines starting with # are ignored. Every fixed bug adds a line.
+
+# ── corners ──
+# (exact) 2·(80 + 40): the inside of a corner stays sharp
+rectangle-in : closed : 0,0 100,0 100,60 0,60 : 10 => 1 240
+# (exact) 320 + 2π·10: the outside of a corner is rounded
+rectangle-out : closed : 0,0 100,0 100,60 0,60 : -10 => 1 382.8318530717959
+# (exact) 80 + 80
+open-corner-inside : open : 0,0 100,0 100,100 : 20 => 1 160
+# (exact) 200 + (π/2)·20
+open-corner-outside : open : 0,0 100,0 100,100 : -20 => 1 231.41592653589794
+# (exact) a reflex corner on the inside gets an arc: 300 + 5π
+l-shape-in : closed : 0,0 100,0 100,40 40,40 40,100 0,100 : 10 => 1 315.707963267949
+# (exact) five rounded corners and one sharp: 380 + 25π
+l-shape-out : closed : 0,0 100,0 100,40 40,40 40,100 0,100 : -10 => 1 458.5398163397448
+# (exact) a redundant vertex on a straight run changes nothing
+collinear-vertex : open : 0,0 50,0 100,0 : 10 => 1 100
+
+# ── things that disappear ──
+# nothing is left of a 100 × 60 rectangle 31 in from every side
+rectangle-gone : closed : 0,0 100,0 100,60 0,60 : 31 => 0 0
+# (exact) a notch 10 wide, offset 20 over it: only its two top corners
+# still matter, and the offset dips between them: 200 + 2·20·asin(1/4)
+notch-over : open : 0,0 100,0 100,-50 110,-50 110,0 210,0 : 20 => 1 210.10721020568315
+# (exact) under it the notch survives, its two outer corners rounded: 260 + 20π
+notch-under : open : 0,0 100,0 100,-50 110,-50 110,0 210,0 : -20 => 1 292.8318530717959
+# (exact) two rooms and a corridor too narrow to survive: two dimpled
+# squares, each 160 − 10 + 10π/3
+dumbbell-in : closed : 0,0 60,0 60,25 120,25 120,0 180,0 180,60 120,60 120,35 60,35 60,60 0,60 : 10 => 2 320.943951023932
+
+# ── arcs ──
+# (exact) 200 + 2π·15
+slot-in : closed : 0,0 100,0,1 100,40 0,40,1 : 5 => 1 294.2477796076938
+# (exact) 200 + 2π·25
+slot-out : closed : 0,0 100,0,1 100,40 0,40,1 : -5 => 1 357.07963267948966
+# (exact) a fillet of radius 5 swallowed by an offset of 10: a sharp square
+fillet-swallowed : closed : 0,0 95,0,0.41421356237309503 100,5 100,100 0,100 : 10 => 1 320
+# (exact) two tangent quarter arcs, an S: no corner, no join: (40 + 60)·π/2
+s-curve : open : 0,0,0.41421356237309503 50,50,-0.41421356237309503 100,100 : 10 => 1 157.07963267948966
+# (exact) a circle drawn as two semicircles: 2π·40 and 2π·60
+circle-in : closed : 0,0,1 100,0,1 : 10 => 1 251.32741228718345
+circle-out : closed : 0,0,1 100,0,1 : -10 => 1 376.99111843077515
+circle-gone : closed : 0,0,1 100,0,1 : 50 => 0 0
+
+# ── awkward input (recorded, not derived) ──
+# a path that crosses itself: the offset breaks where the path crosses
+figure-eight : open : 0,0 100,100 100,0 0,100 : 8 => 2 388.54182431769647
+# a very sharp spike: inside it the two sides meet a fifth of the way along
+# (≈ 20 + 20); outside, a long arc goes round the tip (≈ 200.25 + 2·3.09)
+spike-inside : open : 0,0 100,0 0,5 : 2 => 1 40.02498439450079
+spike-outside : open : 0,0 100,0 0,5 : -2 => 1 206.30819048823963
+# regression: an arc of radius 100,000 whose crossing intersection missed
+flat-arc : open : 0,-40.79313164211775 -192.84856245719732,-94.41844070332529 0,-186.9870865413599,-0.000746102365195887 0,133.65375689380312 121.49725133306622,0,0.9265266681888825 -174.9811812741329,0 : 26.061059034600945 => 3 590.058357080093

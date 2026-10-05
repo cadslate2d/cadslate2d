@@ -62,7 +62,7 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 ## Testing rules (DESIGN §41, LOCKED)
 
 - Every behaviour change ships with tests in the same commit.
-- **Geometry:** unit tests, property tests where there are algebraic laws, and a permanent regression test for every fixed geometry bug.
+- **Geometry:** unit tests, property tests where there are algebraic laws, and a permanent regression test for every fixed geometry bug. The corpora under `test-data/geometry/` (intersections, polyline offsets) take one line per case.
 - **Commands:** headless tests driving `Session` — the same methods `cad-wasm` calls.
 - **Render boundary:** determinism, revision invariance under pointer movement, buffer lengths and batch ranges.
 - **DXF:** fixture files under `test-data/dxf/`; arbitrary bytes must never panic.

@@ -79,6 +79,7 @@ dependencies = [
  "cad-core",
  "cad-document",
  "cad-dxf",
+ "cad-geometry",
  "cad-render",
  "criterion",
 ]

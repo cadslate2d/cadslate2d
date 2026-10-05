@@ -772,6 +772,37 @@ mod tests {
         );
     }
 
+    /// Regression: a circle written as a closed polyline of two arcs — a
+    /// common encoding — imports as the whole circle and round-trips.
+    #[test]
+    fn a_circle_written_as_two_arcs_imports_whole() {
+        let body = [
+            (0, "LWPOLYLINE"),
+            (70, "1"),
+            (10, "0"),
+            (20, "0"),
+            (42, "1"),
+            (10, "100"),
+            (20, "0"),
+            (42, "1"),
+        ];
+        let first = import(entities(&body).as_bytes()).unwrap();
+        let circle = polylines_of(&first)[0].clone();
+        assert_eq!(circle.bulges().collect::<Vec<_>>(), vec![1.0, 1.0]);
+        let shape = Entity::Polyline(circle.clone());
+        assert_eq!(shape.primitives().len(), 2);
+        assert!(
+            shape.distance_to(p(50.0, 50.0)) < 1e-12 && shape.distance_to(p(50.0, -50.0)) < 1e-12
+        );
+
+        let text = export(&first.drawing);
+        assert_eq!(text.matches("\n 42\n").count(), 2);
+        assert_eq!(
+            polylines_of(&import(text.as_bytes()).unwrap()),
+            vec![circle]
+        );
+    }
+
     #[test]
     fn an_absurd_bulge_never_becomes_unbounded_geometry() {
         let with_bulge = |bulge: &'static str| {

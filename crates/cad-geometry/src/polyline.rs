@@ -107,11 +107,24 @@ pub fn bulge_primitive(start: Point2, end: Point2, bulge: f64) -> Primitive {
     )
 }
 
+/// Whether a closed polyline of `count` vertices has a segment from its last
+/// vertex back to its first. With three or more it always does. With two it
+/// does only if one of the two segments is an arc — a circle drawn as two
+/// arcs, a lens. Two straight segments between the same two points would be
+/// one line drawn twice.
+pub fn polyline_closes(count: usize, closed: bool, bulge_at: impl Fn(usize) -> f64) -> bool {
+    closed && (count > 2 || (count == 2 && !(is_straight(bulge_at(0)) && is_straight(bulge_at(1)))))
+}
+
 /// The index pairs `(from, to)` of a polyline's segments, including the
-/// closing segment when `closed`. Fewer than two vertices yield none, and a
-/// closed polyline of two vertices is one segment, not one doubled.
-pub fn polyline_spans(count: usize, closed: bool) -> impl Iterator<Item = (usize, usize)> {
-    let closing = (closed && count > 2).then(|| (count - 1, 0));
+/// closing segment when there is one (see [`polyline_closes`]). Fewer than
+/// two vertices yield none.
+pub fn polyline_spans(
+    count: usize,
+    closed: bool,
+    bulge_at: impl Fn(usize) -> f64,
+) -> impl Iterator<Item = (usize, usize)> {
+    let closing = polyline_closes(count, closed, bulge_at).then(|| (count - 1, 0));
     (1..count).map(|to| (to - 1, to)).chain(closing)
 }
 
@@ -123,7 +136,9 @@ pub fn polyline_primitives<'a>(
     bulge_at: impl Fn(usize) -> f64 + 'a,
     closed: bool,
 ) -> impl Iterator<Item = Primitive> + 'a {
-    polyline_spans(vertices.len(), closed)
+    polyline_spans(vertices.len(), closed, &bulge_at)
+        .collect::<Vec<_>>()
+        .into_iter()
         .map(move |(from, to)| bulge_primitive(vertices[from], vertices[to], bulge_at(from)))
 }
 
@@ -172,6 +187,33 @@ mod tests {
         assert_eq!(straight(&[p(1.0, 1.0)], true).len(), 0);
         // Two vertices closed is still one segment, not a doubled one.
         assert_eq!(straight(&[p(0.0, 0.0), p(1.0, 0.0)], true).len(), 1);
+    }
+
+    /// Regression (found by the offset corpus): a circle drawn as two
+    /// semicircles is a closed polyline of two vertices. Its second arc is
+    /// the closing segment, and it must not be dropped as a doubled line.
+    #[test]
+    fn a_closed_polyline_of_two_vertices_closes_when_it_has_an_arc() {
+        let ends = [p(0.0, 0.0), p(100.0, 0.0)];
+        let circle: Vec<Primitive> = polyline_primitives(&ends, |_| 1.0, true).collect();
+        assert_eq!(circle.len(), 2, "both semicircles");
+        let (Primitive::Arc(lower), Primitive::Arc(upper)) = (circle[0], circle[1]) else {
+            panic!("two arcs");
+        };
+        assert!(
+            close(lower.mid_point(), p(50.0, -50.0)) && close(upper.mid_point(), p(50.0, 50.0))
+        );
+
+        // A lens: one arc and its chord.
+        let bulges = [0.5, 0.0];
+        assert_eq!(
+            polyline_primitives(&ends, |index| bulges[index], true).count(),
+            2
+        );
+        // Two straight segments would be the same line twice: still one.
+        assert_eq!(polyline_primitives(&ends, |_| 0.0, true).count(), 1);
+        assert!(polyline_closes(2, true, |_| 1.0) && !polyline_closes(2, true, |_| 0.0));
+        assert!(polyline_closes(3, true, |_| 0.0) && !polyline_closes(3, false, |_| 1.0));
     }
 
     #[test]

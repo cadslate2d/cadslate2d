@@ -151,7 +151,7 @@ pnpm --dir web dev
 | Web typecheck, lint, unit tests | `pnpm --dir web typecheck` / `lint` / `test` |
 | Production bundle | `pnpm --dir web build` → `web/dist/` |
 | End-to-end tests (needs a production bundle) | `pnpm --dir web e2e` |
-| Rust benchmarks (store, index, scene, snapping) | `cargo bench -p cad-benchmarks` |
+| Rust benchmarks (store, index, scene, snapping, grips, offset) | `cargo bench -p cad-benchmarks` |
 | Re-record visual baselines (Chromium) | `E2E_BROWSERS=chromium pnpm --dir web exec playwright test --update-snapshots` |
 | Generate a benchmark drawing | `cargo run --release -p cad-benchmarks --bin generate-drawing -- 100000 benches/generated-drawings/lines-100k.dxf` |
 | Render-transport measurement in the browser | `pnpm --dir web bench:transport` (after `build` and generating `lines-1k`, `-10k`, `-100k`) |

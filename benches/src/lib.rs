@@ -7,6 +7,8 @@
 
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
+pub mod winding_offset;
+
 use std::collections::HashMap;
 
 use cad_core::{Aabb, EntityId, Point2, Vec2};

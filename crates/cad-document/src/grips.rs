@@ -211,8 +211,8 @@ fn polyline_neighbours(
     if index >= count {
         return None;
     }
-    // A closed polyline of two vertices has one segment, not two.
-    let wraps = polyline.closed && count > 2;
+    // Two vertices close only through an arc; see `polyline_closes`.
+    let wraps = cad_geometry::polyline_closes(count, polyline.closed, |at| polyline.bulge(at));
     let before = match index {
         0 if wraps => Some(count - 1),
         0 => None,

@@ -13,6 +13,7 @@ mod extend;
 pub mod intersect;
 mod offset;
 mod path;
+mod path_offset;
 mod polyline;
 mod segment;
 mod transform;
@@ -24,9 +25,12 @@ pub use extend::{extend_arc, extend_segment};
 pub use intersect::{Hits, Orientation, Primitive, orientation};
 pub use offset::{distance_to_line, offset_arc, offset_circle, offset_segment};
 pub use path::{Location, Path, PathTrimError};
+pub use path_offset::{
+    PathOffsetError, PathSpan, offset_path, path_spans, raw_offset, stitch_spans,
+};
 pub use polyline::{
     arc_from_bulge, bulge_end_tangent, bulge_from_arc, bulge_from_tangent, bulge_primitive,
-    is_straight, polyline_primitives, polyline_spans,
+    is_straight, polyline_closes, polyline_primitives, polyline_spans,
 };
 pub use segment::Segment;
 pub use transform::{Transform, unit_at_degrees};
