@@ -6,9 +6,8 @@
 
 use cad_core::EntityId;
 
-use crate::EntityRecord;
-use crate::layer::Layer;
-use crate::table::TableChange;
+use crate::layer::LayerChange;
+use crate::{EntityRecord, SettingsChange};
 
 /// A reversible change to one entity: to its geometry, its properties, or
 /// both. Payloads are shared, not copied.
@@ -55,13 +54,14 @@ impl EntityChange {
 /// One reversible change to the saved drawing: to an entity, or to a row of
 /// one of its tables. One enum and one history for all of them (§19.2).
 ///
-/// Non-exhaustive: linetype, text style, block, and settings changes join
-/// it as their tables arrive.
+/// Non-exhaustive: linetype, text style, and block changes join it as
+/// their tables arrive.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Change {
     Entity(EntityChange),
-    Layer(TableChange<Layer>),
+    Layer(LayerChange),
+    Settings(SettingsChange),
 }
 
 impl Change {
@@ -69,6 +69,7 @@ impl Change {
         match self {
             Change::Entity(change) => Change::Entity(change.inverse()),
             Change::Layer(change) => Change::Layer(change.inverse()),
+            Change::Settings(change) => Change::Settings(change.inverse()),
         }
     }
 }
@@ -111,8 +112,9 @@ mod tests {
     use cad_core::Point2;
 
     use super::*;
-    use crate::layer::LayerId;
-    use crate::{LineEntity, Properties};
+    use crate::layer::{Layer, LayerId};
+    use crate::table::TableChange;
+    use crate::{DrawingSettings, LineEntity, Properties};
 
     fn line(x: f64) -> EntityRecord {
         EntityRecord::new(
@@ -178,6 +180,12 @@ mod tests {
                 id: id(4),
                 record: line(4.0),
             }),
+            Change::Settings(SettingsChange {
+                before: DrawingSettings::default(),
+                after: DrawingSettings {
+                    current_layer: LayerId::from_raw(1),
+                },
+            }),
         ])
     }
 
@@ -202,11 +210,13 @@ mod tests {
                 Change::Layer(TableChange::Insert { .. }) => "insert layer",
                 Change::Layer(TableChange::Remove { .. }) => "remove layer",
                 Change::Layer(TableChange::Replace { .. }) => "replace layer",
+                Change::Settings(_) => "settings",
             })
             .collect();
         assert_eq!(
             kinds,
             vec![
+                "settings",
                 "insert entity",
                 "replace layer",
                 "replace entity",

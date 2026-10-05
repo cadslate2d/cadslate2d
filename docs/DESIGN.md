@@ -1909,6 +1909,8 @@ All persistent table changes must use the unified transaction system.
 
 Block redefinition must remain one semantic block transaction while invalidating derived state for dependent inserts.
 
+> **Resolved in M4 (layers):** a layer has a name, a colour, a linetype, a lineweight, and is on or off and locked or unlocked. Layer `0` cannot be removed or renamed; names are unique whatever their case. The current layer is a drawing setting, changed and undone like anything else in the drawing; it cannot be off. Objects on a layer that is off are neither drawn nor reachable by the pointer; objects on a locked layer are drawn and snapped to but not changed.
+
 > **Rewritten at the M3 exit:** the order of work and what is left out are in the [roadmap](roadmap.md) and the issues of the M4 milestone.
 
 ---

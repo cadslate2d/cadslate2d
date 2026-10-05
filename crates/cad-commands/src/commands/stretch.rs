@@ -23,12 +23,15 @@ struct Held {
     part: Vec<(EntityId, Entity)>,
     /// Both kinds together: what must not be snapped to meanwhile.
     sources: Vec<EntityId>,
+    /// How many more the window would have held, but for their locked layer.
+    locked: usize,
 }
 
 impl Held {
-    /// Everything `window` crosses that has a defining point inside it.
+    /// Everything shown that `window` crosses and that has a defining point
+    /// inside it — except what is on a locked layer, which is counted.
     fn by(window: Aabb, ctx: &CommandContext<'_>) -> Self {
-        let mut ids = ctx.drawing.query(&window);
+        let mut ids = ctx.drawing.query_shown(&window);
         ids.sort_unstable();
         let mut held = Self {
             window: Some(window),
@@ -43,7 +46,12 @@ impl Held {
             else {
                 continue;
             };
-            match entity.stretch_hold(&window) {
+            let hold = entity.stretch_hold(&window);
+            if hold != StretchHold::Nothing && ctx.drawing.is_locked(id) {
+                held.locked += 1;
+                continue;
+            }
+            match hold {
                 StretchHold::Nothing => continue,
                 StretchHold::Whole => whole.push(id),
                 StretchHold::Part => held.part.push((id, entity.clone())),
@@ -147,6 +155,11 @@ impl Command for StretchCommand {
             }
             (State::OppositeCorner { first }, CommandInput::Point(opposite)) => {
                 let held = Held::by(Aabb::from_points(*first, opposite), ctx);
+                match held.locked {
+                    0 => {}
+                    1 => ctx.message("1 was on a locked layer."),
+                    several => ctx.message(format!("{several} were on a locked layer.")),
+                }
                 if held.sources.is_empty() {
                     ctx.message("Nothing in the window to stretch.");
                     self.state = State::FirstCorner;

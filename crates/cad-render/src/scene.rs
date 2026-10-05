@@ -33,7 +33,8 @@ impl RenderScene {
             .extents()
             .map_or(Point2::ORIGIN, |extents| extents.center());
         frame.reset(origin);
-        for (_, entity) in drawing.entities() {
+        // Objects on a layer that is off are not drawn.
+        for (_, entity) in drawing.shown() {
             frame.push_entity(StyleRole::Entity, entity);
         }
     }

@@ -243,7 +243,8 @@ pub fn find_snap_from(
     let within = |pixels: f64| pixels <= SNAP_APERTURE.0;
 
     // Candidates come from the index, never from a scan of the drawing.
-    let mut ids = drawing.query(&view.pick_bounds(cursor, SNAP_APERTURE));
+    // What is on a layer that is off is not there to snap to.
+    let mut ids = drawing.query_shown(&view.pick_bounds(cursor, SNAP_APERTURE));
     ids.retain(|id| !excluded.contains(id));
     ids.sort_unstable();
     let candidates: Vec<&Entity> = ids.iter().filter_map(|id| drawing.entity(*id)).collect();

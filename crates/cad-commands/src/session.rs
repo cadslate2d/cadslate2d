@@ -186,7 +186,8 @@ impl Session {
         if !asks_for_object || self.pan_anchor.is_some() {
             return None;
         }
-        self.pick(cursor)
+        // Nothing is offered on an object a click would not take.
+        self.pick(cursor).filter(|id| !self.drawing.is_locked(*id))
     }
 
     /// The grip being dragged, if a grip edit is in progress.
@@ -408,6 +409,12 @@ impl Session {
             // A command asking for one object gets the entity under the cursor.
             PointerButton::Primary if self.expected().kind == InputKind::Object => {
                 match self.pick(at) {
+                    // A command acts on what it picks, and nothing acts on
+                    // an object on a locked layer.
+                    Some(entity) if self.drawing.is_locked(entity) => {
+                        self.log.push(self.locked_message(entity));
+                        Dirty::UI
+                    }
                     Some(entity) => self.feed(CommandInput::Pick {
                         entity,
                         at: self.view.screen_to_world(at),
@@ -657,7 +664,7 @@ impl Session {
         let point = self.view.screen_to_world(at);
         let reach = self.view.pixels_to_world(PICK_TOLERANCE.0);
         self.drawing
-            .query(&self.view.pick_bounds(at, PICK_TOLERANCE))
+            .query_shown(&self.view.pick_bounds(at, PICK_TOLERANCE))
             .into_iter()
             .filter_map(|id| Some((id, self.drawing.entity(id)?.distance_to(point))))
             .filter(|(_, distance)| *distance <= reach)
@@ -707,7 +714,7 @@ impl Session {
         let crossing = is_crossing(start, end);
         let mut hits: Vec<EntityId> = self
             .drawing
-            .query(&bounds)
+            .query_shown(&bounds)
             .into_iter()
             .filter(|&id| {
                 self.drawing.entity(id).is_some_and(|entity| {
@@ -725,14 +732,23 @@ impl Session {
 
     /// Adds `ids` to the selection, or removes them, and reports the result
     /// while a command is collecting objects.
+    ///
+    /// Objects on a locked layer are never added: a selection is what a
+    /// command will change. Leaving them out is said, so a click that
+    /// selects nothing is not a mystery.
     fn change_selection(&mut self, ids: &[EntityId], remove: bool) -> Dirty {
+        let locked = if remove {
+            0
+        } else {
+            ids.iter().filter(|id| self.drawing.is_locked(**id)).count()
+        };
         let changed = ids
             .iter()
             .filter(|&&id| {
                 if remove {
                     self.selection.remove(id)
                 } else {
-                    self.selection.insert(id)
+                    !self.drawing.is_locked(id) && self.selection.insert(id)
                 }
             })
             .count();
@@ -741,11 +757,25 @@ impl Session {
             self.log
                 .push(format!("{changed} {verb}, {} total", self.selection.len()));
         }
-        if changed > 0 || self.active.is_some() {
+        match locked {
+            0 => {}
+            1 => self.log.push("1 was on a locked layer.".to_owned()),
+            several => self.log.push(format!("{several} were on a locked layer.")),
+        }
+        if changed > 0 || locked > 0 || self.active.is_some() {
             Dirty::OVERLAY | Dirty::UI
         } else {
             Dirty::NONE
         }
+    }
+
+    /// Why a pick on `id` is refused: it names the layer.
+    fn locked_message(&self, id: EntityId) -> String {
+        let layer = self
+            .drawing
+            .layer_of(id)
+            .map_or("", |layer| layer.name.as_str());
+        format!("That object is on the locked layer \"{layer}\".")
     }
 
     /// What the current prompt accepts.
@@ -884,9 +914,11 @@ impl Session {
             self.drawing.end_group();
         }
 
-        // Whatever the command did, the selection must never name a dead entity.
+        // Whatever the command did, the selection must never name an entity
+        // that is gone, that is no longer shown, or that has been locked.
         let drawing = &self.drawing;
-        self.selection.retain(|id| drawing.entity(*id).is_some());
+        self.selection
+            .retain(|id| drawing.is_shown(*id) && !drawing.is_locked(*id));
 
         let mut dirty = Dirty::OVERLAY | Dirty::UI;
         if self.drawing.revision() != revision {

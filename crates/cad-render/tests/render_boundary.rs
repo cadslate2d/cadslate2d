@@ -287,3 +287,40 @@ fn render_preparation_does_not_mutate_cad_state() {
     assert_eq!(h.session.overlay(), overlay_description);
     assert_eq!(h.session.selection().iter().collect::<Vec<_>>(), selection);
 }
+
+/// #132: objects on a layer that is off are not in the scene at all — not
+/// drawn dimmed, not drawn and discarded: no instances.
+#[test]
+fn objects_on_a_layer_that_is_off_are_not_in_the_scene() {
+    use cad_core::Point2;
+    use cad_document::{Drawing, Entity, Layer, LayerId, LineEntity, Properties};
+
+    let line =
+        |y: f64| -> Entity { LineEntity::new(Point2::new(0.0, y), Point2::new(100.0, y)).into() };
+    let entities = |hidden: LayerId| {
+        [
+            (line(0.0), Properties::default()),
+            (line(10.0), Properties::on(hidden)),
+            (line(20.0), Properties::on(LayerId::from_raw(2))),
+        ]
+    };
+    let build = |off: bool| {
+        let layers = [
+            Layer {
+                on: !off,
+                ..Layer::named("maybe hidden")
+            },
+            Layer {
+                locked: true,
+                ..Layer::named("locked")
+            },
+        ];
+        let drawing = Drawing::from_parts(layers, entities(LayerId::from_raw(1))).unwrap();
+        let mut cache = SceneCache::default();
+        let scene = cache.scene(&drawing);
+        assert_frame_is_consistent(scene.frame(), "scene");
+        scene.frame().segment_count()
+    };
+    assert_eq!(build(false), 3, "everything on, locked or not");
+    assert_eq!(build(true), 2, "the layer that is off contributes nothing");
+}

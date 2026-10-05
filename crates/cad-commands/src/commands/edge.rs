@@ -93,7 +93,9 @@ impl EdgeCommand {
     ) -> Vec<&'a Entity> {
         let ids = match edges {
             // Candidates come from the index, never from a scan of the drawing.
-            Edges::All => drawing.query(region),
+            // An object on a locked layer is an edge like any other; one on
+            // a layer that is off is not there.
+            Edges::All => drawing.query_shown(region),
             Edges::Chosen(ids) => ids.clone(),
         };
         ids.into_iter()

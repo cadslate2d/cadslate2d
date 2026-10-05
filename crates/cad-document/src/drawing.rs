@@ -7,12 +7,12 @@ use cad_core::{Aabb, EntityId};
 
 use crate::history::History;
 use crate::id_alloc::EntityIdAllocator;
-use crate::layer::{Layer, LayerId, LayerTable, initial_layers};
+use crate::layer::{Layer, LayerId, LayerNameError, LayerTable, initial_layers};
 use crate::spatial::RTreeIndex;
 use crate::table::TableChange;
 use crate::{
-    Change, Entity, EntityChange, EntityRecord, EntityStore, Properties, Revision, SpatialIndex,
-    Transaction,
+    Change, DrawingSettings, Entity, EntityChange, EntityRecord, EntityStore, Properties, Revision,
+    SettingsChange, SpatialIndex, Transaction,
 };
 
 /// A 2D drawing.
@@ -28,6 +28,7 @@ use crate::{
 pub struct Drawing {
     entities: EntityStore,
     layers: LayerTable,
+    settings: DrawingSettings,
     ids: EntityIdAllocator,
     index: Box<dyn SpatialIndex>,
     history: History,
@@ -59,10 +60,18 @@ pub enum TransactionError {
     UnknownLayer(LayerId),
     /// The layer was already changed earlier in this transaction.
     LayerAlreadyChanged(LayerId),
-    /// Layer `0` is always there: it cannot be removed.
+    /// Layer `0` is always there: it cannot be removed or renamed.
     PermanentLayer,
     /// An entity is on the layer, so it cannot be removed.
     LayerInUse(LayerId),
+    /// The name cannot be a layer's name.
+    BadLayerName(LayerNameError),
+    /// This layer already has the name, give or take its case.
+    DuplicateLayerName(LayerId),
+    /// The layer is the current one, so it cannot be removed or switched off.
+    CurrentLayer(LayerId),
+    /// The layer is off, so it cannot be made the current one.
+    LayerIsOff(LayerId),
 }
 
 impl fmt::Display for TransactionError {
@@ -76,8 +85,12 @@ impl fmt::Display for TransactionError {
             Self::LayerAlreadyChanged(id) => {
                 write!(f, "layer {id} was already changed in this transaction")
             }
-            Self::PermanentLayer => write!(f, "layer 0 cannot be removed"),
+            Self::PermanentLayer => write!(f, "layer 0 cannot be removed or renamed"),
             Self::LayerInUse(id) => write!(f, "layer {id} has entities on it"),
+            Self::BadLayerName(error) => write!(f, "{error}"),
+            Self::DuplicateLayerName(id) => write!(f, "layer {id} already has that name"),
+            Self::CurrentLayer(id) => write!(f, "layer {id} is the current layer"),
+            Self::LayerIsOff(id) => write!(f, "layer {id} is off"),
         }
     }
 }
@@ -101,6 +114,7 @@ impl Drawing {
         Self {
             entities: EntityStore::new(),
             layers: initial_layers(),
+            settings: DrawingSettings::default(),
             ids: EntityIdAllocator::new(),
             index,
             history: History::default(),
@@ -124,14 +138,19 @@ impl Drawing {
     /// properties, and an empty history.
     ///
     /// `layers` come after layer `0`, which is always there, and take the
-    /// IDs 1, 2, … in the order given. An entity on a layer that is not
-    /// among them is refused.
+    /// IDs 1, 2, … in the order given. A layer with a name that is not
+    /// allowed or is already taken, and an entity on a layer that is not
+    /// among them, are refused.
     pub fn from_parts(
         layers: impl IntoIterator<Item = Layer>,
         entities: impl IntoIterator<Item = (Entity, Properties)>,
     ) -> Result<Self, TransactionError> {
         let mut drawing = Self::new();
         for layer in layers {
+            Layer::check_name(&layer.name).map_err(TransactionError::BadLayerName)?;
+            if let Some(taken) = drawing.layers.find(&layer.name) {
+                return Err(TransactionError::DuplicateLayerName(taken));
+            }
             let id = drawing.layers.allocate();
             drawing
                 .layers
@@ -191,6 +210,53 @@ impl Drawing {
     /// The layer table. It always holds layer `0`.
     pub fn layers(&self) -> &LayerTable {
         &self.layers
+    }
+
+    /// The drawing's settings.
+    pub fn settings(&self) -> DrawingSettings {
+        self.settings
+    }
+
+    /// The layer new objects are put on. It always exists and is on.
+    pub fn current_layer(&self) -> LayerId {
+        self.settings.current_layer
+    }
+
+    /// The layer an entity is on.
+    pub fn layer_of(&self, id: EntityId) -> Option<&Layer> {
+        self.layers.get(self.properties(id)?.layer)
+    }
+
+    /// Whether the entity is shown: it exists and its layer is on. What is
+    /// not shown is not there for the pointer either — not picked, not
+    /// selected, not snapped to.
+    pub fn is_shown(&self, id: EntityId) -> bool {
+        self.layer_of(id).is_some_and(|layer| layer.on)
+    }
+
+    /// Whether the entity is protected from change: its layer is locked.
+    pub fn is_locked(&self, id: EntityId) -> bool {
+        self.layer_of(id).is_some_and(|layer| layer.locked)
+    }
+
+    /// Every entity that is shown, in dense storage order.
+    pub fn shown(&self) -> impl Iterator<Item = (EntityId, &Entity)> {
+        self.entities
+            .records()
+            .filter(|(_, record)| {
+                self.layers
+                    .get(record.properties.layer)
+                    .is_some_and(|layer| layer.on)
+            })
+            .map(|(id, record)| (id, &*record.entity))
+    }
+
+    /// [`query`](Self::query), keeping only entities that are shown. This is
+    /// the query for anything the pointer does.
+    pub fn query_shown(&self, bounds: &Aabb) -> Vec<EntityId> {
+        let mut ids = self.index.query(bounds);
+        ids.retain(|id| self.is_shown(*id));
+        ids
     }
 
     /// Candidate entities whose bounds intersect `bounds`. Callers follow up
@@ -299,6 +365,7 @@ impl Drawing {
                     self.layers.apply(change);
                     report.tables_changed = true;
                 }
+                Change::Settings(change) => self.settings = change.after,
             }
         }
         self.revision = Revision::next();
@@ -321,12 +388,13 @@ impl TransactionBuilder<'_> {
     /// Adds a new entity and returns its ID. The ID is consumed even if the
     /// transaction is abandoned; sparse IDs are fine (DESIGN §10.2).
     ///
-    /// The entity gets the properties new objects are given: layer `0`,
-    /// everything by layer. An object made *from* another — a copy, an
-    /// offset, the second piece of a break — takes that object's properties
-    /// with [`insert_like`](Self::insert_like) instead.
+    /// The entity gets the properties new objects are given: the current
+    /// layer, everything by layer. An object made *from* another — a copy,
+    /// an offset, the second piece of a break — takes that object's
+    /// properties with [`insert_like`](Self::insert_like) instead.
     pub fn insert(&mut self, entity: impl Into<Entity>) -> EntityId {
-        self.insert_record(EntityRecord::new(entity, Properties::default()))
+        let properties = Properties::on(self.settings_now().current_layer);
+        self.insert_record(EntityRecord::new(entity, properties))
     }
 
     /// Adds a new entity with the given properties.
@@ -387,19 +455,32 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
-    /// Adds a layer and returns its ID. Like an entity's, the ID is
-    /// consumed even if the transaction is abandoned.
-    pub fn add_layer(&mut self, layer: Layer) -> LayerId {
+    /// Adds a layer and returns its ID. Its name must be allowed and not
+    /// taken. Like an entity's, the ID is consumed even if the transaction
+    /// is abandoned.
+    pub fn add_layer(&mut self, layer: Layer) -> Result<LayerId, TransactionError> {
+        self.free_name(&layer.name, None)?;
         let id = self.drawing.layers.allocate();
         self.changes
             .push(Change::Layer(TableChange::Insert { id, row: layer }));
-        id
+        Ok(id)
     }
 
-    /// Replaces an existing layer's row — its name — keeping its ID, and so
-    /// every entity on it.
+    /// Replaces an existing layer's row — its name or any of its settings —
+    /// keeping its ID, and so every entity on it.
+    ///
+    /// Layer `0` keeps its name, and the current layer stays on.
     pub fn replace_layer(&mut self, id: LayerId, layer: Layer) -> Result<(), TransactionError> {
         let before = self.existing_layer(id)?;
+        if layer.name != before.name {
+            if id == LayerId::FIRST {
+                return Err(TransactionError::PermanentLayer);
+            }
+            self.free_name(&layer.name, Some(id))?;
+        }
+        if !layer.on && self.settings_now().current_layer == id {
+            return Err(TransactionError::CurrentLayer(id));
+        }
         self.changes.push(Change::Layer(TableChange::Replace {
             id,
             before,
@@ -408,12 +489,16 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
-    /// Removes a layer that has no entities on it. Layer `0` stays.
+    /// Removes a layer that has no entities on it and is not the current
+    /// one. Layer `0` stays.
     pub fn remove_layer(&mut self, id: LayerId) -> Result<(), TransactionError> {
         if id == LayerId::FIRST {
             return Err(TransactionError::PermanentLayer);
         }
         let row = self.existing_layer(id)?;
+        if self.settings_now().current_layer == id {
+            return Err(TransactionError::CurrentLayer(id));
+        }
         // In use by an entity of the drawing, or by one this transaction
         // puts on it. (An entity this transaction takes *off* it still
         // counts: remove the layer in a transaction of its own.)
@@ -421,13 +506,27 @@ impl TransactionBuilder<'_> {
         let pending = self.changes.iter().any(|change| match change {
             Change::Entity(EntityChange::Insert { record, .. }) => on_layer(record),
             Change::Entity(EntityChange::Replace { after, .. }) => on_layer(after),
-            Change::Entity(EntityChange::Remove { .. }) | Change::Layer(_) => false,
+            Change::Entity(EntityChange::Remove { .. })
+            | Change::Layer(_)
+            | Change::Settings(_) => false,
         });
         if pending || self.drawing.records().any(|(_, record)| on_layer(record)) {
             return Err(TransactionError::LayerInUse(id));
         }
         self.changes
             .push(Change::Layer(TableChange::Remove { id, row }));
+        Ok(())
+    }
+
+    /// Makes `id` the layer new objects are put on. It must exist and be on.
+    pub fn set_current_layer(&mut self, id: LayerId) -> Result<(), TransactionError> {
+        let layer = self
+            .layer_now(id)
+            .ok_or(TransactionError::UnknownLayer(id))?;
+        if !layer.on {
+            return Err(TransactionError::LayerIsOff(id));
+        }
+        self.set_settings(DrawingSettings { current_layer: id });
         Ok(())
     }
 
@@ -456,7 +555,7 @@ impl TransactionBuilder<'_> {
     fn existing(&self, id: EntityId) -> Result<EntityRecord, TransactionError> {
         let already_changed = self.changes.iter().any(|change| match change {
             Change::Entity(change) => change.id() == id,
-            Change::Layer(_) => false,
+            Change::Layer(_) | Change::Settings(_) => false,
         });
         if already_changed {
             return Err(TransactionError::AlreadyChanged(id));
@@ -476,6 +575,44 @@ impl TransactionBuilder<'_> {
         })
     }
 
+    /// The layer `id` as it will be once this transaction commits.
+    fn layer_now(&self, id: LayerId) -> Option<&Layer> {
+        match self.layer_change(id) {
+            Some(TableChange::Remove { .. }) => None,
+            Some(TableChange::Insert { row, .. }) => Some(row),
+            Some(TableChange::Replace { after, .. }) => Some(after),
+            None => self.drawing.layers.get(id),
+        }
+    }
+
+    /// The settings as they will be once this transaction commits.
+    fn settings_now(&self) -> DrawingSettings {
+        self.changes
+            .iter()
+            .rev()
+            .find_map(|change| match change {
+                Change::Settings(change) => Some(change.after),
+                _ => None,
+            })
+            .unwrap_or(self.drawing.settings)
+    }
+
+    /// Records the settings as `after`. A transaction holds at most one
+    /// settings change: a second one moves the first one's end.
+    fn set_settings(&mut self, after: DrawingSettings) {
+        let pending = self.changes.iter_mut().find_map(|change| match change {
+            Change::Settings(change) => Some(change),
+            _ => None,
+        });
+        match pending {
+            Some(change) => change.after = after,
+            None => self.changes.push(Change::Settings(SettingsChange {
+                before: self.drawing.settings,
+                after,
+            })),
+        }
+    }
+
     /// A layer of the drawing that this transaction has not touched.
     fn existing_layer(&self, id: LayerId) -> Result<Layer, TransactionError> {
         if self.layer_change(id).is_some() {
@@ -491,15 +628,35 @@ impl TransactionBuilder<'_> {
     /// Whether an entity may be put on layer `id`: it exists and this
     /// transaction does not remove it, or this transaction adds it.
     fn known_layer(&self, id: LayerId) -> Result<(), TransactionError> {
-        let known = match self.layer_change(id) {
-            Some(TableChange::Remove { .. }) => false,
-            Some(TableChange::Insert { .. } | TableChange::Replace { .. }) => true,
-            None => self.drawing.layers.contains(id),
-        };
-        if known {
-            Ok(())
-        } else {
-            Err(TransactionError::UnknownLayer(id))
+        match self.layer_now(id) {
+            Some(_) => Ok(()),
+            None => Err(TransactionError::UnknownLayer(id)),
+        }
+    }
+
+    /// Whether `name` can be given to a layer — to `renamed`, or to a new
+    /// one: it is allowed, and no other layer has it once this transaction
+    /// commits.
+    fn free_name(&self, name: &str, renamed: Option<LayerId>) -> Result<(), TransactionError> {
+        Layer::check_name(name).map_err(TransactionError::BadLayerName)?;
+        let added = self.changes.iter().filter_map(|change| match change {
+            Change::Layer(TableChange::Insert { id, .. }) => Some(*id),
+            _ => None,
+        });
+        let taken = self
+            .drawing
+            .layers
+            .iter()
+            .map(|(id, _)| id)
+            .chain(added)
+            .filter(|id| Some(*id) != renamed)
+            .find(|id| {
+                self.layer_now(*id)
+                    .is_some_and(|layer| Layer::same_name(&layer.name, name))
+            });
+        match taken {
+            Some(id) => Err(TransactionError::DuplicateLayerName(id)),
+            None => Ok(()),
         }
     }
 }
@@ -938,7 +1095,7 @@ mod tests {
 
     fn add_layer(drawing: &mut Drawing, name: &str) -> LayerId {
         let mut tx = drawing.transaction();
-        let id = tx.add_layer(Layer::named(name));
+        let id = tx.add_layer(Layer::named(name)).unwrap();
         tx.commit();
         id
     }
@@ -1129,7 +1286,7 @@ mod tests {
     fn a_layer_and_what_is_on_it_can_be_made_in_one_transaction() {
         let mut drawing = Drawing::new();
         let mut tx = drawing.transaction();
-        let layer = tx.add_layer(Layer::named("walls"));
+        let layer = tx.add_layer(Layer::named("walls")).unwrap();
         let id = tx
             .insert_with(line(0.0, 0.0, 10.0, 0.0), Properties::on(layer))
             .unwrap();
@@ -1221,15 +1378,299 @@ mod tests {
         assert_eq!(drawing.layers().get(walls), Some(&Layer::named("walls")));
     }
 
+    // ── layer settings, names, and the current layer (#132) ──
+
+    fn change_layer(
+        drawing: &mut Drawing,
+        id: LayerId,
+        edit: impl FnOnce(&mut Layer),
+    ) -> Result<(), TransactionError> {
+        let mut layer = drawing.layers().get(id).cloned().expect("the layer exists");
+        edit(&mut layer);
+        let mut tx = drawing.transaction();
+        let result = tx.replace_layer(id, layer);
+        tx.commit();
+        result
+    }
+
+    #[test]
+    fn each_setting_of_a_layer_is_one_undoable_change() {
+        let mut drawing = Drawing::new();
+        let walls = add_layer(&mut drawing, "walls");
+        let fresh = Layer::named("walls");
+
+        type Edit = fn(&mut Layer);
+        let edits: [(&str, Edit); 6] = [
+            ("rename", |layer| layer.name = "partitions".to_owned()),
+            ("colour", |layer| layer.color = crate::Color::Index(3)),
+            ("linetype", |layer| {
+                layer.linetype = crate::Linetype::ByBlock
+            }),
+            ("lineweight", |layer| {
+                layer.lineweight = crate::Lineweight::ByBlock
+            }),
+            ("off", |layer| layer.on = false),
+            ("lock", |layer| layer.locked = true),
+        ];
+        for (what, edit) in edits {
+            change_layer(&mut drawing, walls, edit).unwrap();
+            let mut expected = fresh.clone();
+            edit(&mut expected);
+            assert_eq!(drawing.layers().get(walls), Some(&expected), "{what}");
+            drawing.undo().unwrap();
+            assert_eq!(drawing.layers().get(walls), Some(&fresh), "{what} undone");
+            drawing.redo().unwrap();
+            assert_eq!(
+                drawing.layers().get(walls),
+                Some(&expected),
+                "{what} redone"
+            );
+            drawing.undo().unwrap();
+        }
+    }
+
+    #[test]
+    fn layer_zero_keeps_its_name_but_takes_every_setting() {
+        let mut drawing = Drawing::new();
+        assert_eq!(
+            change_layer(&mut drawing, LayerId::FIRST, |layer| layer.name =
+                "base".to_owned()),
+            Err(TransactionError::PermanentLayer)
+        );
+        change_layer(&mut drawing, LayerId::FIRST, |layer| {
+            layer.color = crate::Color::Index(2);
+            layer.locked = true;
+        })
+        .unwrap();
+        let zero = drawing.layers().get(LayerId::FIRST).unwrap();
+        assert_eq!(
+            (zero.name.as_str(), zero.color, zero.locked),
+            ("0", crate::Color::Index(2), true)
+        );
+    }
+
+    #[test]
+    fn layer_names_must_be_allowed_and_unique_whatever_their_case() {
+        let mut drawing = Drawing::new();
+        let walls = add_layer(&mut drawing, "Walls");
+        let doors = add_layer(&mut drawing, "doors");
+
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.add_layer(Layer::named("WALLS")),
+            Err(TransactionError::DuplicateLayerName(walls))
+        );
+        assert_eq!(
+            tx.add_layer(Layer::named("0")),
+            Err(TransactionError::DuplicateLayerName(LayerId::FIRST))
+        );
+        assert_eq!(
+            tx.add_layer(Layer::named("a*b")),
+            Err(TransactionError::BadLayerName(LayerNameError::Forbidden(
+                '*'
+            )))
+        );
+        assert_eq!(
+            tx.add_layer(Layer::named("")),
+            Err(TransactionError::BadLayerName(LayerNameError::Empty))
+        );
+        // Two new layers in one transaction cannot share a name either.
+        let windows = tx.add_layer(Layer::named("windows")).unwrap();
+        assert_eq!(
+            tx.add_layer(Layer::named("Windows")),
+            Err(TransactionError::DuplicateLayerName(windows))
+        );
+        tx.commit();
+
+        assert_eq!(
+            change_layer(&mut drawing, doors, |layer| layer.name = "walls".to_owned()),
+            Err(TransactionError::DuplicateLayerName(walls))
+        );
+        assert_eq!(
+            change_layer(&mut drawing, doors, |layer| layer.name =
+                " doors".to_owned()),
+            Err(TransactionError::BadLayerName(LayerNameError::Padded))
+        );
+        // Changing only the case of a layer's own name is a rename like any other.
+        change_layer(&mut drawing, doors, |layer| layer.name = "Doors".to_owned()).unwrap();
+        assert_eq!(drawing.layers().find("DOORS"), Some(doors));
+
+        // A name freed in a transaction can be taken in the same one.
+        let mut tx = drawing.transaction();
+        tx.replace_layer(walls, Layer::named("partitions")).unwrap();
+        let new_walls = tx.add_layer(Layer::named("walls")).unwrap();
+        tx.commit();
+        assert_eq!(drawing.layers().find("walls"), Some(new_walls));
+        assert_eq!(drawing.layers().find("partitions"), Some(walls));
+    }
+
+    #[test]
+    fn new_entities_go_on_the_current_layer_and_changing_it_is_undoable() {
+        let mut drawing = Drawing::new();
+        let walls = add_layer(&mut drawing, "walls");
+        assert_eq!(drawing.current_layer(), LayerId::FIRST);
+
+        let mut tx = drawing.transaction();
+        tx.set_current_layer(walls).unwrap();
+        tx.commit();
+        assert_eq!(drawing.current_layer(), walls);
+        assert_eq!(
+            drawing.settings(),
+            DrawingSettings {
+                current_layer: walls
+            }
+        );
+        let on_walls = create(&mut drawing, line(0.0, 0.0, 10.0, 0.0));
+        assert_eq!(drawing.properties(on_walls), Some(Properties::on(walls)));
+
+        drawing.undo().unwrap(); // the line
+        drawing.undo().unwrap(); // the setting
+        assert_eq!(drawing.current_layer(), LayerId::FIRST);
+        let on_zero = create(&mut drawing, line(0.0, 5.0, 10.0, 5.0));
+        assert_eq!(drawing.properties(on_zero), Some(Properties::default()));
+
+        // Set and draw in one transaction: the entity is on the new layer,
+        // and setting twice records one change from the first value to the last.
+        let doors = add_layer(&mut drawing, "doors");
+        let mut tx = drawing.transaction();
+        tx.set_current_layer(walls).unwrap();
+        tx.set_current_layer(doors).unwrap();
+        let id = tx.insert(line(0.0, 9.0, 10.0, 9.0));
+        tx.commit();
+        assert_eq!(drawing.properties(id), Some(Properties::on(doors)));
+        drawing.undo().unwrap();
+        assert_eq!(
+            drawing.current_layer(),
+            LayerId::FIRST,
+            "one step back to where it was"
+        );
+    }
+
+    #[test]
+    fn the_current_layer_cannot_be_removed_switched_off_or_be_an_off_layer() {
+        let mut drawing = Drawing::new();
+        let walls = add_layer(&mut drawing, "walls");
+        let hidden = add_layer(&mut drawing, "hidden");
+        change_layer(&mut drawing, hidden, |layer| layer.on = false).unwrap();
+
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.set_current_layer(hidden),
+            Err(TransactionError::LayerIsOff(hidden))
+        );
+        assert_eq!(
+            tx.set_current_layer(LayerId::from_raw(50)),
+            Err(TransactionError::UnknownLayer(LayerId::from_raw(50)))
+        );
+        tx.set_current_layer(walls).unwrap();
+        // Already current within this transaction.
+        assert_eq!(
+            tx.remove_layer(walls),
+            Err(TransactionError::CurrentLayer(walls))
+        );
+        tx.commit();
+
+        assert_eq!(
+            change_layer(&mut drawing, walls, |layer| layer.on = false),
+            Err(TransactionError::CurrentLayer(walls))
+        );
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.remove_layer(walls),
+            Err(TransactionError::CurrentLayer(walls))
+        );
+        drop(tx);
+        // Locking the current layer is allowed: new objects can still be drawn on it.
+        change_layer(&mut drawing, walls, |layer| layer.locked = true).unwrap();
+        assert_eq!(drawing.current_layer(), walls);
+    }
+
+    #[test]
+    fn what_is_on_an_off_layer_is_not_shown_and_what_is_on_a_locked_one_is_locked() {
+        let (off, locked) = (LayerId::from_raw(1), LayerId::from_raw(2));
+        let drawing = Drawing::from_parts(
+            [
+                Layer {
+                    on: false,
+                    ..Layer::named("off")
+                },
+                Layer {
+                    locked: true,
+                    ..Layer::named("locked")
+                },
+            ],
+            [
+                (
+                    Entity::Line(line(0.0, 0.0, 10.0, 0.0)),
+                    Properties::default(),
+                ),
+                (Entity::Line(line(0.0, 1.0, 10.0, 1.0)), Properties::on(off)),
+                (
+                    Entity::Line(line(0.0, 2.0, 10.0, 2.0)),
+                    Properties::on(locked),
+                ),
+            ],
+        )
+        .unwrap();
+        let ids = live_ids(&drawing);
+        assert_eq!(
+            ids.iter()
+                .map(|id| drawing.is_shown(*id))
+                .collect::<Vec<_>>(),
+            [true, false, true]
+        );
+        assert_eq!(
+            ids.iter()
+                .map(|id| drawing.is_locked(*id))
+                .collect::<Vec<_>>(),
+            [false, false, true]
+        );
+        assert_eq!(
+            drawing.layer_of(ids[1]).map(|layer| layer.name.as_str()),
+            Some("off")
+        );
+        assert_eq!(
+            sorted(drawing.query_shown(&everything())),
+            vec![ids[0], ids[2]]
+        );
+        assert_eq!(
+            sorted(drawing.query(&everything())),
+            ids,
+            "the index itself holds everything"
+        );
+        assert_eq!(
+            sorted(drawing.shown().map(|(id, _)| id).collect()),
+            vec![ids[0], ids[2]]
+        );
+        let ghost = EntityId::from_raw(999);
+        assert!(!drawing.is_shown(ghost) && !drawing.is_locked(ghost));
+
+        let duplicate = Drawing::from_parts([Layer::named("a"), Layer::named("A")], []);
+        assert_eq!(
+            duplicate.err(),
+            Some(TransactionError::DuplicateLayerName(LayerId::from_raw(1)))
+        );
+        let bad = Drawing::from_parts([Layer::named("a,b")], []);
+        assert_eq!(
+            bad.err(),
+            Some(TransactionError::BadLayerName(LayerNameError::Forbidden(
+                ','
+            )))
+        );
+    }
+
     #[derive(Clone, Debug)]
     enum Op {
-        Create(f64, f64, f64, f64, usize),
+        Create(f64, f64, f64, f64),
+        CreateOn(f64, usize),
         Erase(usize),
         Modify(usize, f64, f64),
         Restyle(usize, usize, u8),
         AddLayer(u8),
         RenameLayer(usize, u8),
+        SwitchLayer(usize, bool, bool),
         RemoveLayer(usize),
+        SetCurrent(usize),
         /// A layer, an entity on it, and an edit of another, as one step.
         Together(usize, f64),
         Undo,
@@ -1242,14 +1683,17 @@ mod tests {
 
     fn op() -> impl Strategy<Value = Op> {
         prop_oneof![
-            4 => (coordinate(), coordinate(), coordinate(), coordinate(), any::<usize>())
-                .prop_map(|(a, b, c, d, layer)| Op::Create(a, b, c, d, layer)),
+            3 => (coordinate(), coordinate(), coordinate(), coordinate())
+                .prop_map(|(a, b, c, d)| Op::Create(a, b, c, d)),
+            2 => (coordinate(), any::<usize>()).prop_map(|(x, layer)| Op::CreateOn(x, layer)),
             1 => any::<usize>().prop_map(Op::Erase),
             2 => (any::<usize>(), coordinate(), coordinate()).prop_map(|(i, x, y)| Op::Modify(i, x, y)),
             2 => (any::<usize>(), any::<usize>(), 1..8u8).prop_map(|(i, layer, color)| Op::Restyle(i, layer, color)),
-            2 => any::<u8>().prop_map(Op::AddLayer),
-            1 => (any::<usize>(), any::<u8>()).prop_map(|(i, name)| Op::RenameLayer(i, name)),
+            2 => (0..12u8).prop_map(Op::AddLayer),
+            1 => (any::<usize>(), 0..12u8).prop_map(|(i, name)| Op::RenameLayer(i, name)),
+            1 => (any::<usize>(), any::<bool>(), any::<bool>()).prop_map(|(i, on, locked)| Op::SwitchLayer(i, on, locked)),
             1 => any::<usize>().prop_map(Op::RemoveLayer),
+            1 => any::<usize>().prop_map(Op::SetCurrent),
             1 => (any::<usize>(), coordinate()).prop_map(|(i, x)| Op::Together(i, x)),
             3 => Just(Op::Undo),
             2 => Just(Op::Redo),
@@ -1257,8 +1701,12 @@ mod tests {
     }
 
     /// Everything that is saved: every entity with its geometry and
-    /// properties, and every layer.
-    type Saved = (Vec<(EntityId, Entity, Properties)>, Vec<(LayerId, Layer)>);
+    /// properties, every layer, and the settings.
+    type Saved = (
+        Vec<(EntityId, Entity, Properties)>,
+        Vec<(LayerId, Layer)>,
+        DrawingSettings,
+    );
 
     fn saved(drawing: &Drawing) -> Saved {
         let mut entities: Vec<(EntityId, Entity, Properties)> = drawing
@@ -1271,19 +1719,20 @@ mod tests {
             .iter()
             .map(|(id, layer)| (id, layer.clone()))
             .collect();
-        (entities, layers)
+        (entities, layers, drawing.settings())
     }
 
     proptest! {
-        /// After any sequence of edits to entities and layers, undos, and
-        /// redos:
+        /// After any sequence of edits to entities, layers, and settings,
+        /// undos, and redos — refused changes included:
         ///  - the spatial index equals one rebuilt from scratch (§19.5);
         ///  - no entity or layer ID is ever handed out twice (§10.2);
         ///  - the allocator never decreases;
-        ///  - every entity is on a layer that exists;
+        ///  - every entity is on a layer that exists; layer names are
+        ///    unique; the current layer exists and is on;
         ///  - undoing everything gives back the empty drawing, and redoing
         ///    everything gives back exactly the drawing there was (§19.2):
-        ///    one history for entities and tables.
+        ///    one history for entities, tables, and settings.
         #[test]
         fn derived_state_and_identity_survive_any_edit_sequence(
             ops in prop::collection::vec(op(), 0..80),
@@ -1295,18 +1744,23 @@ mod tests {
             let mut allocated: Vec<EntityId> = Vec::new();
             let mut layers_made: Vec<LayerId> = Vec::new();
             let mut high_water = drawing.next_entity_id();
+            let mut together = 0;
 
             for op in ops {
                 let live = live_ids(&drawing);
                 let layers: Vec<LayerId> = drawing.layers().iter().map(|(id, _)| id).collect();
                 let layer = |pick: usize| layers[pick % layers.len()];
                 match op {
-                    Op::Create(x0, y0, x1, y1, on) => {
-                        let mut tx = drawing.transaction();
-                        let id = tx.insert_with(line(x0, y0, x1, y1), Properties::on(layer(on))).unwrap();
-                        tx.commit();
+                    Op::Create(x0, y0, x1, y1) => {
+                        let id = create(&mut drawing, line(x0, y0, x1, y1));
                         prop_assert!(!allocated.contains(&id), "ID {id} was reused");
+                        prop_assert_eq!(drawing.properties(id).unwrap().layer, drawing.current_layer());
                         allocated.push(id);
+                    }
+                    Op::CreateOn(x, on) => {
+                        let mut tx = drawing.transaction();
+                        allocated.push(tx.insert_with(line(x, 0.0, x, 9.0), Properties::on(layer(on))).unwrap());
+                        tx.commit();
                     }
                     Op::Erase(pick) if !live.is_empty() => {
                         let mut tx = drawing.transaction();
@@ -1328,27 +1782,61 @@ mod tests {
                         tx.commit();
                     }
                     Op::AddLayer(name) => {
-                        let id = add_layer(&mut drawing, &format!("layer {name}"));
-                        prop_assert!(!layers_made.contains(&id), "layer ID {} was reused", id);
-                        layers_made.push(id);
+                        // Few names: collisions are common and must be refused.
+                        let name = format!("Layer {name}");
+                        let taken = drawing.layers().find(&name);
+                        let mut tx = drawing.transaction();
+                        let added = tx.add_layer(Layer::named(name.to_uppercase()));
+                        tx.commit();
+                        match (added, taken) {
+                            (Ok(id), None) => {
+                                prop_assert!(!layers_made.contains(&id), "layer ID {} was reused", id);
+                                layers_made.push(id);
+                            }
+                            (Err(TransactionError::DuplicateLayerName(id)), Some(existing)) => {
+                                prop_assert_eq!(id, existing);
+                            }
+                            other => prop_assert!(false, "adding a layer: {:?}", other),
+                        }
                     }
                     Op::RenameLayer(pick, name) => {
-                        let mut tx = drawing.transaction();
-                        tx.replace_layer(layer(pick), Layer::named(format!("renamed {name}"))).unwrap();
-                        tx.commit();
+                        let id = layer(pick);
+                        let name = format!("layer {name}");
+                        let taken = drawing.layers().find(&name).filter(|other| *other != id);
+                        let renamed = change_layer(&mut drawing, id, |layer| layer.name = name);
+                        prop_assert_eq!(renamed.is_ok(), id != LayerId::FIRST && taken.is_none(), "{:?}", renamed);
+                    }
+                    Op::SwitchLayer(pick, on, locked) => {
+                        let id = layer(pick);
+                        let switched = change_layer(&mut drawing, id, |layer| {
+                            layer.on = on;
+                            layer.locked = locked;
+                        });
+                        prop_assert_eq!(switched.is_ok(), on || id != drawing.current_layer(), "{:?}", switched);
                     }
                     Op::RemoveLayer(pick) => {
                         let id = layer(pick);
                         let in_use = drawing.records().any(|(_, record)| record.properties.layer == id);
+                        let current = drawing.current_layer() == id;
                         let mut tx = drawing.transaction();
                         let removed = tx.remove_layer(id);
                         tx.commit();
-                        prop_assert_eq!(removed.is_ok(), id != LayerId::FIRST && !in_use);
+                        prop_assert_eq!(removed.is_ok(), id != LayerId::FIRST && !in_use && !current);
+                    }
+                    Op::SetCurrent(pick) => {
+                        let id = layer(pick);
+                        let on = drawing.layers().get(id).unwrap().on;
+                        let mut tx = drawing.transaction();
+                        let set = tx.set_current_layer(id);
+                        tx.commit();
+                        prop_assert_eq!(set.is_ok(), on);
                     }
                     Op::Together(pick, x) => {
+                        together += 1;
                         let mut tx = drawing.transaction();
-                        let new_layer = tx.add_layer(Layer::named("together"));
-                        allocated.push(tx.insert_with(line(x, 0.0, x, 5.0), Properties::on(new_layer)).unwrap());
+                        let new_layer = tx.add_layer(Layer::named(format!("together {together}"))).unwrap();
+                        tx.set_current_layer(new_layer).unwrap();
+                        allocated.push(tx.insert(line(x, 0.0, x, 5.0)));
                         if !live.is_empty() {
                             tx.set_properties(live[pick % live.len()], Properties::on(new_layer)).unwrap();
                         }
@@ -1367,6 +1855,13 @@ mod tests {
                         "entity {} is on a layer that does not exist", id
                     );
                 }
+                let current = drawing.layers().get(drawing.current_layer());
+                prop_assert!(current.is_some_and(|layer| layer.on), "the current layer is {:?}", current);
+                let mut names: Vec<String> = drawing.layers().iter().map(|(_, layer)| layer.name.to_lowercase()).collect();
+                names.sort();
+                let count = names.len();
+                names.dedup();
+                prop_assert_eq!(names.len(), count, "two layers share a name");
             }
 
             let mut reference = LinearIndex::new();

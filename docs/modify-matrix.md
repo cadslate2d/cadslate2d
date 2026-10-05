@@ -23,6 +23,21 @@ Undo brings an erased or changed object back with the properties it had.
 
 Tests: `cad-commands/src/tests/properties.rs`, one per row and command; `cad-document/src/drawing.rs`.
 
+## Layers that are off or locked
+
+| The object's layer is… | Drawn | Snapped to; a cutting edge or boundary | Selected; picked by a command to act on |
+| --- | --- | --- | --- |
+| On and unlocked | yes | yes | yes |
+| **Locked** | yes | yes | **no** |
+| **Off** | no | no | no |
+
+- An object on a layer that is off is not there for the pointer at all: a click passes through it, a box does not catch it, TRIM with every object as an edge does not count it.
+- An object on a locked layer cannot be changed by any command. A click or a box that would have selected it says how many were left out — "1 was on a locked layer." — and a command that picks the object it acts on (OFFSET, TRIM, EXTEND, FILLET, CHAMFER, BREAK) refuses the pick and names the layer: `That object is on the locked layer "walls".` STRETCH leaves locked objects out of its window and says how many.
+- A selected object whose layer is then switched off or locked leaves the selection.
+- New objects are put on the current layer, which always exists and is on; it may be locked.
+
+Tests: `cad-commands/src/tests/layers.rs`, `cad-document/src/drawing.rs`, `cad-render/tests/render_boundary.rs`.
+
 ## At a glance
 
 | Command | Line | Arc | Circle | Open polyline | Closed polyline |
