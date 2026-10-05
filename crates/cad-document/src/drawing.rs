@@ -33,6 +33,7 @@ pub struct Drawing {
     index: Box<dyn SpatialIndex>,
     history: History,
     revision: Revision,
+    shown_revision: Revision,
 }
 
 /// What a commit, undo, or redo did, so interaction state such as the
@@ -119,6 +120,7 @@ impl Drawing {
             index,
             history: History::default(),
             revision: Revision::next(),
+            shown_revision: Revision::next(),
         }
     }
 
@@ -178,6 +180,18 @@ impl Drawing {
     /// Changes on every commit, undo, and redo, and at no other time.
     pub fn revision(&self) -> Revision {
         self.revision
+    }
+
+    /// Changes whenever what [`shown`](Self::shown) yields could have
+    /// changed — an entity inserted, removed, or replaced (its properties
+    /// count), or a layer switched on or off — and at no other time.
+    ///
+    /// A layer renamed, recoloured, or locked leaves it alone: the same
+    /// entities are shown, in the same places, with the same properties.
+    /// Derived state that depends on the entities but not on what their
+    /// layers look like can tell by this that it is still good.
+    pub fn shown_revision(&self) -> Revision {
+        self.shown_revision
     }
 
     pub fn len(&self) -> usize {
@@ -348,7 +362,14 @@ impl Drawing {
     /// revision.
     fn apply(&mut self, transaction: &Transaction) -> ApplyReport {
         let mut report = ApplyReport::default();
+        let mut shown_changed = false;
         for change in transaction.changes() {
+            shown_changed |= match change {
+                Change::Entity(_) => true,
+                Change::Layer(TableChange::Replace { before, after, .. }) => before.on != after.on,
+                // A layer that is made or removed has nothing on it.
+                Change::Layer(_) | Change::Settings(_) => false,
+            };
             match change {
                 Change::Entity(EntityChange::Insert { id, record }) => {
                     self.index.insert(*id, record.entity.bounds());
@@ -382,6 +403,9 @@ impl Drawing {
             }
         }
         self.revision = Revision::next();
+        if shown_changed {
+            self.shown_revision = Revision::next();
+        }
         report
     }
 }
@@ -1664,6 +1688,74 @@ mod tests {
         // Locking the current layer is allowed: new objects can still be drawn on it.
         change_layer(&mut drawing, walls, |layer| layer.locked = true).unwrap();
         assert_eq!(drawing.current_layer(), walls);
+    }
+
+    /// #134: what is shown has its own revision, which a change to how a
+    /// layer looks does not touch.
+    #[test]
+    fn the_shown_revision_changes_with_entities_and_layer_visibility_only() {
+        let mut drawing = Drawing::new();
+        let walls = add_layer(&mut drawing, "walls");
+        let id = create(&mut drawing, line(0.0, 0.0, 10.0, 0.0));
+
+        let expect = |drawing: &mut Drawing,
+                      changes: bool,
+                      what: &str,
+                      edit: &mut dyn FnMut(&mut Drawing)| {
+            let (shown, all) = (drawing.shown_revision(), drawing.revision());
+            edit(drawing);
+            assert_ne!(drawing.revision(), all, "{what}: the drawing changed");
+            assert_eq!(drawing.shown_revision() != shown, changes, "{what}");
+        };
+
+        expect(&mut drawing, false, "a new layer", &mut |d| {
+            add_layer(d, "doors");
+        });
+        expect(&mut drawing, false, "a layer's colour", &mut |d| {
+            change_layer(d, walls, |layer| layer.color = crate::Color::Index(1)).unwrap();
+        });
+        expect(&mut drawing, false, "a layer's name", &mut |d| {
+            change_layer(d, walls, |layer| layer.name = "partitions".to_owned()).unwrap();
+        });
+        expect(&mut drawing, false, "a layer locked", &mut |d| {
+            change_layer(d, walls, |layer| layer.locked = true).unwrap();
+        });
+        expect(&mut drawing, false, "the current layer", &mut |d| {
+            let mut tx = d.transaction();
+            tx.set_unit(Some(LengthUnit::Metres));
+            tx.commit();
+        });
+        expect(&mut drawing, false, "undoing a setting", &mut |d| {
+            d.undo().unwrap();
+        });
+
+        expect(&mut drawing, true, "a layer switched off", &mut |d| {
+            change_layer(d, walls, |layer| layer.on = false).unwrap();
+        });
+        expect(&mut drawing, true, "undoing that", &mut |d| {
+            d.undo().unwrap();
+        });
+        expect(&mut drawing, true, "an entity drawn", &mut |d| {
+            create(d, line(0.0, 5.0, 10.0, 5.0));
+        });
+        expect(&mut drawing, true, "an entity moved", &mut |d| {
+            let mut tx = d.transaction();
+            tx.replace(id, line(1.0, 1.0, 9.0, 9.0)).unwrap();
+            tx.commit();
+        });
+        expect(&mut drawing, true, "an entity's properties", &mut |d| {
+            let mut tx = d.transaction();
+            tx.set_properties(id, Properties::on(walls)).unwrap();
+            tx.commit();
+        });
+        expect(&mut drawing, true, "an entity erased", &mut |d| {
+            let mut tx = d.transaction();
+            tx.remove(id).unwrap();
+            tx.commit();
+        });
+        expect(&mut drawing, true, "redo after undo", &mut |d| {
+            d.undo().unwrap();
+        });
     }
 
     #[test]

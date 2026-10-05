@@ -9,7 +9,7 @@
 use cad_commands::testing::Harness;
 use cad_commands::{Dirty, Modifiers, PointerButton, Toggle};
 use cad_core::ScreenPoint;
-use cad_render::{OverlayFrame, PackedFrame, SceneCache, StyleRole};
+use cad_render::{OverlayFrame, PackedFrame, RenderScene, SceneCache, StyleRole};
 
 /// A small drawing made the way a user would make it.
 fn drawing() -> Harness {
@@ -323,4 +323,130 @@ fn objects_on_a_layer_that_is_off_are_not_in_the_scene() {
     };
     assert_eq!(build(false), 3, "everything on, locked or not");
     assert_eq!(build(true), 2, "the layer that is off contributes nothing");
+}
+
+/// A drawing with layers in three colours, made the way a user makes it.
+fn coloured() -> Harness {
+    let mut h = Harness::new();
+    h.enter_all(&[
+        "LA",
+        "N",
+        "walls,doors",
+        "C",
+        "1",
+        "walls",
+        "C",
+        "5",
+        "doors",
+        "",
+    ]);
+    h.enter_all(&["L", "0,0", "100,0", "100,50", ""]);
+    h.enter_all(&[
+        "LA", "S", "walls", "", "C", "50,25", "10", "L", "0,60", "90,60", "",
+    ]);
+    h.enter_all(&[
+        "LA", "S", "doors", "", "PL", "0,-20", "40,-20", "A", "40,-40", "",
+    ]);
+    h
+}
+
+/// #134 (ADR-0014): with several colours, the committed scene still crosses
+/// as a few whole buffers — one style index per instance, every index a row
+/// of the table — and is the same every time it is built.
+#[test]
+fn styled_scenes_are_consistent_and_deterministic() {
+    let h = coloured();
+    let mut cache = SceneCache::new();
+    let scene = cache.scene(h.session.drawing());
+    assert_frame_is_consistent(scene.frame(), "scene");
+
+    assert_eq!(
+        scene.segment_styles().len(),
+        scene.frame().segment_count() as usize
+    );
+    assert_eq!(scene.arc_styles().len(), scene.frame().arc_count() as usize);
+    assert_eq!(
+        scene.styles().len(),
+        scene.style_count() * RenderScene::BYTES_PER_STYLE
+    );
+    assert_eq!(scene.style_count(), 3, "layer 0, walls, and doors");
+    for style in scene.segment_styles().iter().chain(scene.arc_styles()) {
+        assert!(usize::from(*style) < scene.style_count());
+    }
+    // Committed geometry is still one batch per buffer, however many colours:
+    // colour is not what batches are for any more.
+    assert_eq!(scene.frame().batches().len(), 1);
+    assert_eq!(scene.frame().arc_batches().len(), 1);
+    // Layer 0 is the foreground; walls red; doors blue.
+    assert_eq!(
+        scene.styles(),
+        &[
+            0,
+            0,
+            0,
+            RenderScene::STYLE_FOREGROUND,
+            255,
+            0,
+            0,
+            RenderScene::STYLE_RGB,
+            0,
+            0,
+            255,
+            RenderScene::STYLE_RGB,
+        ]
+    );
+
+    let again = coloured();
+    let mut other = SceneCache::new();
+    let rebuilt = other.scene(again.session.drawing());
+    assert_eq!(rebuilt.frame(), scene.frame());
+    assert_eq!(rebuilt.segment_styles(), scene.segment_styles());
+    assert_eq!(rebuilt.arc_styles(), scene.arc_styles());
+    assert_eq!(rebuilt.styles(), scene.styles());
+}
+
+/// #134: pointer movement, pan, and zoom build neither geometry nor styles;
+/// recolouring a layer resolves the styles and builds no geometry.
+#[test]
+fn pointer_activity_touches_neither_geometry_nor_styles_and_a_recolour_only_styles() {
+    let mut h = coloured();
+    let mut cache = SceneCache::new();
+    let (geometry, styles) = {
+        let scene = cache.scene(h.session.drawing());
+        (scene.revision(), scene.style_revision())
+    };
+
+    h.enter("L");
+    for step in 0..200 {
+        h.move_to(f64::from(step * 3 % 800), f64::from(step * 7 % 600));
+        let scene = cache.scene(h.session.drawing());
+        assert_eq!(
+            (scene.revision(), scene.style_revision()),
+            (geometry, styles)
+        );
+    }
+    h.escape();
+    h.session
+        .wheel(ScreenPoint::new(400.0, 300.0), 120.0, Modifiers::NONE);
+    h.session.pointer_down(
+        ScreenPoint::new(100.0, 100.0),
+        PointerButton::Middle,
+        Modifiers::NONE,
+    );
+    h.move_to(180.0, 140.0);
+    h.session.pointer_up(
+        ScreenPoint::new(180.0, 140.0),
+        PointerButton::Middle,
+        Modifiers::NONE,
+    );
+    cache.scene(h.session.drawing());
+    assert_eq!((cache.build_count(), cache.style_build_count()), (1, 1));
+
+    let dirty = h.enter_all_dirty(&["LA", "C", "3", "walls", ""]);
+    assert!(dirty.contains(Dirty::SCENE), "the host is told to look");
+    let scene = cache.scene(h.session.drawing());
+    assert_eq!(scene.revision(), geometry, "the geometry is untouched");
+    assert_ne!(scene.style_revision(), styles);
+    assert_eq!(&scene.styles()[4..8], &[0, 255, 0, RenderScene::STYLE_RGB]);
+    assert_eq!((cache.build_count(), cache.style_build_count()), (1, 2));
 }

@@ -99,6 +99,12 @@ export type StyleRole = (typeof StyleRole)[keyof typeof StyleRole];
 export const FLOATS_PER_SEGMENT = 4;
 export const FLOATS_PER_ARC = 5;
 export const WORDS_PER_BATCH = 3;
+/** Bytes per row of the style table: red, green, blue, kind (ADR-0014). */
+export const BYTES_PER_STYLE = 4;
+/** The kind of a style row whose colour is the theme's foreground. */
+export const STYLE_FOREGROUND = 0;
+/** The kind of a style row whose first three bytes are its colour. */
+export const STYLE_RGB = 255;
 
 /**
  * Packed geometry for one render lifetime.
@@ -116,6 +122,13 @@ export interface FrameBuffers {
   readonly arcs: Float32Array;
   /** `style, first, count` per arc batch. */
   readonly arcBatches: Uint32Array;
+  /**
+   * One style index per segment instance: a row of the style table. Only the
+   * committed scene has them; overlay geometry is styled by its batches.
+   */
+  readonly segmentStyles?: Uint16Array;
+  /** One style index per arc instance; see `segmentStyles`. */
+  readonly arcStyles?: Uint16Array;
 }
 
 /** `[scaleX, scaleY, translateX, translateY]`: `clip = position * scale + translate`. */
@@ -233,9 +246,25 @@ export class CadEngine {
 
   // ── output: pulled in bulk ──
 
-  /** Identifies the committed scene; re-upload committed buffers only when it changes. */
+  /**
+   * Identifies the committed geometry; re-upload committed buffers only when
+   * it changes. Recolouring a layer does not change it (ADR-0014).
+   */
   get sceneRevision(): number {
     return this.#session.scene_revision();
+  }
+
+  /** Identifies the style table; re-upload it only when this changes. */
+  get styleRevision(): number {
+    return this.#session.scene_style_revision();
+  }
+
+  /**
+   * Lends the style table to `consume` for the duration of the call:
+   * `BYTES_PER_STYLE` bytes per row, `red, green, blue, kind`.
+   */
+  readStyles<T>(consume: (rows: Uint8Array) => T): T {
+    return consume(this.#session.scene_styles());
   }
 
   /** Lends the committed scene's buffers to `consume` for the duration of the call. */
@@ -246,6 +275,8 @@ export class CadEngine {
       batches: this.#session.scene_batches(),
       arcs: this.#session.scene_arcs(),
       arcBatches: this.#session.scene_arc_batches(),
+      segmentStyles: this.#session.scene_segment_styles(),
+      arcStyles: this.#session.scene_arc_styles(),
     });
   }
 

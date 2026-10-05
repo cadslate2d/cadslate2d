@@ -13,6 +13,7 @@ import { ARC_FRAGMENT_SHADER, ARC_STRIP_VERTICES, ARC_VERTEX_SHADER } from "./ar
 import { InstanceLayer, type InstanceLayout, type StrokeUniforms } from "./instance-layer";
 import { linkProgram } from "./program";
 import { STROKE_FRAGMENT_SHADER, STROKE_VERTEX_SHADER } from "./shaders";
+import { styleTexels } from "./style-table";
 
 /**
  * Roles that travel in the overlay frame, because they depend on the view,
@@ -29,6 +30,8 @@ export interface RendererStats {
   drawCalls: number;
   /** Uploads of committed geometry. Must not grow with pointer activity. */
   sceneUploads: number;
+  /** Uploads of the style table: a few bytes per style, never geometry. */
+  styleUploads: number;
   /** Uploads of transient geometry. */
   overlayUploads: number;
   /** GPU buffer reallocations, for either lifetime. */
@@ -47,15 +50,16 @@ class FrameLayers {
   readonly segments: InstanceLayer;
   readonly arcs: InstanceLayer;
 
-  constructor(gl: WebGL2RenderingContext, pipelines: Pipelines, usage: number) {
-    this.segments = new InstanceLayer(gl, pipelines.segments.layout, usage);
-    this.arcs = new InstanceLayer(gl, pipelines.arcs.layout, usage);
+  /** `styled`: every instance has a style index, and colours come from the style table. */
+  constructor(gl: WebGL2RenderingContext, pipelines: Pipelines, usage: number, styled: boolean) {
+    this.segments = new InstanceLayer(gl, pipelines.segments.layout, usage, styled);
+    this.arcs = new InstanceLayer(gl, pipelines.arcs.layout, usage, styled);
   }
 
   /** Returns how many of the buffers had to be reallocated. */
   upload(frame: FrameBuffers): number {
-    const segments = this.segments.upload(frame.segments, frame.batches);
-    const arcs = this.arcs.upload(frame.arcs, frame.arcBatches);
+    const segments = this.segments.upload(frame.segments, frame.batches, frame.segmentStyles);
+    const arcs = this.arcs.upload(frame.arcs, frame.arcBatches, frame.arcStyles);
     return Number(segments) + Number(arcs);
   }
 
@@ -77,6 +81,8 @@ interface GpuResources {
   readonly scene: FrameLayers;
   /** Transient geometry: small, rewritten on most frames. */
   readonly overlay: FrameLayers;
+  /** What each committed instance is drawn with: one texel per style (ADR-0014). */
+  readonly styles: WebGLTexture;
 }
 
 export class WebGlRenderer implements FrameSink {
@@ -84,6 +90,7 @@ export class WebGlRenderer implements FrameSink {
     frames: 0,
     drawCalls: 0,
     sceneUploads: 0,
+    styleUploads: 0,
     overlayUploads: 0,
     bufferReallocations: 0,
   };
@@ -96,6 +103,7 @@ export class WebGlRenderer implements FrameSink {
   readonly #palette: CanvasPalette;
   #resources: GpuResources;
   #sceneRevision: number | undefined;
+  #styleRevision: number | undefined;
   #devicePixelRatio = 1;
 
   constructor(canvas: HTMLCanvasElement, palette: CanvasPalette) {
@@ -131,6 +139,30 @@ export class WebGlRenderer implements FrameSink {
     this.stats.sceneUploads += 1;
   }
 
+  get styleRevision(): number | undefined {
+    return this.#styleRevision;
+  }
+
+  updateStyles(revision: number, rows: Uint8Array): void {
+    const gl = this.#gl;
+    // The theme's colour for ordinary geometry stands in for "foreground".
+    const texels = styleTexels(rows, this.#palette.strokes[StyleRole.Entity].color);
+    gl.bindTexture(gl.TEXTURE_2D, this.#resources.styles);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA8,
+      texels.width,
+      texels.height,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      texels.data,
+    );
+    this.#styleRevision = revision;
+    this.stats.styleUploads += 1;
+  }
+
   updateOverlay(frame: FrameBuffers): void {
     this.stats.bufferReallocations += this.#resources.overlay.upload(frame);
     this.stats.overlayUploads += 1;
@@ -146,6 +178,8 @@ export class WebGlRenderer implements FrameSink {
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied alpha
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.#resources.styles);
 
     // The grid, then committed geometry, then transient geometry on top.
     const passes: [FrameLayers, ClipTransform, (role: StyleRole) => boolean][] = [
@@ -167,9 +201,10 @@ export class WebGlRenderer implements FrameSink {
   dispose(): void {
     this.#canvas.removeEventListener("webglcontextlost", this.#onContextLost);
     this.#canvas.removeEventListener("webglcontextrestored", this.#onContextRestored);
-    const { pipelines, quad, scene, overlay } = this.#resources;
+    const { pipelines, quad, scene, overlay, styles } = this.#resources;
     scene.dispose();
     overlay.dispose();
+    this.#gl.deleteTexture(styles);
     this.#gl.deleteBuffer(quad);
     this.#gl.deleteProgram(pipelines.segments.program);
     this.#gl.deleteProgram(pipelines.arcs.program);
@@ -184,6 +219,7 @@ export class WebGlRenderer implements FrameSink {
     const gl = this.#gl;
     gl.useProgram(pipeline.program);
     gl.uniform2f(pipeline.uniforms.viewport, this.#canvas.width, this.#canvas.height);
+    gl.uniform1i(pipeline.uniforms.styles, 0); // texture unit 0: the style table
     return layer.draw(pipeline.uniforms, transform, this.#palette, this.#devicePixelRatio, include);
   }
 
@@ -197,6 +233,7 @@ export class WebGlRenderer implements FrameSink {
     // revision so the next frame re-uploads from the current scene.
     this.#resources = createResources(this.#gl);
     this.#sceneRevision = undefined;
+    this.#styleRevision = undefined;
     this.onContextRestored?.();
   };
 }
@@ -222,6 +259,8 @@ function createPipeline(
       viewport: uniform("u_viewport"),
       halfWidth: uniform("u_half_width"),
       color: uniform("u_color"),
+      styled: uniform("u_styled"),
+      styles: uniform("u_styles"),
     },
   };
 }
@@ -251,10 +290,30 @@ function createResources(gl: WebGL2RenderingContext): GpuResources {
     }),
   };
 
+  // One opaque texel until the first table arrives, so the sampler is always complete.
+  const styles = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, styles);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA8,
+    1,
+    1,
+    0,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    new Uint8Array([255, 255, 255, 255]),
+  );
+
   return {
     pipelines,
     quad,
-    scene: new FrameLayers(gl, pipelines, gl.STATIC_DRAW),
-    overlay: new FrameLayers(gl, pipelines, gl.DYNAMIC_DRAW),
+    scene: new FrameLayers(gl, pipelines, gl.STATIC_DRAW, true),
+    overlay: new FrameLayers(gl, pipelines, gl.DYNAMIC_DRAW, false),
+    styles,
   };
 }

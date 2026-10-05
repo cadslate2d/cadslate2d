@@ -11,8 +11,16 @@ const emptyFrame = (): FrameBuffers => ({
 
 class FakeSource implements FrameSource {
   sceneRevision = 1;
+  styleRevision = 1;
   calls = 0;
   sceneReads = 0;
+  styleReads = 0;
+
+  readStyles<T>(consume: (rows: Uint8Array) => T): T {
+    this.calls += 1;
+    this.styleReads += 1;
+    return consume(new Uint8Array(4));
+  }
 
   readScene<T>(consume: (frame: FrameBuffers) => T): T {
     this.calls += 1;
@@ -38,7 +46,15 @@ class FakeSource implements FrameSource {
 
 class FakeSink implements FrameSink {
   sceneRevision: number | undefined;
+  styleRevision: number | undefined;
+  styleUploads = 0;
   sceneUploads = 0;
+
+  updateStyles(revision: number): void {
+    this.styleRevision = revision;
+    this.styleUploads += 1;
+  }
+
   overlayUploads = 0;
   draws = 0;
 
@@ -81,6 +97,32 @@ describe("renderFrame", () => {
     renderFrame(source, sink);
     expect(sink.sceneUploads).toBe(2);
     expect(sink.sceneRevision).toBe(2);
+  });
+
+  // ADR-0014: the style table has a lifetime of its own.
+  test("uploads the style table once, and again only when its revision changes", () => {
+    const [source, sink] = [new FakeSource(), new FakeSink()];
+    for (let frame = 0; frame < 10; frame += 1) renderFrame(source, sink);
+    expect(sink.styleUploads).toBe(1);
+    expect(source.styleReads).toBe(1);
+
+    // A layer was recoloured: the table changed, the geometry did not.
+    source.styleRevision = 2;
+    renderFrame(source, sink);
+    renderFrame(source, sink);
+    expect(sink.styleUploads).toBe(2);
+    expect(sink.styleRevision).toBe(2);
+    expect(sink.sceneUploads).toBe(1);
+    expect(source.sceneReads).toBe(1);
+  });
+
+  test("an edit uploads both the geometry and the table", () => {
+    const [source, sink] = [new FakeSource(), new FakeSink()];
+    renderFrame(source, sink);
+    source.sceneRevision = 2;
+    source.styleRevision = 2;
+    renderFrame(source, sink);
+    expect([sink.sceneUploads, sink.styleUploads]).toEqual([2, 2]);
   });
 
   test("refreshes the overlay every frame, independently of the scene", () => {

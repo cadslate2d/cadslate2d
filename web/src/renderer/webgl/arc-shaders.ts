@@ -7,6 +7,8 @@
 // curve itself is evaluated analytically, so there is no faceting at any
 // zoom, and the instance data does not depend on the view.
 
+import { STYLE_VERTEX_DECLARATIONS, STYLE_VERTEX_RESOLVE } from "./style-table";
+
 /** Quads in the covering strip. More means less overdraw on large circles. */
 export const ARC_STRIP_SEGMENTS = 32;
 export const ARC_STRIP_VERTICES = 2 * (ARC_STRIP_SEGMENTS + 1);
@@ -21,7 +23,7 @@ uniform vec2 u_scale;       // frame units → clip space
 uniform vec2 u_translate;
 uniform vec2 u_viewport;    // device pixels
 uniform float u_half_width; // device pixels
-
+${STYLE_VERTEX_DECLARATIONS}
 flat out vec2 v_center;     // device pixels from the viewport centre
 flat out float v_radius;    // device pixels
 flat out float v_start;
@@ -57,6 +59,7 @@ void main() {
   v_radius = radius;
   v_start = a_arc.w;
   v_sweep = a_sweep;
+  ${STYLE_VERTEX_RESOLVE}
   gl_Position = vec4(position / half_viewport, 0.0, 1.0);
 }
 `;
@@ -64,10 +67,10 @@ void main() {
 export const ARC_FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 
-uniform vec4 u_color;       // straight alpha
 uniform vec2 u_viewport;    // device pixels
 uniform float u_half_width; // device pixels
 
+flat in vec4 v_color;       // straight alpha
 flat in vec2 v_center;
 flat in float v_radius;
 flat in float v_start;
@@ -92,7 +95,7 @@ void main() {
   }
 
   float coverage = clamp(u_half_width + 0.5 - distance_px, 0.0, 1.0);
-  float alpha = u_color.a * coverage;
-  out_color = vec4(u_color.rgb * alpha, alpha); // premultiplied
+  float alpha = v_color.a * coverage;
+  out_color = vec4(v_color.rgb * alpha, alpha); // premultiplied
 }
 `;

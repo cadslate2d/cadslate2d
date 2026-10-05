@@ -7,6 +7,7 @@ export interface RendererStats {
   frames: number;
   drawCalls: number;
   sceneUploads: number;
+  styleUploads: number;
   overlayUploads: number;
   bufferReallocations: number;
 }
@@ -81,14 +82,16 @@ export function litPixels(canvas: Locator): Promise<number> {
 }
 
 /**
- * Lit pixels in a small rectangle of world space, `halfWidth` × `halfHeight`
- * around a world point, in a view that has not been panned or zoomed.
+ * Pixels that `matches`, in a small rectangle of world space, `half.width` ×
+ * `half.height` around a world point, in a view that has not been panned or
+ * zoomed.
  */
-export async function litPixelsAround(
+export async function pixelsAround(
   page: Page,
   canvas: Locator,
   at: { x: number; y: number },
   half: { width: number; height: number },
+  matches: (pixel: [red: number, green: number, blue: number]) => boolean,
 ): Promise<number> {
   const center = await centerOf(canvas);
   const image = PNG.sync.read(
@@ -103,11 +106,24 @@ export async function litPixelsAround(
   );
   let count = 0;
   for (let offset = 0; offset < image.data.length; offset += 4) {
-    const sum =
-      (image.data[offset] ?? 0) + (image.data[offset + 1] ?? 0) + (image.data[offset + 2] ?? 0);
-    if (sum > 3 * 96) count += 1;
+    const pixel: [number, number, number] = [
+      image.data[offset] ?? 0,
+      image.data[offset + 1] ?? 0,
+      image.data[offset + 2] ?? 0,
+    ];
+    if (matches(pixel)) count += 1;
   }
   return count;
+}
+
+/** Lit pixels — clearly brighter than the background — around a world point. */
+export function litPixelsAround(
+  page: Page,
+  canvas: Locator,
+  at: { x: number; y: number },
+  half: { width: number; height: number },
+): Promise<number> {
+  return pixelsAround(page, canvas, at, half, ([red, green, blue]) => red + green + blue > 3 * 96);
 }
 
 /** Pixels in the crossing-selection colour (green), including antialiased ones. */

@@ -105,7 +105,9 @@ A position that would collapse the object — a line of no length, a circle of n
 
 Every object is on a layer; new objects go on the current one, and an object made from another — a copy, an offset, a piece of a trim — stays on its source's. `LAYER` makes and manages them. A layer that is **off** hides its objects from the screen and from the pointer. A layer that is **locked** still shows them, and they can be snapped to and trimmed against, but no command changes them.
 
-Not there yet: layers are not drawn in their colours, and are not written to or read from DXF — an exported drawing has everything on layer `0`. Both are in the [M4 plan](docs/roadmap.md).
+Objects are drawn in the colour of their layer (`LAYER`, `Color`, a number from 1 to 255: 1 red, 2 yellow, 3 green, 4 cyan, 5 blue, 6 magenta). Colour 7, which a new layer has, is the foreground: light on the dark canvas.
+
+Not there yet: layers are not written to or read from DXF — an exported drawing has everything on layer `0`. That is in the [M4 plan](docs/roadmap.md).
 
 ### ORTHO and POLAR
 
@@ -170,6 +172,7 @@ pnpm --dir web dev
 | Generate a benchmark drawing | `cargo run --release -p cad-benchmarks --bin generate-drawing -- 100000 benches/generated-drawings/lines-100k.dxf` |
 | Render-transport measurement in the browser | `pnpm --dir web bench:transport` (after `build` and generating `lines-1k`, `-10k`, `-100k`) |
 | Curve-rendering experiment in the browser | `pnpm --dir web bench:curves` (after `build`) |
+| Colour-transport experiment in the browser | `pnpm --dir web bench:styles` (after `build`) |
 
 First-time Playwright setup: `pnpm --dir web exec playwright install chromium firefox`. The suite runs in Chromium and Firefox by default; choose browsers with `E2E_BROWSERS=chromium,firefox,webkit` (WebKit needs `playwright install --with-deps webkit`). CI runs Chromium only, because headless Firefox on the hosted runner provides no WebGL2.
 

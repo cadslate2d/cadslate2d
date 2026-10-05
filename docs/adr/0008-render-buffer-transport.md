@@ -86,3 +86,9 @@ Eighteen kilobytes buys a 2.6× faster open (later runs measure the 100k import 
 - Measurements on a real GPU contradict the software-GL comparisons.
 - Edit latency at 100k becomes visible once more entity types make scene preparation heavier.
 - Linetype or join data changes the instance layout.
+
+## Amendments
+
+### 2026-10-05 — committed instances gain a style index
+
+[ADR-0014](0014-colours-across-the-render-boundary.md) adds, for the committed scene only, one `u16` style index per instance in a buffer of its own, and a small style table with a revision of its own. The geometry buffers and their layout are as decided here.

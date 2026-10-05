@@ -610,6 +610,8 @@ The exact packed-buffer representation is PROVISIONAL.
 
 The lifetime split is not.
 
+> **Extended in M4:** committed geometry is drawn in the colours of its layers. Each committed instance carries a style index into a small style table that has its own revision, so recolouring a layer uploads the table and no geometry — [ADR-0014](adr/0014-colours-across-the-render-boundary.md).
+
 > **Resolved in M2:** the reference grid depends on the view (which lines are visible, and how many), so it is `OverlayFrame` content, not a third lifetime. Its batches carry their own style roles, and the adapter draws those beneath the committed scene; everything else in the overlay is drawn on top. The grid shows the set spacing times 1, 2, 5, 10, … so that lines stay at least 12 CSS pixels apart.
 
 ## 12.3 Scene revision rule

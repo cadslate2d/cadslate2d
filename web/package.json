@@ -15,7 +15,8 @@
     "test": "vitest run",
     "e2e": "playwright test",
     "bench:transport": "playwright test --config playwright.bench.config.ts transport",
-    "bench:curves": "playwright test --config playwright.bench.config.ts curves"
+    "bench:curves": "playwright test --config playwright.bench.config.ts curves",
+    "bench:styles": "playwright test --config playwright.bench.config.ts styles"
   },
   "dependencies": {
     "react": "^19.3.0",

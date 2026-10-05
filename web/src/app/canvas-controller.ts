@@ -70,6 +70,10 @@ export class CanvasController {
         const { probeCurves } = await import("../renderer/webgl/curve-probe");
         return probeCurves(arcCount);
       },
+      probeStyles: async (segments, styles, order) => {
+        const { probeStyles } = await import("../renderer/webgl/style-probe");
+        return probeStyles(segments, styles, order);
+      },
     });
 
     const options = { signal: this.#abort.signal };

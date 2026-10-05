@@ -139,6 +139,13 @@ impl Harness {
         self.session.prompt()
     }
 
+    /// Types several lines and reports everything they dirtied together.
+    pub fn enter_all_dirty(&mut self, lines: &[&str]) -> Dirty {
+        lines
+            .iter()
+            .fold(Dirty::NONE, |dirty, line| dirty | self.enter(line))
+    }
+
     /// The whole command log.
     pub fn log(&self) -> Vec<String> {
         self.session.log_since(0)

@@ -43,10 +43,17 @@ describe("WASM API surface", () => {
       "pointer_up",
       "resize",
       "scene_arc_batches",
+      // ADR-0014: one style index per arc instance, as one buffer.
+      "scene_arc_styles",
       "scene_arcs",
       "scene_batches",
       "scene_revision",
+      // ADR-0014: one style index per segment instance, as one buffer.
+      "scene_segment_styles",
       "scene_segments",
+      // ADR-0014: the revision of the style table, and the table as one buffer.
+      "scene_style_revision",
+      "scene_styles",
       "scene_transform",
       "submit_text",
       "take_host_request",
@@ -63,10 +70,15 @@ describe("WASM API surface", () => {
 });
 
 describe("calls across the boundary per frame", () => {
-  const sink = (): FrameSink & { sceneRevision: number | undefined } => ({
+  type Revisions = { sceneRevision: number | undefined; styleRevision: number | undefined };
+  const sink = (): FrameSink & Revisions => ({
     sceneRevision: undefined,
+    styleRevision: undefined,
     updateScene(revision) {
       this.sceneRevision = revision;
+    },
+    updateStyles(revision) {
+      this.styleRevision = revision;
     },
     updateOverlay() {},
     draw() {},
@@ -113,7 +125,8 @@ describe("calls across the boundary per frame", () => {
 
     expect(perFrame[1]).toEqual(perFrame[0]);
     expect(perFrame[2]).toEqual(perFrame[0]);
-    // Revision check, overlay read, and two transforms.
-    expect(perFrame[0]?.steady).toBe(4);
+    // Two revision checks — geometry and style table — the overlay read,
+    // and two transforms.
+    expect(perFrame[0]?.steady).toBe(5);
   });
 });

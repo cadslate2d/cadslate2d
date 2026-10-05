@@ -4,6 +4,8 @@ import {
   coreVersion,
   Dirty,
   KeyAction,
+  STYLE_FOREGROUND,
+  STYLE_RGB,
   StyleRole,
   wasmMemory,
   type FrameBuffers,
@@ -147,6 +149,30 @@ describe("commands", () => {
     });
     enter(cad, "Ground floor");
     expect(cad.uiState().spaceAccepts).toBe(true);
+  });
+
+  // ADR-0014: the geometry and the style table have revisions of their own.
+  test("recolouring a layer changes the style table and not the geometry", () => {
+    const cad = engine();
+    enter(cad, "LA", "N", "walls", "S", "walls", "");
+    enter(cad, "L", "0,0", "100,0", "");
+    const styles = () => cad.readStyles((rows) => [...rows]);
+    const indices = () => cad.readScene((frame) => [...(frame.segmentStyles ?? [])]);
+    expect(indices()).toEqual([0]);
+    expect(styles()).toEqual([0, 0, 0, STYLE_FOREGROUND]); // colour 7: the theme's foreground
+
+    const [geometry, table] = [cad.sceneRevision, cad.styleRevision];
+    expect(enter(cad, "LA", "C", "1", "walls", "") & Dirty.Scene).toBeTruthy();
+    expect(cad.sceneRevision).toBe(geometry);
+    expect(cad.styleRevision).not.toBe(table);
+    expect(styles()).toEqual([255, 0, 0, STYLE_RGB]);
+    expect(indices()).toEqual([0]);
+
+    // A second line on layer 0 is a second style; drawing it changes both.
+    enter(cad, "LA", "S", "0", "", "L", "0,10", "100,10", "");
+    expect(cad.sceneRevision).not.toBe(geometry);
+    expect(indices()).toEqual([0, 1]);
+    expect(styles()).toEqual([255, 0, 0, STYLE_RGB, 0, 0, 0, STYLE_FOREGROUND]);
   });
 
   test("log lines are fetched incrementally", () => {

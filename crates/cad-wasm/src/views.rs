@@ -1,6 +1,6 @@
 //! Zero-copy typed-array views over Rust-owned buffers (ADR-0002 §4).
 
-use js_sys::{Float32Array, Uint32Array};
+use js_sys::{Float32Array, Uint8Array, Uint16Array, Uint32Array};
 
 /// A `Float32Array` aliasing `data` inside WASM linear memory.
 ///
@@ -20,4 +20,18 @@ pub(crate) fn f32_view(data: &[f32]) -> Float32Array {
 pub(crate) fn u32_view(data: &[u32]) -> Uint32Array {
     // SAFETY: see `f32_view`.
     unsafe { Uint32Array::view(data) }
+}
+
+/// A `Uint16Array` aliasing `data`. Same lifetime rule as [`f32_view`].
+#[allow(unsafe_code)]
+pub(crate) fn u16_view(data: &[u16]) -> Uint16Array {
+    // SAFETY: see `f32_view`.
+    unsafe { Uint16Array::view(data) }
+}
+
+/// A `Uint8Array` aliasing `data`. Same lifetime rule as [`f32_view`].
+#[allow(unsafe_code)]
+pub(crate) fn u8_view(data: &[u8]) -> Uint8Array {
+    // SAFETY: see `f32_view`.
+    unsafe { Uint8Array::view(data) }
 }

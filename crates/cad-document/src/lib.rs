@@ -8,6 +8,7 @@
 
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
+mod aci;
 mod drawing;
 mod editing;
 mod entity;
@@ -24,6 +25,7 @@ mod store;
 mod table;
 mod transaction;
 
+pub use aci::{FOREGROUND_INDEX, Paint, index_paint};
 pub use drawing::{ApplyReport, Drawing, TransactionBuilder, TransactionError};
 pub use editing::{
     BreakError, CornerError, Cornered, ExtendError, OffsetError, StretchHold, TrimError, TrimParts,

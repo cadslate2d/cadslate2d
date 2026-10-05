@@ -1,6 +1,7 @@
 import { WORDS_PER_BATCH, type ClipTransform, type StyleRole } from "../../cad/engine";
 import type { CanvasPalette } from "../palette";
 import { nextCapacity } from "./buffer-capacity";
+import { STYLE_ATTRIBUTE_LOCATION } from "./style-table";
 
 export interface StrokeUniforms {
   readonly scale: WebGLUniformLocation;
@@ -8,6 +9,10 @@ export interface StrokeUniforms {
   readonly viewport: WebGLUniformLocation;
   readonly halfWidth: WebGLUniformLocation;
   readonly color: WebGLUniformLocation;
+  /** 1 when the colour comes from the style table, 0 when from `color`. */
+  readonly styled: WebGLUniformLocation;
+  /** The sampler the style table is bound to. */
+  readonly styles: WebGLUniformLocation;
 }
 
 /** One per-instance vertex attribute: where it is bound and where it sits in an instance. */
@@ -35,24 +40,29 @@ export interface InstanceLayout {
 
 /**
  * GPU-side storage for one kind of primitive in one render lifetime: an
- * instance buffer plus the batches that say how to draw it.
+ * instance buffer plus the batches that say how to draw it. A *styled* layer
+ * — committed geometry — has a second buffer with a style index per
+ * instance, and takes its colours from the style table (ADR-0014).
  */
 export class InstanceLayer {
   readonly #gl: WebGL2RenderingContext;
   readonly #layout: InstanceLayout;
   readonly #vao: WebGLVertexArrayObject;
   readonly #buffer: WebGLBuffer;
+  /** One style index per instance; absent for a layer styled by its batches. */
+  readonly #styles: WebGLBuffer | undefined;
   readonly #usage: number;
   #capacityBytes: number;
   // Batches are copied out of WASM memory; views must not outlive the upload.
   #batches = new Uint32Array(0);
 
-  constructor(gl: WebGL2RenderingContext, layout: InstanceLayout, usage: number) {
+  constructor(gl: WebGL2RenderingContext, layout: InstanceLayout, usage: number, styled = false) {
     this.#gl = gl;
     this.#layout = layout;
     this.#usage = usage;
     this.#vao = gl.createVertexArray();
     this.#buffer = gl.createBuffer();
+    this.#styles = styled ? gl.createBuffer() : undefined;
 
     gl.bindVertexArray(this.#vao);
     if (layout.perVertex) {
@@ -68,12 +78,20 @@ export class InstanceLayer {
       gl.enableVertexAttribArray(attribute.location);
       gl.vertexAttribDivisor(attribute.location, 1);
     }
+    if (this.#styles) {
+      gl.enableVertexAttribArray(STYLE_ATTRIBUTE_LOCATION);
+      gl.vertexAttribDivisor(STYLE_ATTRIBUTE_LOCATION, 1);
+    }
     this.#pointAt(0);
     gl.bindVertexArray(null);
   }
 
-  /** Copies instances and batches to the GPU. Returns true when the buffer was reallocated. */
-  upload(instances: Float32Array, batches: Uint32Array): boolean {
+  /**
+   * Copies instances and batches — and, for a styled layer, the style index
+   * of each instance — to the GPU. Returns true when the instance buffer was
+   * reallocated.
+   */
+  upload(instances: Float32Array, batches: Uint32Array, styles?: Uint16Array): boolean {
     const gl = this.#gl;
     const capacity = nextCapacity(this.#capacityBytes, instances.byteLength);
     const reallocated = capacity !== this.#capacityBytes;
@@ -84,6 +102,11 @@ export class InstanceLayer {
       this.#capacityBytes = capacity;
     }
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, instances);
+
+    if (this.#styles && styles) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.#styles);
+      gl.bufferData(gl.ARRAY_BUFFER, styles, this.#usage);
+    }
 
     if (this.#batches.length === batches.length) {
       this.#batches.set(batches);
@@ -111,6 +134,7 @@ export class InstanceLayer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.#buffer);
     gl.uniform2f(uniforms.scale, transform[0] ?? 0, transform[1] ?? 0);
     gl.uniform2f(uniforms.translate, transform[2] ?? 0, transform[3] ?? 0);
+    gl.uniform1f(uniforms.styled, this.#styles ? 1 : 0);
 
     let drawCalls = 0;
     for (let offset = 0; offset < this.#batches.length; offset += WORDS_PER_BATCH) {
@@ -132,6 +156,7 @@ export class InstanceLayer {
 
   dispose(): void {
     this.#gl.deleteBuffer(this.#buffer);
+    if (this.#styles) this.#gl.deleteBuffer(this.#styles);
     this.#gl.deleteVertexArray(this.#vao);
   }
 
@@ -140,9 +165,24 @@ export class InstanceLayer {
     const gl = this.#gl;
     const bytesPerFloat = Float32Array.BYTES_PER_ELEMENT;
     const stride = this.#layout.floatsPerInstance * bytesPerFloat;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.#buffer);
     for (const attribute of this.#layout.attributes) {
       const offset = first * stride + attribute.offset * bytesPerFloat;
       gl.vertexAttribPointer(attribute.location, attribute.size, gl.FLOAT, false, stride, offset);
+    }
+    if (this.#styles) {
+      // A 16-bit index per instance, read by the shader as a float.
+      const bytesPerStyle = Uint16Array.BYTES_PER_ELEMENT;
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.#styles);
+      gl.vertexAttribPointer(
+        STYLE_ATTRIBUTE_LOCATION,
+        1,
+        gl.UNSIGNED_SHORT,
+        false,
+        bytesPerStyle,
+        first * bytesPerStyle,
+      );
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.#buffer);
     }
   }
 }

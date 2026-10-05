@@ -5,11 +5,11 @@ use cad_commands::{
 };
 use cad_core::{ClipTransform, ScreenPoint};
 use cad_render::{OverlayFrame, SceneCache};
-use js_sys::{Float32Array, Uint32Array};
+use js_sys::{Float32Array, Uint8Array, Uint16Array, Uint32Array};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-use crate::views::{f32_view, u32_view};
+use crate::views::{f32_view, u8_view, u16_view, u32_view};
 
 const MODIFIER_SHIFT: u32 = 1;
 const MODIFIER_CTRL: u32 = 1 << 1;
@@ -278,12 +278,39 @@ impl CadSession {
         self.session.log_since(since.max(0.0) as u64)
     }
 
-    /// Identifies the committed scene. Re-upload committed GPU buffers only
-    /// when this differs from the revision last uploaded. Cheap: does not
-    /// build the scene.
+    /// Identifies the committed geometry. Re-upload committed instance
+    /// buffers only when this differs from the revision last uploaded. It
+    /// changes when what is shown changes — not when a layer is recoloured
+    /// (ADR-0014). Cheap: does not build the scene.
     pub fn scene_revision(&self) -> f64 {
         // Revisions are small sequential integers; f64 represents them exactly.
+        self.session.drawing().shown_revision().as_u64() as f64
+    }
+
+    /// Identifies the style table. Re-upload it only when this differs from
+    /// the revision last uploaded. Cheap: does not build the scene.
+    pub fn scene_style_revision(&self) -> f64 {
         self.session.drawing().revision().as_u64() as f64
+    }
+
+    /// The style table: four bytes per row, `red, green, blue, kind`, where
+    /// kind 255 is that colour and kind 0 is the theme's foreground. Row `i`
+    /// is what an instance with style index `i` is drawn with. A view into
+    /// WASM memory — consume before the next call.
+    pub fn scene_styles(&mut self) -> Uint8Array {
+        u8_view(self.scene.scene(self.session.drawing()).styles())
+    }
+
+    /// One style index per committed segment instance. A view into WASM
+    /// memory — consume before the next call.
+    pub fn scene_segment_styles(&mut self) -> Uint16Array {
+        u16_view(self.scene.scene(self.session.drawing()).segment_styles())
+    }
+
+    /// One style index per committed arc instance. A view into WASM memory —
+    /// consume before the next call.
+    pub fn scene_arc_styles(&mut self) -> Uint16Array {
+        u16_view(self.scene.scene(self.session.drawing()).arc_styles())
     }
 
     /// Committed segment instances: `x0, y0, x1, y1` per segment, relative to
