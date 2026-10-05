@@ -13,7 +13,7 @@ use crate::commands::{
     ArcCommand, BreakCommand, CircleCommand, CornerCommand, EdgeCommand, EraseCommand,
     ExportCommand, GridCommand, JoinCommand, LineCommand, MirrorCommand, OffsetCommand,
     OpenCommand, OsnapCommand, PlineCommand, PolarAngleCommand, RectangCommand, RedoCommand,
-    TransformCommand, UndoCommand,
+    StretchCommand, TransformCommand, UndoCommand,
 };
 
 type CommandFactory = fn() -> Box<dyn Command>;
@@ -49,7 +49,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 25] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 26] = [
             ("ERASE", &["E"], || Box::new(EraseCommand)),
             ("MOVE", &["M"], || Box::new(TransformCommand::moving())),
             ("COPY", &["CO", "CP"], || {
@@ -63,6 +63,7 @@ impl CommandRegistry {
             ("EXTEND", &["EX"], || Box::new(EdgeCommand::extending())),
             ("BREAK", &["BR"], || Box::new(BreakCommand::new())),
             ("JOIN", &["J"], || Box::new(JoinCommand)),
+            ("STRETCH", &["S"], || Box::new(StretchCommand::new())),
             ("FILLET", &["F"], || Box::new(CornerCommand::fillet())),
             ("CHAMFER", &["CHA"], || Box::new(CornerCommand::chamfer())),
             ("PLINE", &["PL"], || Box::new(PlineCommand::new())),

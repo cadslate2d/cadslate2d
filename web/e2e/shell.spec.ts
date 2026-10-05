@@ -38,6 +38,7 @@ test.describe("toolbar", () => {
       "Rotate",
       "Scale",
       "Mirror",
+      "Stretch",
       "Offset",
       "Trim",
       "Extend",

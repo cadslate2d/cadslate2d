@@ -183,3 +183,27 @@ Rules:
 Not implemented: bridging a gap between arcs; joining to a chosen source object; a fuzz distance for ends that nearly meet.
 
 Tests: `cad-geometry/src/join.rs` (with a property test that a path cut into its segments, shuffled, and turned round chains back into one), `cad-document/src/joining.rs`, `cad-commands/src/tests/join.rs`, `web/e2e/join.spec.ts`.
+
+## STRETCH
+
+Two corners of a crossing window, a base point, and a second point. Every object the window crosses is looked at; the points that define it and lie inside the window move by the displacement from the base point to the second, and the rest stay.
+
+| Object | Its defining points | Some inside | All inside |
+| --- | --- | --- | --- |
+| Line | Its two ends | The end inside moves; the line changes length and direction | Moves as it is |
+| Arc | Its two ends | Re-fitted through the moved end, its old midpoint, and its other end — the rule of its end grips ([ADR-0010](adr/0010-grip-editing-and-arc-grip-semantics.md)) | Moves as it is, even if its bulge reaches outside the window |
+| Circle | Its centre | — | Moves as it is. **A circle moves only if its centre is inside**; it never changes size |
+| Polyline, open or closed | Its vertices | The vertices inside move. Arc segments keep their bulge, so each is re-fitted between its new ends with the same included angle | Moves as it is |
+
+Rules:
+
+- The window is asked for by the command, corner by corner, and is a crossing window whichever way it is drawn. Its corners are places on the screen: object snap does not apply to them. It applies to the base point and the second point as usual, as do ORTHO, POLAR, and a typed distance.
+- An object the window crosses without holding any of its defining points — a line running through it, a circle whose centre is outside — is left as it is. A circle whose centre is inside a window that does not touch the circle itself is not crossed, and is left too.
+- With nothing held: "Nothing in the window to stretch.", and the window is asked for again.
+- While the second point is being chosen the result is previewed; the objects being stretched are not snap targets meanwhile (DESIGN §18.2).
+- An object that would stop being valid — a line stretched to no length, an arc whose three points fall in a line, a polyline vertex moved onto its neighbour — is left unchanged and counted: "1 object could not be stretched that way and was left unchanged." The others are still stretched.
+- Every object keeps its identity. One stretch is one transaction.
+
+Not implemented: choosing objects by clicking them (they would move whole) or with several windows; the `Displacement` option; a selection made before the command, which is ignored.
+
+Tests: `cad-document/src/editing.rs` (`stretch_hold`, `stretched`), `cad-commands/src/tests/stretch.rs`, `web/e2e/stretch.spec.ts`.

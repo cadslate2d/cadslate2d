@@ -81,6 +81,16 @@ const MODIFY: readonly Tool[] = [
     ),
   },
   {
+    command: "STRETCH",
+    label: "Stretch",
+    icon: icon(
+      <>
+        <path d="M3 7h9v10H3z" strokeDasharray="2 2.5" />
+        <path d="M12 12h9M18 9l3 3-3 3" strokeLinejoin="round" />
+      </>,
+    ),
+  },
+  {
     command: "OFFSET",
     label: "Offset",
     icon: icon(<path d="M4 17 14 5M10 20 20 8" />),

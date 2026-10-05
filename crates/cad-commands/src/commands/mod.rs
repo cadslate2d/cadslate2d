@@ -41,6 +41,7 @@ mod osnap;
 mod pline;
 mod polarang;
 mod rectang;
+mod stretch;
 mod transform;
 
 /// Option keywords shared by more than one command.
@@ -69,4 +70,5 @@ pub(crate) use osnap::OsnapCommand;
 pub(crate) use pline::PlineCommand;
 pub(crate) use polarang::PolarAngleCommand;
 pub(crate) use rectang::RectangCommand;
+pub(crate) use stretch::StretchCommand;
 pub(crate) use transform::TransformCommand;

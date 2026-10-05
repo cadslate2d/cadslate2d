@@ -174,6 +174,13 @@ pub trait Command: Debug {
         self.base_point()
     }
 
+    /// Whether the point being asked for is a point of the drawing, which
+    /// object snap may place exactly, or only a place on the screen — the
+    /// corner of a window — which is taken where the pointer is.
+    fn takes_object_snap(&self) -> bool {
+        true
+    }
+
     /// The grip this command is dragging, if it is a grip edit. The session
     /// keeps the grips on screen meanwhile, marks this one, and lets Enter
     /// commit at the pointer.

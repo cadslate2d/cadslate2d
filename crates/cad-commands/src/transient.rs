@@ -25,6 +25,11 @@ impl TransientEdit {
         }
     }
 
+    /// An edit of exactly these entities.
+    pub fn of_ids(sources: Vec<EntityId>) -> Self {
+        Self { sources }
+    }
+
     /// The entities being edited, in ID order. Snapping must skip these while
     /// the edit is in progress (§18.2).
     pub fn sources(&self) -> &[EntityId] {

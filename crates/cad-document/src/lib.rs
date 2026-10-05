@@ -22,7 +22,7 @@ mod transaction;
 
 pub use drawing::{ApplyReport, Drawing, TransactionBuilder, TransactionError};
 pub use editing::{
-    BreakError, CornerError, Cornered, ExtendError, OffsetError, TrimError, TrimParts,
+    BreakError, CornerError, Cornered, ExtendError, OffsetError, StretchHold, TrimError, TrimParts,
 };
 pub use entity::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity, SharedEntity};
 pub use grips::{EntityGrip, GripKind};

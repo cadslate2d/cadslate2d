@@ -7,7 +7,7 @@
 //! `Unsupported` error, never a guess.
 
 use cad_core::tolerance::LinearTolerance;
-use cad_core::{Aabb, Point2};
+use cad_core::{Aabb, Point2, Vec2};
 use cad_geometry::{
     Corner, CornerJoin, Path, PathCornerError, PathOffsetError, PathTrimError, Primitive,
     break_arc, break_circle, break_segment, distance_to_line, extend_arc, extend_segment,
@@ -96,6 +96,18 @@ pub enum BreakError {
     NeedsTwoPoints(&'static str),
 }
 
+/// How much of an entity a stretch window takes hold of: how many of the
+/// points that define it are inside.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StretchHold {
+    /// None of them: the entity stays as it is.
+    Nothing,
+    /// Some: those move and the rest stay, so the entity changes shape.
+    Part,
+    /// All: the entity moves as it is.
+    Whole,
+}
+
 /// An entity after trimming: what replaces it, and the part that was cut away.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TrimParts {
@@ -113,6 +125,93 @@ pub enum ExtendError {
 }
 
 impl Entity {
+    /// How much of this entity a stretch window takes hold of. The points
+    /// that count are a line's two ends, an arc's two ends, a polyline's
+    /// vertices, and a circle's centre — so a circle moves whole or not at
+    /// all.
+    pub fn stretch_hold(&self, window: &Aabb) -> StretchHold {
+        let held = |points: &[Point2]| {
+            let inside = points
+                .iter()
+                .filter(|point| window.contains_point(**point))
+                .count();
+            match inside {
+                0 => StretchHold::Nothing,
+                all if all == points.len() => StretchHold::Whole,
+                _ => StretchHold::Part,
+            }
+        };
+        match self {
+            Entity::Line(line) => held(&[line.start, line.end]),
+            Entity::Circle(circle) => held(&[circle.center]),
+            Entity::Arc(entity) => {
+                let arc = entity.arc();
+                held(&[arc.start_point(), arc.end_point()])
+            }
+            Entity::Polyline(polyline) => held(&polyline.vertices),
+        }
+    }
+
+    /// This entity with the points `window` takes hold of moved by `offset`
+    /// and the rest left where they are (see [`Entity::stretch_hold`]).
+    ///
+    /// An arc held by one end follows the grip rule (ADR-0010): it is
+    /// re-fitted through the moved end, its old midpoint, and its other end.
+    /// A polyline's arc segments keep their bulge between their new ends.
+    ///
+    /// `None` when the result would not be a valid entity: a line of no
+    /// length, an arc through three points in a line, a polyline vertex on
+    /// top of its neighbour.
+    pub fn stretched(&self, window: &Aabb, offset: Vec2) -> Option<Entity> {
+        match self.stretch_hold(window) {
+            StretchHold::Nothing => return Some(self.clone()),
+            StretchHold::Whole => return Some(self.translated(offset)),
+            StretchHold::Part => {}
+        }
+        let moved = |point: Point2| {
+            if window.contains_point(point) {
+                point + offset
+            } else {
+                point
+            }
+        };
+        match self {
+            Entity::Line(line) => {
+                let (start, end) = (moved(line.start), moved(line.end));
+                (!TOLERANCE.coincident(start, end)).then(|| LineEntity::new(start, end).into())
+            }
+            // A circle is held whole or not at all.
+            Entity::Circle(_) => Some(self.clone()),
+            Entity::Arc(entity) => {
+                let arc = entity.arc();
+                let (start, end) = (arc.start_point(), arc.end_point());
+                // The grips of an arc: 0 is its start, 2 its end.
+                if window.contains_point(start) {
+                    self.grip_moved(0, start + offset)
+                } else {
+                    self.grip_moved(2, end + offset)
+                }
+            }
+            Entity::Polyline(polyline) => {
+                let vertices: Vec<Point2> = polyline.vertices.iter().copied().map(moved).collect();
+                let count = vertices.len();
+                let collapsed = (0..count)
+                    .filter(|index| polyline.closed || index + 1 < count)
+                    .any(|index| {
+                        TOLERANCE.coincident(vertices[index], vertices[(index + 1) % count])
+                    });
+                (!collapsed).then(|| {
+                    PolylineEntity::with_bulges(
+                        vertices,
+                        polyline.bulges().collect(),
+                        polyline.closed,
+                    )
+                    .into()
+                })
+            }
+        }
+    }
+
     /// What is left of this entity broken between two points: the part
     /// between them goes, or — with the two points the same — the entity is
     /// split there. The points need not be on the entity; where each lands
@@ -1240,6 +1339,157 @@ mod tests {
             square.broken(p(50.0, 0.0), p(50.0, 0.0)),
             Err(BreakError::NeedsTwoPoints("closed polyline"))
         );
+    }
+
+    // ── STRETCH (#128): every kind of entity ──
+
+    fn window(x0: f64, y0: f64, x1: f64, y1: f64) -> Aabb {
+        Aabb::from_points(p(x0, y0), p(x1, y1))
+    }
+
+    #[test]
+    fn a_line_stretches_by_the_end_inside_the_window_and_moves_when_both_are() {
+        let line: Entity = LineEntity::new(p(0.0, 0.0), p(100.0, 0.0)).into();
+        let offset = Vec2::new(20.0, 10.0);
+
+        let right = window(80.0, -10.0, 120.0, 10.0);
+        assert_eq!(line.stretch_hold(&right), StretchHold::Part);
+        assert_eq!(
+            line.stretched(&right, offset),
+            Some(LineEntity::new(p(0.0, 0.0), p(120.0, 10.0)).into())
+        );
+
+        let all = window(-10.0, -10.0, 120.0, 10.0);
+        assert_eq!(line.stretch_hold(&all), StretchHold::Whole);
+        assert_eq!(
+            line.stretched(&all, offset),
+            Some(LineEntity::new(p(20.0, 10.0), p(120.0, 10.0)).into())
+        );
+
+        // The window crosses the line but holds neither end.
+        let middle = window(40.0, -10.0, 60.0, 10.0);
+        assert_eq!(line.stretch_hold(&middle), StretchHold::Nothing);
+        assert_eq!(line.stretched(&middle, offset), Some(line.clone()));
+
+        // Stretched onto its own other end: not a line any more.
+        assert_eq!(line.stretched(&right, Vec2::new(-100.0, 0.0)), None);
+    }
+
+    /// Circles move only if their centre is inside.
+    #[test]
+    fn a_circle_moves_only_if_its_centre_is_inside_the_window() {
+        let circle: Entity = CircleEntity::new(p(0.0, 0.0), 50.0).into();
+        let offset = Vec2::new(30.0, 0.0);
+
+        let around_centre = window(-10.0, -10.0, 60.0, 10.0);
+        assert_eq!(circle.stretch_hold(&around_centre), StretchHold::Whole);
+        assert_eq!(
+            circle.stretched(&around_centre, offset),
+            Some(CircleEntity::new(p(30.0, 0.0), 50.0).into())
+        );
+
+        // Most of the circle is inside, but not its centre.
+        let most = window(1.0, -60.0, 60.0, 60.0);
+        assert_eq!(circle.stretch_hold(&most), StretchHold::Nothing);
+        assert_eq!(circle.stretched(&most, offset), Some(circle.clone()));
+    }
+
+    /// An arc held by one end follows the grip rule: through the moved end,
+    /// the old midpoint, and the other end.
+    #[test]
+    fn an_arc_held_by_one_end_is_refitted_like_a_grip_edit() {
+        let entity: Entity = ArcEntity::new(p(0.0, 0.0), 50.0, 0.0, PI).into();
+        let offset = Vec2::new(20.0, -10.0);
+
+        let at_start = window(40.0, -10.0, 60.0, 10.0);
+        assert_eq!(entity.stretch_hold(&at_start), StretchHold::Part);
+        let stretched = entity.stretched(&at_start, offset).unwrap();
+        assert_eq!(stretched, entity.grip_moved(0, p(70.0, -10.0)).unwrap());
+        let Entity::Arc(arc) = &stretched else {
+            panic!("still an arc");
+        };
+        assert!(close(arc.arc().start_point(), p(70.0, -10.0)));
+        assert!(close(arc.arc().end_point(), p(-50.0, 0.0)));
+        assert!(
+            arc.arc().distance_to_point(p(0.0, 50.0)) < 1e-9,
+            "it still passes through the old midpoint"
+        );
+
+        let at_end = window(-60.0, -10.0, -40.0, 10.0);
+        assert_eq!(
+            entity.stretched(&at_end, offset),
+            entity.grip_moved(2, p(-30.0, -10.0))
+        );
+
+        // Both ends inside: the arc moves as it is, though its top is outside.
+        let both = window(-60.0, -10.0, 60.0, 10.0);
+        assert_eq!(entity.stretch_hold(&both), StretchHold::Whole);
+        assert_eq!(
+            entity.stretched(&both, offset),
+            Some(entity.translated(offset))
+        );
+
+        // Only its top inside: no end is held.
+        assert_eq!(
+            entity.stretch_hold(&window(-10.0, 40.0, 10.0, 60.0)),
+            StretchHold::Nothing
+        );
+
+        // The moved end in line with the midpoint and the other end: no arc.
+        let quarter: Entity = ArcEntity::new(p(0.0, 0.0), 50.0, 0.0, FRAC_PI_2).into();
+        let Entity::Arc(q) = &quarter else {
+            unreachable!()
+        };
+        let (middle, end) = (q.arc().mid_point(), q.arc().end_point());
+        let onto_the_chord = middle + (middle - end) - p(50.0, 0.0);
+        assert_eq!(
+            quarter.stretched(&window(40.0, -10.0, 60.0, 10.0), onto_the_chord),
+            None
+        );
+    }
+
+    #[test]
+    fn a_polyline_moves_the_vertices_inside_and_keeps_its_bulges() {
+        // A 100 × 60 rectangle whose right side is a half circle.
+        let slot: Entity = PolylineEntity::with_bulges(
+            vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 60.0), p(0.0, 60.0)],
+            vec![0.0, 1.0, 0.0, 0.0],
+            true,
+        )
+        .into();
+        let offset = Vec2::new(40.0, 0.0);
+        let right = window(90.0, -10.0, 140.0, 70.0);
+        assert_eq!(slot.stretch_hold(&right), StretchHold::Part);
+        assert_eq!(
+            slot.stretched(&right, offset),
+            Some(
+                PolylineEntity::with_bulges(
+                    vec![p(0.0, 0.0), p(140.0, 0.0), p(140.0, 60.0), p(0.0, 60.0)],
+                    vec![0.0, 1.0, 0.0, 0.0],
+                    true,
+                )
+                .into()
+            )
+        );
+
+        // One vertex only: the corner is pulled out, the arc re-fitted to it.
+        let corner = window(90.0, 50.0, 110.0, 70.0);
+        let Some(Entity::Polyline(pulled)) = slot.stretched(&corner, Vec2::new(0.0, 20.0)) else {
+            panic!("a polyline");
+        };
+        assert_eq!(pulled.vertices[2], p(100.0, 80.0));
+        assert_eq!(pulled.bulge(1), 1.0, "still a half circle, now 80 across");
+
+        assert_eq!(
+            slot.stretch_hold(&window(-10.0, -10.0, 150.0, 70.0)),
+            StretchHold::Whole
+        );
+        assert_eq!(
+            slot.stretch_hold(&window(40.0, -10.0, 60.0, 70.0)),
+            StretchHold::Nothing
+        );
+        // A vertex moved onto its neighbour: refused.
+        assert_eq!(slot.stretched(&right, Vec2::new(-100.0, 0.0)), None);
     }
 
     // ── several edges at once (#119) ──

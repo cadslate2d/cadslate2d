@@ -203,7 +203,7 @@ impl Session {
     pub fn snap(&self) -> Option<SnapPoint> {
         let cursor = self.cursor?;
         let command = self.point_target()?;
-        if !self.toggles.is_on(Toggle::Osnap) {
+        if !self.toggles.is_on(Toggle::Osnap) || !command.takes_object_snap() {
             return None;
         }
         find_snap_from(
