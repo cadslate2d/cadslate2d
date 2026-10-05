@@ -11,13 +11,22 @@ Each table is backed by tests named in its section.
 | Line | A parallel line of the same length, on the side of the picked point | The picked point is on the line (it chooses no side) |
 | Circle | A concentric circle: larger if the point is outside, smaller if inside | The point is on the circle; or an inward offset would leave nothing |
 | Arc | A concentric arc with the same angles: larger if the point is outside the arc's circle, smaller if inside | The point is on the arc's circle; or an inward offset would leave nothing |
-| Polyline | Not supported yet | Always: "OFFSET does not support polylines yet." |
+| Polyline, open or closed, with straight and arc segments | Its offset on the side of the picked point: one polyline, or several where the shape falls apart | The point is on the polyline; or nothing is left of it at that distance |
 
 The distance must be greater than zero and is remembered for the session.
 
 With the `Through` option there is no distance: after the object is picked, the copy is placed so that it passes through the next point. For a line the distance is measured to the line carried on past its ends, so the point may lie beyond them.
 
-Tests: `cad-geometry/src/offset.rs`, `cad-document/src/editing.rs`, `cad-commands/src/tests/offset.rs`, `web/e2e/offset.spec.ts`.
+Polylines ([ADR-0011](adr/0011-polyline-offset.md)):
+
+- The result is the true offset: every point of it is the offset distance from the polyline. On the inside of a corner the result is sharp; **on the outside of a corner it is an arc**, not a mitre.
+- Segments too short to survive disappear; arcs offset past their centre collapse to a corner; a shape with a narrow part comes back as several polylines, all created by the one pick.
+- Where a narrow part vanishes, the offset can dip slightly towards it: there the nearest part of the polyline is a corner, and the offset follows an arc about it.
+- An open polyline is offset to one side only, with flat ends.
+
+Not implemented: mitred outside corners.
+
+Tests: `cad-geometry/src/offset.rs`, `cad-geometry/src/path_offset.rs` (including the distance property on random polylines), the corpus `test-data/geometry/polyline-offsets.txt`, `cad-document/src/editing.rs`, `cad-commands/src/tests/offset.rs`, `web/e2e/offset.spec.ts`.
 
 ## TRIM
 

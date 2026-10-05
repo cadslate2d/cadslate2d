@@ -130,19 +130,142 @@ fn an_arc_is_offset_to_a_concentric_arc() {
     assert_eq!(h.entities().len(), 3);
 }
 
+// ── polylines (#123) ──
+
+fn polylines(h: &Harness) -> Vec<PolylineEntity> {
+    h.entities()
+        .into_iter()
+        .filter_map(|entity| match entity {
+            Entity::Polyline(polyline) => Some(polyline),
+            _ => None,
+        })
+        .collect()
+}
+
 #[test]
-fn polylines_are_declined_by_name() {
-    let polyline: Entity =
-        PolylineEntity::new(vec![p(-100.0, -50.0), p(100.0, -50.0)], false).into();
-    let mut h = Harness::with_entities([polyline]);
-    h.enter_all(&["O", "5"]);
-    h.click_world(p(0.0, -50.0));
+fn a_closed_polyline_offsets_inwards_sharp_and_outwards_rounded() {
+    let mut h = Harness::new();
+    h.enter_all(&["REC", "0,0", "100,60", "O", "10"]);
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(50.0, 30.0)); // inside
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(50.0, -30.0)); // outside
+    h.enter("");
+
+    let found = polylines(&h);
+    assert_eq!(found.len(), 3);
     assert_eq!(
-        h.log().last().unwrap(),
-        "OFFSET does not support polylines yet."
+        found[1],
+        PolylineEntity::new(
+            vec![p(10.0, 10.0), p(90.0, 10.0), p(90.0, 50.0), p(10.0, 50.0)],
+            true
+        )
     );
+    let outer = &found[2];
+    assert!(outer.closed && outer.has_arcs());
+    assert_eq!(outer.vertices.len(), 8, "four sides and four corner arcs");
+    // Every corner arc is a quarter turn of radius 10 about a corner of the source.
+    let outer_entity = Entity::Polyline(outer.clone());
+    for corner in [p(0.0, 0.0), p(100.0, 0.0), p(100.0, 60.0), p(0.0, 60.0)] {
+        assert!((outer_entity.distance_to(corner) - 10.0).abs() < 1e-9);
+    }
+}
+
+#[test]
+fn an_open_bulged_polyline_offsets_to_either_side() {
+    // Right 100, then a quarter arc up to (150, 50): a hook.
+    let hook: Entity = PolylineEntity::with_bulges(
+        vec![p(0.0, 0.0), p(100.0, 0.0), p(150.0, 50.0)],
+        vec![0.0, std::f64::consts::SQRT_2 - 1.0],
+        false,
+    )
+    .into();
+    let mut h = Harness::with_entities([hook]);
+    h.enter_all(&["O", "10"]);
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(50.0, 20.0)); // the inside of the bend
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(50.0, -20.0)); // the outside
+    h.enter("");
+
+    let found = polylines(&h);
+    assert_eq!(found.len(), 3);
+    // Concentric arcs about (100, 50): radius 40 inside, 60 outside.
+    assert_eq!(
+        found[1].vertices,
+        vec![p(0.0, 10.0), p(100.0, 10.0), p(140.0, 50.0)]
+    );
+    assert_eq!(
+        found[2].vertices,
+        vec![p(0.0, -10.0), p(100.0, -10.0), p(160.0, 50.0)]
+    );
+    for offset in &found[1..] {
+        assert!((offset.bulge(1) - (std::f64::consts::SQRT_2 - 1.0)).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn a_shape_with_a_waist_offsets_to_two_polylines_in_one_transaction() {
+    let dumbbell: Entity = PolylineEntity::new(
+        vec![
+            p(0.0, 0.0),
+            p(60.0, 0.0),
+            p(60.0, 25.0),
+            p(120.0, 25.0),
+            p(120.0, 0.0),
+            p(180.0, 0.0),
+            p(180.0, 60.0),
+            p(120.0, 60.0),
+            p(120.0, 35.0),
+            p(60.0, 35.0),
+            p(60.0, 60.0),
+            p(0.0, 60.0),
+        ],
+        true,
+    )
+    .into();
+    let mut h = Harness::with_entities([dumbbell]);
+    h.enter_all(&["O", "10"]);
+    h.click_world(p(30.0, 0.0));
+
+    // Both rooms are previewed.
+    h.move_to_world(p(30.0, 30.0));
+    let previews = h
+        .session
+        .overlay()
+        .into_iter()
+        .filter(|item| matches!(item, OverlayItem::PreviewEntity(_)))
+        .count();
+    assert_eq!(previews, 2);
+
+    h.click_world(p(30.0, 30.0));
+    h.enter("");
+    assert_eq!(polylines(&h).len(), 3);
+    h.undo();
+    assert_eq!(polylines(&h).len(), 1, "both came from one command");
+}
+
+#[test]
+fn a_polyline_offset_that_leaves_nothing_is_refused() {
+    let mut h = Harness::new();
+    h.enter_all(&["REC", "0,0", "100,60", "O", "40"]);
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(50.0, 30.0));
+    assert_eq!(h.log().last().unwrap(), "The offset would leave nothing.");
+    assert_eq!(polylines(&h).len(), 1);
     assert_eq!(h.prompt(), "Select object to offset:");
-    assert_eq!(h.entities().len(), 1);
+}
+
+#[test]
+fn through_works_for_polylines() {
+    let mut h = Harness::new();
+    h.enter_all(&["PL", "0,0", "100,0", "100,100", "", "O", "T"]);
+    h.click_world(p(50.0, 0.0));
+    h.enter_all(&["40,25", ""]);
+    assert_eq!(
+        polylines(&h)[1],
+        PolylineEntity::new(vec![p(0.0, 25.0), p(75.0, 25.0), p(75.0, 100.0)], false)
+    );
 }
 
 // ── the Through option (#121) ──

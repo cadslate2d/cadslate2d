@@ -67,13 +67,35 @@ test.describe("OFFSET", () => {
     ]);
   });
 
-  test("declines polylines by name and explains an empty pick", async ({ page }) => {
+  test("offsets a rectangle: sharp corners inside, round corners outside", async ({ page }) => {
     const canvas = await openApp(page);
-    await enter(page, "PL", "-50,50", "0,60", "50,50", "", "O", "5");
-    await clickWorld(page, canvas, 50, 50);
-    await expect(logLines(page).last()).toHaveText("OFFSET does not support polylines yet.");
+    await enter(page, "REC", "0,0", "100,60", "O", "10");
+    await clickWorld(page, canvas, 50, 0);
+    await clickWorld(page, canvas, 50, 30);
+    await clickWorld(page, canvas, 50, 0);
+    await clickWorld(page, canvas, 50, -30);
+    await enter(page, "");
+
+    const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    expect(file.text.match(/^POLYLINE$/gm)).toHaveLength(3);
+    // The inner one: four plain vertices, one of them the corner (10, 10).
+    expect(file.text).toContain("VERTEX\n  8\n0\n 10\n10.0\n 20\n10.0\n  0\n");
+    // The outer one: four quarter-arc corners, each a bulge of tan(22.5°).
+    const bulges = [...file.text.matchAll(/^ 42\n(.+)$/gm)].map((match) =>
+      Math.abs(Number(match[1])),
+    );
+    expect(bulges).toHaveLength(4);
+    for (const bulge of bulges) expect(bulge).toBeCloseTo(Math.SQRT2 - 1, 9);
+  });
+
+  test("explains an empty pick and an offset that would leave nothing", async ({ page }) => {
+    const canvas = await openApp(page);
+    await enter(page, "REC", "0,0", "100,60", "O", "40");
     await clickWorld(page, canvas, 200, 200);
     await expect(logLines(page).last()).toHaveText("No object there.");
+    await clickWorld(page, canvas, 50, 0);
+    await clickWorld(page, canvas, 50, 30);
+    await expect(logLines(page).last()).toHaveText("The offset would leave nothing.");
     await expect(prompt(page)).toHaveText("Select object to offset:");
   });
 });

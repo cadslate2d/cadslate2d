@@ -1,5 +1,5 @@
-//! OFFSET: a parallel copy of a line, or a concentric copy of a circle or an
-//! arc, on a chosen side (DESIGN §22) — at a set distance, or, with the
+//! OFFSET: a parallel copy of a line, a concentric copy of a circle or an
+//! arc, or the offset of a polyline, on a chosen side (DESIGN §22, ADR-0011) — at a set distance, or, with the
 //! `Through` option, through a picked point. Repeats until Enter.
 
 use cad_core::{EntityId, Point2};
@@ -20,8 +20,9 @@ enum Amount {
 }
 
 impl Amount {
-    /// The offset of `source` that the point `at` asks for.
-    fn apply(self, source: &Entity, at: Point2) -> Result<Entity, OffsetError> {
+    /// The offset of `source` that the point `at` asks for: one object, or
+    /// several where a polyline's offset falls apart.
+    fn apply(self, source: &Entity, at: Point2) -> Result<Vec<Entity>, OffsetError> {
         match self {
             Self::Distance(distance) => source.offset(distance, at),
             Self::Through => source.offset_through(at),
@@ -64,7 +65,6 @@ fn display(value: f64) -> String {
 
 fn explain(error: OffsetError) -> String {
     match error {
-        OffsetError::Unsupported(kind) => format!("OFFSET does not support {kind}s yet."),
         OffsetError::NoSide => "That point is on the object: pick a point to one side.".to_owned(),
         OffsetError::Collapses => "The offset would leave nothing.".to_owned(),
     }
@@ -116,15 +116,9 @@ impl Command for OffsetCommand {
                 Some(_) => self.state = State::Object,
                 None => return Step::Finished,
             },
-            (State::Object, CommandInput::Pick { entity: id, at }) => {
-                let (Some(source), Some(amount)) = (ctx.drawing.entity(id).cloned(), self.amount)
-                else {
-                    return Step::Continue;
-                };
-                // Only "unsupported" can be told before the copy is placed.
-                match amount.apply(&source, at) {
-                    Err(error @ OffsetError::Unsupported(_)) => ctx.message(explain(error)),
-                    _ => self.state = State::Place { id, source },
+            (State::Object, CommandInput::Pick { entity: id, .. }) => {
+                if let Some(source) = ctx.drawing.entity(id).cloned() {
+                    self.state = State::Place { id, source };
                 }
             }
             (State::Place { source, .. }, CommandInput::Point(at)) => {
@@ -132,9 +126,11 @@ impl Command for OffsetCommand {
                     return Step::Continue;
                 };
                 match amount.apply(source, at) {
-                    Ok(offset) => {
+                    Ok(offsets) => {
                         let mut transaction = ctx.drawing.transaction();
-                        transaction.insert(offset);
+                        for offset in offsets {
+                            transaction.insert(offset);
+                        }
                         transaction.commit();
                         self.state = State::Object;
                     }
@@ -156,8 +152,8 @@ impl Command for OffsetCommand {
     fn preview(&self, cursor: Point2, out: &mut Vec<OverlayItem>) {
         if let (State::Place { id, source }, Some(amount)) = (&self.state, self.amount) {
             out.push(OverlayItem::Highlight(*id));
-            if let Ok(offset) = amount.apply(source, cursor) {
-                out.push(OverlayItem::PreviewEntity(offset));
+            if let Ok(offsets) = amount.apply(source, cursor) {
+                out.extend(offsets.into_iter().map(OverlayItem::PreviewEntity));
             }
         }
     }

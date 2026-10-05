@@ -9,8 +9,8 @@
 use cad_core::tolerance::LinearTolerance;
 use cad_core::{Aabb, Point2};
 use cad_geometry::{
-    Corner, Path, PathTrimError, Primitive, distance_to_line, extend_arc, extend_segment,
-    offset_arc, offset_circle, offset_segment, trim_arc_parts, trim_circle_parts,
+    Corner, Path, PathOffsetError, PathTrimError, Primitive, distance_to_line, extend_arc,
+    extend_segment, offset_arc, offset_circle, offset_segment, trim_arc_parts, trim_circle_parts,
     trim_segment_parts,
 };
 
@@ -29,8 +29,6 @@ fn polyline_end_is_nearer(polyline: &PolylineEntity, pick: Point2) -> bool {
 /// Why an entity could not be offset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OffsetError {
-    /// This kind of entity cannot be offset yet; carries its name.
-    Unsupported(&'static str),
     /// The side point is on the entity, so it chooses no side.
     NoSide,
     /// Offsetting inwards by this much would leave nothing.
@@ -319,40 +317,64 @@ impl Entity {
         }
     }
 
-    /// A copy of the entity `distance` away, on the side `side` is on: a
-    /// parallel line, a concentric circle, or a concentric arc.
-    pub fn offset(&self, distance: f64, side: Point2) -> Result<Entity, OffsetError> {
+    /// What lies `distance` from the entity on the side `side` is on: a
+    /// parallel line, a concentric circle or arc — or, for a polyline, its
+    /// offset, which may be several polylines where the shape falls apart
+    /// (ADR-0011).
+    pub fn offset(&self, distance: f64, side: Point2) -> Result<Vec<Entity>, OffsetError> {
         // On a circle or an arc, a side point on the curve's circle chooses no side.
         let on_circle =
             |center: Point2, radius: f64| TOLERANCE.eq(center.distance_to(side), radius);
+        let one = |entity: Option<Entity>, otherwise: OffsetError| {
+            entity.map(|entity| vec![entity]).ok_or(otherwise)
+        };
         match self {
-            Entity::Line(line) => offset_segment(&line.segment(), distance, side)
-                .map(|parallel| LineEntity::new(parallel.start, parallel.end).into())
-                .ok_or(OffsetError::NoSide),
+            Entity::Line(line) => one(
+                offset_segment(&line.segment(), distance, side)
+                    .map(|parallel| LineEntity::new(parallel.start, parallel.end).into()),
+                OffsetError::NoSide,
+            ),
             Entity::Circle(circle) if on_circle(circle.center, circle.radius) => {
                 Err(OffsetError::NoSide)
             }
-            Entity::Circle(circle) => offset_circle(&circle.circle(), distance, side, TOLERANCE)
-                .map(|offset| CircleEntity::new(offset.center, offset.radius).into())
-                .ok_or(OffsetError::Collapses),
+            Entity::Circle(circle) => one(
+                offset_circle(&circle.circle(), distance, side, TOLERANCE)
+                    .map(|offset| CircleEntity::new(offset.center, offset.radius).into()),
+                OffsetError::Collapses,
+            ),
             Entity::Arc(arc) if on_circle(arc.center, arc.radius) => Err(OffsetError::NoSide),
-            Entity::Arc(arc) => offset_arc(&arc.arc(), distance, side, TOLERANCE)
-                .map(|offset| ArcEntity::from(offset).into())
-                .ok_or(OffsetError::Collapses),
-            Entity::Polyline(_) => Err(OffsetError::Unsupported(self.kind_name())),
+            Entity::Arc(arc) => one(
+                offset_arc(&arc.arc(), distance, side, TOLERANCE)
+                    .map(|offset| ArcEntity::from(offset).into()),
+                OffsetError::Collapses,
+            ),
+            Entity::Polyline(polyline) => polyline
+                .path()
+                .offset(distance, side)
+                .map(|paths| {
+                    paths
+                        .into_iter()
+                        .map(|path| PolylineEntity::from(path).into())
+                        .collect()
+                })
+                .map_err(|error| match error {
+                    PathOffsetError::NoSide => OffsetError::NoSide,
+                    PathOffsetError::Vanishes => OffsetError::Collapses,
+                }),
         }
     }
 
     /// The offset of the entity that passes through `point`: the distance is
-    /// however far the point is from the entity's line or circle.
-    pub fn offset_through(&self, point: Point2) -> Result<Entity, OffsetError> {
+    /// however far the point is from the entity — for a line, from the line
+    /// carried on past its ends.
+    pub fn offset_through(&self, point: Point2) -> Result<Vec<Entity>, OffsetError> {
         let distance = match self {
             Entity::Line(line) => {
                 distance_to_line(&line.segment(), point).ok_or(OffsetError::NoSide)?
             }
             Entity::Circle(circle) => (circle.center.distance_to(point) - circle.radius).abs(),
             Entity::Arc(arc) => (arc.center.distance_to(point) - arc.radius).abs(),
-            Entity::Polyline(_) => return Err(OffsetError::Unsupported(self.kind_name())),
+            Entity::Polyline(_) => self.distance_to(point),
         };
         self.offset(distance, point)
     }
@@ -373,11 +395,11 @@ mod tests {
         let line: Entity = LineEntity::new(p(0.0, 0.0), p(10.0, 0.0)).into();
         assert_eq!(
             line.offset(2.0, p(3.0, 9.0)),
-            Ok(LineEntity::new(p(0.0, 2.0), p(10.0, 2.0)).into())
+            Ok(vec![LineEntity::new(p(0.0, 2.0), p(10.0, 2.0)).into()])
         );
         assert_eq!(
             line.offset(2.0, p(3.0, -9.0)),
-            Ok(LineEntity::new(p(0.0, -2.0), p(10.0, -2.0)).into())
+            Ok(vec![LineEntity::new(p(0.0, -2.0), p(10.0, -2.0)).into()])
         );
         assert_eq!(line.offset(2.0, p(3.0, 0.0)), Err(OffsetError::NoSide));
     }
@@ -387,11 +409,11 @@ mod tests {
         let circle: Entity = CircleEntity::new(p(0.0, 0.0), 10.0).into();
         assert_eq!(
             circle.offset(4.0, p(50.0, 0.0)),
-            Ok(CircleEntity::new(p(0.0, 0.0), 14.0).into())
+            Ok(vec![CircleEntity::new(p(0.0, 0.0), 14.0).into()])
         );
         assert_eq!(
             circle.offset(4.0, p(1.0, 0.0)),
-            Ok(CircleEntity::new(p(0.0, 0.0), 6.0).into())
+            Ok(vec![CircleEntity::new(p(0.0, 0.0), 6.0).into()])
         );
         assert_eq!(
             circle.offset(10.0, p(1.0, 0.0)),
@@ -1142,27 +1164,96 @@ mod tests {
         let arc: Entity = ArcEntity::new(p(0.0, 0.0), 10.0, 0.0, FRAC_PI_2).into();
         assert_eq!(
             arc.offset(4.0, p(50.0, 50.0)),
-            Ok(ArcEntity::new(p(0.0, 0.0), 14.0, 0.0, FRAC_PI_2).into())
+            Ok(vec![
+                ArcEntity::new(p(0.0, 0.0), 14.0, 0.0, FRAC_PI_2).into()
+            ])
         );
         assert_eq!(
             arc.offset(4.0, p(1.0, 1.0)),
-            Ok(ArcEntity::new(p(0.0, 0.0), 6.0, 0.0, FRAC_PI_2).into())
+            Ok(vec![
+                ArcEntity::new(p(0.0, 0.0), 6.0, 0.0, FRAC_PI_2).into()
+            ])
         );
         assert_eq!(arc.offset(10.0, p(1.0, 1.0)), Err(OffsetError::Collapses));
         assert_eq!(arc.offset(25.0, p(1.0, 1.0)), Err(OffsetError::Collapses));
         assert_eq!(arc.offset(4.0, p(0.0, 10.0)), Err(OffsetError::NoSide));
     }
 
+    /// #123: polylines, through the method of ADR-0011.
     #[test]
-    fn polylines_cannot_be_offset_yet_and_say_so() {
-        let polyline: Entity = PolylineEntity::new(vec![p(0.0, 0.0), p(1.0, 0.0)], false).into();
+    fn a_polyline_offsets_to_one_or_more_polylines() {
+        let rectangle: Entity = PolylineEntity::new(
+            vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 60.0), p(0.0, 60.0)],
+            true,
+        )
+        .into();
+        // Inwards: a smaller rectangle with sharp corners.
         assert_eq!(
-            polyline.offset(1.0, p(9.0, 9.0)),
-            Err(OffsetError::Unsupported("polyline"))
+            rectangle.offset(10.0, p(50.0, 30.0)),
+            Ok(vec![
+                PolylineEntity::new(
+                    vec![p(10.0, 10.0), p(90.0, 10.0), p(90.0, 50.0), p(10.0, 50.0)],
+                    true
+                )
+                .into()
+            ])
+        );
+        // Outwards: the corners are rounded, so the result has arcs.
+        let outer = rectangle.offset(10.0, p(50.0, -30.0)).unwrap();
+        assert_eq!(outer.len(), 1);
+        let Entity::Polyline(outer) = &outer[0] else {
+            panic!("a polyline offsets to polylines");
+        };
+        assert!(outer.closed && outer.has_arcs() && outer.vertices.len() == 8);
+        // Too far inwards leaves nothing; a point on it chooses no side.
+        assert_eq!(
+            rectangle.offset(40.0, p(50.0, 30.0)),
+            Err(OffsetError::Collapses)
         );
         assert_eq!(
-            polyline.offset_through(p(9.0, 9.0)),
-            Err(OffsetError::Unsupported("polyline"))
+            rectangle.offset(10.0, p(50.0, 0.0)),
+            Err(OffsetError::NoSide)
+        );
+
+        // A shape with a waist falls apart into two.
+        let dumbbell: Entity = PolylineEntity::new(
+            vec![
+                p(0.0, 0.0),
+                p(60.0, 0.0),
+                p(60.0, 25.0),
+                p(120.0, 25.0),
+                p(120.0, 0.0),
+                p(180.0, 0.0),
+                p(180.0, 60.0),
+                p(120.0, 60.0),
+                p(120.0, 35.0),
+                p(60.0, 35.0),
+                p(60.0, 60.0),
+                p(0.0, 60.0),
+            ],
+            true,
+        )
+        .into();
+        assert_eq!(dumbbell.offset(10.0, p(30.0, 30.0)).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_polyline_offset_through_a_point_passes_through_it() {
+        let corner: Entity =
+            PolylineEntity::new(vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 100.0)], false).into();
+        let through = p(40.0, 25.0);
+        let offsets = corner.offset_through(through).unwrap();
+        assert_eq!(
+            offsets,
+            vec![
+                PolylineEntity::new(vec![p(0.0, 25.0), p(75.0, 25.0), p(75.0, 100.0)], false)
+                    .into()
+            ]
+        );
+        assert!(offsets[0].distance_to(through) < 1e-9);
+        assert_eq!(
+            corner.offset_through(p(40.0, 0.0)),
+            Err(OffsetError::NoSide)
         );
     }
 
@@ -1172,7 +1263,7 @@ mod tests {
         let line: Entity = LineEntity::new(p(0.0, 0.0), p(10.0, 0.0)).into();
         assert_eq!(
             line.offset_through(p(300.0, 7.0)),
-            Ok(LineEntity::new(p(0.0, 7.0), p(10.0, 7.0)).into()),
+            Ok(vec![LineEntity::new(p(0.0, 7.0), p(10.0, 7.0)).into()]),
             "the distance is to the line carried on, not to the segment"
         );
         assert_eq!(line.offset_through(p(300.0, 0.0)), Err(OffsetError::NoSide));
@@ -1180,11 +1271,11 @@ mod tests {
         let circle: Entity = CircleEntity::new(p(0.0, 0.0), 10.0).into();
         assert_eq!(
             circle.offset_through(p(3.0, 4.0)),
-            Ok(CircleEntity::new(p(0.0, 0.0), 5.0).into())
+            Ok(vec![CircleEntity::new(p(0.0, 0.0), 5.0).into()])
         );
         assert_eq!(
             circle.offset_through(p(0.0, 26.0)),
-            Ok(CircleEntity::new(p(0.0, 0.0), 26.0).into())
+            Ok(vec![CircleEntity::new(p(0.0, 0.0), 26.0).into()])
         );
         assert_eq!(
             circle.offset_through(p(0.0, 0.0)),
@@ -1198,7 +1289,9 @@ mod tests {
         let arc: Entity = ArcEntity::new(p(0.0, 0.0), 10.0, 0.0, FRAC_PI_2).into();
         assert_eq!(
             arc.offset_through(p(-12.0, -16.0)),
-            Ok(ArcEntity::new(p(0.0, 0.0), 20.0, 0.0, FRAC_PI_2).into())
+            Ok(vec![
+                ArcEntity::new(p(0.0, 0.0), 20.0, 0.0, FRAC_PI_2).into()
+            ])
         );
     }
 }
