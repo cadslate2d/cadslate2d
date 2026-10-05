@@ -177,6 +177,7 @@ pnpm --dir web dev
 | Render-transport measurement in the browser | `pnpm --dir web bench:transport` (after `build` and generating `lines-1k`, `-10k`, `-100k`) |
 | Curve-rendering experiment in the browser | `pnpm --dir web bench:curves` (after `build`) |
 | Colour-transport experiment in the browser | `pnpm --dir web bench:styles` (after `build`) |
+| Linetype experiment in the browser; rewrites the pictures in ADR-0015 | `pnpm --dir web bench:linetypes` (after `build`) |
 
 First-time Playwright setup: `pnpm --dir web exec playwright install chromium firefox`. The suite runs in Chromium and Firefox by default; choose browsers with `E2E_BROWSERS=chromium,firefox,webkit` (WebKit needs `playwright install --with-deps webkit`). CI runs Chromium only, because headless Firefox on the hosted runner provides no WebGL2.
 

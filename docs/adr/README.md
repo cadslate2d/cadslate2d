@@ -25,6 +25,7 @@ There are two kinds:
 | [0012](0012-linear-tolerance-far-from-the-origin.md) | The linear tolerance far from the origin | Accepted | Evidence |
 | [0013](0013-entity-properties-and-tables.md) | Entity properties, tables, and one change model for both | Accepted | Bootstrap |
 | [0014](0014-colours-across-the-render-boundary.md) | Colours across the render boundary: a style index per instance and a style table | Accepted | Evidence |
+| [0015](0015-linetype-rendering.md) | Linetype rendering: dashes drawn by the shader from a distance along the path | Accepted | Evidence |
 
 ## Expected evidence ADRs
 

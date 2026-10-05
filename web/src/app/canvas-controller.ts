@@ -70,6 +70,14 @@ export class CanvasController {
         const { probeCurves } = await import("../renderer/webgl/curve-probe");
         return probeCurves(arcCount);
       },
+      probeLinetypes: async (segments) => {
+        const { probeLinetypes } = await import("../renderer/webgl/linetype-probe");
+        return probeLinetypes(segments);
+      },
+      linetypePictures: async () => {
+        const { linetypePictures } = await import("../renderer/webgl/linetype-probe");
+        return linetypePictures();
+      },
       probeStyles: async (segments, styles, order) => {
         const { probeStyles } = await import("../renderer/webgl/style-probe");
         return probeStyles(segments, styles, order);

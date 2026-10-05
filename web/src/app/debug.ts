@@ -1,6 +1,7 @@
 // Counters and measurements exposed for end-to-end tests and benchmarks.
 // Nothing here can reach CAD state: no entities, no selection, no geometry.
 import type { CurveReport } from "../renderer/webgl/curve-probe";
+import type { LinetypeReport } from "../renderer/webgl/linetype-probe";
 import type { StyleReport } from "../renderer/webgl/style-probe";
 import type { TransportReport } from "../renderer/webgl/transport-probe";
 import type { RendererStats } from "../renderer/webgl/webgl-renderer";
@@ -13,6 +14,10 @@ export interface DebugHandle {
   readonly probeOpen: (text: string) => Promise<number>;
   /** Runs the curve-rendering experiment (ADR-0009) on `arcCount` generated arcs. */
   readonly probeCurves: (arcCount: number) => Promise<CurveReport>;
+  /** Runs the linetype experiment (ADR-0015) on generated dashed paths. */
+  readonly probeLinetypes: (segments: number) => Promise<LinetypeReport>;
+  /** The linetype experiment's small scene, drawn both ways at three zooms, as PNG data URLs. */
+  readonly linetypePictures: () => Promise<{ zoom: number; shader: string; split: string }[]>;
   /** Runs the colour-transport experiment (ADR-0014) on generated segments. */
   readonly probeStyles: (
     segments: number,
