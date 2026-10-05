@@ -1,8 +1,69 @@
 # What the modify commands support
 
-M2 implements deliberately narrow cases of the geometry-heavy modify commands (DESIGN §22, §30). This page is the published list of what works. Anything not listed is refused with a message and changes nothing; it is never guessed at. The general cases are M3 work.
+This page is the published list of what each modify command does to each kind of object (DESIGN §22, §30, §31). Anything not listed is refused with a message and changes nothing; it is never guessed at. Each section names the tests that back it.
 
-Each table is backed by tests named in its section.
+Two rules hold for every command here:
+
+- **A command returns its result or a reason.** The operation underneath is a pure function that produces the new geometry or says, as a typed value, why not; the command turns that reason into the message quoted in its section. A refusal leaves the drawing exactly as it was.
+- **One committed action is one undo step**, and an object that is changed rather than replaced keeps its identity.
+
+## At a glance
+
+| Command | Line | Arc | Circle | Open polyline | Closed polyline |
+| --- | --- | --- | --- | --- | --- |
+| [MOVE, COPY, ROTATE, SCALE, MIRROR](#move-copy-rotate-scale-mirror) | yes | yes | yes | yes | yes |
+| [Grip editing](#grip-editing) | ends, midpoint | ends, midpoint, centre | centre, quadrants | vertices | vertices |
+| [OFFSET](#offset) | yes | yes | yes | yes | yes |
+| [TRIM](#trim) | yes | yes | if crossed twice | yes | if crossed twice |
+| [EXTEND](#extend) | yes | yes | no: it has no end | yes | no: it has no end |
+| [FILLET](#fillet) | with a line, arc, or circle | with a line, arc, or circle | with a line, arc, or circle; left whole | between two of its own segments | between two of its own segments |
+| [CHAMFER](#chamfer) | with a line | no | no | between two of its own segments | between two of its own segments |
+| [BREAK](#break) | yes | yes | two points; becomes an arc | yes | two points; opens |
+| [JOIN](#join) | yes | yes | no: it has no end | yes | no: it has no end |
+| [STRETCH](#stretch) | by its ends | by its ends | whole, by its centre | by its vertices | by its vertices |
+| ERASE | yes | yes | yes | yes | yes |
+
+Polylines may have arc segments throughout: every command reads a polyline through the same primitives — segments and arcs — as it reads separate lines and arcs.
+
+Every operation above has an invariant held over generated, nearly degenerate input, and the geometry underneath has a regression corpus: see [`test-data/geometry/README.md`](../test-data/geometry/README.md).
+
+## MOVE, COPY, ROTATE, SCALE, MIRROR
+
+These act on a selection, made before the command or at its prompt, and apply one transform to every object in it.
+
+| Command | Transform | Every kind of object |
+| --- | --- | --- |
+| MOVE | Translation from a base point to a second point | Moved as it is |
+| COPY | The same, leaving the originals; repeats until Enter | Copies are new objects |
+| ROTATE | Rotation about a base point by a typed angle, or towards the pointer | Arcs keep their sweep; polyline bulges are unchanged |
+| SCALE | Uniform scaling about a base point by a typed factor, or by the pointer's distance | Radii scale with it; a factor of zero or less is refused |
+| MIRROR | Reflection across a line through two points; asks whether to erase the originals | Arcs are re-oriented so they stay counter-clockwise; polyline bulges change sign |
+
+Rules:
+
+- Quarter turns, mirrors across horizontal and vertical lines, and translations are computed directly, so whole-number coordinates stay whole numbers.
+- While the target is being chosen the result is previewed without copying the objects, and the objects being moved are not snap targets (DESIGN §18.2).
+- The two points of a mirror line must differ; a rotation or scale needs a base point.
+
+Tests: `cad-geometry/src/transform.rs` (property tests: rotating there and back and mirroring twice are the identity; rotation keeps distances; scaling multiplies them), `cad-document/src/entity.rs`, `cad-commands/src/tests/transform.rs`, `web/e2e/transform.spec.ts`.
+
+## Grip editing
+
+Selecting objects shows their grips; clicking one starts a stretch of that point, which runs as a command — typed coordinates, object snap, ORTHO, POLAR, and undo all apply ([ADR-0010](adr/0010-grip-editing-and-arc-grip-semantics.md)).
+
+| Object | Grip | Dragging it |
+| --- | --- | --- |
+| Line | An end | Moves that end; the other stays |
+| Line | The midpoint | Moves the whole line |
+| Circle | The centre | Moves the circle |
+| Circle | A quadrant point | Changes the radius |
+| Arc | An end or the midpoint | Re-fits the arc through the dragged point and the other two |
+| Arc | The centre | Moves the arc |
+| Polyline | A vertex | Moves that vertex; arc segments on either side keep their bulge |
+
+Refused, leaving the object as it was: a line dragged to no length, a circle to no radius, an arc's three points into a line, a vertex onto its neighbour. Grips are shown for up to 100 selected objects.
+
+Tests: `cad-document/src/grips.rs`, `cad-commands/src/tests/grips.rs`, `web/e2e/grips.spec.ts`.
 
 ## OFFSET
 

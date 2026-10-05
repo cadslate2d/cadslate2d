@@ -1882,6 +1882,8 @@ Potential work:
 
 The exact scope should be rewritten after real M2 geometry exists.
 
+> **Resolved in M3:** all of the above was done, in the order set out at the M2 exit — see the [M3 exit review](reviews/m3-exit-review.md). Polyline offset is [ADR-0011](adr/0011-polyline-offset.md); the regression corpus and the invariant of each operation are in [`test-data/geometry/README.md`](../test-data/geometry/README.md); what each command supports is [`modify-matrix.md`](modify-matrix.md).
+
 ---
 
 # 32. M4 — Drawing Organization
@@ -1904,6 +1906,8 @@ Potential work:
 All persistent table changes must use the unified transaction system.
 
 Block redefinition must remain one semantic block transaction while invalidating derived state for dependent inserts.
+
+> **Rewritten at the M3 exit:** the order of work and what is left out are in the [roadmap](roadmap.md) and the issues of the M4 milestone.
 
 ---
 
