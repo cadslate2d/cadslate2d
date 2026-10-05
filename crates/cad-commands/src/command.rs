@@ -12,7 +12,7 @@ use cad_document::{Drawing, Entity};
 use cad_input::{ExpectedInput, Keyword};
 
 use crate::log::CommandLog;
-use crate::{DraftingSettings, Grip, HostRequest, OverlayItem, Selection};
+use crate::{DraftingSettings, Grip, HostRequest, OverlayItem, Selection, Toggles};
 
 /// One resolved input handed to the active command.
 #[derive(Clone, Debug, PartialEq)]
@@ -106,6 +106,8 @@ pub struct CommandContext<'a> {
     pub selection: &'a mut Selection,
     /// How the drafting aids behave; session state, never undoable.
     pub settings: &'a mut DraftingSettings,
+    /// Which status-bar toggles are on, as the command finds them.
+    pub toggles: Toggles,
     pub(crate) log: &'a mut CommandLog,
     pub(crate) host_request: &'a mut Option<HostRequest>,
 }

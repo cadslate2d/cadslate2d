@@ -6,6 +6,7 @@ import {
   KeyAction,
   STYLE_FOREGROUND,
   STYLE_RGB,
+  STYLE_WEIGHT_DEFAULT,
   StyleRole,
   wasmMemory,
   type FrameBuffers,
@@ -159,20 +160,26 @@ describe("commands", () => {
     const styles = () => cad.readStyles((rows) => [...rows]);
     const indices = () => cad.readScene((frame) => [...(frame.segmentStyles ?? [])]);
     expect(indices()).toEqual([0]);
-    expect(styles()).toEqual([0, 0, 0, STYLE_FOREGROUND]); // colour 7: the theme's foreground
+    // Colour 7 is the theme's foreground; the weight is the ordinary one.
+    const thin = [STYLE_WEIGHT_DEFAULT, 0, 0, 0];
+    expect(styles()).toEqual([0, 0, 0, STYLE_FOREGROUND, ...thin]);
 
     const [geometry, table] = [cad.sceneRevision, cad.styleRevision];
     expect(enter(cad, "LA", "C", "1", "walls", "") & Dirty.Scene).toBeTruthy();
     expect(cad.sceneRevision).toBe(geometry);
     expect(cad.styleRevision).not.toBe(table);
-    expect(styles()).toEqual([255, 0, 0, STYLE_RGB]);
+    expect(styles()).toEqual([255, 0, 0, STYLE_RGB, ...thin]);
     expect(indices()).toEqual([0]);
 
     // A second line on layer 0 is a second style; drawing it changes both.
     enter(cad, "LA", "S", "0", "", "L", "0,10", "100,10", "");
     expect(cad.sceneRevision).not.toBe(geometry);
     expect(indices()).toEqual([0, 1]);
-    expect(styles()).toEqual([255, 0, 0, STYLE_RGB, 0, 0, 0, STYLE_FOREGROUND]);
+    expect(styles()).toEqual([255, 0, 0, STYLE_RGB, ...thin, 0, 0, 0, STYLE_FOREGROUND, ...thin]);
+
+    // A lineweight is a byte of the row too: 0.50 mm is 50.
+    enter(cad, "LA", "LW", "0.5", "walls", "");
+    expect(styles().slice(0, 8)).toEqual([255, 0, 0, STYLE_RGB, 50, 0, 0, 0]);
   });
 
   test("log lines are fetched incrementally", () => {

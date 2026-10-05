@@ -378,23 +378,14 @@ fn styled_scenes_are_consistent_and_deterministic() {
     assert_eq!(scene.frame().batches().len(), 1);
     assert_eq!(scene.frame().arc_batches().len(), 1);
     // Layer 0 is the foreground; walls red; doors blue.
-    assert_eq!(
-        scene.styles(),
-        &[
-            0,
-            0,
-            0,
-            RenderScene::STYLE_FOREGROUND,
-            255,
-            0,
-            0,
-            RenderScene::STYLE_RGB,
-            0,
-            0,
-            255,
-            RenderScene::STYLE_RGB,
-        ]
-    );
+    let thin = RenderScene::STYLE_WEIGHT_DEFAULT;
+    #[rustfmt::skip]
+    let expected = [
+        0, 0, 0, RenderScene::STYLE_FOREGROUND, thin, 0, 0, 0,
+        255, 0, 0, RenderScene::STYLE_RGB, thin, 0, 0, 0,
+        0, 0, 255, RenderScene::STYLE_RGB, thin, 0, 0, 0,
+    ];
+    assert_eq!(scene.styles(), &expected);
 
     let again = coloured();
     let mut other = SceneCache::new();
@@ -447,7 +438,7 @@ fn pointer_activity_touches_neither_geometry_nor_styles_and_a_recolour_only_styl
     let scene = cache.scene(h.session.drawing());
     assert_eq!(scene.revision(), geometry, "the geometry is untouched");
     assert_ne!(scene.style_revision(), styles);
-    assert_eq!(&scene.styles()[4..8], &[0, 255, 0, RenderScene::STYLE_RGB]);
+    assert_eq!(&scene.styles()[8..12], &[0, 255, 0, RenderScene::STYLE_RGB]);
     assert_eq!((cache.build_count(), cache.style_build_count()), (1, 2));
 }
 
@@ -464,11 +455,14 @@ fn an_objects_own_colour_wins_over_its_layers_on_screen() {
     let rows = |h: &Harness| -> Vec<[u8; 4]> {
         let mut cache = SceneCache::new();
         let scene = cache.scene(h.session.drawing());
-        let (rows, _) = scene.styles().as_chunks::<4>();
+        let (rows, _) = scene
+            .styles()
+            .as_chunks::<{ RenderScene::BYTES_PER_STYLE }>();
         scene
             .segment_styles()
             .iter()
             .map(|style| rows[usize::from(*style)])
+            .map(|row| [row[0], row[1], row[2], row[3]])
             .collect()
     };
     let rgb = |red, green, blue| [red, green, blue, RenderScene::STYLE_RGB];

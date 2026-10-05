@@ -46,6 +46,7 @@ fn key_action(code: u32) -> Option<KeyAction> {
         7 => Some(KeyAction::Toggle(Toggle::Grid)),
         8 => Some(KeyAction::Toggle(Toggle::Ortho)),
         9 => Some(KeyAction::Toggle(Toggle::Polar)),
+        10 => Some(KeyAction::Toggle(Toggle::Lineweight)),
         _ => None,
     }
 }
@@ -293,10 +294,12 @@ impl CadSession {
         self.session.drawing().revision().as_u64() as f64
     }
 
-    /// The style table: four bytes per row, `red, green, blue, kind`, where
-    /// kind 255 is that colour and kind 0 is the theme's foreground. Row `i`
-    /// is what an instance with style index `i` is drawn with. A view into
-    /// WASM memory — consume before the next call.
+    /// The style table: eight bytes per row — `red, green, blue, kind,
+    /// weight`, and three kept for later. Kind 255 is that colour and kind 0
+    /// the theme's foreground; weight is a lineweight in hundredths of a
+    /// millimetre, or 255 for the theme's ordinary width. Row `i` is what an
+    /// instance with style index `i` is drawn with. A view into WASM memory
+    /// — consume before the next call.
     pub fn scene_styles(&mut self) -> Uint8Array {
         u8_view(self.scene.scene(self.session.drawing()).styles())
     }

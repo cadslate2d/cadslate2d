@@ -915,6 +915,7 @@ impl Session {
             drawing: &mut self.drawing,
             selection: &mut self.selection,
             settings: &mut self.settings,
+            toggles: self.toggles,
             log: &mut self.log,
             host_request: &mut self.host_request,
         };

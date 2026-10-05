@@ -40,14 +40,16 @@ pub enum Linetype {
     Continuous,
 }
 
-/// An entity's lineweight. Explicit widths arrive with lineweight display.
+/// An entity's lineweight (see `lineweight.rs`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Lineweight {
     #[default]
     ByLayer,
     ByBlock,
-    /// The drawing's default width.
+    /// The drawing's ordinary width.
     Default,
+    /// One of the standard widths, in hundredths of a millimetre.
+    Hundredths(u16),
 }
 
 /// Everything about an entity that is not its geometry.

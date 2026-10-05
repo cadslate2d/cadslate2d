@@ -6,8 +6,8 @@
 
 use cad_core::LengthUnit;
 
-use crate::Color;
 use crate::layer::LayerId;
+use crate::{Color, Lineweight};
 
 /// The settings of one drawing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,6 +16,8 @@ pub struct DrawingSettings {
     pub current_layer: LayerId,
     /// The colour new objects are given: `ByLayer` unless set otherwise.
     pub current_color: Color,
+    /// The lineweight new objects are given: `ByLayer` unless set otherwise.
+    pub current_lineweight: Lineweight,
     /// What the drawing's numbers are numbers of, or `None` for a unitless
     /// drawing. It says what the geometry means and changes none of it: a
     /// line 25 long is 25 long in any unit. A typed length with a unit
@@ -30,6 +32,7 @@ impl Default for DrawingSettings {
         Self {
             current_layer: LayerId::FIRST,
             current_color: Color::ByLayer,
+            current_lineweight: Lineweight::ByLayer,
             unit: None,
         }
     }
@@ -71,6 +74,7 @@ mod tests {
             after: DrawingSettings {
                 current_layer: LayerId::from_raw(3),
                 current_color: Color::Index(1),
+                current_lineweight: Lineweight::Hundredths(25),
                 unit: Some(LengthUnit::Metres),
             },
         };

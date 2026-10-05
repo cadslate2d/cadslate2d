@@ -1,7 +1,7 @@
 // Binds one canvas to the app: DOM events go in as semantic engine calls and
 // frames are drawn on demand. This module interprets nothing — every decision
 // is made in Rust.
-import { CadEngine, Dirty, Modifier } from "../cad/engine";
+import { CadEngine, Dirty, Modifier, ToggleBit } from "../cad/engine";
 import { documentPalette } from "../renderer/palette";
 import { renderFrame } from "../renderer/render-frame";
 import { WebGlRenderer } from "../renderer/webgl/webgl-renderer";
@@ -89,7 +89,11 @@ export class CanvasController {
     this.#resizeObserver = new ResizeObserver(this.#syncSize);
     this.#resizeObserver.observe(canvas);
     this.#syncSize();
-    this.#detachRenderer = app.setRenderer(() => renderFrame(app.engine, this.#renderer));
+    this.#detachRenderer = app.setRenderer(() => {
+      // LWT is session state in Rust; how it looks is the renderer's business.
+      this.#renderer.showLineweights = (app.ui.getSnapshot().toggles & ToggleBit.Lineweight) !== 0;
+      renderFrame(app.engine, this.#renderer);
+    });
   }
 
   dispose(): void {

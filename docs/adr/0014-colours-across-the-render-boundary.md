@@ -106,3 +106,16 @@ Four exports are added, each one whole buffer or one number: `scene_segment_styl
 - Rendering is measured on a real GPU.
 - Lineweights and linetypes arrive: the row format is decided there.
 - Layer toggling on large drawings needs to be faster than a geometry rebuild.
+
+## Amendments
+
+### 2026-10-05 — a style row gains a lineweight
+
+Lineweights travel the way this ADR said they would: a style row grows, and instances do not change.
+
+- A row is now **eight bytes**: `red, green, blue, kind, weight`, and three kept for what comes next. `weight` is a lineweight in hundredths of a millimetre — the heaviest standard one is 211 — or 255 for the theme's ordinary width. Rust resolves `ByLayer` and `ByBlock` for the weight as it does for the colour.
+- The table texture stays RGBA8, with **two texels per style**: the colour, then the half width in device pixels in the red channel, in sixteenths of a pixel. The alternative noted above — a float texture — was not needed: a byte covers half widths to sixteen pixels at a sixteenth of a pixel, and the heaviest lineweight is four.
+- The width is a matter of presentation, so the adapter computes it: a lineweight is drawn at its true size, 96 CSS pixels to the inch, and never thinner than the theme's ordinary line. Both shader programs take the half width from the table for committed geometry and from the batch's uniform for the overlay, as they do the colour.
+- **LWT** — whether lineweights are shown — is a session toggle in Rust and a re-layout of the table in the adapter: the rows are kept, and switching the toggle or changing the device pixel ratio uploads the table again and no geometry. With it off, every row has the ordinary width.
+
+Measured from the canvas in the end-to-end tests: a 2.11 mm line covers more than three times the pixels of an ordinary one with LWT on and exactly as many with it off; zooming changes neither the width nor any upload counter.

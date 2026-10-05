@@ -15,10 +15,19 @@ pub enum Toggle {
     Ortho,
     /// Polar tracking (F10).
     Polar,
+    /// Lineweight display (LWT): lines drawn as heavy as their lineweight
+    /// says. Off, every line is drawn at the ordinary width.
+    Lineweight,
 }
 
 impl Toggle {
-    pub const ALL: [Self; 4] = [Self::Osnap, Self::Grid, Self::Ortho, Self::Polar];
+    pub const ALL: [Self; 5] = [
+        Self::Osnap,
+        Self::Grid,
+        Self::Ortho,
+        Self::Polar,
+        Self::Lineweight,
+    ];
 
     /// This toggle's bit in [`Toggles::bits`].
     pub const fn bit(self) -> u32 {
@@ -31,7 +40,7 @@ impl Toggle {
         match self {
             Self::Ortho => Some(Self::Polar),
             Self::Polar => Some(Self::Ortho),
-            Self::Osnap | Self::Grid => None,
+            Self::Osnap | Self::Grid | Self::Lineweight => None,
         }
     }
 
@@ -42,6 +51,7 @@ impl Toggle {
             Self::Grid => "GRID",
             Self::Ortho => "ORTHO",
             Self::Polar => "POLAR",
+            Self::Lineweight => "LWT",
         }
     }
 }
@@ -110,8 +120,12 @@ mod tests {
     #[test]
     fn every_toggle_has_its_own_bit_and_label() {
         let bits: Vec<u32> = Toggle::ALL.iter().map(|toggle| toggle.bit()).collect();
-        assert_eq!(bits, vec![1, 2, 4, 8]);
+        assert_eq!(bits, vec![1, 2, 4, 8, 16]);
         let labels: Vec<&str> = Toggle::ALL.iter().map(|toggle| toggle.label()).collect();
-        assert_eq!(labels, vec!["OSNAP", "GRID", "ORTHO", "POLAR"]);
+        assert_eq!(labels, vec!["OSNAP", "GRID", "ORTHO", "POLAR", "LWT"]);
+        assert!(
+            !Toggles::default().is_on(Toggle::Lineweight),
+            "LWT starts off"
+        );
     }
 }

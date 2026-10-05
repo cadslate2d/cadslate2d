@@ -35,11 +35,18 @@ export const KeyAction = {
   ToggleGrid: 7,
   ToggleOrtho: 8,
   TogglePolar: 9,
+  ToggleLineweight: 10,
 } as const;
 export type KeyAction = (typeof KeyAction)[keyof typeof KeyAction];
 
 /** Bits of `UiState.toggles`: the drafting aids that are switched on. */
-export const ToggleBit = { Osnap: 1, Grid: 1 << 1, Ortho: 1 << 2, Polar: 1 << 3 } as const;
+export const ToggleBit = {
+  Osnap: 1,
+  Grid: 1 << 1,
+  Ortho: 1 << 2,
+  Polar: 1 << 3,
+  Lineweight: 1 << 4,
+} as const;
 
 /** Something only the host can do, requested by a command. */
 export const HostRequest = { None: 0, OpenFile: 1, ExportFile: 2 } as const;
@@ -99,12 +106,14 @@ export type StyleRole = (typeof StyleRole)[keyof typeof StyleRole];
 export const FLOATS_PER_SEGMENT = 4;
 export const FLOATS_PER_ARC = 5;
 export const WORDS_PER_BATCH = 3;
-/** Bytes per row of the style table: red, green, blue, kind (ADR-0014). */
-export const BYTES_PER_STYLE = 4;
+/** Bytes per row of the style table: red, green, blue, kind, weight, and three spare (ADR-0014). */
+export const BYTES_PER_STYLE = 8;
 /** The kind of a style row whose colour is the theme's foreground. */
 export const STYLE_FOREGROUND = 0;
 /** The kind of a style row whose first three bytes are its colour. */
 export const STYLE_RGB = 255;
+/** The weight of a style row drawn at the theme's ordinary width; else hundredths of a millimetre. */
+export const STYLE_WEIGHT_DEFAULT = 255;
 
 /**
  * Packed geometry for one render lifetime.
@@ -261,7 +270,7 @@ export class CadEngine {
 
   /**
    * Lends the style table to `consume` for the duration of the call:
-   * `BYTES_PER_STYLE` bytes per row, `red, green, blue, kind`.
+   * `BYTES_PER_STYLE` bytes per row, `red, green, blue, kind, weight`.
    */
   readStyles<T>(consume: (rows: Uint8Array) => T): T {
     return consume(this.#session.scene_styles());

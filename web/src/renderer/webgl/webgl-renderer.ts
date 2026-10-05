@@ -104,6 +104,9 @@ export class WebGlRenderer implements FrameSink {
   #resources: GpuResources;
   #sceneRevision: number | undefined;
   #styleRevision: number | undefined;
+  /** The style rows last received, kept so the table can be laid out again. */
+  #styleRows = new Uint8Array(0);
+  #showLineweights = false;
   #devicePixelRatio = 1;
 
   constructor(canvas: HTMLCanvasElement, palette: CanvasPalette) {
@@ -124,7 +127,11 @@ export class WebGlRenderer implements FrameSink {
 
   /** Sizes the backing store for the given CSS size and device pixel ratio. */
   resize(cssWidth: number, cssHeight: number, devicePixelRatio: number): void {
-    this.#devicePixelRatio = devicePixelRatio;
+    if (devicePixelRatio !== this.#devicePixelRatio) {
+      // Widths in the style table are in device pixels.
+      this.#devicePixelRatio = devicePixelRatio;
+      this.#uploadStyles();
+    }
     const width = Math.max(1, Math.round(cssWidth * devicePixelRatio));
     const height = Math.max(1, Math.round(cssHeight * devicePixelRatio));
     if (this.#canvas.width !== width || this.#canvas.height !== height) {
@@ -144,9 +151,38 @@ export class WebGlRenderer implements FrameSink {
   }
 
   updateStyles(revision: number, rows: Uint8Array): void {
+    // The rows are a view into WASM memory: copy them before anything else runs.
+    this.#styleRows = rows.slice();
+    this.#styleRevision = revision;
+    this.#uploadStyles();
+  }
+
+  /**
+   * Whether lineweights are shown (the LWT toggle). Off, every committed
+   * line is drawn at the ordinary width. Switching it lays the style table
+   * out again; no geometry is uploaded.
+   */
+  set showLineweights(show: boolean) {
+    if (show === this.#showLineweights) return;
+    this.#showLineweights = show;
+    this.#uploadStyles();
+  }
+
+  get showLineweights(): boolean {
+    return this.#showLineweights;
+  }
+
+  #uploadStyles(): void {
     const gl = this.#gl;
-    // The theme's colour for ordinary geometry stands in for "foreground".
-    const texels = styleTexels(rows, this.#palette.strokes[StyleRole.Entity].color);
+    const entity = this.#palette.strokes[StyleRole.Entity];
+    const texels = styleTexels(this.#styleRows, {
+      // The theme's colour and width for ordinary geometry stand in for
+      // "foreground" and "default".
+      foreground: entity.color,
+      defaultWidth: entity.width,
+      lineweights: this.#showLineweights,
+      devicePixelRatio: this.#devicePixelRatio,
+    });
     gl.bindTexture(gl.TEXTURE_2D, this.#resources.styles);
     gl.texImage2D(
       gl.TEXTURE_2D,
@@ -159,7 +195,6 @@ export class WebGlRenderer implements FrameSink {
       gl.UNSIGNED_BYTE,
       texels.data,
     );
-    this.#styleRevision = revision;
     this.stats.styleUploads += 1;
   }
 

@@ -80,8 +80,10 @@ export class CadApp {
   }
 
   #onFrame(dirty: number): void {
-    if (dirty & RENDER_FLAGS) this.#render?.();
+    // The UI state first: drawing reads it — whether lineweights are shown —
+    // and must see what this frame's input changed, not the frame before's.
     if (dirty & Dirty.Ui) this.ui.refresh(this.engine);
+    if (dirty & RENDER_FLAGS) this.#render?.();
   }
 
   #afterInput(dirty: number): void {

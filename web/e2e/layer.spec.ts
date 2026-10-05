@@ -10,7 +10,8 @@ import {
   prompt,
 } from "./support";
 
-const OPTIONS = "Press Enter to finish or [?/New/Set/Color/ON/OFF/Lock/Unlock/Rename/Delete]:";
+const OPTIONS =
+  "Press Enter to finish or [?/New/Set/Color/LWeight/ON/OFF/Lock/Unlock/Rename/Delete]:";
 
 test.describe("LAYER", () => {
   test("makes a layer whose name has a space, and draws on it", async ({ page }) => {

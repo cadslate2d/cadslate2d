@@ -2,12 +2,13 @@
 // their state; this table only says how each is labelled and reached.
 import { KeyAction, ToggleBit } from "../cad/engine";
 
-export type ToggleId = "osnap" | "grid" | "ortho" | "polar";
+export type ToggleId = "osnap" | "grid" | "ortho" | "polar" | "lineweight";
 
 export interface ToggleSpec {
   readonly id: ToggleId;
   readonly label: string;
-  readonly key: string;
+  /** The function key that flips it, if it has one. */
+  readonly key?: string;
   readonly bit: number;
   readonly action: KeyAction;
   /** What the toggle does, for its tooltip. */
@@ -51,10 +52,29 @@ export const TOGGLES: readonly ToggleSpec[] = [
 ];
 
 /** Shown in the reference design but not implemented: visibly unavailable. */
-export const UNAVAILABLE_TOGGLES = ["SNAP", "OTRACK", "LWT"] as const;
+export const UNAVAILABLE_TOGGLES = ["SNAP", "OTRACK"] as const;
+
+/** Lineweight display. It has no function key: it is flipped from the status bar. */
+export const LINEWEIGHT_TOGGLE: ToggleSpec = {
+  id: "lineweight",
+  label: "LWT",
+  bit: ToggleBit.Lineweight,
+  action: KeyAction.ToggleLineweight,
+  hint: "Draws lines as heavy as their lineweights say. Off, every line is drawn at the ordinary width. Type LWEIGHT to set the lineweight of new objects.",
+};
+
+/**
+ * The status bar, left to right, as in the reference design: the toggles
+ * that work, and the names of those that do not yet.
+ */
+export const STATUS_BAR: readonly (ToggleSpec | string)[] = [
+  ...TOGGLES,
+  ...UNAVAILABLE_TOGGLES,
+  LINEWEIGHT_TOGGLE,
+];
 
 export function toggleSpec(id: ToggleId): ToggleSpec {
-  const spec = TOGGLES.find((toggle) => toggle.id === id);
+  const spec = [...TOGGLES, LINEWEIGHT_TOGGLE].find((toggle) => toggle.id === id);
   if (!spec) throw new Error(`unknown toggle ${id}`);
   return spec;
 }

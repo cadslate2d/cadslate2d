@@ -7,23 +7,27 @@
 //! is, and the refusal says which name was the trouble. What the layer
 //! table allows is decided by `cad-document`; this is the conversation.
 
-use cad_document::{Color, Layer, LayerId, TransactionBuilder, TransactionError};
+use cad_document::{Color, Layer, LayerId, Lineweight, TransactionBuilder, TransactionError};
 use cad_input::{ExpectedInput, InputKind, Keyword};
 
 use super::color::NOT_A_COLOR;
+use super::lweight::NOT_A_LINEWEIGHT;
 use crate::{Command, CommandContext, CommandInput, Prompt, Step};
 
 const LIST: Keyword = Keyword::new("?");
 const NEW: Keyword = Keyword::new("New");
 const SET: Keyword = Keyword::new("Set");
 const COLOR: Keyword = Keyword::new("Color");
+const LWEIGHT: Keyword = Keyword::new("LWeight");
 const ON: Keyword = Keyword::new("ON");
 const OFF: Keyword = Keyword::new("OFF");
 const LOCK: Keyword = Keyword::new("Lock");
 const UNLOCK: Keyword = Keyword::new("Unlock");
 const RENAME: Keyword = Keyword::new("Rename");
 const DELETE: Keyword = Keyword::new("Delete");
-const OPTIONS: [Keyword; 10] = [LIST, NEW, SET, COLOR, ON, OFF, LOCK, UNLOCK, RENAME, DELETE];
+const OPTIONS: [Keyword; 11] = [
+    LIST, NEW, SET, COLOR, LWEIGHT, ON, OFF, LOCK, UNLOCK, RENAME, DELETE,
+];
 
 /// A switch that some options throw on every layer named.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,6 +77,9 @@ enum State {
     /// The colour, then the layers to give it to.
     ColorNumber,
     ColorLayers(u8),
+    /// The lineweight, then the layers to give it to.
+    Weight,
+    WeightLayers(Lineweight),
     Switch(Switch),
     RenameFrom,
     RenameTo(LayerId),
@@ -173,6 +180,9 @@ impl LayerCommand {
                     layer.name,
                     if layer.on { "on" } else { "off" }
                 );
+                if layer.lineweight != Lineweight::Default {
+                    line.push_str(&format!(", {}", layer.lineweight.describe()));
+                }
                 if layer.locked {
                     line.push_str(", locked");
                 }
@@ -271,6 +281,21 @@ impl LayerCommand {
                     |count| format!("{} set to colour {index}.", layers(count)),
                 );
             }
+            State::WeightLayers(lineweight) => {
+                let lineweight = *lineweight;
+                Self::edit_layers(
+                    ctx,
+                    text,
+                    |layer| layer.lineweight = lineweight,
+                    |count| {
+                        format!(
+                            "{} set to lineweight {}.",
+                            layers(count),
+                            lineweight.describe()
+                        )
+                    },
+                );
+            }
             State::Switch(switch) => {
                 let switch = *switch;
                 Self::edit_layers(
@@ -315,7 +340,7 @@ impl LayerCommand {
                     Err(message) => ctx.message(message),
                 }
             }
-            State::Option | State::ColorNumber => {}
+            State::Option | State::ColorNumber | State::Weight => {}
         }
         self.state = State::Option;
     }
@@ -336,6 +361,11 @@ impl Command for LayerCommand {
             State::ColorLayers(index) => {
                 Prompt::new(format!("Enter name(s) of layer(s) for colour {index}"))
             }
+            State::Weight => Prompt::new("Enter lineweight (mm or Default)"),
+            State::WeightLayers(lineweight) => Prompt::new(format!(
+                "Enter name(s) of layer(s) for lineweight {}",
+                lineweight.describe()
+            )),
             State::Switch(switch) => Prompt::new(format!(
                 "Enter name(s) of layer(s) to {}",
                 switch.infinitive()
@@ -361,6 +391,7 @@ impl Command for LayerCommand {
                     NEW => State::New,
                     SET => State::Set,
                     COLOR => State::ColorNumber,
+                    LWEIGHT => State::Weight,
                     ON => State::Switch(Switch::On),
                     OFF => State::Switch(Switch::Off),
                     LOCK => State::Switch(Switch::Lock),
@@ -380,6 +411,16 @@ impl Command for LayerCommand {
                     ctx.message("A layer needs a colour of its own, not ByLayer or ByBlock.");
                 }
                 None => ctx.message(NOT_A_COLOR),
+            },
+            (State::Weight, CommandInput::Text(text)) => match Lineweight::parse(&text) {
+                Some(lineweight) if lineweight.is_concrete() => {
+                    self.state = State::WeightLayers(lineweight);
+                }
+                // A layer's lineweight is what ByLayer means.
+                Some(_) => {
+                    ctx.message("A layer needs a lineweight of its own, not ByLayer or ByBlock.");
+                }
+                None => ctx.message(format!("{NOT_A_LINEWEIGHT} Or Default.")),
             },
             (_, CommandInput::Text(text)) => self.text(&text, ctx),
             // Enter at any other prompt goes back to the options.

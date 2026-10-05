@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { CadApp } from "../app/cad-app";
-import { TOGGLES, UNAVAILABLE_TOGGLES } from "../app/toggles";
+import { STATUS_BAR } from "../app/toggles";
 
 const COORDINATE_DECIMALS = 4;
 
@@ -28,15 +28,28 @@ export function StatusBar({ app }: { app: CadApp }) {
       <span className="status__chip status__coordinates" data-testid="coordinates">
         {formatCoordinates(ui.cursor)}
       </span>
-      {TOGGLES.map((toggle) => {
+      {STATUS_BAR.map((toggle) => {
+        if (typeof toggle === "string") {
+          return (
+            <span
+              key={toggle}
+              className="status__chip status__chip--unavailable"
+              aria-disabled="true"
+              title={`${toggle} is not available yet`}
+            >
+              {toggle}
+            </span>
+          );
+        }
         const on = (ui.toggles & toggle.bit) !== 0;
+        const key = toggle.key ? ` (${toggle.key})` : "";
         return (
           <button
             key={toggle.id}
             type="button"
             className={`status__chip status__toggle${on ? " status__chip--active" : ""}`}
             aria-pressed={on}
-            title={`${toggle.label} (${toggle.key}). ${toggle.hint}`}
+            title={`${toggle.label}${key}. ${toggle.hint}`}
             // Keep keyboard focus on the command line.
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => app.key(toggle.action)}
@@ -45,16 +58,6 @@ export function StatusBar({ app }: { app: CadApp }) {
           </button>
         );
       })}
-      {UNAVAILABLE_TOGGLES.map((label) => (
-        <span
-          key={label}
-          className="status__chip status__chip--unavailable"
-          aria-disabled="true"
-          title={`${label} is not available yet`}
-        >
-          {label}
-        </span>
-      ))}
       <span className="status__chip status__chip--active">MODEL</span>
     </footer>
   );

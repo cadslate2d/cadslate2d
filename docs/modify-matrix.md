@@ -17,7 +17,7 @@ Every object has a layer, a colour, a linetype, and a lineweight beside its geom
 | Made from another: a copy, a mirror image kept beside its original, an offset, a further piece of a trim or a break | Those of the object it was made from |
 | A fillet arc or a chamfer bevel | Those of the object picked first |
 | Joined from several | Those of its oldest member, whose identity it keeps |
-| Newly drawn | Those new objects are given: the current layer (`LAYER`, `Set`) and the current colour (`COLOR`); the rest by layer |
+| Newly drawn | Those new objects are given: the current layer (`LAYER`, `Set`), colour (`COLOR`), and lineweight (`LWEIGHT`); the linetype by layer |
 
 Undo brings an erased or changed object back with the properties it had.
 

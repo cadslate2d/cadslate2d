@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 
 use cad_core::Point2;
-use cad_document::{Drawing, Paint, Properties, Revision};
+use cad_document::{Drawing, Paint, Properties, Revision, Weight};
 
 use crate::{PackedFrame, StyleRole};
 
@@ -42,12 +42,16 @@ pub struct RenderScene {
 
 impl RenderScene {
     /// Bytes per row of the style table.
-    pub const BYTES_PER_STYLE: usize = 4;
+    pub const BYTES_PER_STYLE: usize = 8;
     /// The fourth byte of a row whose colour is the theme's foreground: the
     /// first three bytes mean nothing, and the adapter supplies the colour.
     pub const STYLE_FOREGROUND: u8 = 0;
     /// The fourth byte of a row whose first three bytes are red, green, blue.
     pub const STYLE_RGB: u8 = 255;
+    /// The fifth byte of a row drawn at the theme's ordinary width. Any
+    /// other value is a lineweight in hundredths of a millimetre, of which
+    /// the heaviest standard one is 211.
+    pub const STYLE_WEIGHT_DEFAULT: u8 = 255;
 
     /// Identifies the geometry: the drawing's shown revision it was built
     /// from. TypeScript re-uploads committed instance buffers only when
@@ -76,10 +80,12 @@ impl RenderScene {
         self.style_revision
     }
 
-    /// The style table: [`Self::BYTES_PER_STYLE`] bytes per row, `red,
-    /// green, blue, kind`, where `kind` is [`Self::STYLE_RGB`] or
-    /// [`Self::STYLE_FOREGROUND`]. Row `i` is what an instance with style
-    /// index `i` is drawn with.
+    /// The style table: [`Self::BYTES_PER_STYLE`] bytes per row — `red,
+    /// green, blue, kind, weight`, then three bytes kept for what a style
+    /// gains next. `kind` is [`Self::STYLE_RGB`] or
+    /// [`Self::STYLE_FOREGROUND`]; `weight` is a lineweight in hundredths of
+    /// a millimetre or [`Self::STYLE_WEIGHT_DEFAULT`]. Row `i` is what an
+    /// instance with style index `i` is drawn with.
     pub fn styles(&self) -> &[u8] {
         &self.styles
     }
@@ -131,14 +137,25 @@ impl RenderScene {
     fn resolve_styles(&mut self, drawing: &Drawing) {
         self.styles.clear();
         for properties in &self.properties {
-            let paint = drawing
-                .layers()
-                .get(properties.layer)
-                .map_or(Paint::Foreground, |layer| properties.color.paint_on(layer));
-            self.styles.extend(match paint {
+            let layer = drawing.layers().get(properties.layer);
+            let paint = layer.map_or(Paint::Foreground, |layer| properties.color.paint_on(layer));
+            let weight = layer.map_or(Weight::Default, |layer| {
+                properties.lineweight.weight_on(layer)
+            });
+            let [red, green, blue, kind] = match paint {
                 Paint::Rgb([red, green, blue]) => [red, green, blue, Self::STYLE_RGB],
                 Paint::Foreground => [0, 0, 0, Self::STYLE_FOREGROUND],
-            });
+            };
+            let weight = match weight {
+                Weight::Default => Self::STYLE_WEIGHT_DEFAULT,
+                // The standard widths all fit; anything heavier is drawn as
+                // the heaviest that does.
+                Weight::Hundredths(hundredths) => {
+                    hundredths.min(u16::from(Self::STYLE_WEIGHT_DEFAULT) - 1) as u8
+                }
+            };
+            self.styles
+                .extend([red, green, blue, kind, weight, 0, 0, 0]);
         }
         self.style_revision = drawing.revision();
     }
@@ -336,10 +353,23 @@ mod tests {
     const BLUE: [u8; 4] = [0, 0, 255, RenderScene::STYLE_RGB];
     const FOREGROUND: [u8; 4] = [0, 0, 0, RenderScene::STYLE_FOREGROUND];
 
+    /// The colour of every row: red, green, blue, kind.
     fn rows(scene: &RenderScene) -> Vec<[u8; 4]> {
-        let (rows, rest) = scene.styles().as_chunks::<4>();
+        let (rows, rest) = scene
+            .styles()
+            .as_chunks::<{ RenderScene::BYTES_PER_STYLE }>();
         assert!(rest.is_empty(), "whole rows only");
-        rows.to_vec()
+        rows.iter()
+            .map(|row| [row[0], row[1], row[2], row[3]])
+            .collect()
+    }
+
+    /// The weight byte of every row.
+    fn weights(scene: &RenderScene) -> Vec<u8> {
+        let (rows, _) = scene
+            .styles()
+            .as_chunks::<{ RenderScene::BYTES_PER_STYLE }>();
+        rows.iter().map(|row| row[4]).collect()
     }
 
     fn on(layer: u32) -> Properties {
@@ -552,5 +582,60 @@ mod tests {
             cache.scene(&drawing);
         }
         assert_eq!(cache_counts(&cache), (1, 1));
+    }
+
+    // ── lineweights (#136) ──
+
+    #[test]
+    fn a_style_row_carries_the_resolved_lineweight() {
+        use cad_document::Lineweight;
+
+        let layers = [Layer {
+            lineweight: Lineweight::Hundredths(50),
+            ..Layer::named("heavy")
+        }];
+        let own = Properties {
+            lineweight: Lineweight::Hundredths(211),
+            ..on(1)
+        };
+        let default_on_heavy = Properties {
+            lineweight: Lineweight::Default,
+            ..on(1)
+        };
+        let mut drawing = Drawing::from_parts(
+            layers,
+            [
+                (
+                    Entity::Line(line(0.0, 0.0, 10.0, 0.0)),
+                    Properties::default(),
+                ),
+                (Entity::Line(line(0.0, 1.0, 10.0, 1.0)), on(1)),
+                (Entity::Line(line(0.0, 2.0, 10.0, 2.0)), own),
+                (Entity::Line(line(0.0, 3.0, 10.0, 3.0)), default_on_heavy),
+            ],
+        )
+        .unwrap();
+        let mut cache = SceneCache::new();
+        let default = RenderScene::STYLE_WEIGHT_DEFAULT;
+        // Layer 0 has the default weight; ByLayer on `heavy` is 0.50 mm; an
+        // object's own weight wins; and Default is not ByLayer.
+        assert_eq!(
+            weights(cache.scene(&drawing)),
+            vec![default, 50, 211, default]
+        );
+        assert_eq!(cache.scene(&drawing).segment_styles(), &[0, 1, 2, 3]);
+
+        // Changing the layer's lineweight is a table change, like its colour.
+        let id = drawing.layers().find("heavy").unwrap();
+        let mut layer = drawing.layers().get(id).cloned().unwrap();
+        layer.lineweight = Lineweight::Hundredths(100);
+        let mut tx = drawing.transaction();
+        tx.replace_layer(id, layer).unwrap();
+        tx.commit();
+        assert_eq!(
+            weights(cache.scene(&drawing)),
+            vec![default, 100, 211, default]
+        );
+        assert_eq!(cache.build_count(), 1, "no geometry was rebuilt");
     }
 }

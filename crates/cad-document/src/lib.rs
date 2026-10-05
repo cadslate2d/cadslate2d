@@ -17,6 +17,7 @@ mod history;
 mod id_alloc;
 mod joining;
 mod layer;
+mod lineweight;
 mod properties;
 mod revision;
 mod settings;
@@ -34,6 +35,7 @@ pub use entity::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity, Sh
 pub use grips::{EntityGrip, GripKind};
 pub use joining::{JoinError, Joined, close_into_circle, join};
 pub use layer::{Layer, LayerChange, LayerId, LayerNameError, LayerTable};
+pub use lineweight::Weight;
 pub use properties::{Color, EntityRecord, Linetype, Lineweight, Properties};
 pub use revision::Revision;
 pub use settings::{DrawingSettings, SettingsChange};

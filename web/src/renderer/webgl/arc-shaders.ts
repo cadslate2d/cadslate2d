@@ -22,7 +22,6 @@ layout(location = 1) in float a_sweep; // radians, counter-clockwise; 2π for a 
 uniform vec2 u_scale;       // frame units → clip space
 uniform vec2 u_translate;
 uniform vec2 u_viewport;    // device pixels
-uniform float u_half_width; // device pixels
 ${STYLE_VERTEX_DECLARATIONS}
 flat out vec2 v_center;     // device pixels from the viewport centre
 flat out float v_radius;    // device pixels
@@ -33,10 +32,11 @@ const float TAU = 6.283185307179586;
 const float SEGMENTS = ${ARC_STRIP_SEGMENTS}.0;
 
 void main() {
+  ${STYLE_VERTEX_RESOLVE}
   vec2 half_viewport = u_viewport * 0.5;
   vec2 center = (a_arc.xy * u_scale + u_translate) * half_viewport;
   float radius = a_arc.z * u_scale.x * half_viewport.x;
-  float extent = u_half_width + 1.0;
+  float extent = v_half_width + 1.0;
 
   // Cover the round caps by widening the angular range by the cap's angle.
   float pad = extent / max(radius, 1e-3);
@@ -59,7 +59,6 @@ void main() {
   v_radius = radius;
   v_start = a_arc.w;
   v_sweep = a_sweep;
-  ${STYLE_VERTEX_RESOLVE}
   gl_Position = vec4(position / half_viewport, 0.0, 1.0);
 }
 `;
@@ -68,9 +67,9 @@ export const ARC_FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 
 uniform vec2 u_viewport;    // device pixels
-uniform float u_half_width; // device pixels
 
-flat in vec4 v_color;       // straight alpha
+flat in vec4 v_color;        // straight alpha
+flat in float v_half_width;  // device pixels
 flat in vec2 v_center;
 flat in float v_radius;
 flat in float v_start;
@@ -94,7 +93,7 @@ void main() {
     }
   }
 
-  float coverage = clamp(u_half_width + 0.5 - distance_px, 0.0, 1.0);
+  float coverage = clamp(v_half_width + 0.5 - distance_px, 0.0, 1.0);
   float alpha = v_color.a * coverage;
   out_color = vec4(v_color.rgb * alpha, alpha); // premultiplied
 }

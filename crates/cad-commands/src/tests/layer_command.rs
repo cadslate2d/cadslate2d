@@ -9,7 +9,7 @@ use cad_document::{Color, Layer, LayerId, Properties};
 use crate::testing::Harness;
 
 const OPTIONS: &str =
-    "Press Enter to finish or [?/New/Set/Color/ON/OFF/Lock/Unlock/Rename/Delete]:";
+    "Press Enter to finish or [?/New/Set/Color/LWeight/ON/OFF/Lock/Unlock/Rename/Delete]:";
 
 fn last(h: &Harness) -> String {
     h.log().last().cloned().unwrap_or_default()
@@ -196,6 +196,52 @@ fn color_gives_layers_a_colour_from_the_palette() {
 }
 
 #[test]
+fn lweight_gives_layers_a_standard_lineweight() {
+    use cad_document::Lineweight;
+
+    let mut h = with_layers();
+    h.enter_all(&["LA", "LW"]);
+    assert_eq!(h.prompt(), "Enter lineweight (mm or Default):");
+    h.enter("0.26");
+    assert!(
+        last(&h).starts_with("A lineweight is one of the standard widths in millimetres: 0, 0.05,")
+    );
+    assert!(last(&h).ends_with("2, or 2.11. Or Default."));
+    h.enter("ByLayer");
+    assert_eq!(
+        last(&h),
+        "A layer needs a lineweight of its own, not ByLayer or ByBlock."
+    );
+    assert_eq!(h.prompt(), "Enter lineweight (mm or Default):");
+    h.enter("0.5");
+    assert_eq!(
+        h.prompt(),
+        "Enter name(s) of layer(s) for lineweight 0.50 mm:"
+    );
+    h.enter("walls,doors");
+    assert_eq!(last(&h), "2 layers set to lineweight 0.50 mm.");
+    h.enter_all(&["LW", "default", "doors", "?"]);
+    let log = h.log();
+    assert_eq!(
+        &log[log.len() - 2..],
+        [
+            "  \"walls\": colour 7, on, 0.50 mm",
+            "  \"doors\": colour 7, on"
+        ]
+    );
+    h.enter("");
+    assert_eq!(layer(&h, "walls").lineweight, Lineweight::Hundredths(50));
+    assert_eq!(layer(&h, "doors").lineweight, Lineweight::Default);
+    assert_eq!(layer(&h, "0").lineweight, Lineweight::Default);
+    h.undo();
+    assert_eq!(
+        layer(&h, "walls").lineweight,
+        Lineweight::Default,
+        "one step"
+    );
+}
+
+#[test]
 fn on_off_lock_and_unlock_switch_the_layers_named() {
     let mut h = with_layers();
     h.enter_all(&["LA", "OFF"]);
@@ -368,7 +414,7 @@ fn the_question_mark_lists_every_layer_with_its_state() {
 fn enter_at_a_name_prompt_goes_back_to_the_options_and_escape_cancels() {
     let mut h = with_layers();
     let revision = h.session.drawing().revision();
-    for option in ["N", "S", "C", "ON", "OFF", "L", "U", "R", "D"] {
+    for option in ["N", "S", "C", "LW", "ON", "OFF", "L", "U", "R", "D"] {
         h.enter_all(&["LA", option]);
         assert_ne!(h.prompt(), OPTIONS, "{option}");
         h.enter("");

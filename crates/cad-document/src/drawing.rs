@@ -11,8 +11,8 @@ use crate::layer::{Layer, LayerId, LayerNameError, LayerTable, initial_layers};
 use crate::spatial::RTreeIndex;
 use crate::table::TableChange;
 use crate::{
-    Change, Color, DrawingSettings, Entity, EntityChange, EntityRecord, EntityStore, Properties,
-    Revision, SettingsChange, SpatialIndex, Transaction,
+    Change, Color, DrawingSettings, Entity, EntityChange, EntityRecord, EntityStore, Lineweight,
+    Properties, Revision, SettingsChange, SpatialIndex, Transaction,
 };
 
 /// A 2D drawing.
@@ -241,6 +241,11 @@ impl Drawing {
         self.settings.current_color
     }
 
+    /// The lineweight new objects are given.
+    pub fn current_lineweight(&self) -> Lineweight {
+        self.settings.current_lineweight
+    }
+
     /// The drawing's unit, or `None` if it is unitless.
     pub fn unit(&self) -> Option<LengthUnit> {
         self.settings.unit
@@ -431,13 +436,14 @@ impl TransactionBuilder<'_> {
     /// transaction is abandoned; sparse IDs are fine (DESIGN §10.2).
     ///
     /// The entity gets the properties new objects are given: the current
-    /// layer and the current colour, the rest by layer. An object made *from* another — a copy,
+    /// layer, colour, and lineweight; the linetype by layer. An object made *from* another — a copy,
     /// an offset, the second piece of a break — takes that object's
     /// properties with [`insert_like`](Self::insert_like) instead.
     pub fn insert(&mut self, entity: impl Into<Entity>) -> EntityId {
         let settings = self.settings_now();
         let properties = Properties {
             color: settings.current_color,
+            lineweight: settings.current_lineweight,
             ..Properties::on(settings.current_layer)
         };
         self.insert_record(EntityRecord::new(entity, properties))
@@ -584,6 +590,15 @@ impl TransactionBuilder<'_> {
     pub fn set_current_color(&mut self, color: Color) {
         self.set_settings(DrawingSettings {
             current_color: color,
+            ..self.settings_now()
+        });
+    }
+
+    /// Sets the lineweight new objects are given. `ByLayer`, the default,
+    /// means each takes its layer's.
+    pub fn set_current_lineweight(&mut self, lineweight: Lineweight) {
+        self.set_settings(DrawingSettings {
+            current_lineweight: lineweight,
             ..self.settings_now()
         });
     }
@@ -1664,6 +1679,36 @@ mod tests {
         let id = tx.insert(line(0.0, 20.0, 10.0, 20.0));
         tx.commit();
         assert_eq!(drawing.properties(id).unwrap().color, Color::ByBlock);
+    }
+
+    /// #136: the same for the lineweight new objects are given.
+    #[test]
+    fn new_entities_take_the_current_lineweight_which_is_an_undoable_setting() {
+        let mut drawing = Drawing::new();
+        assert_eq!(drawing.current_lineweight(), Lineweight::ByLayer);
+        let thin = create(&mut drawing, line(0.0, 0.0, 10.0, 0.0));
+
+        let heavy = Lineweight::Hundredths(100);
+        let mut tx = drawing.transaction();
+        tx.set_current_lineweight(heavy);
+        tx.commit();
+        let wide = create(&mut drawing, line(0.0, 5.0, 10.0, 5.0));
+        assert_eq!(drawing.properties(wide).unwrap().lineweight, heavy);
+        assert_eq!(
+            drawing.properties(thin).unwrap().lineweight,
+            Lineweight::ByLayer
+        );
+        assert_eq!(
+            drawing.current_color(),
+            Color::ByLayer,
+            "the other settings are kept"
+        );
+
+        drawing.undo().unwrap();
+        drawing.undo().unwrap();
+        assert_eq!(drawing.current_lineweight(), Lineweight::ByLayer);
+        drawing.redo().unwrap();
+        assert_eq!(drawing.current_lineweight(), heavy);
     }
 
     /// #113: changing the drawing unit is undoable, and changes no geometry.

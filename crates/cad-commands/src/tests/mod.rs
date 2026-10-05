@@ -11,6 +11,7 @@ mod grips;
 mod join;
 mod layer_command;
 mod layers;
+mod lweight;
 mod modify;
 mod offset;
 mod properties;

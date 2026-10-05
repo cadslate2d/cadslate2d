@@ -19,13 +19,13 @@ layout(location = 1) in vec4 a_segment;
 uniform vec2 u_scale;      // frame units → clip space
 uniform vec2 u_translate;
 uniform vec2 u_viewport;   // device pixels
-uniform float u_half_width; // device pixels
 ${STYLE_VERTEX_DECLARATIONS}
 // Position in the segment's own pixel frame: x along, y across.
 out vec2 v_local;
 out float v_length;
 
 void main() {
+  ${STYLE_VERTEX_RESOLVE}
   vec2 half_viewport = u_viewport * 0.5;
   vec2 start = (a_segment.xy * u_scale + u_translate) * half_viewport;
   vec2 end = (a_segment.zw * u_scale + u_translate) * half_viewport;
@@ -37,7 +37,7 @@ void main() {
 
   // Grow the quad by the half width plus one pixel of antialiasing margin,
   // on the sides and past both ends (for the caps).
-  float extent = u_half_width + 1.0;
+  float extent = v_half_width + 1.0;
   float end_sign = a_corner.x * 2.0 - 1.0;
   vec2 position = mix(start, end, a_corner.x)
     + along * end_sign * extent
@@ -45,7 +45,6 @@ void main() {
 
   v_local = vec2(a_corner.x * len + end_sign * extent, a_corner.y * extent);
   v_length = len;
-  ${STYLE_VERTEX_RESOLVE}
   gl_Position = vec4(position / half_viewport, 0.0, 1.0);
 }
 `;
@@ -53,9 +52,8 @@ void main() {
 export const STROKE_FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 
-uniform float u_half_width; // device pixels
-
-flat in vec4 v_color;       // straight alpha
+flat in vec4 v_color;        // straight alpha
+flat in float v_half_width;  // device pixels
 in vec2 v_local;
 in float v_length;
 out vec4 out_color;
@@ -64,7 +62,7 @@ void main() {
   // Distance from this fragment to the segment (a capsule's medial axis).
   float nearest = clamp(v_local.x, 0.0, v_length);
   float distance_px = length(vec2(v_local.x - nearest, v_local.y));
-  float coverage = clamp(u_half_width + 0.5 - distance_px, 0.0, 1.0);
+  float coverage = clamp(v_half_width + 0.5 - distance_px, 0.0, 1.0);
   float alpha = v_color.a * coverage;
   out_color = vec4(v_color.rgb * alpha, alpha); // premultiplied
 }
