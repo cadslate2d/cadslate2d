@@ -19,5 +19,5 @@ mod resolve;
 pub use aliases::{CommandAliases, DuplicateCommandName};
 pub use diagnostic::Diagnostic;
 pub use keyword::Keyword;
-pub use point::{PointInput, parse_point};
+pub use point::{PointInput, parse_point, parse_point_in};
 pub use resolve::{ExpectedInput, Input, InputKind, resolve};

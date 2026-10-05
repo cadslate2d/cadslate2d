@@ -44,6 +44,7 @@ mod polarang;
 mod rectang;
 mod stretch;
 mod transform;
+mod units;
 
 /// Option keywords shared by more than one command.
 mod keywords {
@@ -74,3 +75,4 @@ pub(crate) use polarang::PolarAngleCommand;
 pub(crate) use rectang::RectangCommand;
 pub(crate) use stretch::StretchCommand;
 pub(crate) use transform::TransformCommand;
+pub(crate) use units::UnitsCommand;

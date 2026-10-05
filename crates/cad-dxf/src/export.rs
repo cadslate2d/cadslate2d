@@ -2,7 +2,7 @@
 
 use std::fmt::Write;
 
-use cad_core::EntityId;
+use cad_core::{EntityId, LengthUnit};
 use cad_document::{ArcEntity, CircleEntity, Drawing, Entity, LineEntity, PolylineEntity};
 
 /// The DXF release written, as stored in `$ACADVER`. R12 is the simplest
@@ -22,6 +22,14 @@ pub fn export(drawing: &Drawing) -> String {
     section(&mut out, "HEADER", |out| {
         group(out, 9, "$ACADVER");
         group(out, 1, ACADVER_R12);
+        // The drawing unit. `$INSUNITS` is newer than R12; it is written
+        // all the same so that a drawing keeps its unit when saved and
+        // reopened (ADR-0005, amended). A unitless drawing writes nothing,
+        // and so stays a plain R12 file.
+        if let Some(unit) = drawing.unit() {
+            group(out, 9, "$INSUNITS");
+            group(out, 70, &insunits_code(unit).to_string());
+        }
     });
     section(&mut out, "ENTITIES", |out| {
         let mut entities: Vec<(EntityId, &Entity)> = drawing.entities().collect();
@@ -37,6 +45,17 @@ pub fn export(drawing: &Drawing) -> String {
     });
     group(&mut out, 0, "EOF");
     out
+}
+
+/// The `$INSUNITS` code of a unit.
+pub(crate) const fn insunits_code(unit: LengthUnit) -> i64 {
+    match unit {
+        LengthUnit::Inches => 1,
+        LengthUnit::Feet => 2,
+        LengthUnit::Millimetres => 4,
+        LengthUnit::Centimetres => 5,
+        LengthUnit::Metres => 6,
+    }
 }
 
 fn write_line(out: &mut String, line: &LineEntity) {

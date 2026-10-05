@@ -23,6 +23,7 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `ARC` | `A` | Three points; or start, `Center`, end; or start, centre, `Angle`. |
 | `PLINE` | `PL` | One polyline through a chain of points. `Arc` switches to arc segments that continue smoothly from the one before; `Line` switches back. Also `Close`, `Undo`. |
 | `RECTANG` | `REC` | A closed rectangle from two corners. |
+| `UNITS` | `UN` | Says what the drawing's numbers are: unitless (the default), millimetres, centimetres, metres, inches, or feet. Nothing is rescaled; the unit is what a typed `25mm` is converted into, and it is saved with the drawing. |
 | `LAYER` | `LA` | Layers from the command line: `New`, `Set` (the layer new objects go on), `Color`, `ON`, `OFF`, `Lock`, `Unlock`, `Rename`, `Delete`, and `?` to list. Names may contain spaces; several can be given at once, separated by commas. Objects on a layer that is off are hidden and cannot be picked; objects on a locked layer cannot be changed. |
 | `ERASE` | `E`, Delete | Erases the selected objects. |
 | `MOVE` | `M` | Moves the selection from a base point to a second point. |
@@ -58,6 +59,7 @@ Options shown in brackets, as in `Specify next point or [Close/Undo]:`, are chos
 | `@500,0` | Point relative to the previous one |
 | `@500<45` | Relative polar: distance `<` angle in degrees, counter-clockwise from +X |
 | `500` | At a next-point prompt: that distance towards the cursor (direct distance) |
+| `25mm`, `2.5m,300mm`, `@1in<45` | A length with a unit — `mm`, `cm`, `m`, `in`, `ft` — converted into the drawing's unit. Needs a drawing unit: see `UNITS` |
 | Click | A point while a command asks for one; on a grip, takes the grip; otherwise adds the object under the cursor to the selection (Shift+click removes it) |
 | Click or drag on empty space | A selection box: left to right selects what is entirely inside (window); right to left selects what it touches (crossing) |
 | Enter / Space | Accept or finish; at the idle prompt, repeat the last command |

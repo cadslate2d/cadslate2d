@@ -43,7 +43,8 @@ impl Operation {
         match self {
             Self::Move | Self::Copy => ExpectedInput::point().with_direct_distance(),
             Self::Rotate => ExpectedInput::angle(),
-            Self::Scale => ExpectedInput::distance(),
+            // A factor is a plain number: `2mm` is not a scale.
+            Self::Scale => ExpectedInput::factor(),
         }
     }
 

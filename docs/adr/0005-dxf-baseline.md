@@ -54,3 +54,21 @@ R12 has no mandatory handles, so none are written. When a later release is targe
 - M5 defines the compatibility matrix and may raise the output release.
 - Text import arrives and code pages matter.
 - A real CAD tool rejects or misreads a file we write.
+
+## Amendments
+
+### 2026-10-05 — `$INSUNITS` is written into the R12 header
+
+A drawing can now say what unit its numbers are in (DESIGN §14). In DXF that is the header variable `$INSUNITS`, which was introduced after R12. The writer's release stays R12, and the variable is written into its header all the same — only when the drawing has a unit, so a unitless drawing is still a plain R12 file.
+
+Why: DXF is the only way a drawing is saved until M5. Dropping the unit on every save would make the setting useless: reopen the file and `25mm` is refused again.
+
+Evidence:
+
+- The reader takes `$INSUNITS` from the header of any release. Four of the fixtures written by ezdxf (R2010, R2018) declare metres, and now import as metre drawings.
+- ezdxf 1.4.4 reads an `AC1009` file with `$INSUNITS` in its header without complaint and reports the unit (`doc.units == 4`); its recovery mode reports no errors for it.
+- ezdxf itself does **not** write the variable when asked for R12 ("Drawing units ($INSUNITS) are not exported for DXF R12"). So this is a deliberate step outside what R12 defines, taken because a header variable a reader does not know is one it can skip.
+
+Not verified: that AutoCAD and other tools accept the variable in an R12 header. If one is found that rejects it, the unit moves with the baseline release decision in M5, as the third "revisit when" above already provides.
+
+Codes read and written: 0 unitless, 1 inches, 2 feet, 4 millimetres, 5 centimetres, 6 metres. A file declaring any other unit imports as a unitless drawing, and the import report says so; nothing is rescaled.

@@ -2,6 +2,8 @@
 
 use std::collections::BTreeMap;
 
+use cad_core::LengthUnit;
+
 /// The outcome of an import, for the user.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ImportReport {
@@ -18,6 +20,12 @@ pub struct ImportReport {
     /// Imported entities that carried properties the drawing cannot hold yet
     /// (a layer other than `0`, a colour, a linetype, an elevation…).
     pub with_dropped_properties: usize,
+    /// The drawing unit the file declares, when it is one the drawing can
+    /// be in.
+    pub unit: Option<LengthUnit>,
+    /// The `$INSUNITS` code of a unit the file declares and the drawing
+    /// cannot be in — miles, microns — so that the drawing came in unitless.
+    pub unsupported_unit: Option<i64>,
 }
 
 impl ImportReport {
@@ -29,7 +37,9 @@ impl ImportReport {
     /// True when exporting the imported drawing would lose something the
     /// original file contained. The UI must warn before such an export.
     pub fn has_unsupported_content(&self) -> bool {
-        !self.unsupported.is_empty() || self.with_dropped_properties > 0
+        !self.unsupported.is_empty()
+            || self.with_dropped_properties > 0
+            || self.unsupported_unit.is_some()
     }
 
     pub fn unsupported_total(&self) -> usize {
@@ -83,6 +93,14 @@ impl ImportReport {
             let entities = counted(self.with_dropped_properties, "entity", "entities");
             lines.push(format!(
                 "Layer, colour, and linetype were dropped from {entities}."
+            ));
+        }
+        if let Some(unit) = self.unit {
+            lines.push(format!("Drawing unit: {}.", unit.name()));
+        }
+        if let Some(code) = self.unsupported_unit {
+            lines.push(format!(
+                "The file's drawing unit (code {code}) is not supported: the drawing is unitless."
             ));
         }
         lines

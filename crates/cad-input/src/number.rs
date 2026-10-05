@@ -1,5 +1,7 @@
 //! Numeric literals.
 
+use cad_core::LengthUnit;
+
 use crate::Diagnostic;
 
 /// A slice of the input together with its byte offset, so diagnostics can
@@ -49,6 +51,57 @@ pub(crate) fn parse_number(span: Span<'_>) -> Result<f64, Diagnostic> {
         _ => Err(Diagnostic::new(
             format!("\"{}\" is out of range.", span.text),
             span.offset,
+        )),
+    }
+}
+
+/// Parses a length: a number, or a number with a unit suffix — `25mm`,
+/// `2.5 m`, `6in` — which is converted into the drawing's unit.
+///
+/// A bare number means what it always meant: so many drawing units. A
+/// suffix needs something to convert *to*, so in a unitless drawing
+/// (`drawing_unit` is `None`) it is refused rather than guessed at.
+///
+/// The suffix is whatever letters end the text. That leaves the syntax
+/// open: feet-and-inches input (`5'6"`) uses marks that are not letters and
+/// can be added beside this without changing what is accepted today.
+pub(crate) fn parse_length(
+    span: Span<'_>,
+    drawing_unit: Option<LengthUnit>,
+) -> Result<f64, Diagnostic> {
+    let span = span.trimmed();
+    let letters = span
+        .text
+        .bytes()
+        .rev()
+        .take_while(u8::is_ascii_alphabetic)
+        .count();
+    let split = span.text.len() - letters;
+    let number = span.slice(0, split);
+    // No suffix, or only letters (a word, not a length): a plain number or
+    // the plain number's diagnostic.
+    if letters == 0 || number.text.trim().is_empty() || !is_decimal_literal(number.text.trim()) {
+        return parse_number(span);
+    }
+    let suffix = span.slice(split, span.text.len());
+    let Some(unit) = LengthUnit::from_suffix(suffix.text) else {
+        return Err(Diagnostic::specific(
+            format!(
+                "\"{}\" is not a unit of length. Use mm, cm, m, in, or ft.",
+                suffix.text
+            ),
+            suffix.offset,
+        ));
+    };
+    let value = parse_number(number)?;
+    match drawing_unit {
+        Some(target) => Ok(unit.convert(value, target)),
+        None => Err(Diagnostic::specific(
+            format!(
+                "This drawing has no unit, so \"{}\" cannot be converted. Set one with UNITS.",
+                span.text
+            ),
+            suffix.offset,
         )),
     }
 }

@@ -184,6 +184,7 @@ mod tests {
                 before: DrawingSettings::default(),
                 after: DrawingSettings {
                     current_layer: LayerId::from_raw(1),
+                    ..DrawingSettings::default()
                 },
             }),
         ])

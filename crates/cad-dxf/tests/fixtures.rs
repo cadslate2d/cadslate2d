@@ -193,6 +193,8 @@ fn unsupported_content_is_counted_and_reported() {
             "Imported 3 lines, 2 circles, 1 arc, 1 polyline.",
             "Not imported (unsupported): 1 BLOCK, 1 INSERT, 1 TEXT.",
             "Layer, colour, and linetype were dropped from 2 entities.",
+            // ezdxf wrote `$INSUNITS 6` into this file's header.
+            "Drawing unit: metres.",
         ]
     );
 }

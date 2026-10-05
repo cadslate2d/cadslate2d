@@ -4,9 +4,10 @@
 //! section and at LINE, CIRCLE, ARC, and polyline records. Everything else is
 //! counted and reported.
 
-use cad_core::Point2;
+use cad_core::{LengthUnit, Point2};
 use cad_document::{ArcEntity, CircleEntity, Drawing, Entity, LineEntity, PolylineEntity};
 
+use crate::export::insunits_code;
 use crate::{DxfError, ImportReport};
 
 /// Start of every binary DXF file.
@@ -75,7 +76,7 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
     };
     reader.read_file()?;
     Ok(Import {
-        drawing: Drawing::from_entities(reader.entities),
+        drawing: Drawing::from_entities(reader.entities).with_unit(reader.report.unit),
         report: reader.report,
     })
 }
@@ -168,6 +169,7 @@ impl<'a> Reader<'a> {
             if group.is(0, "SECTION") {
                 let name = self.groups.expect()?;
                 match name.value {
+                    "HEADER" if name.code == 2 => self.read_header()?,
                     "ENTITIES" if name.code == 2 => self.read_records(RecordContext::Entities)?,
                     "BLOCKS" if name.code == 2 => self.read_records(RecordContext::Blocks)?,
                     _ => self.skip_section()?,
@@ -175,6 +177,37 @@ impl<'a> Reader<'a> {
             }
             // Anything else between sections (comments, stray groups) is ignored.
         }
+    }
+
+    /// Reads the one header variable the drawing can hold: its unit,
+    /// `$INSUNITS`. Every other variable is skipped.
+    fn read_header(&mut self) -> Result<(), DxfError> {
+        let mut variable = "";
+        loop {
+            let group = self.groups.expect()?;
+            if group.is(0, "ENDSEC") {
+                return Ok(());
+            }
+            if group.code == 9 {
+                variable = group.value;
+            } else if variable == "$INSUNITS" && group.code == 70 {
+                // Not a whole number: no unit is declared, as if absent.
+                if let Ok(code) = group.value.trim().parse::<i64>() {
+                    self.declare_unit(code);
+                }
+                variable = "";
+            }
+        }
+    }
+
+    /// Takes the file's `$INSUNITS` code: a unit the drawing can be in, no
+    /// unit, or one it cannot be in — reported, and the drawing unitless.
+    fn declare_unit(&mut self, code: i64) {
+        let unit = LengthUnit::ALL
+            .into_iter()
+            .find(|unit| insunits_code(*unit) == code);
+        self.report.unit = unit;
+        self.report.unsupported_unit = (unit.is_none() && code != 0).then_some(code);
     }
 
     fn skip_section(&mut self) -> Result<(), DxfError> {
@@ -586,6 +619,116 @@ mod tests {
         )
         .unwrap();
         assert!(import.drawing.is_empty());
+    }
+
+    // ── the drawing unit (#113) ──
+
+    fn with_header(header: &[(i32, &str)]) -> String {
+        let mut groups = vec![(0, "SECTION"), (2, "HEADER")];
+        groups.extend_from_slice(header);
+        groups.extend_from_slice(&[
+            (0, "ENDSEC"),
+            (0, "SECTION"),
+            (2, "ENTITIES"),
+            (0, "LINE"),
+            (10, "0"),
+            (20, "0"),
+            (11, "25"),
+            (21, "0"),
+            (0, "ENDSEC"),
+            (0, "EOF"),
+        ]);
+        dxf(&groups)
+    }
+
+    #[test]
+    fn the_drawing_unit_is_read_from_the_header() {
+        use LengthUnit::{Centimetres, Feet, Inches, Metres, Millimetres};
+        for (code, unit) in [
+            ("1", Inches),
+            ("2", Feet),
+            ("4", Millimetres),
+            ("5", Centimetres),
+            ("     6", Metres),
+        ] {
+            let text = with_header(&[(9, "$ACADVER"), (1, "AC1015"), (9, "$INSUNITS"), (70, code)]);
+            let import = import(text.as_bytes()).unwrap();
+            assert_eq!(import.drawing.unit(), Some(unit), "code {code}");
+            assert_eq!(import.report.unit, Some(unit));
+            assert!(!import.report.has_unsupported_content());
+            assert_eq!(
+                import.report.summary(),
+                vec![
+                    "Imported 1 line.".to_owned(),
+                    format!("Drawing unit: {}.", unit.name())
+                ]
+            );
+            assert!(!import.drawing.can_undo(), "no history");
+        }
+    }
+
+    #[test]
+    fn a_file_without_a_unit_or_with_unit_zero_is_unitless() {
+        for header in [
+            &[][..],
+            &[(9, "$ACADVER"), (1, "AC1009")],
+            &[(9, "$INSUNITS"), (70, "0")],
+            // Not a whole number, and a value group that is not the unit's.
+            &[(9, "$INSUNITS"), (70, "mm")],
+            &[(9, "$INSUNITS"), (40, "4")],
+            // The value belongs to the variable just before it only.
+            &[(9, "$INSUNITS"), (9, "$LUNITS"), (70, "4")],
+        ] {
+            let import = import(with_header(header).as_bytes()).unwrap();
+            assert_eq!(import.drawing.unit(), None, "{header:?}");
+            assert_eq!(import.report.unsupported_unit, None, "{header:?}");
+            assert_eq!(import.report.summary(), vec!["Imported 1 line.".to_owned()]);
+        }
+    }
+
+    #[test]
+    fn a_unit_the_drawing_cannot_be_in_is_reported_and_the_drawing_is_unitless() {
+        // 3 is miles, 7 kilometres, 13 microns.
+        for code in ["3", "7", "13", "-1", "99999"] {
+            let text = with_header(&[(9, "$INSUNITS"), (70, code)]);
+            let import = import(text.as_bytes()).unwrap();
+            assert_eq!(import.drawing.unit(), None);
+            assert!(
+                import.report.has_unsupported_content(),
+                "exporting would lose it"
+            );
+            assert_eq!(
+                import.report.summary().last().unwrap(),
+                &format!(
+                    "The file's drawing unit (code {code}) is not supported: the drawing is unitless."
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn the_drawing_unit_survives_a_round_trip_and_a_unitless_file_is_plain_r12() {
+        let mut drawing = Drawing::from_entities([Entity::Line(line(0.0, 0.0, 25.0, 0.0))]);
+        let plain = crate::export(&drawing);
+        assert!(
+            !plain.contains("$INSUNITS"),
+            "nothing newer than R12 without a unit"
+        );
+
+        for unit in LengthUnit::ALL {
+            let mut tx = drawing.transaction();
+            tx.set_unit(Some(unit));
+            tx.commit();
+            let text = crate::export(&drawing);
+            assert!(text.contains(&format!("  9\n$INSUNITS\n 70\n{}\n", insunits_code(unit))));
+            let back = import(text.as_bytes()).unwrap();
+            assert_eq!(back.drawing.unit(), Some(unit));
+            assert_eq!(
+                crate::export(&back.drawing),
+                text,
+                "export → import → export"
+            );
+        }
     }
 
     #[test]

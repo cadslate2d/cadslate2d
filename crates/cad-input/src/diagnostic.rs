@@ -9,6 +9,11 @@ pub struct Diagnostic {
     pub message: String,
     /// Byte offset into the input text where the problem starts.
     pub position: usize,
+    /// The text was the right kind of thing with one thing wrong, and the
+    /// message says exactly what — an unknown unit, say. Such a message is
+    /// shown as it is, where a general one gives way to a reminder of what
+    /// the prompt accepts.
+    pub(crate) specific: bool,
 }
 
 impl Diagnostic {
@@ -16,6 +21,15 @@ impl Diagnostic {
         Self {
             message: message.into(),
             position,
+            specific: false,
+        }
+    }
+
+    /// A diagnostic that says exactly what is wrong; see [`Self::specific`].
+    pub(crate) fn specific(message: impl Into<String>, position: usize) -> Self {
+        Self {
+            specific: true,
+            ..Self::new(message, position)
         }
     }
 }

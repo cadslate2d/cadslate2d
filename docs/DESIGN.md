@@ -843,6 +843,8 @@ Initial display/unit support may include:
 
 Architectural feet-inch parsing is FUTURE but the parser must remain extensible enough to support it.
 
+> **Resolved in M4:** the unit list is confirmed as unitless (the default), millimetres, centimetres, metres, inches, and feet. The drawing unit is a drawing setting, changed with `UNITS` in a transaction. It rescales nothing; it is what a typed length with a suffix — `mm`, `cm`, `m`, `in`, `ft` — is converted into. A bare number is so many drawing units, as before; a suffix in a unitless drawing is refused, not guessed at. Angles and factors take no unit. The suffix is the letters that end a number, which leaves the marks of feet-and-inches input free.
+
 ---
 
 # 15. Command State Machines

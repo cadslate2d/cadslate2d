@@ -9,7 +9,9 @@
 use cad_core::{Point2, Vec2};
 
 use crate::Diagnostic;
-use crate::number::{Span, parse_number};
+use cad_core::LengthUnit;
+
+use crate::number::{Span, parse_length, parse_number};
 
 /// A point as typed, before it is resolved against the previous point.
 ///
@@ -36,8 +38,19 @@ impl PointInput {
     }
 }
 
-/// Parses one point in any supported syntax.
+/// Parses one point in any supported syntax, for a unitless drawing: plain
+/// numbers only.
 pub fn parse_point(text: &str) -> Result<PointInput, Diagnostic> {
+    parse_point_in(text, None)
+}
+
+/// Parses one point in any supported syntax. Coordinates and distances may
+/// carry a unit suffix — `100mm,2m`, `@500mm<45` — and are converted into
+/// `drawing_unit`; an angle never has one.
+pub fn parse_point_in(
+    text: &str,
+    drawing_unit: Option<LengthUnit>,
+) -> Result<PointInput, Diagnostic> {
     let span = Span::new(text, 0).trimmed();
     if span.text.is_empty() {
         return Err(Diagnostic::new("A point is required.", span.offset));
@@ -62,7 +75,7 @@ pub fn parse_point(text: &str) -> Result<PointInput, Diagnostic> {
                 span.offset,
             ));
         }
-        let distance = parse_number(body.slice(0, separator))?;
+        let distance = parse_length(body.slice(0, separator), drawing_unit)?;
         let angle_degrees = parse_number(body.slice(separator + 1, body.text.len()))?;
         return Ok(PointInput::RelativePolar {
             distance,
@@ -70,7 +83,7 @@ pub fn parse_point(text: &str) -> Result<PointInput, Diagnostic> {
         });
     }
 
-    let (x, y) = parse_pair(body)?;
+    let (x, y) = parse_pair(body, drawing_unit)?;
     Ok(if relative {
         PointInput::RelativeCartesian(Vec2::new(x, y))
     } else {
@@ -79,7 +92,7 @@ pub fn parse_point(text: &str) -> Result<PointInput, Diagnostic> {
 }
 
 /// Parses `x,y`. Exactly two components: drawings are 2D.
-fn parse_pair(span: Span<'_>) -> Result<(f64, f64), Diagnostic> {
+fn parse_pair(span: Span<'_>, drawing_unit: Option<LengthUnit>) -> Result<(f64, f64), Diagnostic> {
     let Some(comma) = span.text.find(',') else {
         return Err(Diagnostic::new("A point is required, as x,y.", span.offset));
     };
@@ -90,7 +103,10 @@ fn parse_pair(span: Span<'_>) -> Result<(f64, f64), Diagnostic> {
             rest.offset + extra,
         ));
     }
-    Ok((parse_number(span.slice(0, comma))?, parse_number(rest)?))
+    Ok((
+        parse_length(span.slice(0, comma), drawing_unit)?,
+        parse_length(rest, drawing_unit)?,
+    ))
 }
 
 #[cfg(test)]

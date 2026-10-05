@@ -348,7 +348,7 @@ impl Command for LayerCommand {
     fn expected(&self) -> ExpectedInput {
         match self.state {
             State::Option => ExpectedInput::new(InputKind::Nothing).with_keywords(&OPTIONS),
-            State::ColorNumber => ExpectedInput::distance(),
+            State::ColorNumber => ExpectedInput::factor(),
             _ => ExpectedInput::text(),
         }
     }

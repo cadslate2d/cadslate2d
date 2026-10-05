@@ -493,7 +493,13 @@ impl Session {
         self.log.push(echo.trim_end().to_owned());
         self.history.record(text);
 
-        let dirty = match cad_input::resolve(text, &self.expected(), self.registry.aliases()) {
+        let resolved = cad_input::resolve(
+            text,
+            &self.expected(),
+            self.registry.aliases(),
+            self.drawing.unit(),
+        );
+        let dirty = match resolved {
             Ok(input) => self
                 .dispatch(input)
                 .unwrap_or_else(|message| self.notify(message)),

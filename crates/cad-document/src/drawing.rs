@@ -3,7 +3,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use cad_core::{Aabb, EntityId};
+use cad_core::{Aabb, EntityId, LengthUnit};
 
 use crate::history::History;
 use crate::id_alloc::EntityIdAllocator;
@@ -220,6 +220,19 @@ impl Drawing {
     /// The layer new objects are put on. It always exists and is on.
     pub fn current_layer(&self) -> LayerId {
         self.settings.current_layer
+    }
+
+    /// The drawing's unit, or `None` if it is unitless.
+    pub fn unit(&self) -> Option<LengthUnit> {
+        self.settings.unit
+    }
+
+    /// The same drawing with its unit set, and still no history: for a
+    /// drawing being put together from a file.
+    #[must_use]
+    pub fn with_unit(mut self, unit: Option<LengthUnit>) -> Self {
+        self.settings.unit = unit;
+        self
     }
 
     /// The layer an entity is on.
@@ -526,8 +539,20 @@ impl TransactionBuilder<'_> {
         if !layer.on {
             return Err(TransactionError::LayerIsOff(id));
         }
-        self.set_settings(DrawingSettings { current_layer: id });
+        self.set_settings(DrawingSettings {
+            current_layer: id,
+            ..self.settings_now()
+        });
         Ok(())
+    }
+
+    /// Says what the drawing's numbers are numbers of; `None` makes it
+    /// unitless. No geometry changes: the unit is what the numbers mean.
+    pub fn set_unit(&mut self, unit: Option<LengthUnit>) {
+        self.set_settings(DrawingSettings {
+            unit,
+            ..self.settings_now()
+        });
     }
 
     /// Applies the changes as one undo step and discards any redo branch.
@@ -1517,7 +1542,8 @@ mod tests {
         assert_eq!(
             drawing.settings(),
             DrawingSettings {
-                current_layer: walls
+                current_layer: walls,
+                unit: None
             }
         );
         let on_walls = create(&mut drawing, line(0.0, 0.0, 10.0, 0.0));
@@ -1544,6 +1570,61 @@ mod tests {
             LayerId::FIRST,
             "one step back to where it was"
         );
+    }
+
+    /// #113: changing the drawing unit is undoable, and changes no geometry.
+    #[test]
+    fn the_drawing_unit_is_a_setting_changed_and_undone_like_any_other() {
+        let mut drawing = Drawing::new();
+        assert_eq!(drawing.unit(), None, "a new drawing is unitless");
+        let id = create(&mut drawing, line(0.0, 0.0, 25.0, 0.0));
+        let walls = add_layer(&mut drawing, "walls");
+
+        let mut tx = drawing.transaction();
+        tx.set_unit(Some(LengthUnit::Millimetres));
+        tx.commit();
+        assert_eq!(drawing.unit(), Some(LengthUnit::Millimetres));
+        assert_eq!(
+            drawing.entity(id),
+            Some(&Entity::Line(line(0.0, 0.0, 25.0, 0.0))),
+            "the unit says what the numbers mean; it does not change them"
+        );
+
+        // The unit and the current layer are one settings record: each
+        // change keeps the other.
+        let mut tx = drawing.transaction();
+        tx.set_current_layer(walls).unwrap();
+        tx.commit();
+        assert_eq!(drawing.unit(), Some(LengthUnit::Millimetres));
+        let mut tx = drawing.transaction();
+        tx.set_unit(Some(LengthUnit::Metres));
+        tx.commit();
+        assert_eq!(drawing.current_layer(), walls);
+
+        drawing.undo().unwrap();
+        assert_eq!(drawing.unit(), Some(LengthUnit::Millimetres));
+        drawing.undo().unwrap();
+        drawing.undo().unwrap();
+        assert_eq!(drawing.unit(), None);
+        drawing.redo().unwrap();
+        assert_eq!(drawing.unit(), Some(LengthUnit::Millimetres));
+
+        // Both in one transaction: one change, one step.
+        let mut tx = drawing.transaction();
+        tx.set_unit(Some(LengthUnit::Feet));
+        tx.set_current_layer(walls).unwrap();
+        tx.set_unit(None);
+        tx.commit();
+        assert_eq!((drawing.unit(), drawing.current_layer()), (None, walls));
+        drawing.undo().unwrap();
+        assert_eq!(
+            (drawing.unit(), drawing.current_layer()),
+            (Some(LengthUnit::Millimetres), LayerId::FIRST)
+        );
+
+        let imported = Drawing::new().with_unit(Some(LengthUnit::Inches));
+        assert_eq!(imported.unit(), Some(LengthUnit::Inches));
+        assert!(!imported.can_undo());
     }
 
     #[test]
@@ -1671,6 +1752,7 @@ mod tests {
         SwitchLayer(usize, bool, bool),
         RemoveLayer(usize),
         SetCurrent(usize),
+        SetUnit(usize),
         /// A layer, an entity on it, and an edit of another, as one step.
         Together(usize, f64),
         Undo,
@@ -1694,6 +1776,7 @@ mod tests {
             1 => (any::<usize>(), any::<bool>(), any::<bool>()).prop_map(|(i, on, locked)| Op::SwitchLayer(i, on, locked)),
             1 => any::<usize>().prop_map(Op::RemoveLayer),
             1 => any::<usize>().prop_map(Op::SetCurrent),
+            1 => any::<usize>().prop_map(Op::SetUnit),
             1 => (any::<usize>(), coordinate()).prop_map(|(i, x)| Op::Together(i, x)),
             3 => Just(Op::Undo),
             2 => Just(Op::Redo),
@@ -1830,6 +1913,16 @@ mod tests {
                         let set = tx.set_current_layer(id);
                         tx.commit();
                         prop_assert_eq!(set.is_ok(), on);
+                    }
+                    Op::SetUnit(pick) => {
+                        let units = LengthUnit::ALL;
+                        let unit = (pick % (units.len() + 1)).checked_sub(1).map(|index| units[index]);
+                        let layer_before = drawing.current_layer();
+                        let mut tx = drawing.transaction();
+                        tx.set_unit(unit);
+                        tx.commit();
+                        prop_assert_eq!(drawing.unit(), unit);
+                        prop_assert_eq!(drawing.current_layer(), layer_before);
                     }
                     Op::Together(pick, x) => {
                         together += 1;

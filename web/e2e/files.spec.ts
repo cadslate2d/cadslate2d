@@ -55,7 +55,9 @@ test.describe("open", () => {
       () => enter(page, "OPEN"),
       fixturePath("valid/ezdxf-r2010-bulged-lwpolylines.dxf"),
     );
-    await expect(logLines(page).last()).toHaveText("Imported 3 polylines.");
+    await expect(logLines(page).filter({ hasText: "Imported 3 polylines." })).toHaveCount(1);
+    // The file's header says the drawing is in metres.
+    await expect(logLines(page).last()).toHaveText("Drawing unit: metres.");
 
     const first = await downloadFrom(page, () => enter(page, "DXFOUT"));
     expect(first.text.match(/^POLYLINE$/gm)).toHaveLength(3);
@@ -69,7 +71,9 @@ test.describe("open", () => {
       mimeType: "application/dxf",
       buffer: Buffer.from(first.text),
     });
-    await expect(logLines(page).last()).toHaveText("Imported 3 polylines.");
+    // The unit came through our own export and back.
+    expect(first.text).toContain("$INSUNITS\n 70\n6\n");
+    await expect(logLines(page).last()).toHaveText("Drawing unit: metres.");
     const second = await downloadFrom(page, () => enter(page, "DXFOUT"));
     expect(second.text).toBe(first.text);
     expect(await litPixels(canvas)).toBeGreaterThan(300);

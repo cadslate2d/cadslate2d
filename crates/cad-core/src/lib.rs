@@ -10,9 +10,11 @@ mod aabb;
 mod id;
 mod point;
 pub mod tolerance;
+mod units;
 mod view;
 
 pub use aabb::Aabb;
 pub use id::EntityId;
 pub use point::{Point2, Vec2};
+pub use units::LengthUnit;
 pub use view::{ClipTransform, PixelTolerance, ScreenPoint, View};

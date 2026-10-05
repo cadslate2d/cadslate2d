@@ -4,8 +4,10 @@
 //! prompt states what it expects, and resolution is a pure function of
 //! `(text, expectation, alias table)` — so it is deterministic by construction.
 
-use crate::number::{Span, parse_number};
-use crate::{CommandAliases, Diagnostic, Keyword, PointInput, parse_point};
+use cad_core::LengthUnit;
+
+use crate::number::{Span, parse_length, parse_number};
+use crate::{CommandAliases, Diagnostic, Keyword, PointInput, parse_point_in};
 
 /// The primary kind of input a prompt accepts.
 ///
@@ -45,6 +47,9 @@ pub struct ExpectedInput {
     /// At a point prompt: a bare number is a distance along the cursor
     /// direction from the previous point (direct-distance entry).
     pub direct_distance: bool,
+    /// At a distance prompt: the number is a plain number — a scale factor,
+    /// a count — not a length, so a unit suffix makes no sense on it.
+    pub plain_number: bool,
 }
 
 impl ExpectedInput {
@@ -53,6 +58,7 @@ impl ExpectedInput {
             kind,
             keywords: Vec::new(),
             direct_distance: false,
+            plain_number: false,
         }
     }
 
@@ -66,6 +72,15 @@ impl ExpectedInput {
 
     pub fn distance() -> Self {
         Self::new(InputKind::Distance)
+    }
+
+    /// A number that is not a length: a factor, a count. It is asked for
+    /// and delivered like a distance, but takes no unit suffix.
+    pub fn factor() -> Self {
+        Self {
+            plain_number: true,
+            ..Self::new(InputKind::Distance)
+        }
     }
 
     pub fn angle() -> Self {
@@ -122,10 +137,14 @@ pub enum Input {
 ///
 /// Text that does not fit the expectation is a diagnostic — never a silent
 /// fallback to some other interpretation.
+///
+/// `drawing_unit` is what a length with a unit suffix is converted into;
+/// `None` is a unitless drawing, where only plain numbers are lengths.
 pub fn resolve(
     text: &str,
     expected: &ExpectedInput,
     aliases: &CommandAliases,
+    drawing_unit: Option<LengthUnit>,
 ) -> Result<Input, Diagnostic> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -161,29 +180,51 @@ pub fn resolve(
         }
     }
 
+    // A length may carry a unit suffix; an angle or a factor may not.
+    let length = || parse_length(Span::new(text, 0), drawing_unit);
     let number = || parse_number(Span::new(text, 0));
+    let point = || parse_point_in(text, drawing_unit);
     let result = match expected.kind {
         InputKind::Command => unreachable!("handled above"),
-        InputKind::Point => parse_point(text)
-            .map(Input::Point)
-            .or_else(|error| match number() {
+        InputKind::Point => point().map(Input::Point).or_else(|error| {
+            if error.specific {
+                return Err(error);
+            }
+            match length() {
                 Ok(distance) if expected.direct_distance => Ok(Input::DirectDistance(distance)),
+                Err(unit) if unit.specific && expected.direct_distance => Err(unit),
                 _ => Err(error),
-            }),
+            }
+        }),
         // A number, or a point for the caller to measure from its base point.
-        InputKind::Distance => number()
+        InputKind::Distance if expected.plain_number => number()
             .map(Input::Distance)
-            .or_else(|_| parse_point(text).map(Input::Point)),
+            .or_else(|_| point().map(Input::Point)),
+        InputKind::Distance => length().map(Input::Distance).or_else(|error| {
+            if error.specific {
+                Err(error)
+            } else {
+                point().map(Input::Point)
+            }
+        }),
         InputKind::Angle => number()
             .map(Input::Angle)
-            .or_else(|_| parse_point(text).map(Input::Point)),
+            .or_else(|_| point().map(Input::Point)),
         InputKind::Nothing | InputKind::Selection | InputKind::Object => {
             Err(Diagnostic::new("", position))
         }
         // Anything at all is text.
         InputKind::Text => return Ok(Input::Text(trimmed.to_owned())),
     };
-    result.map_err(|error| Diagnostic::new(requirement(expected), error.position.max(position)))
+    result.map_err(|error| {
+        // A message that says exactly what is wrong is more use than a
+        // reminder of what the prompt accepts.
+        if error.specific {
+            error
+        } else {
+            Diagnostic::new(requirement(expected), error.position.max(position))
+        }
+    })
 }
 
 /// A one-line reminder of everything the prompt accepts.
@@ -223,7 +264,7 @@ fn requirement(expected: &ExpectedInput) -> String {
 
 #[cfg(test)]
 mod tests {
-    use cad_core::Point2;
+    use cad_core::{Point2, Vec2};
     use proptest::prelude::*;
 
     use super::*;
@@ -239,11 +280,24 @@ mod tests {
     }
 
     fn resolved(text: &str, expected: &ExpectedInput) -> Result<Input, Diagnostic> {
-        resolve(text, expected, &aliases())
+        resolve(text, expected, &aliases(), None)
+    }
+
+    /// The same, in a drawing whose unit is `unit`.
+    fn resolved_in(
+        unit: LengthUnit,
+        text: &str,
+        expected: &ExpectedInput,
+    ) -> Result<Input, Diagnostic> {
+        resolve(text, expected, &aliases(), Some(unit))
     }
 
     fn message(text: &str, expected: &ExpectedInput) -> String {
         resolved(text, expected).unwrap_err().message
+    }
+
+    fn message_in(unit: LengthUnit, text: &str, expected: &ExpectedInput) -> String {
+        resolved_in(unit, text, expected).unwrap_err().message
     }
 
     fn command(name: &str) -> Result<Input, Diagnostic> {
@@ -490,12 +544,183 @@ mod tests {
         );
     }
 
+    // ── unit suffixes (#113) ──
+
+    use LengthUnit::{Feet, Inches, Metres, Millimetres};
+
+    /// The issue's criterion: `25mm` at a distance prompt in a metre
+    /// drawing yields 0.025.
+    #[test]
+    fn a_length_with_a_unit_is_converted_into_the_drawings_unit() {
+        let distance = ExpectedInput::distance();
+        assert_eq!(
+            resolved_in(Metres, "25mm", &distance),
+            Ok(Input::Distance(0.025))
+        );
+        assert_eq!(
+            resolved_in(Millimetres, "2.5m", &distance),
+            Ok(Input::Distance(2500.0))
+        );
+        assert_eq!(
+            resolved_in(Millimetres, "1in", &distance),
+            Ok(Input::Distance(25.4))
+        );
+        assert_eq!(
+            resolved_in(Inches, "2ft", &distance),
+            Ok(Input::Distance(24.0))
+        );
+        assert_eq!(
+            resolved_in(Feet, "6 IN", &distance),
+            Ok(Input::Distance(0.5))
+        );
+        assert_eq!(
+            resolved_in(Metres, "-1e3mm", &distance),
+            Ok(Input::Distance(-1.0))
+        );
+        assert_eq!(
+            resolved_in(Metres, "3m", &distance),
+            Ok(Input::Distance(3.0))
+        );
+    }
+
+    /// A bare number is unchanged in meaning, whatever the drawing's unit.
+    #[test]
+    fn a_bare_number_means_what_it_always_meant() {
+        for unit in LengthUnit::ALL {
+            assert_eq!(
+                resolved_in(unit, "25", &ExpectedInput::distance()),
+                Ok(Input::Distance(25.0))
+            );
+            assert_eq!(
+                resolved_in(unit, "10,20", &ExpectedInput::point()),
+                point(10.0, 20.0)
+            );
+            assert_eq!(
+                resolved_in(unit, "1e3", &ExpectedInput::distance()),
+                Ok(Input::Distance(1000.0)),
+                "an exponent is not a suffix"
+            );
+        }
+        assert_eq!(
+            resolved("25", &ExpectedInput::distance()),
+            Ok(Input::Distance(25.0))
+        );
+    }
+
+    #[test]
+    fn coordinates_and_polar_distances_take_units_and_angles_do_not() {
+        let expected = ExpectedInput::point().with_direct_distance();
+        assert_eq!(
+            resolved_in(Metres, "250mm,1.5", &expected),
+            point(0.25, 1.5)
+        );
+        assert_eq!(
+            resolved_in(Millimetres, "@1m,2cm", &expected),
+            Ok(Input::Point(PointInput::RelativeCartesian(Vec2::new(
+                1000.0, 20.0
+            ))))
+        );
+        assert_eq!(
+            resolved_in(Millimetres, "@1in<45", &expected),
+            Ok(Input::Point(PointInput::RelativePolar {
+                distance: 25.4,
+                angle_degrees: 45.0
+            }))
+        );
+        assert_eq!(
+            resolved_in(Metres, "500mm", &expected),
+            Ok(Input::DirectDistance(0.5))
+        );
+        // An angle is in degrees: a unit of length on it is not understood.
+        assert_eq!(
+            message_in(Millimetres, "@10<45mm", &expected),
+            "A point is required."
+        );
+        assert_eq!(
+            message_in(Millimetres, "45mm", &ExpectedInput::angle()),
+            "An angle or a point is required."
+        );
+    }
+
+    #[test]
+    fn an_unknown_unit_and_a_unitless_drawing_each_say_what_is_wrong() {
+        let distance = ExpectedInput::distance();
+        let not_a_unit = |suffix: &str| {
+            format!("\"{suffix}\" is not a unit of length. Use mm, cm, m, in, or ft.")
+        };
+        assert_eq!(message_in(Metres, "25km", &distance), not_a_unit("km"));
+        assert_eq!(
+            message_in(Metres, "25 parsecs", &distance),
+            not_a_unit("parsecs")
+        );
+        assert_eq!(message("25km", &distance), not_a_unit("km"));
+        assert_eq!(
+            message_in(Metres, "10,5furlongs", &ExpectedInput::point()),
+            not_a_unit("furlongs")
+        );
+        // The diagnostic points at the suffix.
+        assert_eq!(
+            resolved_in(Metres, "25km", &distance).unwrap_err().position,
+            2
+        );
+
+        let no_unit = |typed: &str| {
+            format!(
+                "This drawing has no unit, so \"{typed}\" cannot be converted. Set one with UNITS."
+            )
+        };
+        assert_eq!(message("25mm", &distance), no_unit("25mm"));
+        assert_eq!(message("10mm,5", &ExpectedInput::point()), no_unit("10mm"));
+        assert_eq!(
+            message("3ft", &ExpectedInput::point().with_direct_distance()),
+            no_unit("3ft")
+        );
+        // Words are still not numbers, and say so the usual way.
+        assert_eq!(
+            message_in(Metres, "mm", &distance),
+            "A distance or a point is required."
+        );
+        assert_eq!(
+            message_in(Metres, "abc", &distance),
+            "A distance or a point is required."
+        );
+    }
+
+    #[test]
+    fn a_factor_is_a_plain_number_and_takes_no_unit() {
+        let factor = ExpectedInput::factor();
+        assert_eq!(resolved_in(Metres, "2", &factor), Ok(Input::Distance(2.0)));
+        assert_eq!(
+            resolved_in(Metres, "0.5", &factor),
+            Ok(Input::Distance(0.5))
+        );
+        assert_eq!(
+            message_in(Metres, "2mm", &factor),
+            "A distance or a point is required."
+        );
+        // It can still be given by pointing, like any distance.
+        assert_eq!(resolved_in(Metres, "3,4", &factor), point(3.0, 4.0));
+    }
+
     proptest! {
+        /// A number with a known unit, typed in a drawing with a unit, is
+        /// always a distance: the number times a fixed ratio.
+        #[test]
+        fn a_number_with_a_unit_is_always_a_length(
+            value in -1e6..1e6f64,
+            from in proptest::sample::select(LengthUnit::ALL.to_vec()),
+            to in proptest::sample::select(LengthUnit::ALL.to_vec()),
+        ) {
+            let typed = format!("{value}{}", from.suffix());
+            let got = resolve(&typed, &ExpectedInput::distance(), &aliases(), Some(to));
+            prop_assert_eq!(got, Ok(Input::Distance(from.convert(value, to))));
+        }
+
         /// Whatever is typed at a text prompt comes back as text — the same
         /// characters, less the spaces around them — or as Enter.
         #[test]
         fn a_text_prompt_never_refuses_and_never_changes_the_text(text in "\\PC*") {
-            match resolve(&text, &ExpectedInput::text(), &aliases()) {
+            match resolve(&text, &ExpectedInput::text(), &aliases(), None) {
                 Ok(Input::Text(got)) => prop_assert_eq!(got, text.trim()),
                 Ok(Input::Accept) => prop_assert!(text.trim().is_empty()),
                 other => prop_assert!(false, "{:?}", other),
@@ -503,7 +728,10 @@ mod tests {
         }
 
         #[test]
-        fn resolution_is_deterministic_and_never_panics(text in "\\PC*") {
+        fn resolution_is_deterministic_and_never_panics(
+            text in "\\PC*",
+            unit in proptest::option::of(proptest::sample::select(LengthUnit::ALL.to_vec())),
+        ) {
             let aliases = aliases();
             let contexts = [
                 ExpectedInput::command(),
@@ -513,9 +741,10 @@ mod tests {
                 ExpectedInput::new(InputKind::Nothing).with_keywords(&[CLOSE]),
                 ExpectedInput::text(),
                 ExpectedInput::text().with_keywords(&[CLOSE, Keyword::new("?")]),
+                ExpectedInput::factor(),
             ];
             for expected in &contexts {
-                prop_assert_eq!(resolve(&text, expected, &aliases), resolve(&text, expected, &aliases));
+                prop_assert_eq!(resolve(&text, expected, &aliases, unit), resolve(&text, expected, &aliases, unit));
             }
         }
     }
