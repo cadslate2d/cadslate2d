@@ -22,6 +22,7 @@ There are two kinds:
 | [0009](0009-curve-rendering.md) | Curve rendering: analytic arc instances under a covering strip | Accepted | Evidence |
 | [0010](0010-grip-editing-and-arc-grip-semantics.md) | Grip editing as a command, and what arc grips hold fixed | Accepted | Evidence |
 | [0011](0011-polyline-offset.md) | Polyline offset: slice the raw offset and keep what is at the distance | Accepted | Evidence |
+| [0012](0012-linear-tolerance-far-from-the-origin.md) | The linear tolerance far from the origin | Accepted | Evidence |
 
 ## Expected evidence ADRs
 

@@ -147,6 +147,8 @@ pnpm --dir web dev
 | --- | --- |
 | Full check (run before pushing) | `scripts/check.sh` |
 | Rust tests | `cargo test --workspace` |
+| Geometry regression corpus only | `cargo test -p cad-geometry --test regression` (see [`test-data/geometry/`](test-data/geometry/README.md)) |
+| Long stress run of the geometry property tests (not part of the check) | `scripts/stress.sh` |
 | Rust lints | `cargo clippy --workspace --all-targets -- -D warnings` |
 | Rust format | `cargo fmt --all` |
 | Crate-boundary check | `scripts/check-boundaries.sh` |
@@ -185,7 +187,7 @@ web/
   src/ui/         React shell and theme tokens
   e2e/            Playwright tests and the plain static server they run against
   bench/          Browser measurements, run on demand
-scripts/          build-wasm.sh, check.sh, check-boundaries.sh
+scripts/          build-wasm.sh, check.sh, check-boundaries.sh, stress.sh
 test-data/        DXF fixtures, geometry regression cases, screenshots
 benches/          cad-benchmarks crate: drawing generator and criterion benchmarks
 docs/             DESIGN.md, ADRs, milestone reviews, roadmap

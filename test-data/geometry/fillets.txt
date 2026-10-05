@@ -1,0 +1,49 @@
+# Fillet and chamfer regression corpus (DESIGN §21.3, §22).
+#
+#   fillet <radius> : <object> @ <pick x y> | <object> @ <pick x y> => <first> ; <second> [; <arc>]
+#   chamfer <first> <second> : <segment> @ <pick x y> | <segment> @ <pick x y> => <first> ; <second> [; <bevel>]
+#   … => refused parallel | too-large | no-solution
+#
+# Objects are written as in intersections.txt. The outcome lists the two
+# objects as they become, then the joint: absent for a radius of zero or
+# distances of zero. Each object is kept on the side it was picked.
+#
+# The runner also checks, for every case, that the joint ends on both
+# objects, and that a fillet arc has the radius asked for and is tangent
+# to both.
+#
+# Blank lines and lines starting with # are ignored. Every fixed bug adds a line.
+
+# ── fillets between lines ──
+# a right angle with a gap at the corner: both lines are carried on to the arc
+fillet 20 : segment 10 0 100 0 @ 50 0 | segment 0 10 0 80 @ 0 50 => segment 20 0 100 0 ; segment 0 20 0 80 ; arc 20 20 20 180 90
+# radius zero: a sharp corner and no arc
+fillet 0 : segment 10 0 100 0 @ 50 0 | segment 0 10 0 80 @ 0 50 => segment 0 0 100 0 ; segment 0 0 0 80
+# lines that cross: the picked side of each is kept
+fillet 10 : segment -50 0 50 0 @ 40 0 | segment 0 -50 0 50 @ 0 40 => segment 10 0 50 0 ; segment 0 10 0 50 ; arc 10 10 10 180 90
+fillet 10 : segment -50 0 50 0 @ -40 0 | segment 0 -50 0 50 @ 0 -40 => segment -50 0 -10 0 ; segment 0 -50 0 -10 ; arc -10 -10 10 0 90
+# a radius that would use up a whole line
+fillet 500 : segment 10 0 100 0 @ 50 0 | segment 0 10 0 80 @ 0 50 => refused too-large
+fillet 10 : segment 0 0 100 0 @ 50 0 | segment 0 40 100 40 @ 50 40 => refused parallel
+
+# ── fillets with curves ──
+# a line 30 above the centre of a circle of radius 50, which it crosses at
+# x = 40. Four arcs of radius 10 are tangent to both on that side; the one
+# used touches each object nearest its pick: centred below the line and
+# outside the circle. The circle is left whole, the line cut back to the arc.
+fillet 10 : segment -100 30 100 30 @ 90 30 | circle 0 0 50 @ 40 30 => segment 56.568542494923804 30 100 30 ; circle 0 0 50 ; arc 56.568542494923804 20 10 90 109.47122063449069
+# picked on the other side of the crossing, the fillet is inside the circle
+fillet 10 : segment -100 30 100 30 @ 10 30 | circle 0 0 50 @ 40 30 => segment -100 30 34.64101615137755 30 ; circle 0 0 50 ; arc 34.64101615137755 20 10 30 60
+# no arc of that radius reaches both
+fillet 5 : segment -100 200 100 200 @ 0 200 | circle 0 0 50 @ 0 50 => refused no-solution
+
+# ── chamfers ──
+chamfer 10 20 : segment 10 0 100 0 @ 50 0 | segment 0 10 0 80 @ 0 50 => segment 10 0 100 0 ; segment 0 20 0 80 ; segment 10 0 0 20
+# the first distance belongs to the line picked first
+chamfer 10 20 : segment 0 10 0 80 @ 0 50 | segment 10 0 100 0 @ 50 0 => segment 0 10 0 80 ; segment 20 0 100 0 ; segment 0 10 20 0
+# both distances zero: a sharp corner and no bevel
+chamfer 0 0 : segment 10 0 100 0 @ 50 0 | segment 0 10 0 80 @ 0 50 => segment 0 0 100 0 ; segment 0 0 0 80
+# an equal chamfer at an obtuse corner (135° between the kept sides)
+chamfer 10 10 : segment 0 0 100 0 @ 50 0 | segment 0 0 -50 50 @ -30 30 => segment 10 0 100 0 ; segment -7.0710678118654755 7.0710678118654755 -50 50 ; segment 10 0 -7.0710678118654755 7.0710678118654755
+chamfer 200 10 : segment 10 0 100 0 @ 50 0 | segment 0 10 0 80 @ 0 50 => refused too-large
+chamfer 10 10 : segment 0 0 100 0 @ 50 0 | segment 0 40 100 40 @ 50 40 => refused parallel

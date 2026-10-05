@@ -1,0 +1,44 @@
+# Offset regression corpus: lines, circles, and arcs (DESIGN §21.3, §22).
+# Polylines have their own file, polyline-offsets.txt.
+#
+#   <object> : <distance> @ <side x y> => <object>
+#   <object> : <distance> @ <side x y> => nothing      refused
+#
+# Objects are written as in intersections.txt. The side point chooses the
+# side: for a circle or an arc, inside or outside its circle.
+#
+# The runner also checks, for every case, that the result is the same kind
+# of thing at the distance: a parallel line of the same length, a
+# concentric circle, a concentric arc with the same angles.
+#
+# Blank lines and lines starting with # are ignored. Every fixed bug adds a line.
+
+# ── lines ──
+segment 0 0 100 0 : 10 @ 50 30 => segment 0 10 100 10
+segment 0 0 100 0 : 10 @ 50 -0.001 => segment 0 -10 100 -10
+# the side is judged against the line carried on, so a point beyond the end counts
+segment 0 0 100 0 : 10 @ 500 1 => segment 0 10 100 10
+# a sloping line keeps its length and direction
+segment 0 0 30 40 : 5 @ 0 10 => segment -4 3 26 43
+# a point on the line chooses no side
+segment 0 0 100 0 : 10 @ 50 0 => nothing
+segment 0 0 100 0 : 10 @ 300 0 => nothing
+
+# ── circles ──
+circle 0 0 50 : 10 @ 80 0 => circle 0 0 60
+circle 0 0 50 : 10 @ 5 5 => circle 0 0 40
+# the centre is inside
+circle 0 0 50 : 10 @ 0 0 => circle 0 0 40
+# inwards by the whole radius, or more, leaves nothing
+circle 0 0 50 : 50 @ 0 0 => nothing
+circle 0 0 50 : 80 @ 10 0 => nothing
+# a point on the circle chooses no side
+circle 0 0 50 : 10 @ 0 50 => nothing
+
+# ── arcs ──
+arc 0 0 50 0 90 : 10 @ 60 60 => arc 0 0 60 0 90
+arc 0 0 50 0 90 : 10 @ 10 10 => arc 0 0 40 0 90
+# the side is judged against the arc's whole circle: a point outside it,
+# though nowhere near the arc, still means outwards
+arc 0 0 50 0 90 : 10 @ -200 -200 => arc 0 0 60 0 90
+arc 0 0 50 0 90 : 60 @ 10 10 => nothing

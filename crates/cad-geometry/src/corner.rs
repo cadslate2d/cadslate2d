@@ -155,12 +155,23 @@ impl Corner {
         // θ is the angle between the kept sides: 0 < θ < π for lines that meet.
         let cosine = a.dot(b).clamp(-1.0, 1.0);
         let sine = (a.x * b.y - a.y * b.x).abs();
-        // r / tan(θ/2), and r / sin(θ/2) along the bisector to the centre.
-        let setback = radius * (1.0 + cosine) / sine;
+        // 1 / tan(θ/2) and sin(θ/2), each written so that it never
+        // subtracts two nearly equal numbers. `1 - cos θ` keeps only half
+        // its digits by θ = 10⁻⁵ — lines a hair from parallel — and
+        // `1 + cos θ` does the same near a straight angle; an arc placed
+        // with either would miss the lines it is meant to touch.
+        let (cotangent_half, sine_half) = if cosine > 0.0 {
+            ((1.0 + cosine) / sine, sine / (2.0 * (1.0 + cosine)).sqrt())
+        } else {
+            (sine / (1.0 - cosine), ((1.0 - cosine) / 2.0).sqrt())
+        };
+        // r / tan(θ/2) back along each line from the apex.
+        let setback = radius * cotangent_half;
         let (lines, joints) = self.cut_back([setback, setback], tolerance)?;
 
         let bisector = a + b;
-        let to_center = radius / ((1.0 - cosine) / 2.0).sqrt();
+        // r / sin(θ/2) along the bisector to the centre.
+        let to_center = radius / sine_half;
         let center = self.apex + bisector * (to_center / bisector.length());
         let angle = |point: Point2| {
             let offset = point - center;
@@ -283,6 +294,29 @@ mod tests {
             fillet.arc.unwrap().center,
             p(10.0 * 2f64.sqrt(), 0.0)
         ));
+    }
+
+    /// Regression: found by the stress tests. With the half angle taken from
+    /// `1 - cos θ`, the arc between lines 10⁻⁵ rad apart sat 3.4 × 10⁻⁶ off
+    /// tangent; the same happened near a straight angle with `1 + cos θ`.
+    #[test]
+    fn a_fillet_between_lines_a_hair_from_parallel_is_still_tangent() {
+        for angle in [1e-5_f64, 1e-7, std::f64::consts::PI - 1e-5] {
+            let first = Segment::new(p(0.0, 0.0), p(100.0, 0.0));
+            let second = Segment::new(p(0.0, 0.0), p(100.0 * angle.cos(), 100.0 * angle.sin()));
+            let corner = Corner::new(&first, first.end, &second, second.end, TOLERANCE).unwrap();
+            // The radius that sets each line back by 20 from the corner.
+            let radius = 20.0 * (angle / 2.0).tan();
+            let fillet = corner.fillet(radius, TOLERANCE).unwrap();
+            let arc = fillet.arc.expect("a radius was given");
+            for line in [&first, &second] {
+                let away = line_distance(line, arc.center);
+                assert!(
+                    (away - radius).abs() < radius * 1e-9,
+                    "at {angle}: {away} from a line, radius {radius}"
+                );
+            }
+        }
     }
 
     #[test]

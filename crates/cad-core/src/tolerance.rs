@@ -85,6 +85,41 @@ impl LinearTolerance {
     pub fn coincident(self, a: Point2, b: Point2) -> bool {
         self.is_zero(a.distance_to(b))
     }
+
+    /// This tolerance as it applies to coordinates of size `magnitude`.
+    ///
+    /// Near the origin that is the tolerance itself. Far from it,
+    /// neighbouring floating-point numbers are further apart than the
+    /// tolerance — two nanometres at ten million units — and a point
+    /// computed to be on a line can no longer be *within* the tolerance of
+    /// it. There the tolerance widens to a few of those spacings, so that
+    /// "the same, as nearly as can be told" keeps meaning something
+    /// (ADR-0012). It is never narrower than `self`.
+    #[must_use]
+    pub fn at_magnitude(self, magnitude: f64) -> Self {
+        let spacing = magnitude.abs() * f64::EPSILON;
+        if spacing.is_finite() {
+            Self::new(self.value.max(spacing * Self::SPACINGS))
+        } else {
+            self
+        }
+    }
+
+    /// The tolerance for work on these points: [`Self::at_magnitude`] of
+    /// the largest coordinate among them.
+    #[must_use]
+    pub fn around(self, points: &[Point2]) -> Self {
+        let magnitude = points
+            .iter()
+            .map(|point| point.x.abs().max(point.y.abs()))
+            .fold(0.0, f64::max);
+        self.at_magnitude(magnitude)
+    }
+
+    /// How many spacings of the floating-point numbers the tolerance is
+    /// never narrower than: room for the few roundings between a computed
+    /// point and the curve it is on.
+    const SPACINGS: f64 = 8.0;
 }
 
 impl AngularTolerance {
@@ -126,6 +161,37 @@ mod tests {
         assert!(tol.is_zero(5e-7));
         assert!(tol.is_zero(-5e-7));
         assert!(!tol.is_zero(2e-6));
+    }
+
+    #[test]
+    fn the_tolerance_is_itself_near_the_origin_and_wider_far_from_it() {
+        let tol = LinearTolerance::DEFAULT;
+        for near in [0.0, 1.0, 1e3, 5e5] {
+            assert_eq!(tol.at_magnitude(near).value(), 1e-9, "at {near}");
+        }
+        // Ten million out, floats are 1.9e-9 apart: the tolerance is a few of those.
+        let far = tol.at_magnitude(1e7).value();
+        assert!(far > 1.5e-8 && far < 2e-8, "{far}");
+        assert_eq!(
+            tol.at_magnitude(-1e7).value(),
+            far,
+            "the sign does not matter"
+        );
+        assert!(tol.at_magnitude(1e10).value() > far);
+        // Never narrower, whatever is asked.
+        assert_eq!(LinearTolerance::new(1e-3).at_magnitude(1e7).value(), 1e-3);
+        assert_eq!(tol.at_magnitude(f64::INFINITY).value(), 1e-9);
+        assert_eq!(tol.at_magnitude(f64::NAN).value(), 1e-9);
+    }
+
+    #[test]
+    fn the_tolerance_around_points_follows_their_largest_coordinate() {
+        let tol = LinearTolerance::DEFAULT;
+        let near = [Point2::new(3.0, -4.0), Point2::new(100.0, 0.0)];
+        assert_eq!(tol.around(&near).value(), 1e-9);
+        let far = [Point2::new(3.0, -4.0), Point2::new(0.0, -2e9)];
+        assert_eq!(tol.around(&far).value(), tol.at_magnitude(2e9).value());
+        assert_eq!(tol.around(&[]).value(), 1e-9);
     }
 
     #[test]

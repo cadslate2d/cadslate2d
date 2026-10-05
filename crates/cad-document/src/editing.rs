@@ -2062,4 +2062,177 @@ mod tests {
             ])
         );
     }
+
+    // ── invariants, over any input (#129) ──
+
+    mod properties {
+        use proptest::prelude::*;
+
+        use super::*;
+
+        fn coordinate() -> impl Strategy<Value = f64> {
+            (-200i32..200).prop_map(f64::from)
+        }
+
+        fn any_point() -> impl Strategy<Value = Point2> {
+            (coordinate(), coordinate()).prop_map(|(x, y)| p(x, y))
+        }
+
+        fn any_window() -> impl Strategy<Value = Aabb> {
+            (any_point(), any_point()).prop_map(|(a, b)| Aabb::from_points(a, b))
+        }
+
+        /// A polyline of distinct vertices, with arc segments here and there.
+        fn any_polyline() -> impl Strategy<Value = PolylineEntity> {
+            (
+                proptest::collection::vec(any_point(), 2..7),
+                proptest::collection::vec(prop_oneof![Just(0.0), -1.2..1.2f64], 7),
+                any::<bool>(),
+            )
+                .prop_filter_map("distinct vertices", |(points, bulges, closed)| {
+                    let mut vertices: Vec<Point2> = Vec::new();
+                    for point in points {
+                        if !vertices.contains(&point) {
+                            vertices.push(point);
+                        }
+                    }
+                    (vertices.len() >= 2).then(|| {
+                        let bulges = bulges[..vertices.len()].to_vec();
+                        PolylineEntity::with_bulges(vertices, bulges, closed)
+                    })
+                })
+        }
+
+        proptest! {
+            /// STRETCH: a vertex moves by the offset if the window holds it
+            /// and stays where it is otherwise; arc segments keep their
+            /// bulge; and holding everything is a plain move.
+            #[test]
+            fn stretching_moves_exactly_the_vertices_the_window_holds(
+                polyline in any_polyline(), window in any_window(),
+                dx in -80.0..80f64, dy in -80.0..80f64,
+            ) {
+                let offset = Vec2::new(dx, dy);
+                let entity: Entity = polyline.clone().into();
+                let held = polyline.vertices.iter().filter(|v| window.contains_point(**v)).count();
+                let hold = entity.stretch_hold(&window);
+                prop_assert_eq!(hold == StretchHold::Nothing, held == 0);
+                prop_assert_eq!(hold == StretchHold::Whole, held == polyline.vertices.len());
+
+                match entity.stretched(&window, offset) {
+                    Some(Entity::Polyline(stretched)) => {
+                        prop_assert_eq!(stretched.vertices.len(), polyline.vertices.len());
+                        for (before, after) in polyline.vertices.iter().zip(&stretched.vertices) {
+                            let expected = if window.contains_point(*before) { *before + offset } else { *before };
+                            prop_assert_eq!(*after, expected);
+                        }
+                        prop_assert_eq!(stretched.closed, polyline.closed);
+                        prop_assert_eq!(stretched.bulges().collect::<Vec<_>>(), polyline.bulges().collect::<Vec<_>>());
+                        if hold == StretchHold::Whole {
+                            prop_assert_eq!(Entity::from(stretched), entity.translated(offset));
+                        }
+                    }
+                    Some(other) => prop_assert!(false, "a polyline became {:?}", other),
+                    // Refused only for a vertex landing on its neighbour.
+                    None => prop_assert_eq!(hold, StretchHold::Part),
+                }
+            }
+
+            /// STRETCH: lines, circles, and arcs. A circle moves whole or not
+            /// at all; an arc held by one end keeps its other end and still
+            /// passes through its old midpoint.
+            #[test]
+            fn stretching_a_line_circle_or_arc_moves_only_what_is_held(
+                a in any_point(), b in any_point(), radius in 1.0..80f64,
+                start in 0.0..6.2f64, sweep in 0.2..6.0f64,
+                window in any_window(), dx in -80.0..80f64, dy in -80.0..80f64,
+            ) {
+                let offset = Vec2::new(dx, dy);
+                let moved = |point: Point2| if window.contains_point(point) { point + offset } else { point };
+
+                if a != b {
+                    let line: Entity = LineEntity::new(a, b).into();
+                    if let Some(Entity::Line(stretched)) = line.stretched(&window, offset) {
+                        prop_assert_eq!((stretched.start, stretched.end), (moved(a), moved(b)));
+                    }
+                }
+
+                let circle: Entity = CircleEntity::new(a, radius).into();
+                let expected: Entity = CircleEntity::new(moved(a), radius).into();
+                prop_assert_eq!(circle.stretched(&window, offset), Some(expected));
+
+                let entity: Entity = ArcEntity::new(a, radius, start, start + sweep).into();
+                let Entity::Arc(original) = &entity else { unreachable!() };
+                let arc = original.arc();
+                let (first, last) = (arc.start_point(), arc.end_point());
+                match (entity.stretch_hold(&window), entity.stretched(&window, offset)) {
+                    (StretchHold::Nothing, result) => prop_assert_eq!(result, Some(entity.clone())),
+                    (StretchHold::Whole, result) => prop_assert_eq!(result, Some(entity.translated(offset))),
+                    (StretchHold::Part, Some(Entity::Arc(stretched))) => {
+                        let stretched = stretched.arc();
+                        let reach = 1e-6 * (1.0 + stretched.radius);
+                        // An arc is kept counter-clockwise, so dragging an
+                        // end across the chord swaps which end is its start.
+                        let ends = [stretched.start_point(), stretched.end_point()];
+                        for expected in [moved(first), moved(last)] {
+                            prop_assert!(
+                                ends.iter().any(|end| end.distance_to(expected) < reach),
+                                "no end at {:?}: {:?}", expected, ends
+                            );
+                        }
+                        prop_assert!(
+                            stretched.distance_to_point(arc.mid_point()) < reach,
+                            "through the old midpoint"
+                        );
+                    }
+                    // Three points in a line make no arc: refused.
+                    (StretchHold::Part, None) => {}
+                    (StretchHold::Part, other) => prop_assert!(false, "an arc became {:?}", other),
+                }
+            }
+
+            /// BREAK then JOIN: an entity broken at one point and joined
+            /// again covers exactly what it did.
+            #[test]
+            fn breaking_at_a_point_and_joining_gives_the_entity_back(
+                polyline in any_polyline(), along in 0.05..0.95f64, which in 0..6usize,
+            ) {
+                prop_assume!(!polyline.closed);
+                let entity: Entity = polyline.clone().into();
+                let primitives: Vec<_> = polyline.primitives().collect();
+                let on = primitives[which % primitives.len()];
+                let at = match on {
+                    Primitive::Segment(segment) => segment.start + (segment.end - segment.start) * along,
+                    Primitive::Arc(arc) => arc.point_at(arc.start + arc.sweep * along),
+                    Primitive::Circle(circle) => circle.center,
+                };
+                // A path that crosses itself may be nearest somewhere else:
+                // only breaks that land where they were aimed are compared.
+                if let Ok(pieces) = entity.broken(at, at) {
+                    prop_assert_eq!(pieces.len(), 2);
+                    let refs: Vec<&Entity> = pieces.iter().collect();
+                    if let Ok(joined) = crate::join(&refs) {
+                        prop_assert_eq!(joined.len(), 1);
+                        let Entity::Polyline(whole) = &joined[0].entity else {
+                            return Err(TestCaseError::fail("not a polyline"));
+                        };
+                        prop_assert_eq!(whole.vertices.first(), polyline.vertices.first());
+                        prop_assert_eq!(whole.vertices.last(), polyline.vertices.last());
+                        let length = |polyline: &PolylineEntity| -> f64 {
+                            polyline
+                                .primitives()
+                                .map(|primitive| match primitive {
+                                    Primitive::Segment(segment) => segment.length(),
+                                    Primitive::Arc(arc) => arc.radius * arc.sweep,
+                                    Primitive::Circle(_) => 0.0,
+                                })
+                                .sum()
+                        };
+                        let (before, after) = (length(&polyline), length(whole));
+                        prop_assert!((before - after).abs() < 1e-6 * (1.0 + before), "{} became {}", before, after);
+                    }
+                }
+            }
+        }
+    }
 }

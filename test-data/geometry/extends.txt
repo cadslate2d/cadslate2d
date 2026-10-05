@@ -1,0 +1,45 @@
+# Extend regression corpus (DESIGN §21.3, §22).
+#
+#   <object> / <boundary> [; <boundary>…] @ <pick x y> => <object>
+#   <object> / <boundary> [; <boundary>…] @ <pick x y> => nothing     reaches none
+#
+# Objects and boundaries are written as in intersections.txt. The end of
+# the object nearer the pick is carried on — a line straight ahead, an arc
+# round its circle — to the first boundary it meets.
+#
+# The runner also checks, for every case, that the other end has not
+# moved, that the result still passes through the old end, and that the
+# new end is on a boundary.
+#
+# Blank lines and lines starting with # are ignored. Every fixed bug adds a line.
+
+# ── lines ──
+segment 0 0 50 0 / segment 80 -50 80 50 @ 45 0 => segment 0 0 80 0
+# the start is extended when the pick is nearer it
+segment 0 0 50 0 / segment -30 -50 -30 50 @ 5 0 => segment -30 0 50 0
+# the first boundary met is the one used
+segment 0 0 50 0 / segment 120 -50 120 50 ; segment 80 -50 80 50 @ 45 0 => segment 0 0 80 0
+# a boundary behind the end is not reached by going forwards
+segment 0 0 50 0 / segment -30 -50 -30 50 @ 45 0 => nothing
+# a boundary the line would pass beside
+segment 0 0 50 0 / segment 80 10 80 50 @ 45 0 => nothing
+# to a circle: the near side
+segment 0 0 50 0 / circle 100 0 20 @ 45 0 => segment 0 0 80 0
+# to an arc: only where the arc is
+segment 0 0 50 0 / arc 100 0 20 270 180 @ 45 0 => segment 0 0 120 0
+# regression: the new end is computed on the line itself, so a horizontal
+# line stays exactly horizontal and ends exactly on the boundary (it came
+# out as 29.999999999999996 when found with a long probe segment)
+segment 0 10 20 10 / segment 30 0 30 20 @ 19 10 => segment 0 10 30 10
+# a sloping line to a sloping boundary
+segment 0 0 10 10 / segment 0 40 40 0 @ 9 9 => segment 0 0 20 20
+# parallel to the boundary: never meets it
+segment 0 0 50 0 / segment 0 20 200 20 @ 45 0 => nothing
+
+# ── arcs ──
+# a quarter circle carried on counter-clockwise to the negative x axis
+arc 0 0 50 0 90 / segment -100 0 0 0 @ 5 49 => arc 0 0 50 0 180
+# its start carried back clockwise to the negative y axis
+arc 0 0 50 0 90 / segment 0 -100 0 0 @ 49 5 => arc 0 0 50 270 180
+# a boundary inside the circle that the arc's circle never touches
+arc 0 0 50 0 90 / segment -10 -10 10 10 @ 5 49 => nothing

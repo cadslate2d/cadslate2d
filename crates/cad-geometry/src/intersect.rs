@@ -7,9 +7,16 @@
 //! - **angular** decides whether two directions are parallel;
 //! - **linear** decides whether a computed point lies on a bounded curve
 //!   (within reach of a segment's end or an arc's end) and whether two
-//!   solutions are the same point (tangency);
+//!   solutions are the same point (tangency). It is taken at the magnitude
+//!   of the coordinates at hand (`LinearTolerance::around`, ADR-0012);
 //! - **orientation** — which side of a line a point is on — uses an exact
 //!   predicate, not a tolerance (§21.2).
+//!
+//! A hit is computed *on* the line or circle it belongs to, so whether it is
+//! on the bounded segment or arc is a question of where along — a parameter
+//! or an angle — never of measuring its distance from the curve again. Far
+//! from the origin that distance cannot be resolved to the tolerance, and
+//! measuring it would throw good hits away.
 //!
 //! Degenerate configurations have defined results: parallel or collinear
 //! lines, concentric or identical circles, and zero-length segments yield no
@@ -45,7 +52,7 @@ impl Hits {
 
     /// Two solutions, merged into one when they coincide (tangency).
     pub(crate) fn pair(a: Point2, b: Point2) -> Self {
-        if LINEAR.coincident(a, b) {
+        if LINEAR.around(&[a, b]).coincident(a, b) {
             Self::one(a)
         } else {
             Self {
@@ -107,9 +114,10 @@ pub fn orientation(a: Point2, b: Point2, c: Point2) -> Orientation {
     }
 }
 
-/// Where the infinite lines through `a` and `b` meet. `None` when they are
+/// Where the infinite lines through `a` and `b` meet, as a parameter along
+/// each: 0 at the segment's start, 1 at its end. `None` when they are
 /// parallel (or the same line), or when either segment has no direction.
-pub fn line_line(a: &Segment, b: &Segment) -> Option<Point2> {
+fn crossing_parameters(a: &Segment, b: &Segment) -> Option<(f64, f64)> {
     let (da, db) = (a.end - a.start, b.end - b.start);
     let cross = da.x * db.y - da.y * db.x;
     // |cross| = |da||db| sin θ: parallel when the angle between them is negligible.
@@ -117,13 +125,31 @@ pub fn line_line(a: &Segment, b: &Segment) -> Option<Point2> {
         return None;
     }
     let between = b.start - a.start;
-    let t = (between.x * db.y - between.y * db.x) / cross;
-    Some(a.start + da * t)
+    Some((
+        (between.x * db.y - between.y * db.x) / cross,
+        (between.x * da.y - between.y * da.x) / cross,
+    ))
+}
+
+/// Whether a parameter along a segment of this length — 0 at its start, 1
+/// at its end — is on the segment, give or take the tolerance at each end.
+fn within_span(parameter: f64, length: f64, tolerance: LinearTolerance) -> bool {
+    let slack = tolerance.value() / length;
+    parameter >= -slack && parameter <= 1.0 + slack
+}
+
+/// Where the infinite lines through `a` and `b` meet. `None` when they are
+/// parallel (or the same line), or when either segment has no direction.
+pub fn line_line(a: &Segment, b: &Segment) -> Option<Point2> {
+    crossing_parameters(a, b).map(|(along_a, _)| a.start + (a.end - a.start) * along_a)
 }
 
 /// Where two bounded segments meet, if they do.
 pub fn segment_segment(a: &Segment, b: &Segment) -> Option<Point2> {
-    line_line(a, b).filter(|point| on_segment(a, *point) && on_segment(b, *point))
+    let (along_a, along_b) = crossing_parameters(a, b)?;
+    let tolerance = LINEAR.around(&[a.start, a.end, b.start, b.end]);
+    (within_span(along_a, a.length(), tolerance) && within_span(along_b, b.length(), tolerance))
+        .then(|| a.start + (a.end - a.start) * along_a)
 }
 
 /// Where the infinite line through `line` meets `circle`.
@@ -143,7 +169,10 @@ pub fn line_circle(line: &Segment, circle: &Circle) -> Hits {
     let half_chord_squared = (circle.radius - offset) * (circle.radius + offset);
     if half_chord_squared < 0.0 {
         // Just outside, within tolerance, still counts as tangent.
-        return if LINEAR.eq(offset, circle.radius) {
+        let tolerance = LINEAR
+            .around(&[line.start, line.end, circle.center])
+            .at_magnitude(circle.radius);
+        return if tolerance.eq(offset, circle.radius) {
             Hits::one(foot)
         } else {
             Hits::NONE
@@ -188,10 +217,19 @@ pub fn circle_circle(a: &Circle, b: &Circle) -> Hits {
     let foot = small.center + unit * along;
     let half_chord_squared = (small.radius - along) * (small.radius + along);
     if half_chord_squared < 0.0 {
-        let touching = LINEAR.eq(distance, a.radius + b.radius)
-            || LINEAR.eq(distance, (a.radius - b.radius).abs());
-        return if touching {
-            Hits::one(foot)
+        // Not quite reaching, but within tolerance: they touch. The point
+        // is taken on the smaller circle — towards the larger one's centre
+        // when they touch from outside, away from it when one is inside
+        // the other. (The foot of the radical line will not do: for a
+        // circle nearly as large as the one it is inside, it overshoots by
+        // several times the gap.)
+        let tolerance = LINEAR
+            .around(&[a.center, b.center])
+            .at_magnitude(large.radius);
+        return if tolerance.eq(distance, a.radius + b.radius) {
+            Hits::one(small.center + unit * small.radius)
+        } else if tolerance.eq(distance, (a.radius - b.radius).abs()) {
+            Hits::one(small.center - unit * small.radius)
         } else {
             Hits::NONE
         };
@@ -271,8 +309,15 @@ impl Primitive {
     }
 }
 
+/// Whether `point` — already known to be on the segment's line, because
+/// that is how it was computed — is on the segment: between its ends, or
+/// within the tolerance of one.
 fn on_segment(segment: &Segment, point: Point2) -> bool {
-    LINEAR.is_zero(segment.distance_to_point(point))
+    let direction = segment.end - segment.start;
+    let length = direction.length();
+    let along = (point - segment.start).dot(direction) / (length * length);
+    let tolerance = LINEAR.around(&[segment.start, segment.end]);
+    within_span(along, length, tolerance)
 }
 
 /// Whether `point` — already known to be on the arc's circle, because that is
@@ -284,9 +329,10 @@ fn on_segment(segment: &Segment, point: Point2) -> bool {
 /// off: the check would reject points for the arithmetic's noise.
 fn on_arc(arc: &Arc, point: Point2) -> bool {
     let offset = point - arc.center;
+    let tolerance = LINEAR.around(&[point, arc.center]).at_magnitude(arc.radius);
     arc.contains_angle(offset.y.atan2(offset.x))
-        || LINEAR.coincident(point, arc.start_point())
-        || LINEAR.coincident(point, arc.end_point())
+        || tolerance.coincident(point, arc.start_point())
+        || tolerance.coincident(point, arc.end_point())
 }
 
 #[cfg(test)]
@@ -567,6 +613,74 @@ mod tests {
                 assert!((hit.distance_to(big.center) - big.radius).abs() < 1e-9);
             }
         }
+    }
+
+    /// Regression: found by the stress tests. A circle of radius 49.8 inside
+    /// one of radius 57.6, short of touching it by 10⁻⁹: the touching point
+    /// came back 6 × 10⁻⁹ off the larger circle, outside the tolerance that
+    /// had just said they touch.
+    #[test]
+    fn circles_that_touch_within_tolerance_touch_at_a_point_on_both() {
+        let outer = circle(0.0, 0.0, 57.5512954750725);
+        let gap = 9.5e-10;
+        let inner = circle(
+            57.5512954750725 - 49.83724509716322 - gap,
+            0.0,
+            49.83724509716322,
+        );
+        for hits in [circle_circle(&outer, &inner), circle_circle(&inner, &outer)] {
+            assert_eq!(hits.len(), 1, "{hits:?}");
+            let touch = hits.as_slice()[0];
+            assert!(
+                outer.distance_to_point(touch) <= LINEAR.value(),
+                "{touch:?}"
+            );
+            assert!(
+                inner.distance_to_point(touch) <= LINEAR.value(),
+                "{touch:?}"
+            );
+            assert!(touch.x > 57.0, "on the side where they touch");
+        }
+        // From outside, the same gap apart.
+        let beside = circle(57.5512954750725 + 20.0 + gap, 0.0, 20.0);
+        for hits in [
+            circle_circle(&outer, &beside),
+            circle_circle(&beside, &outer),
+        ] {
+            assert_eq!(hits.len(), 1);
+            let touch = hits.as_slice()[0];
+            assert!(outer.distance_to_point(touch) <= LINEAR.value());
+            assert!(beside.distance_to_point(touch) <= LINEAR.value());
+        }
+    }
+
+    /// Regression (ADR-0012): two segments crossing ten million units out,
+    /// and one crossing a circle there, are found — a computed point is
+    /// placed by where it is along the segment, not by measuring how far
+    /// off the segment the arithmetic left it.
+    #[test]
+    fn crossings_far_from_the_origin_are_found() {
+        let mut missed = 0;
+        for step in 0..500 {
+            let turn = f64::from(step) * 0.618_033_988_75;
+            let at = p(1e10 + turn.sin() * 137.0, 7e9 + turn.cos() * 91.0);
+            let (a, b) = ((turn * 1.3).cos(), (turn * 1.3).sin());
+            let one = Segment::new(
+                p(at.x - 50.0 * a, at.y - 50.0 * b),
+                p(at.x + 70.0 * a, at.y + 70.0 * b),
+            );
+            let other = Segment::new(
+                p(at.x + 60.0 * b, at.y - 60.0 * a),
+                p(at.x - 40.0 * b, at.y + 40.0 * a),
+            );
+            if segment_segment(&one, &other).is_none() {
+                missed += 1;
+            }
+            if segment_circle(&one, &Circle::new(at, 30.0)).len() != 2 {
+                missed += 1;
+            }
+        }
+        assert_eq!(missed, 0);
     }
 
     #[test]

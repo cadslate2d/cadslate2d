@@ -1326,6 +1326,8 @@ No global magic `EPSILON` should be used indiscriminately.
 
 Tolerance values and semantics must be centralized and documented.
 
+> **Extended in M3:** the geometric linear tolerance is 10⁻⁹ near the origin and widens to a few spacings of the floating-point numbers where coordinates are too large to be told apart that finely — [ADR-0012](adr/0012-linear-tolerance-far-from-the-origin.md). Intersections decide whether a computed point is on a segment or an arc by its position along the curve, not by measuring its distance from it.
+
 ## 21.2 Robust predicates
 
 Orientation and similar topological decisions should use robust predicates where appropriate.

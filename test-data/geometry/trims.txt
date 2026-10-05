@@ -1,0 +1,50 @@
+# Trim regression corpus (DESIGN §21.3, §22).
+#
+#   <object> / <cutter> [; <cutter>…] @ <pick x y> => <piece> [; <piece>…]
+#   <object> / <cutter> [; <cutter>…] @ <pick x y> => nothing     not trimmed
+#
+# Objects and cutters are written as in intersections.txt. The object is
+# cut where the cutters cross it, and the part at the pick is removed; the
+# pieces listed are what is kept, in order along the object.
+#
+# The runner also checks, for every case, that what is kept and what is
+# removed add up to the object, and that the removed part is the one
+# nearest the pick.
+#
+# Blank lines and lines starting with # are ignored. Every fixed bug adds a line.
+
+# ── lines ──
+# one cutter: the picked side goes
+segment 0 0 100 0 / segment 40 -50 40 50 @ 80 0 => segment 0 0 40 0
+segment 0 0 100 0 / segment 40 -50 40 50 @ 10 0 => segment 40 0 100 0
+# between two cutters: the middle goes and two pieces are kept
+segment 0 0 100 0 / segment 30 -50 30 50 ; segment 70 -50 70 50 @ 50 0 => segment 0 0 30 0 ; segment 70 0 100 0
+# outside two cutters: only that end goes
+segment 0 0 100 0 / segment 30 -50 30 50 ; segment 70 -50 70 50 @ 90 0 => segment 0 0 70 0
+# a circle cuts twice
+segment -100 0 100 0 / circle 0 0 50 @ 0 0 => segment -100 0 -50 0 ; segment 50 0 100 0
+# the pick need not be on the line: its nearest point is what counts
+segment 0 0 100 0 / segment 40 -50 40 50 @ 80 25 => segment 0 0 40 0
+# a cutter that only touches the end cuts nothing off
+segment 0 0 100 0 / segment 100 -50 100 50 @ 50 0 => nothing
+# a cutter that misses
+segment 0 0 100 0 / segment 200 -50 200 50 @ 50 0 => nothing
+# a tangent circle cuts at its one point
+segment -100 50 100 50 / circle 0 0 50 @ 60 50 => segment -100 50 0 50
+
+# ── arcs ──
+# the upper half circle, cut by the y axis
+arc 0 0 50 0 180 / segment 0 -100 0 100 @ 40 30 => arc 0 0 50 90 90
+arc 0 0 50 0 180 / segment 0 -100 0 100 @ -40 30 => arc 0 0 50 0 90
+# an arc that passes through 0°, cut on both sides of it
+arc 0 0 50 300 120 / segment 0 0 100 100 ; segment 0 0 100 -100 @ 50 0 => arc 0 0 50 300 15 ; arc 0 0 50 45 15
+# a cutter across the arc's circle that misses the arc itself
+arc 0 0 50 0 90 / segment -100 -10 0 -10 @ 30 40 => nothing
+
+# ── circles ──
+# two cuts: the part at the pick goes, and what is left is an arc
+circle 0 0 50 / segment -100 0 100 0 @ 0 50 => arc 0 0 50 180 180
+circle 0 0 50 / segment -100 0 100 0 @ 0 -50 => arc 0 0 50 0 180
+# one cut is not enough to open a circle
+circle 0 0 50 / segment -100 50 100 50 @ 0 -50 => nothing
+circle 0 0 50 / segment 0 0 100 0 @ 0 50 => nothing

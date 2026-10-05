@@ -19,8 +19,24 @@ use cad_geometry::{
 
 use crate::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity};
 
-/// Ends are the same point within the linear tolerance class (DESIGN §21).
-const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
+/// Ends are the same point within the linear tolerance class (DESIGN §21) —
+/// never a literal.
+const LINEAR: LinearTolerance = LinearTolerance::DEFAULT;
+
+/// The linear tolerance for joining these entities: the default near the
+/// origin, wider where their coordinates are too large to be told apart
+/// that finely (ADR-0012). Without it, the two halves of a line broken ten
+/// million units out would not count as collinear.
+fn tolerance_for(entities: &[&Entity]) -> LinearTolerance {
+    let corners: Vec<_> = entities
+        .iter()
+        .flat_map(|entity| {
+            let bounds = entity.bounds();
+            [bounds.min(), bounds.max()]
+        })
+        .collect();
+    LINEAR.around(&corners)
+}
 
 /// One entity made from several.
 #[derive(Clone, Debug, PartialEq)]
@@ -92,9 +108,10 @@ pub fn join(entities: &[&Entity]) -> Result<Vec<Joined>, JoinError> {
         return Err(JoinError::TooFew);
     }
     let everything = || (0..entities.len()).collect();
+    let tolerance = tolerance_for(entities);
 
     if let Some(segments) = all_segments(entities)
-        && let Some(joined) = join_segments(&segments, TOLERANCE)
+        && let Some(joined) = join_segments(&segments, tolerance)
     {
         return Ok(vec![Joined {
             members: everything(),
@@ -103,7 +120,7 @@ pub fn join(entities: &[&Entity]) -> Result<Vec<Joined>, JoinError> {
     }
 
     if let Some(arcs) = all_arcs(entities) {
-        match join_arcs(&arcs, TOLERANCE) {
+        match join_arcs(&arcs, tolerance) {
             Ok(joined) => {
                 let entity = match joined {
                     JoinedArcs::Arc(arc) => ArcEntity::from(arc).into(),
@@ -128,7 +145,7 @@ pub fn join(entities: &[&Entity]) -> Result<Vec<Joined>, JoinError> {
         .enumerate()
         .filter_map(|(index, entity)| Some((index, open_path(entity)?)))
         .unzip();
-    let chains = chain_paths(&paths, TOLERANCE);
+    let chains = chain_paths(&paths, tolerance);
     if chains.is_empty() {
         return Err(JoinError::NothingMeets);
     }
@@ -150,7 +167,7 @@ pub fn join(entities: &[&Entity]) -> Result<Vec<Joined>, JoinError> {
 pub fn close_into_circle(entities: &[&Entity]) -> Result<Entity, JoinError> {
     let arcs = all_arcs(entities).ok_or(JoinError::NotArcsOfOneCircle)?;
     let first = arcs.first().ok_or(JoinError::NotArcsOfOneCircle)?;
-    if !cocircular(&arcs, TOLERANCE) {
+    if !cocircular(&arcs, tolerance_for(entities)) {
         return Err(JoinError::NotArcsOfOneCircle);
     }
     Ok(CircleEntity::new(first.center, first.radius).into())
@@ -356,6 +373,37 @@ mod tests {
             joined(&[closed, line(10.0, 0.0, 20.0, 0.0)]),
             Err(JoinError::NothingMeets)
         );
+    }
+
+    /// Regression (ADR-0012): found by the stress tests. Ten million units
+    /// from the origin a point cannot be within 10⁻⁹ of a line it was
+    /// computed on, so the halves of a broken line were "not collinear".
+    #[test]
+    fn a_line_broken_far_from_the_origin_joins_again() {
+        let far: Entity = LineEntity::new(
+            p(8_434_235.061_870_288, 0.0),
+            p(8_434_195.097_190_29, 91.667_713_3),
+        )
+        .into();
+        let Entity::Line(original) = &far else {
+            unreachable!()
+        };
+        let at = p(8_434_218.9, 37.0);
+        let pieces = far.broken(at, at).expect("a point in the middle");
+        assert_eq!(pieces.len(), 2);
+        assert_eq!(one(&pieces), far);
+        // The same again further out still, with arcs.
+        let arc: Entity = ArcEntity::new(p(3.0e9, -2.0e9), 50.0, 0.3, 2.1).into();
+        let Entity::Arc(whole) = &arc else {
+            unreachable!()
+        };
+        let middle = whole.arc().mid_point();
+        let halves = arc.broken(middle, middle).expect("a point in the middle");
+        let Entity::Arc(joined) = one(&halves) else {
+            panic!("an arc");
+        };
+        assert!((joined.arc().sweep - whole.arc().sweep).abs() < 1e-9);
+        assert_eq!(original.start, p(8_434_235.061_870_288, 0.0));
     }
 
     /// The acceptance criterion: ends match within the tolerance class.

@@ -33,7 +33,7 @@ If code and these documents disagree, fix the code or write an ADR. Do not silen
 - **One pipeline turns the pointer into a point:** `Session::aim` — object snap, then ORTHO or POLAR, then the free cursor. Previews, the status-bar readout, direct-distance entry, and the click all use it. Typed coordinates bypass it. Do not add a second path. A command asking for a place on the screen rather than a point of the drawing — the corner of a window — opts out of object snap with `Command::takes_object_snap`.
 - **Geometry is read through primitives.** `Entity::primitives` turns every entity into segments, circles, and arcs — including the arc segments of a polyline (a bulge per vertex). Snapping, intersection, selection, trimming, and rendering work from those; do not walk `PolylineEntity::vertices` as if the segments between them were straight.
 - **Pixel tolerances are not geometric tolerances.** Pick and snap apertures are `PixelTolerance`s converted through the `View` at the moment of use (§18.3).
-- **No magic epsilons.** Use the tolerance classes in `cad-core`; they are not interchangeable (DESIGN §21).
+- **No magic epsilons.** Use the tolerance classes in `cad-core`; they are not interchangeable (DESIGN §21). A linear tolerance compares coordinates at their own magnitude: far from the origin use `LinearTolerance::around` the points involved, and decide whether a computed point is on a segment or arc by where it is along it, never by measuring its distance from the curve again (ADR-0012).
 - **Only `web/src/renderer/` touches WebGL; only `web/src/cad/` imports the generated WASM package.** ESLint enforces both.
 - **Rust never calls into JavaScript.** When a command needs the browser (a file picker, a download), it raises a `HostRequest`; the host serves it and reports back with an ordinary call.
 - **The WASM API surface is snapshot-tested** (`web/src/cad/render-boundary.test.ts`). Adding an export fails that test on purpose: justify the new call as coarse, then update the list.
@@ -62,7 +62,7 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 ## Testing rules (DESIGN §41, LOCKED)
 
 - Every behaviour change ships with tests in the same commit.
-- **Geometry:** unit tests, property tests where there are algebraic laws, and a permanent regression test for every fixed geometry bug. The corpora under `test-data/geometry/` (intersections, polyline offsets) take one line per case.
+- **Geometry:** unit tests, property tests where there are algebraic laws, and a permanent regression test for every fixed geometry bug. The corpora under `test-data/geometry/` (intersections, offsets, trims, extends, fillets) take one line per case and report a failure by file and line. Every modify operation has an invariant held over generated, nearly degenerate input (`crates/cad-geometry/tests/stress.rs`; the table is in `test-data/geometry/README.md`). `scripts/stress.sh` runs the property tests with many more cases; it is not part of the check.
 - **Commands:** headless tests driving `Session` — the same methods `cad-wasm` calls.
 - **Render boundary:** determinism, revision invariance under pointer movement, buffer lengths and batch ranges.
 - **DXF:** fixture files under `test-data/dxf/`; arbitrary bytes must never panic.
