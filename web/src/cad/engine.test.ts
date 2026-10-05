@@ -136,6 +136,19 @@ describe("commands", () => {
     });
   });
 
+  test("Space stops submitting while a name is being typed", () => {
+    const cad = engine();
+    enter(cad, "LA");
+    expect(cad.uiState().spaceAccepts).toBe(true);
+    enter(cad, "N");
+    expect(cad.uiState()).toMatchObject({
+      prompt: "Enter name(s) for new layer(s):",
+      spaceAccepts: false,
+    });
+    enter(cad, "Ground floor");
+    expect(cad.uiState().spaceAccepts).toBe(true);
+  });
+
   test("log lines are fetched incrementally", () => {
     const cad = freshEngine();
     enter(cad, "L");

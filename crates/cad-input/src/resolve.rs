@@ -29,6 +29,10 @@ pub enum InputKind {
     Object,
     /// Nothing but an option keyword or Enter.
     Nothing,
+    /// Free text: a name. Everything typed is the text — spaces included, so
+    /// Space does not submit at such a prompt — except that an option
+    /// keyword, where the prompt offers any, still comes first.
+    Text,
 }
 
 /// What the current prompt accepts: one primary kind plus option keywords.
@@ -72,6 +76,16 @@ impl ExpectedInput {
         Self::new(InputKind::Object)
     }
 
+    pub fn text() -> Self {
+        Self::new(InputKind::Text)
+    }
+
+    /// Whether Space submits the line, as Enter does. It does everywhere
+    /// except where a space can be part of what is being typed.
+    pub fn space_accepts(&self) -> bool {
+        self.kind != InputKind::Text
+    }
+
     pub fn with_keywords(mut self, keywords: &[Keyword]) -> Self {
         self.keywords.extend_from_slice(keywords);
         self
@@ -98,6 +112,8 @@ pub enum Input {
     DirectDistance(f64),
     /// One of the prompt's option keywords.
     Keyword(Keyword),
+    /// Free text, with the spaces around it removed and those inside kept.
+    Text(String),
     /// Enter or Space on an empty line: accept, confirm, or finish.
     Accept,
 }
@@ -164,6 +180,8 @@ pub fn resolve(
         InputKind::Nothing | InputKind::Selection | InputKind::Object => {
             Err(Diagnostic::new("", position))
         }
+        // Anything at all is text.
+        InputKind::Text => return Ok(Input::Text(trimmed.to_owned())),
     };
     result.map_err(|error| Diagnostic::new(requirement(expected), error.position.max(position)))
 }
@@ -187,6 +205,7 @@ fn requirement(expected: &ExpectedInput) -> String {
         InputKind::Distance => vec!["a distance", "a point"],
         InputKind::Angle => vec!["an angle", "a point"],
         InputKind::Nothing | InputKind::Selection | InputKind::Object => vec![],
+        InputKind::Text => vec!["text"],
     };
     if !expected.keywords.is_empty() || accepted.is_empty() {
         accepted.push("an option keyword");
@@ -440,7 +459,49 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_text_prompt_takes_everything_typed_spaces_and_all() {
+        let name = ExpectedInput::text();
+        let text = |typed: &str| Ok(Input::Text(typed.to_owned()));
+        assert_eq!(resolved("walls", &name), text("walls"));
+        assert_eq!(resolved("  Ground floor  ", &name), text("Ground floor"));
+        // What would be a command, a point, or a number elsewhere is text here.
+        for typed in ["L", "10,20", "@5<30", "42", "a, b,c", "über-Wände"] {
+            assert_eq!(resolved(typed, &name), text(typed), "{typed}");
+        }
+        assert_eq!(resolved("", &name), Ok(Input::Accept));
+        assert_eq!(resolved("   ", &name), Ok(Input::Accept));
+        assert!(!name.space_accepts(), "a space is part of the text");
+        assert!(ExpectedInput::point().space_accepts());
+        assert!(ExpectedInput::command().space_accepts());
+    }
+
+    #[test]
+    fn at_a_text_prompt_an_offered_keyword_still_comes_first() {
+        let expected = ExpectedInput::text().with_keywords(&[CLOSE, Keyword::new("?")]);
+        assert_eq!(resolved("c", &expected), Ok(Input::Keyword(CLOSE)));
+        assert_eq!(
+            resolved("?", &expected),
+            Ok(Input::Keyword(Keyword::new("?")))
+        );
+        assert_eq!(
+            resolved("closet", &expected),
+            Ok(Input::Text("closet".to_owned()))
+        );
+    }
+
     proptest! {
+        /// Whatever is typed at a text prompt comes back as text — the same
+        /// characters, less the spaces around them — or as Enter.
+        #[test]
+        fn a_text_prompt_never_refuses_and_never_changes_the_text(text in "\\PC*") {
+            match resolve(&text, &ExpectedInput::text(), &aliases()) {
+                Ok(Input::Text(got)) => prop_assert_eq!(got, text.trim()),
+                Ok(Input::Accept) => prop_assert!(text.trim().is_empty()),
+                other => prop_assert!(false, "{:?}", other),
+            }
+        }
+
         #[test]
         fn resolution_is_deterministic_and_never_panics(text in "\\PC*") {
             let aliases = aliases();
@@ -450,6 +511,8 @@ mod tests {
                 ExpectedInput::distance().with_keywords(&[Keyword::new("2P")]),
                 ExpectedInput::angle(),
                 ExpectedInput::new(InputKind::Nothing).with_keywords(&[CLOSE]),
+                ExpectedInput::text(),
+                ExpectedInput::text().with_keywords(&[CLOSE, Keyword::new("?")]),
             ];
             for expected in &contexts {
                 prop_assert_eq!(resolve(&text, expected, &aliases), resolve(&text, expected, &aliases));

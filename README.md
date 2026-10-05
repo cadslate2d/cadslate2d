@@ -23,6 +23,7 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `ARC` | `A` | Three points; or start, `Center`, end; or start, centre, `Angle`. |
 | `PLINE` | `PL` | One polyline through a chain of points. `Arc` switches to arc segments that continue smoothly from the one before; `Line` switches back. Also `Close`, `Undo`. |
 | `RECTANG` | `REC` | A closed rectangle from two corners. |
+| `LAYER` | `LA` | Layers from the command line: `New`, `Set` (the layer new objects go on), `Color`, `ON`, `OFF`, `Lock`, `Unlock`, `Rename`, `Delete`, and `?` to list. Names may contain spaces; several can be given at once, separated by commas. Objects on a layer that is off are hidden and cannot be picked; objects on a locked layer cannot be changed. |
 | `ERASE` | `E`, Delete | Erases the selected objects. |
 | `MOVE` | `M` | Moves the selection from a base point to a second point. |
 | `COPY` | `CO`, `CP` | Copies the selection; keeps placing until Enter. |
@@ -97,6 +98,12 @@ Selected objects show grips: small squares you can take hold of. Click a grip (i
 | Polyline | every vertex | moves that vertex |
 
 A position that would collapse the object — a line of no length, a circle of no radius, an arc through three points in a line — is refused. Grips are hidden when more than 100 objects are selected.
+
+### Layers
+
+Every object is on a layer; new objects go on the current one, and an object made from another — a copy, an offset, a piece of a trim — stays on its source's. `LAYER` makes and manages them. A layer that is **off** hides its objects from the screen and from the pointer. A layer that is **locked** still shows them, and they can be snapped to and trimmed against, but no command changes them.
+
+Not there yet: layers are not drawn in their colours, and are not written to or read from DXF — an exported drawing has everything on layer `0`. Both are in the [M4 plan](docs/roadmap.md).
 
 ### ORTHO and POLAR
 

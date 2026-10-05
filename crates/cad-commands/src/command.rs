@@ -15,7 +15,7 @@ use crate::log::CommandLog;
 use crate::{DraftingSettings, Grip, HostRequest, OverlayItem, Selection};
 
 /// One resolved input handed to the active command.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CommandInput {
     /// A world point — already resolved from typed coordinates or the pointer.
     Point(Point2),
@@ -27,6 +27,8 @@ pub enum CommandInput {
     Pick { entity: EntityId, at: Point2 },
     /// One of the option keywords the command offered.
     Keyword(Keyword),
+    /// Free text typed where the command asked for a name.
+    Text(String),
     /// Enter or Space on an empty line.
     Accept,
 }

@@ -82,6 +82,7 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 | A table (linetypes, text styles, blocks, …) | A row type and a `Table<Row>` in `cad-document`, a `Change` variant, one arm in `Drawing::apply`, builder methods that refuse what would leave the drawing inconsistent | The history property test in `drawing.rs` gains its operations; a test per refusal |
 | Geometry maths | `cad-geometry`, as pure functions | Unit and property tests; a regression case per fixed bug |
 | Input syntax | `cad-input` | Table-driven tests and a never-panics property test |
+| A prompt for a name or other free text | `ExpectedInput::text()`; the command receives `CommandInput::Text`. Space does not submit there, which the host learns from `ui_state.space_accepts` | Headless tests with a name that has a space in it |
 | A preview of what picking an object would do | `Command::preview_pick`, computed by the same function the pick then commits | A test that the previewed result equals the committed one |
 | Something drawn transiently | An `OverlayItem` in `cad-commands`, turned into segments in `cad-render` | A render-boundary test that the scene revision is unchanged |
 | A snap mode | `SnapMode` and its points in `crates/cad-commands/src/snap.rs`; its marker glyph in `cad-render` | Headless tests per entity type; a marker baseline in `test-data/screenshots/` |

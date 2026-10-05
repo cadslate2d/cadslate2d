@@ -275,7 +275,7 @@ impl Session {
             snap: aim.and_then(|aim| aim.snap).map(|snap| snap.mode.label()),
             tracking: aim.and_then(|aim| aim.track).map(|track| track.label()),
             selection_count: self.selection.len(),
-            space_accepts: true,
+            space_accepts: self.expected().space_accepts(),
             can_undo: self.drawing.can_undo(),
             can_redo: self.drawing.can_redo(),
             toggles: self.toggles.bits(),
@@ -648,9 +648,11 @@ impl Session {
         let takes_a_point = match command.expected().kind {
             InputKind::Point => true,
             InputKind::Distance | InputKind::Angle => command.base_point().is_some(),
-            InputKind::Command | InputKind::Selection | InputKind::Object | InputKind::Nothing => {
-                false
-            }
+            InputKind::Command
+            | InputKind::Selection
+            | InputKind::Object
+            | InputKind::Nothing
+            | InputKind::Text => false,
         };
         (takes_a_point && self.pan_anchor.is_none()).then_some(command)
     }
@@ -794,6 +796,7 @@ impl Session {
             Input::Distance(distance) => Ok(self.feed(CommandInput::Distance(distance))),
             Input::Angle(angle) => Ok(self.feed(CommandInput::Angle(angle))),
             Input::Keyword(keyword) => Ok(self.feed(CommandInput::Keyword(keyword))),
+            Input::Text(text) => Ok(self.feed(CommandInput::Text(text))),
             Input::DirectDistance(distance) => {
                 let target = self.direct_distance_target(distance).ok_or(NO_DIRECTION)?;
                 Ok(self.feed(CommandInput::Point(target)))
@@ -848,6 +851,7 @@ impl Session {
             (InputKind::Nothing | InputKind::Command | InputKind::Selection, _) => {
                 return Err("An option keyword is required.");
             }
+            (InputKind::Text, _) => return Err("Type the text and press Enter."),
         };
         Ok(self.feed(input))
     }

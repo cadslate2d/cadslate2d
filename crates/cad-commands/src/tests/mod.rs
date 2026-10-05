@@ -8,6 +8,7 @@ mod corner;
 mod edge;
 mod grips;
 mod join;
+mod layer_command;
 mod layers;
 mod modify;
 mod offset;

@@ -95,6 +95,7 @@ impl Command for LineCommand {
             CommandInput::Keyword(_)
             | CommandInput::Distance(_)
             | CommandInput::Angle(_)
+            | CommandInput::Text(_)
             | CommandInput::Pick { .. } => {}
         }
         Step::Continue
