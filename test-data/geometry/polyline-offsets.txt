@@ -68,3 +68,13 @@ spike-inside : open : 0,0 100,0 0,5 : 2 => 1 40.02498439450079
 spike-outside : open : 0,0 100,0 0,5 : -2 => 1 206.30819048823963
 # regression: an arc of radius 100,000 whose crossing intersection missed
 flat-arc : open : 0,-40.79313164211775 -192.84856245719732,-94.41844070332529 0,-186.9870865413599,-0.000746102365195887 0,133.65375689380312 121.49725133306622,0,0.9265266681888825 -174.9811812741329,0 : 26.061059034600945 => 3 590.058357080093
+
+# ── regressions: intersections with nearly straight arcs ──
+# Found by the property test. The first arc has a radius of 44 083; where its
+# offset meets the offset of the round arc after it was found from one side
+# and not the other, so a stretch running across the source was kept.
+flat-arc-meets-round-arc : open : 0,0,0.000998472126098075 -173.40529837455458,30.48561125801501,1.266393496472151 111.7244828729755,33.09822754892721 76.6430326588493,0 : 1 => 1 744.3859587102997
+# Found by a million-case run of the property test. The arc from 161,0 has a
+# radius of 8.8 million; hits on its offset were rejected as "not on the arc"
+# for the arithmetic's noise at that range.
+arc-of-radius-nine-million : open : 0,127.26631047267121 0,0 -88.58358290130211,112.06317760732755,-0.8724497690264524 161.18926839693808,0,9.217728379883385e-6 -149.45428092616012,89.35785622491375 0,-7.860126625272881 : -52.25919558033189 => 2 468.30397748928635

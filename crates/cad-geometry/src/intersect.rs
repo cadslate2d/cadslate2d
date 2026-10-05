@@ -138,7 +138,9 @@ pub fn line_circle(line: &Segment, circle: &Circle) -> Hits {
     let along = (circle.center - line.start).dot(unit);
     let foot = line.start + unit * along;
     let offset = circle.center.distance_to(foot);
-    let half_chord_squared = circle.radius * circle.radius - offset * offset;
+    // The difference first, then the product: exact enough for a line
+    // grazing a very large circle.
+    let half_chord_squared = (circle.radius - offset) * (circle.radius + offset);
     if half_chord_squared < 0.0 {
         // Just outside, within tolerance, still counts as tangent.
         return if LINEAR.eq(offset, circle.radius) {
@@ -162,18 +164,29 @@ pub fn segment_arc(segment: &Segment, arc: &Arc) -> Hits {
 
 /// Where two circles meet. Concentric circles — including identical ones —
 /// have no intersection points.
+///
+/// Everything is measured from the smaller circle, and differences of nearly
+/// equal lengths are taken before squaring, so the error of a hit scales
+/// with the smaller radius. Measured from the larger one, a unit circle
+/// crossing one of radius 40 000 — a nearly straight polyline arc — lands
+/// micrometres off, far outside the linear tolerance, and differently
+/// depending on which circle is named first.
 pub fn circle_circle(a: &Circle, b: &Circle) -> Hits {
-    let between = b.center - a.center;
+    let swapped = a.radius > b.radius;
+    let (small, large) = if swapped { (b, a) } else { (a, b) };
+    let between = large.center - small.center;
     let distance = between.length();
     if LINEAR.is_zero(distance) {
         return Hits::NONE;
     }
     let unit = between * (1.0 / distance);
-    // Distance from a's centre to the radical line, along the line of centres.
-    let along =
-        (distance * distance + a.radius * a.radius - b.radius * b.radius) / (2.0 * distance);
-    let foot = a.center + unit * along;
-    let half_chord_squared = a.radius * a.radius - along * along;
+    // Distance from the smaller centre to the radical line, along the line
+    // of centres: (d² + r² − R²) / 2d.
+    let along = ((distance - large.radius) * (distance + large.radius)
+        + small.radius * small.radius)
+        / (2.0 * distance);
+    let foot = small.center + unit * along;
+    let half_chord_squared = (small.radius - along) * (small.radius + along);
     if half_chord_squared < 0.0 {
         let touching = LINEAR.eq(distance, a.radius + b.radius)
             || LINEAR.eq(distance, (a.radius - b.radius).abs());
@@ -184,7 +197,10 @@ pub fn circle_circle(a: &Circle, b: &Circle) -> Hits {
         };
     }
     let half_chord = half_chord_squared.sqrt();
-    let normal = cad_core::Vec2::new(-unit.y, unit.x);
+    // Across the line of centres, to the left going from `a` to `b`, so the
+    // order of the hits does not depend on which circle is the smaller.
+    let toward_b = if swapped { unit * -1.0 } else { unit };
+    let normal = cad_core::Vec2::new(-toward_b.y, toward_b.x);
     Hits::pair(foot - normal * half_chord, foot + normal * half_chord)
 }
 
@@ -259,8 +275,18 @@ fn on_segment(segment: &Segment, point: Point2) -> bool {
     LINEAR.is_zero(segment.distance_to_point(point))
 }
 
+/// Whether `point` — already known to be on the arc's circle, because that is
+/// how it was computed — is on the arc: within its sweep, or at an end.
+///
+/// The distance from the centre is deliberately not measured again. For a
+/// nearly straight arc the centre is millions of units away, and at that
+/// range a coordinate cannot be told apart from its neighbour a nanometre
+/// off: the check would reject points for the arithmetic's noise.
 fn on_arc(arc: &Arc, point: Point2) -> bool {
-    LINEAR.is_zero(arc.distance_to_point(point))
+    let offset = point - arc.center;
+    arc.contains_angle(offset.y.atan2(offset.x))
+        || LINEAR.coincident(point, arc.start_point())
+        || LINEAR.coincident(point, arc.end_point())
 }
 
 #[cfg(test)]
@@ -506,6 +532,51 @@ mod tests {
             circle_circle(&circle(0.0, 0.0, 5.0), &circle(0.0, 0.0, 5.0)),
             &[],
         );
+    }
+
+    /// Regression: found by the polyline-offset property test. A nearly
+    /// straight arc (radius 44 083) and an ordinary one were found to meet
+    /// when asked one way round and not the other, and a unit circle on the
+    /// big arc was placed 3.4 µm from where it is.
+    #[test]
+    fn a_very_large_circle_meets_a_small_one_exactly_and_either_way_round() {
+        let flat = Arc::new(
+            p(-7719.7602150052735, -43402.37521451124),
+            44082.566916010765,
+            1.3947722252302803,
+            0.003993887177161923,
+        );
+        let round = Arc::new(
+            p(-30.529016862021834, -2.191951976973318),
+            145.56553127466626,
+            2.9167476104082644,
+            3.609608031445091,
+        );
+        let (forward, backward) = (arc_arc(&flat, &round), arc_arc(&round, &flat));
+        assert_eq!(forward.len(), 1, "{forward:?}");
+        assert_hits(backward, forward.as_slice());
+
+        // A unit circle centred on the big one: both hits are on both.
+        let big = flat.circle();
+        let centre = flat.end_point();
+        let unit = Circle::new(centre, 1.0);
+        for hits in [circle_circle(&big, &unit), circle_circle(&unit, &big)] {
+            assert_eq!(hits.len(), 2);
+            for hit in hits.as_slice() {
+                assert!((hit.distance_to(centre) - 1.0).abs() < 1e-12, "{hit:?}");
+                assert!((hit.distance_to(big.center) - big.radius).abs() < 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn the_order_of_the_hits_does_not_depend_on_which_circle_is_larger() {
+        let (small, large) = (circle(0.0, 0.0, 5.0), circle(20.0, 0.0, 18.0));
+        let hits = circle_circle(&small, &large);
+        assert!(hits.as_slice()[0].y < 0.0 && hits.as_slice()[1].y > 0.0);
+        let (small, large) = (circle(20.0, 0.0, 5.0), circle(0.0, 0.0, 18.0));
+        let hits = circle_circle(&large, &small);
+        assert!(hits.as_slice()[0].y < 0.0 && hits.as_slice()[1].y > 0.0);
     }
 
     #[test]
