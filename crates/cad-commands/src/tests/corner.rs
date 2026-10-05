@@ -35,9 +35,9 @@ fn fillet_with_the_default_zero_radius_makes_a_sharp_corner() {
     let ids = h.ids();
     h.enter("F");
     assert_eq!(h.log().last().unwrap(), "Current fillet radius: 0");
-    assert_eq!(h.prompt(), "Select first line or [Radius]:");
+    assert_eq!(h.prompt(), "Select first object or [Radius]:");
     h.click_world(p(50.0, 0.0));
-    assert_eq!(h.prompt(), "Select second line:");
+    assert_eq!(h.prompt(), "Select second object:");
     h.click_world(p(0.0, 50.0));
 
     assert_eq!(h.prompt(), "Command:");
@@ -55,7 +55,7 @@ fn fillet_with_a_radius_adds_a_tangent_arc_and_trims_both_lines() {
     h.enter_all(&["FILLET", "R"]);
     assert_eq!(h.prompt(), "Specify fillet radius <0>:");
     h.enter("20");
-    assert_eq!(h.prompt(), "Select first line or [Radius]:");
+    assert_eq!(h.prompt(), "Select first object or [Radius]:");
     pick_both(&mut h);
 
     let entities = h.entities();
@@ -109,7 +109,11 @@ fn fillet_refuses_parallel_lines_and_radii_that_are_too_large() {
         h.log().last().unwrap(),
         "The radius is too large for these lines."
     );
-    assert_eq!(h.prompt(), "Select first line or [Radius]:", "start again");
+    assert_eq!(
+        h.prompt(),
+        "Select first object or [Radius]:",
+        "start again"
+    );
 
     h.click_world(p(50.0, 0.0));
     h.click_world(p(50.0, 40.0));
@@ -123,21 +127,101 @@ fn fillet_refuses_parallel_lines_and_radii_that_are_too_large() {
 }
 
 #[test]
-fn fillet_joins_only_lines_and_needs_two_different_ones() {
-    let circle: Entity = CircleEntity::new(p(-100.0, 0.0), 30.0).into();
-    let mut h = Harness::with_entities([line(10.0, 0.0, 100.0, 0.0), circle]);
+fn fillet_needs_two_different_objects_and_declines_polylines() {
+    let mut h = Harness::new();
+    h.enter_all(&[
+        "L", "10,0", "100,0", "", "PL", "-100,50", "-50,80", "0,50", "",
+    ]);
     h.enter("F");
-    h.click_world(p(50.0, 0.0));
-    h.click_world(p(-70.0, 0.0));
-    assert_eq!(
-        h.log().last().unwrap(),
-        "FILLET joins two lines; circles are not supported yet."
-    );
     h.click_world(p(50.0, 0.0));
     h.click_world(p(60.0, 0.0));
     assert_eq!(
         h.log().last().unwrap(),
         "Pick a different object for the second one."
+    );
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(-50.0, 80.0));
+    assert_eq!(
+        h.log().last().unwrap(),
+        "FILLET does not support polylines yet."
+    );
+    assert_eq!(h.entities().len(), 2);
+}
+
+// ── arcs and circles (#124) ──
+
+#[test]
+fn fillet_joins_a_line_to_a_circle_and_leaves_the_circle_whole() {
+    let circle: Entity = CircleEntity::new(p(0.0, 40.0), 30.0).into();
+    let mut h = Harness::with_entities([line(-200.0, 0.0, 200.0, 0.0), circle.clone()]);
+    let ids = h.ids();
+    h.enter_all(&["F", "R", "10"]);
+    h.click_world(p(60.0, 0.0));
+    h.click_world(p(30.0, 40.0)); // the circle's rightmost point
+
+    let entities = h.entities();
+    assert_eq!(entities.len(), 3);
+    assert_eq!(&h.ids()[..2], &ids[..]);
+    assert_eq!(entities[1], circle);
+    let reach = 700f64.sqrt();
+    let trimmed = h.lines()[0];
+    assert!(trimmed.start.distance_to(p(reach, 0.0)) < 1e-9 && trimmed.end == p(200.0, 0.0));
+    let Entity::Arc(arc) = &entities[2] else {
+        panic!("the third entity is the fillet arc");
+    };
+    assert!(arc.center.distance_to(p(reach, 10.0)) < 1e-9);
+    h.undo();
+    assert_eq!(h.entities(), vec![line(-200.0, 0.0, 200.0, 0.0), circle]);
+}
+
+#[test]
+fn fillet_joins_two_arcs_and_says_when_no_arc_fits() {
+    use cad_document::ArcEntity;
+    let left: Entity = ArcEntity::new(p(-50.0, 0.0), 30.0, 0.0, std::f64::consts::PI).into();
+    let right: Entity = ArcEntity::new(p(50.0, 0.0), 30.0, 0.0, std::f64::consts::PI).into();
+    let mut h = Harness::with_entities([left, right]);
+    h.enter_all(&["F", "R", "15"]);
+    h.click_world(p(-50.0, 30.0));
+    h.click_world(p(50.0, 30.0));
+    assert_eq!(
+        h.log().last().unwrap(),
+        "No fillet of that radius fits these objects."
+    );
+    assert_eq!(h.entities().len(), 2);
+
+    h.enter_all(&["R", "40"]);
+    h.click_world(p(-50.0, 30.0));
+    h.click_world(p(50.0, 30.0));
+    let entities = h.entities();
+    assert_eq!(entities.len(), 3);
+    let Entity::Arc(joint) = &entities[2] else {
+        panic!("the fillet arc");
+    };
+    assert!(joint.center.distance_to(p(0.0, 2400f64.sqrt())) < 1e-9);
+    // Both arcs now end where the fillet touches them.
+    for index in [0, 1] {
+        let Entity::Arc(kept) = &entities[index] else {
+            panic!("an arc stays an arc");
+        };
+        let kept = kept.arc();
+        let nearer = kept
+            .start_point()
+            .distance_to(joint.center)
+            .min(kept.end_point().distance_to(joint.center));
+        assert!((nearer - 40.0).abs() < 1e-9);
+    }
+}
+
+#[test]
+fn chamfer_is_for_straight_lines_only() {
+    let circle: Entity = CircleEntity::new(p(-100.0, 0.0), 30.0).into();
+    let mut h = Harness::with_entities([line(10.0, 0.0, 100.0, 0.0), circle]);
+    h.enter("CHA");
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(-70.0, 0.0));
+    assert_eq!(
+        h.log().last().unwrap(),
+        "CHAMFER joins two straight lines, not circles."
     );
     assert_eq!(h.entities().len(), 2);
 }

@@ -10,8 +10,8 @@ use cad_core::tolerance::LinearTolerance;
 use cad_core::{Aabb, Point2};
 use cad_geometry::{
     Corner, Path, PathOffsetError, PathTrimError, Primitive, distance_to_line, extend_arc,
-    extend_segment, offset_arc, offset_circle, offset_segment, trim_arc_parts, trim_circle_parts,
-    trim_segment_parts,
+    extend_segment, fillet_curves, offset_arc, offset_circle, offset_segment, trim_arc_parts,
+    trim_circle_parts, trim_segment_parts,
 };
 
 use crate::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity};
@@ -44,6 +44,9 @@ pub enum CornerError {
     Parallel,
     /// A line is too short for the radius or distances asked for.
     TooLarge,
+    /// No arc of that radius is tangent to both objects — or, with a radius
+    /// of zero, they never meet.
+    NoSolution,
 }
 
 impl From<cad_geometry::CornerError> for CornerError {
@@ -51,6 +54,7 @@ impl From<cad_geometry::CornerError> for CornerError {
         match error {
             cad_geometry::CornerError::Parallel => Self::Parallel,
             cad_geometry::CornerError::TooLarge => Self::TooLarge,
+            cad_geometry::CornerError::NoSolution => Self::NoSolution,
         }
     }
 }
@@ -264,9 +268,12 @@ impl Entity {
         }
     }
 
-    /// This line and `other` joined by an arc of `radius` tangent to both,
-    /// each cut back or carried on to meet it. A zero radius makes a sharp
-    /// corner and no arc.
+    /// This entity and `other` joined by an arc of `radius` tangent to both,
+    /// each cut back or carried on to meet it, keeping the side it was
+    /// picked on. A zero radius brings them to a sharp corner with no arc.
+    ///
+    /// Lines, arcs, and circles can be joined in any combination; a circle
+    /// is left whole. Polylines cannot yet.
     pub fn filleted(
         &self,
         pick: Point2,
@@ -274,13 +281,44 @@ impl Entity {
         other_pick: Point2,
         radius: f64,
     ) -> Result<Cornered, CornerError> {
-        let fillet = self
-            .corner_with(pick, other, other_pick)?
-            .fillet(radius, TOLERANCE)?;
-        let [first, second] = fillet.lines;
+        // Two lines: the corner construction, which also knows when a line
+        // is too short for the radius.
+        if let (Entity::Line(_), Entity::Line(_)) = (self, other) {
+            let fillet = self
+                .corner_with(pick, other, other_pick)?
+                .fillet(radius, TOLERANCE)?;
+            let [first, second] = fillet.lines;
+            return Ok(Cornered {
+                first: LineEntity::new(first.start, first.end).into(),
+                second: LineEntity::new(second.start, second.end).into(),
+                joint: fillet.arc.map(|arc| ArcEntity::from(arc).into()),
+            });
+        }
+        let curve = |entity: &Entity| match entity {
+            Entity::Line(line) => Ok(Primitive::Segment(line.segment())),
+            Entity::Circle(circle) => Ok(Primitive::Circle(circle.circle())),
+            Entity::Arc(arc) => Ok(Primitive::Arc(arc.arc())),
+            Entity::Polyline(_) => Err(CornerError::Unsupported(entity.kind_name())),
+        };
+        let rebuilt = |original: &Entity, primitive: Primitive| -> Entity {
+            match primitive {
+                Primitive::Segment(segment) => LineEntity::new(segment.start, segment.end).into(),
+                Primitive::Arc(arc) => ArcEntity::from(arc).into(),
+                // A circle is left exactly as it was, not rebuilt from its parts.
+                Primitive::Circle(_) => original.clone(),
+            }
+        };
+        let fillet = fillet_curves(
+            &curve(self)?,
+            pick,
+            &curve(other)?,
+            other_pick,
+            radius,
+            TOLERANCE,
+        )?;
         Ok(Cornered {
-            first: LineEntity::new(first.start, first.end).into(),
-            second: LineEntity::new(second.start, second.end).into(),
+            first: rebuilt(self, fillet.first),
+            second: rebuilt(other, fillet.second),
             joint: fillet.arc.map(|arc| ArcEntity::from(arc).into()),
         })
     }
@@ -1097,6 +1135,86 @@ mod tests {
         assert_eq!(joined.joint, None);
     }
 
+    // ── fillets with arcs and circles (#124) ──
+
+    #[test]
+    fn a_line_is_filleted_to_a_circle_which_stays_whole() {
+        let floor: Entity = LineEntity::new(p(-200.0, 0.0), p(200.0, 0.0)).into();
+        let circle: Entity = CircleEntity::new(p(0.0, 40.0), 30.0).into();
+        let joined = floor
+            .filleted(p(60.0, 0.0), &circle, p(25.0, 25.0), 10.0)
+            .unwrap();
+        assert_eq!(joined.second, circle, "untouched, to the last bit");
+        let Entity::Line(line) = &joined.first else {
+            panic!("a line stays a line");
+        };
+        assert!(close(line.start, p(700f64.sqrt(), 0.0)) && close(line.end, p(200.0, 0.0)));
+        let Some(Entity::Arc(arc)) = &joined.joint else {
+            panic!("a fillet arc");
+        };
+        assert!(close(arc.center, p(700f64.sqrt(), 10.0)) && (arc.radius - 10.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_line_and_an_arc_are_filleted_in_either_order() {
+        let floor: Entity = LineEntity::new(p(-100.0, 0.0), p(80.0, 0.0)).into();
+        let arc: Entity = ArcEntity::new(p(0.0, 60.0), 50.0, -FRAC_PI_2, 0.0).into(); // (0,10) → (50,60)
+        let one = floor
+            .filleted(p(-50.0, 0.0), &arc, p(40.0, 30.0), 8.0)
+            .unwrap();
+        let other = arc
+            .filleted(p(40.0, 30.0), &floor, p(-50.0, 0.0), 8.0)
+            .unwrap();
+        assert_eq!(one.first, other.second);
+        assert_eq!(one.second, other.first);
+        let (Some(Entity::Arc(a)), Some(Entity::Arc(b))) = (&one.joint, &other.joint) else {
+            panic!("fillet arcs");
+        };
+        assert!(close(a.center, b.center) && (a.radius - 8.0).abs() < 1e-12);
+        // The arc kept its far end and now starts where the fillet touches it.
+        let Entity::Arc(kept) = &one.second else {
+            panic!("an arc stays an arc");
+        };
+        assert!(close(kept.arc().end_point(), p(50.0, 60.0)));
+        assert!((kept.arc().start_point().distance_to(a.center) - 8.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn two_arcs_are_filleted_and_a_radius_that_does_not_fit_is_refused() {
+        let left: Entity = ArcEntity::new(p(-50.0, 0.0), 30.0, 0.0, PI).into();
+        let right: Entity = ArcEntity::new(p(50.0, 0.0), 30.0, 0.0, PI).into();
+        let joined = left
+            .filleted(p(-30.0, 22.0), &right, p(30.0, 22.0), 40.0)
+            .unwrap();
+        let Some(Entity::Arc(arc)) = &joined.joint else {
+            panic!("a fillet arc");
+        };
+        assert!(close(arc.center, p(0.0, 2400f64.sqrt())));
+        // Too small to reach across the gap of 40 between them.
+        assert_eq!(
+            left.filleted(p(-30.0, 22.0), &right, p(30.0, 22.0), 15.0),
+            Err(CornerError::NoSolution)
+        );
+    }
+
+    #[test]
+    fn a_zero_radius_brings_a_line_and_an_arc_to_a_sharp_corner() {
+        let level: Entity = LineEntity::new(p(-100.0, 40.0), p(10.0, 40.0)).into();
+        let arc: Entity = ArcEntity::new(p(0.0, 0.0), 50.0, 0.0, 0.5).into();
+        let joined = level
+            .filleted(p(0.0, 40.0), &arc, p(48.0, 14.0), 0.0)
+            .unwrap();
+        assert_eq!(joined.joint, None);
+        assert_eq!(
+            joined.first,
+            LineEntity::new(p(-100.0, 40.0), p(30.0, 40.0)).into()
+        );
+        let Entity::Arc(grown) = &joined.second else {
+            panic!("an arc stays an arc");
+        };
+        assert!(close(grown.arc().end_point(), p(30.0, 40.0)));
+    }
+
     #[test]
     fn two_lines_are_chamfered_with_equal_or_unequal_distances() {
         let (first, second) = l_lines();
@@ -1146,15 +1264,16 @@ mod tests {
             Err(CornerError::TooLarge)
         );
 
-        let circle: Entity = CircleEntity::new(p(0.0, 0.0), 10.0).into();
+        // CHAMFER joins straight lines only; FILLET takes curves but not polylines yet.
         let arc: Entity = ArcEntity::new(p(0.0, 0.0), 10.0, 0.0, 1.0).into();
-        assert_eq!(
-            first.filleted(p(50.0, 0.0), &circle, p(10.0, 0.0), 5.0),
-            Err(CornerError::Unsupported("circle"))
-        );
         assert_eq!(
             arc.chamfered(p(10.0, 0.0), &first, p(50.0, 0.0), [5.0, 5.0]),
             Err(CornerError::Unsupported("arc"))
+        );
+        let polyline: Entity = PolylineEntity::new(vec![p(0.0, 0.0), p(5.0, 5.0)], false).into();
+        assert_eq!(
+            first.filleted(p(50.0, 0.0), &polyline, p(2.0, 2.0), 5.0),
+            Err(CornerError::Unsupported("polyline"))
         );
     }
 

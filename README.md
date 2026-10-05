@@ -32,7 +32,7 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `OFFSET` | `O` | A parallel copy of a line, a concentric copy of a circle or an arc, or the offset of a polyline, at a set distance on the side you pick — or, with `Through`, through a point you pick. Repeats until Enter. |
 | `TRIM` | `TR` | Choose the cutting edges and press Enter — or just Enter to use every object — then pick objects on the part to remove. Lines, arcs, circles, and polylines can be trimmed ([details](docs/modify-matrix.md)). The part a click would remove is shown in red as you hover. |
 | `EXTEND` | `EX` | Choose the boundary edges and press Enter — or just Enter for every object — then pick lines, arcs, or open polylines near the end to carry on to the first boundary. The extension is previewed as you hover. |
-| `FILLET` | `F` | Joins two lines with a tangent arc, trimming or extending both. `Radius` sets the radius (remembered); zero makes a sharp corner. |
+| `FILLET` | `F` | Joins two lines, arcs, or circles with a tangent arc, trimming or extending them (a circle is left whole). `Radius` sets the radius (remembered); zero makes a sharp corner. Where several arcs would fit, the one nearest your two picks is used. |
 | `CHAMFER` | `CHA` | Joins two lines with a straight bevel. `Distance` sets the two distances (remembered). |
 | `UNDO` | `U`, Ctrl+Z | Reverts the last command. |
 | `REDO` | Ctrl+Y, Ctrl+Shift+Z | Re-applies the last undone command. |

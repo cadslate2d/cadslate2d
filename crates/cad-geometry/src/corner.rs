@@ -20,6 +20,9 @@ pub enum CornerError {
     Parallel,
     /// A line is too short for the radius or distance asked for.
     TooLarge,
+    /// No arc of that radius is tangent to both objects — or, for a radius
+    /// of zero, the objects never meet.
+    NoSolution,
 }
 
 /// One line of a corner, seen from the apex.

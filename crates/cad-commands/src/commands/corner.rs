@@ -1,9 +1,9 @@
-//! FILLET and CHAMFER for two lines (DESIGN §22): pick two lines; they are
-//! cut back or carried on to a corner, joined by a tangent arc or by a
-//! straight bevel.
+//! FILLET and CHAMFER (DESIGN §22): pick two objects; they are cut back or
+//! carried on to meet, joined by a tangent arc or by a straight bevel.
+//! FILLET joins lines, arcs, and circles; CHAMFER joins two lines.
 //!
 //! One state machine serves both. They differ in the setting they keep —
-//! one radius, or two distances — and in what joins the lines. The setting
+//! one radius, or two distances — and in what joins the objects. The setting
 //! is remembered for the session.
 
 use cad_core::{EntityId, Point2};
@@ -28,10 +28,18 @@ fn display(value: f64) -> String {
 }
 
 impl Kind {
-    fn name(self) -> &'static str {
+    /// FILLET joins lines, arcs, and circles; CHAMFER, lines only.
+    fn first_prompt(self) -> &'static str {
         match self {
-            Self::Fillet => "FILLET",
-            Self::Chamfer => "CHAMFER",
+            Self::Fillet => "Select first object",
+            Self::Chamfer => "Select first line",
+        }
+    }
+
+    fn second_prompt(self) -> &'static str {
+        match self {
+            Self::Fillet => "Select second object",
+            Self::Chamfer => "Select second line",
         }
     }
 
@@ -109,11 +117,11 @@ impl Kind {
 
     fn explain(self, error: CornerError) -> String {
         match (error, self) {
-            (CornerError::Unsupported(kind), _) => {
-                format!(
-                    "{} joins two lines; {kind}s are not supported yet.",
-                    self.name()
-                )
+            (CornerError::Unsupported(kind), Self::Fillet) => {
+                format!("FILLET does not support {kind}s yet.")
+            }
+            (CornerError::Unsupported(kind), Self::Chamfer) => {
+                format!("CHAMFER joins two straight lines, not {kind}s.")
             }
             (CornerError::Parallel, _) => "The lines are parallel.".to_owned(),
             (CornerError::TooLarge, Self::Fillet) => {
@@ -121,6 +129,9 @@ impl Kind {
             }
             (CornerError::TooLarge, Self::Chamfer) => {
                 "The distances are too large for these lines.".to_owned()
+            }
+            (CornerError::NoSolution, _) => {
+                "No fillet of that radius fits these objects.".to_owned()
             }
         }
     }
@@ -217,8 +228,8 @@ impl Command for CornerCommand {
 
     fn prompt(&self) -> Prompt {
         match self.state {
-            State::First => Prompt::new("Select first line"),
-            State::Second { .. } => Prompt::new("Select second line"),
+            State::First => Prompt::new(self.kind.first_prompt()),
+            State::Second { .. } => Prompt::new(self.kind.second_prompt()),
             State::Setting { index, current } => {
                 Prompt::new(self.kind.value_prompt(index)).with_default(display(current))
             }

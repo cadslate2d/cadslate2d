@@ -19,12 +19,12 @@ test.describe("FILLET", () => {
   test("joins two lines with a tangent arc of the set radius", async ({ page }) => {
     const canvas = await lShape(page);
     await enter(page, "F");
-    await expect(prompt(page)).toHaveText("Select first line or [Radius]:");
+    await expect(prompt(page)).toHaveText("Select first object or [Radius]:");
     await enter(page, "R");
     await expect(prompt(page)).toHaveText("Specify fillet radius <0>:");
     await enter(page, "20");
     await clickWorld(page, canvas, 50, 0);
-    await expect(prompt(page)).toHaveText("Select second line:");
+    await expect(prompt(page)).toHaveText("Select second object:");
     await clickWorld(page, canvas, 0, 50);
     await expect(prompt(page)).toHaveText("Command:");
 
@@ -58,7 +58,35 @@ test.describe("FILLET", () => {
     await enter(page, "F", "R", "500");
     await pickBoth(page, canvas);
     await expect(logLines(page).last()).toHaveText("The radius is too large for these lines.");
-    await expect(prompt(page)).toHaveText("Select first line or [Radius]:");
+    await expect(prompt(page)).toHaveText("Select first object or [Radius]:");
+  });
+});
+
+test.describe("FILLET with curves", () => {
+  test("joins a line to a circle with a tangent arc and leaves the circle whole", async ({
+    page,
+  }) => {
+    const canvas = await openApp(page);
+    await enter(page, "L", "-200,0", "200,0", "", "C", "0,40", "30", "F", "R", "10");
+    await clickWorld(page, canvas, 60, 0);
+    await clickWorld(page, canvas, 30, 40);
+    await expect(prompt(page)).toHaveText("Command:");
+
+    const text = await exported(page);
+    expect(text).toContain("CIRCLE\n  8\n0\n 10\n0.0\n 20\n40.0\n 40\n30.0\n");
+    // The fillet's centre: 10 above the line, 40 from the circle's centre.
+    const arc = /ARC\n {2}8\n0\n 10\n(.+)\n 20\n(.+)\n 40\n(.+)\n/.exec(text);
+    expect(Number(arc?.[1])).toBeCloseTo(Math.sqrt(700), 9);
+    expect(Number(arc?.[2])).toBeCloseTo(10, 9);
+    expect(Number(arc?.[3])).toBeCloseTo(10, 9);
+  });
+
+  test("says when no arc of the radius fits", async ({ page }) => {
+    const canvas = await openApp(page);
+    await enter(page, "C", "-50,0", "30", "C", "50,0", "30", "F", "R", "15");
+    await clickWorld(page, canvas, -50, 30);
+    await clickWorld(page, canvas, 50, 30);
+    await expect(logLines(page).last()).toHaveText("No fillet of that radius fits these objects.");
   });
 });
 

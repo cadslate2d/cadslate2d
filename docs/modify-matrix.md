@@ -80,9 +80,36 @@ Not implemented: extending to implied edges.
 
 Tests: `cad-geometry/src/extend.rs`, `cad-geometry/src/path.rs`, `cad-document/src/editing.rs`, `cad-commands/src/tests/edge.rs`, `web/e2e/trim-extend.spec.ts`.
 
-## FILLET and CHAMFER
+## FILLET
 
-Two picks; the two objects are cut back or carried on to a corner and joined.
+Two picks; the two objects are cut back or carried on to meet a tangent arc of the set radius.
+
+| First ↓ / Second → | Line | Arc | Circle | Polyline |
+| --- | --- | --- | --- | --- |
+| Line | yes | yes | yes | no |
+| Arc | yes | yes | yes | no |
+| Circle | yes | yes | yes | no |
+| Polyline | no | no | no | no |
+
+Rules:
+
+- The objects need not touch. A line is cut back or carried on to the point where the fillet touches it; an arc is cut back or carried round its circle; **a circle is left whole**.
+- Of each object, the side that was picked is the side that is kept.
+- There can be up to eight arcs of a given radius tangent to two objects. The one used touches each object nearest to where it was picked — so the picks choose the fillet as well as the sides.
+- Between two lines, a radius that would use up a whole line is refused: "The radius is too large for these lines." Parallel lines are refused: "The lines are parallel."
+- With a curve involved, when no arc of the radius is tangent to both: "No fillet of that radius fits these objects."
+- Radius zero makes a sharp corner and no arc: two lines meet at their corner; a line and an arc, or two arcs, meet where their line or circle cross, nearest the picks.
+- Both objects keep their identity; the arc is a new object. One fillet is one transaction.
+- Polylines are refused by name. Picking the same object twice is refused.
+- The radius cannot be negative and is remembered for the session.
+
+Not implemented: fillets on polylines; the `Polyline`, `Trim`, and `Multiple` options.
+
+Tests: `cad-geometry/src/corner.rs` and `cad-geometry/src/curve_fillet.rs` (each with a property test that the fillet arc is tangent to both objects), `cad-document/src/editing.rs`, `cad-commands/src/tests/corner.rs`, `web/e2e/fillet-chamfer.spec.ts`.
+
+## CHAMFER
+
+Two picks; two lines are cut back or carried on to a corner and joined by a straight bevel.
 
 | First ↓ / Second → | Line | Arc | Circle | Polyline |
 | --- | --- | --- | --- | --- |
@@ -91,15 +118,13 @@ Two picks; the two objects are cut back or carried on to a corner and joined.
 
 Rules:
 
-- The lines need not touch: each is cut back or carried on as required. Where they cross, the side of each line that was picked is the side that is kept.
-- **FILLET** joins them with an arc of the set radius, tangent to both. Radius zero makes a sharp corner and no arc.
-- **CHAMFER** cuts the first line picked back by the first distance and the second by the second, and joins the two points with a line. Both distances zero makes a sharp corner and no line.
-- Both lines keep their identity and direction; the arc or bevel is a new object. One join is one transaction.
-- Parallel lines are refused: "The lines are parallel."
-- A radius or distance that would use up a whole line is refused: "The radius is too large for these lines." / "The distances are too large for these lines."
-- Anything but two lines is refused by name. Picking the same line twice is refused.
-- Radius and distances cannot be negative and are remembered for the session.
+- The first line picked is cut back by the first distance and the second by the second, measured from where the lines meet; the two points are joined with a line. Both distances zero makes a sharp corner and no line.
+- The lines need not touch, and where they cross, the side of each that was picked is kept.
+- Both lines keep their identity and direction; the bevel is a new object. One chamfer is one transaction.
+- Parallel lines are refused: "The lines are parallel." Distances that would use up a whole line: "The distances are too large for these lines."
+- A chamfer is a cut across a corner of two straight lines; an arc or a circle has no such corner. They are refused by name: "CHAMFER joins two straight lines, not arcs."
+- Distances cannot be negative and are remembered for the session.
 
-Not implemented: fillets and chamfers involving arcs, circles, or polylines; the `Polyline`, `Angle`, `Trim`, and `Multiple` options.
+Not implemented: chamfers on polylines; the `Angle`, `Polyline`, `Trim`, and `Multiple` options.
 
-Tests: `cad-geometry/src/corner.rs` (including a property test that the fillet arc is tangent to both lines), `cad-document/src/editing.rs`, `cad-commands/src/tests/corner.rs`, `web/e2e/fillet-chamfer.spec.ts`.
+Tests: `cad-geometry/src/corner.rs`, `cad-document/src/editing.rs`, `cad-commands/src/tests/corner.rs`, `web/e2e/fillet-chamfer.spec.ts`.

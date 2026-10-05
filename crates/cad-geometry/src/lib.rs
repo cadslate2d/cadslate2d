@@ -9,6 +9,7 @@ mod arc;
 mod construct;
 mod corner;
 mod crossing;
+mod curve_fillet;
 mod extend;
 pub mod intersect;
 mod offset;
@@ -21,6 +22,7 @@ mod trim;
 
 pub use arc::{Arc, Circle, normalize_angle};
 pub use corner::{Chamfer, Corner, CornerError, Fillet};
+pub use curve_fillet::{CurveFillet, fillet_curves};
 pub use extend::{extend_arc, extend_segment};
 pub use intersect::{Hits, Orientation, Primitive, orientation};
 pub use offset::{distance_to_line, offset_arc, offset_circle, offset_segment};
