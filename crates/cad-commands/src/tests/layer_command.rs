@@ -155,15 +155,22 @@ fn set_makes_a_layer_current_and_new_objects_go_on_it() {
 fn color_gives_layers_a_colour_from_the_palette() {
     let mut h = with_layers();
     h.enter_all(&["LA", "C"]);
-    assert_eq!(h.prompt(), "Enter colour number (1-255):");
-    for bad in ["0", "256", "2.5", "-3"] {
+    assert_eq!(h.prompt(), "Enter colour (1-255 or a name):");
+    for bad in ["0", "256", "2.5", "-3", "purple"] {
         h.enter(bad);
         assert_eq!(
             last(&h),
-            "A colour is a whole number from 1 to 255.",
+            "A colour is a number from 1 to 255, or red, yellow, green, cyan, blue, magenta, or white.",
             "{bad}"
         );
-        assert_eq!(h.prompt(), "Enter colour number (1-255):");
+        assert_eq!(h.prompt(), "Enter colour (1-255 or a name):");
+    }
+    for reference in ["ByLayer", "byblock"] {
+        h.enter(reference);
+        assert_eq!(
+            last(&h),
+            "A layer needs a colour of its own, not ByLayer or ByBlock."
+        );
     }
     h.enter("3");
     assert_eq!(h.prompt(), "Enter name(s) of layer(s) for colour 3:");
@@ -173,6 +180,10 @@ fn color_gives_layers_a_colour_from_the_palette() {
     assert_eq!(layer(&h, "walls").color, Color::Index(3));
     assert_eq!(layer(&h, "0").color, Color::Index(3));
     assert_eq!(layer(&h, "doors").color, Color::Index(7));
+
+    // A name is the same as its number.
+    h.enter_all(&["LA", "C", "Blue", "doors", ""]);
+    assert_eq!(layer(&h, "doors").color, Color::Index(5));
 
     h.enter_all(&["LA", "C", "1", "walls,nowhere"]);
     assert_eq!(last(&h), "There is no layer \"nowhere\".");

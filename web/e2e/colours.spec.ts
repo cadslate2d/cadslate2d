@@ -80,6 +80,29 @@ test.describe("layer colours", () => {
     expect((await rendererStats(page)).sceneUploads).toBe(before.sceneUploads);
   });
 
+  test("an object's own colour wins over its layer's; ByLayer follows it", async ({ page }) => {
+    const canvas = await openApp(page);
+    await page.keyboard.press("F7");
+    // One line coloured by its layer, one with a colour of its own.
+    await enter(page, "L", "0,0", "100,0", "");
+    await enter(page, "COLOR", "red", "L", "0,40", "100,40", "");
+    await page.mouse.move(5, 5);
+    expect((await along(page, canvas, 0)).foreground).toBeGreaterThan(60);
+    expect((await along(page, canvas, 40)).red).toBeGreaterThan(60);
+
+    await enter(page, "LA", "C", "blue", "0", "");
+    await page.mouse.move(6, 6);
+    expect((await along(page, canvas, 0)).blue).toBeGreaterThan(60);
+    const own = await along(page, canvas, 40);
+    expect(own.red).toBeGreaterThan(60);
+    expect(own.blue).toBe(0);
+
+    // Back to ByLayer: the next line takes the layer's blue.
+    await enter(page, "COLOR", "ByLayer", "L", "0,-40", "100,-40", "");
+    await page.mouse.move(7, 7);
+    expect((await along(page, canvas, -40)).blue).toBeGreaterThan(60);
+  });
+
   test("pointer movement, pan, and zoom upload neither geometry nor styles", async ({ page }) => {
     const canvas = await openApp(page);
     await enter(page, "LA", "N", "walls", "C", "1", "walls", "S", "walls", "");

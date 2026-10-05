@@ -11,8 +11,8 @@ use crate::layer::{Layer, LayerId, LayerNameError, LayerTable, initial_layers};
 use crate::spatial::RTreeIndex;
 use crate::table::TableChange;
 use crate::{
-    Change, DrawingSettings, Entity, EntityChange, EntityRecord, EntityStore, Properties, Revision,
-    SettingsChange, SpatialIndex, Transaction,
+    Change, Color, DrawingSettings, Entity, EntityChange, EntityRecord, EntityStore, Properties,
+    Revision, SettingsChange, SpatialIndex, Transaction,
 };
 
 /// A 2D drawing.
@@ -236,6 +236,11 @@ impl Drawing {
         self.settings.current_layer
     }
 
+    /// The colour new objects are given.
+    pub fn current_color(&self) -> Color {
+        self.settings.current_color
+    }
+
     /// The drawing's unit, or `None` if it is unitless.
     pub fn unit(&self) -> Option<LengthUnit> {
         self.settings.unit
@@ -426,11 +431,15 @@ impl TransactionBuilder<'_> {
     /// transaction is abandoned; sparse IDs are fine (DESIGN §10.2).
     ///
     /// The entity gets the properties new objects are given: the current
-    /// layer, everything by layer. An object made *from* another — a copy,
+    /// layer and the current colour, the rest by layer. An object made *from* another — a copy,
     /// an offset, the second piece of a break — takes that object's
     /// properties with [`insert_like`](Self::insert_like) instead.
     pub fn insert(&mut self, entity: impl Into<Entity>) -> EntityId {
-        let properties = Properties::on(self.settings_now().current_layer);
+        let settings = self.settings_now();
+        let properties = Properties {
+            color: settings.current_color,
+            ..Properties::on(settings.current_layer)
+        };
         self.insert_record(EntityRecord::new(entity, properties))
     }
 
@@ -568,6 +577,15 @@ impl TransactionBuilder<'_> {
             ..self.settings_now()
         });
         Ok(())
+    }
+
+    /// Sets the colour new objects are given. `ByLayer`, the default, means
+    /// each takes its layer's.
+    pub fn set_current_color(&mut self, color: Color) {
+        self.set_settings(DrawingSettings {
+            current_color: color,
+            ..self.settings_now()
+        });
     }
 
     /// Says what the drawing's numbers are numbers of; `None` makes it
@@ -1567,7 +1585,7 @@ mod tests {
             drawing.settings(),
             DrawingSettings {
                 current_layer: walls,
-                unit: None
+                ..DrawingSettings::default()
             }
         );
         let on_walls = create(&mut drawing, line(0.0, 0.0, 10.0, 0.0));
@@ -1594,6 +1612,58 @@ mod tests {
             LayerId::FIRST,
             "one step back to where it was"
         );
+    }
+
+    /// #135: new objects take the current colour; it is a setting, undone
+    /// like any other, and an object keeps what it was given.
+    #[test]
+    fn new_entities_take_the_current_colour_which_is_an_undoable_setting() {
+        let mut drawing = Drawing::new();
+        assert_eq!(drawing.current_color(), Color::ByLayer);
+        let walls = add_layer(&mut drawing, "walls");
+        let by_layer = create(&mut drawing, line(0.0, 0.0, 10.0, 0.0));
+
+        let mut tx = drawing.transaction();
+        tx.set_current_color(Color::Index(1));
+        tx.set_current_layer(walls).unwrap();
+        tx.commit();
+        assert_eq!(drawing.current_color(), Color::Index(1));
+        let red = create(&mut drawing, line(0.0, 5.0, 10.0, 5.0));
+        assert_eq!(
+            drawing.properties(red),
+            Some(Properties {
+                color: Color::Index(1),
+                ..Properties::on(walls)
+            })
+        );
+        assert_eq!(
+            drawing.properties(by_layer),
+            Some(Properties::default()),
+            "untouched"
+        );
+
+        // An object made from another takes that one's colour, not the current one.
+        let mut tx = drawing.transaction();
+        let copy = tx.insert_like(by_layer, line(0.0, 9.0, 10.0, 9.0)).unwrap();
+        tx.commit();
+        assert_eq!(drawing.properties(copy).unwrap().color, Color::ByLayer);
+
+        drawing.undo().unwrap(); // the copy
+        drawing.undo().unwrap(); // the red line
+        drawing.undo().unwrap(); // the settings: colour and layer together
+        assert_eq!(
+            (drawing.current_color(), drawing.current_layer()),
+            (Color::ByLayer, LayerId::FIRST)
+        );
+        drawing.redo().unwrap();
+        assert_eq!(drawing.current_color(), Color::Index(1));
+
+        // Set and draw in one transaction.
+        let mut tx = drawing.transaction();
+        tx.set_current_color(Color::ByBlock);
+        let id = tx.insert(line(0.0, 20.0, 10.0, 20.0));
+        tx.commit();
+        assert_eq!(drawing.properties(id).unwrap().color, Color::ByBlock);
     }
 
     /// #113: changing the drawing unit is undoable, and changes no geometry.

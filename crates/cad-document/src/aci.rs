@@ -53,6 +53,65 @@ impl Color {
     }
 }
 
+/// The seven colours that have names, by number.
+const NAMES: [(&str, u8); 7] = [
+    ("red", 1),
+    ("yellow", 2),
+    ("green", 3),
+    ("cyan", 4),
+    ("blue", 5),
+    ("magenta", 6),
+    ("white", 7),
+];
+
+impl Color {
+    /// Reads a colour as it is typed: a number from 1 to 255, one of the
+    /// seven names (`red`, `yellow`, `green`, `cyan`, `blue`, `magenta`,
+    /// `white`), `ByLayer`, or `ByBlock`. Case does not count. `None` for
+    /// anything else, 0 and 256 included.
+    pub fn parse(text: &str) -> Option<Self> {
+        let text = text.trim();
+        if text.eq_ignore_ascii_case("bylayer") {
+            return Some(Color::ByLayer);
+        }
+        if text.eq_ignore_ascii_case("byblock") {
+            return Some(Color::ByBlock);
+        }
+        if let Some((_, index)) = NAMES
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(text))
+        {
+            return Some(Color::Index(*index));
+        }
+        // Digits only: "+3", "3.0", and " 3 " inside are not colour numbers.
+        if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        match text.parse::<u8>() {
+            Ok(index) if index >= 1 => Some(Color::Index(index)),
+            _ => None,
+        }
+    }
+
+    /// The colour as it is shown: `ByLayer`, `ByBlock`, `red`, or a number.
+    pub fn describe(self) -> String {
+        match self {
+            Color::ByLayer => "ByLayer".to_owned(),
+            Color::ByBlock => "ByBlock".to_owned(),
+            Color::Index(index) => NAMES
+                .iter()
+                .find(|(_, named)| *named == index)
+                .map_or_else(|| index.to_string(), |(name, _)| (*name).to_owned()),
+        }
+    }
+
+    /// Whether this is a colour in itself, not a reference to a layer's or
+    /// a block's: what a layer's own colour must be.
+    pub const fn is_concrete(self) -> bool {
+        matches!(self, Color::Index(_))
+    }
+}
+
 /// Red, green, and blue of each index colour. Entry 0 is unused.
 #[rustfmt::skip]
 const INDEX_RGB: [[u8; 3]; 256] = [
@@ -170,6 +229,69 @@ mod tests {
         // Even shades are pure, and darker down the ten.
         assert_eq!(index_paint(12), Paint::Rgb([165, 0, 0]));
         assert_eq!(index_paint(18), Paint::Rgb([38, 0, 0]));
+    }
+
+    /// #135: colours are entered by number or by the seven standard names.
+    #[test]
+    fn colours_are_read_by_number_by_name_and_by_reference() {
+        let cases = [
+            ("1", Color::Index(1)),
+            ("7", Color::Index(7)),
+            ("42", Color::Index(42)),
+            ("255", Color::Index(255)),
+            ("007", Color::Index(7)),
+            ("red", Color::Index(1)),
+            ("Yellow", Color::Index(2)),
+            ("GREEN", Color::Index(3)),
+            ("cyan", Color::Index(4)),
+            ("blue", Color::Index(5)),
+            ("magenta", Color::Index(6)),
+            ("white", Color::Index(7)),
+            (" blue ", Color::Index(5)),
+            ("bylayer", Color::ByLayer),
+            ("ByLayer", Color::ByLayer),
+            ("BYBLOCK", Color::ByBlock),
+        ];
+        for (typed, color) in cases {
+            assert_eq!(Color::parse(typed), Some(color), "{typed:?}");
+        }
+        for typed in [
+            "",
+            "0",
+            "256",
+            "1000",
+            "-1",
+            "+3",
+            "3.0",
+            "1e2",
+            "purple",
+            "re",
+            "reds",
+            "by layer",
+            "1 2",
+            "٣",
+            "99999999999999999999",
+        ] {
+            assert_eq!(Color::parse(typed), None, "{typed:?}");
+        }
+    }
+
+    #[test]
+    fn a_colour_is_shown_by_its_name_if_it_has_one_and_reads_back_as_itself() {
+        assert_eq!(Color::Index(1).describe(), "red");
+        assert_eq!(Color::Index(7).describe(), "white");
+        assert_eq!(Color::Index(8).describe(), "8");
+        assert_eq!(Color::Index(255).describe(), "255");
+        assert_eq!(Color::ByLayer.describe(), "ByLayer");
+        assert_eq!(Color::ByBlock.describe(), "ByBlock");
+        let every = (1..=255u8)
+            .map(Color::Index)
+            .chain([Color::ByLayer, Color::ByBlock]);
+        for color in every {
+            assert_eq!(Color::parse(&color.describe()), Some(color), "{color:?}");
+        }
+        assert!(Color::Index(3).is_concrete());
+        assert!(!Color::ByLayer.is_concrete() && !Color::ByBlock.is_concrete());
     }
 
     #[test]

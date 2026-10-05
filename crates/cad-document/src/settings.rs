@@ -6,6 +6,7 @@
 
 use cad_core::LengthUnit;
 
+use crate::Color;
 use crate::layer::LayerId;
 
 /// The settings of one drawing.
@@ -13,6 +14,8 @@ use crate::layer::LayerId;
 pub struct DrawingSettings {
     /// The layer new objects are put on.
     pub current_layer: LayerId,
+    /// The colour new objects are given: `ByLayer` unless set otherwise.
+    pub current_color: Color,
     /// What the drawing's numbers are numbers of, or `None` for a unitless
     /// drawing. It says what the geometry means and changes none of it: a
     /// line 25 long is 25 long in any unit. A typed length with a unit
@@ -21,10 +24,12 @@ pub struct DrawingSettings {
 }
 
 impl Default for DrawingSettings {
-    /// New objects go on layer `0`; the drawing is unitless.
+    /// New objects go on layer `0`, coloured by their layer; the drawing
+    /// is unitless.
     fn default() -> Self {
         Self {
             current_layer: LayerId::FIRST,
+            current_color: Color::ByLayer,
             unit: None,
         }
     }
@@ -56,6 +61,7 @@ mod tests {
     fn a_new_drawing_draws_on_layer_zero() {
         assert_eq!(DrawingSettings::default().current_layer, LayerId::FIRST);
         assert_eq!(DrawingSettings::default().unit, None, "and has no unit");
+        assert_eq!(DrawingSettings::default().current_color, Color::ByLayer);
     }
 
     #[test]
@@ -64,6 +70,7 @@ mod tests {
             before: DrawingSettings::default(),
             after: DrawingSettings {
                 current_layer: LayerId::from_raw(3),
+                current_color: Color::Index(1),
                 unit: Some(LengthUnit::Metres),
             },
         };

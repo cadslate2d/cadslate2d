@@ -10,6 +10,7 @@
 use cad_document::{Color, Layer, LayerId, TransactionBuilder, TransactionError};
 use cad_input::{ExpectedInput, InputKind, Keyword};
 
+use super::color::NOT_A_COLOR;
 use crate::{Command, CommandContext, CommandInput, Prompt, Step};
 
 const LIST: Keyword = Keyword::new("?");
@@ -69,7 +70,7 @@ enum State {
     Option,
     New,
     Set,
-    /// The colour number, then the layers to give it to.
+    /// The colour, then the layers to give it to.
     ColorNumber,
     ColorLayers(u8),
     Switch(Switch),
@@ -331,7 +332,7 @@ impl Command for LayerCommand {
             State::Option => Prompt::new("Press Enter to finish"),
             State::New => Prompt::new("Enter name(s) for new layer(s)"),
             State::Set => Prompt::new("Enter name of layer to make current"),
-            State::ColorNumber => Prompt::new("Enter colour number (1-255)"),
+            State::ColorNumber => Prompt::new("Enter colour (1-255 or a name)"),
             State::ColorLayers(index) => {
                 Prompt::new(format!("Enter name(s) of layer(s) for colour {index}"))
             }
@@ -348,7 +349,6 @@ impl Command for LayerCommand {
     fn expected(&self) -> ExpectedInput {
         match self.state {
             State::Option => ExpectedInput::new(InputKind::Nothing).with_keywords(&OPTIONS),
-            State::ColorNumber => ExpectedInput::factor(),
             _ => ExpectedInput::text(),
         }
     }
@@ -373,14 +373,14 @@ impl Command for LayerCommand {
                     }
                 };
             }
-            (State::ColorNumber, CommandInput::Distance(number)) => {
-                // A whole number from 1 to 255: an entry of the index palette.
-                if number.fract() == 0.0 && (1.0..=255.0).contains(&number) {
-                    self.state = State::ColorLayers(number as u8);
-                } else {
-                    ctx.message("A colour is a whole number from 1 to 255.");
+            (State::ColorNumber, CommandInput::Text(text)) => match Color::parse(&text) {
+                Some(Color::Index(index)) => self.state = State::ColorLayers(index),
+                // A layer's colour is what ByLayer means: it cannot be ByLayer.
+                Some(Color::ByLayer | Color::ByBlock) => {
+                    ctx.message("A layer needs a colour of its own, not ByLayer or ByBlock.");
                 }
-            }
+                None => ctx.message(NOT_A_COLOR),
+            },
             (_, CommandInput::Text(text)) => self.text(&text, ctx),
             // Enter at any other prompt goes back to the options.
             (_, CommandInput::Accept) => self.state = State::Option,

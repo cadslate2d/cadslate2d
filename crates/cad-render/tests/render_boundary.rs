@@ -450,3 +450,34 @@ fn pointer_activity_touches_neither_geometry_nor_styles_and_a_recolour_only_styl
     assert_eq!(&scene.styles()[4..8], &[0, 255, 0, RenderScene::STYLE_RGB]);
     assert_eq!((cache.build_count(), cache.style_build_count()), (1, 2));
 }
+
+/// #135: an object with a colour of its own is a style of its own, and a
+/// change of its layer's colour leaves it as it is.
+#[test]
+fn an_objects_own_colour_wins_over_its_layers_on_screen() {
+    let mut h = Harness::new();
+    h.enter_all(&["LA", "N", "walls", "C", "blue", "walls", "S", "walls", ""]);
+    h.enter_all(&["L", "0,0", "10,0", ""]); // ByLayer
+    h.enter_all(&["COLOR", "red", "L", "0,5", "10,5", ""]); // its own red
+
+    // The row each line is drawn with, in the order the lines were drawn.
+    let rows = |h: &Harness| -> Vec<[u8; 4]> {
+        let mut cache = SceneCache::new();
+        let scene = cache.scene(h.session.drawing());
+        let (rows, _) = scene.styles().as_chunks::<4>();
+        scene
+            .segment_styles()
+            .iter()
+            .map(|style| rows[usize::from(*style)])
+            .collect()
+    };
+    let rgb = |red, green, blue| [red, green, blue, RenderScene::STYLE_RGB];
+    assert_eq!(rows(&h), vec![rgb(0, 0, 255), rgb(255, 0, 0)]);
+
+    h.enter_all(&["LA", "C", "green", "walls", ""]);
+    assert_eq!(
+        rows(&h),
+        vec![rgb(0, 255, 0), rgb(255, 0, 0)],
+        "only the ByLayer line followed its layer"
+    );
+}

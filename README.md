@@ -23,6 +23,7 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `ARC` | `A` | Three points; or start, `Center`, end; or start, centre, `Angle`. |
 | `PLINE` | `PL` | One polyline through a chain of points. `Arc` switches to arc segments that continue smoothly from the one before; `Line` switches back. Also `Close`, `Undo`. |
 | `RECTANG` | `REC` | A closed rectangle from two corners. |
+| `COLOR` | `COL` | The colour new objects are given: a number from 1 to 255, a name (`red`, `yellow`, `green`, `cyan`, `blue`, `magenta`, `white`), `ByLayer` (the default), or `ByBlock`. An object with a colour of its own keeps it whatever its layer's colour becomes. |
 | `UNITS` | `UN` | Says what the drawing's numbers are: unitless (the default), millimetres, centimetres, metres, inches, or feet. Nothing is rescaled; the unit is what a typed `25mm` is converted into, and it is saved with the drawing. |
 | `LAYER` | `LA` | Layers from the command line: `New`, `Set` (the layer new objects go on), `Color`, `ON`, `OFF`, `Lock`, `Unlock`, `Rename`, `Delete`, and `?` to list. Names may contain spaces; several can be given at once, separated by commas. Objects on a layer that is off are hidden and cannot be picked; objects on a locked layer cannot be changed. |
 | `ERASE` | `E`, Delete | Erases the selected objects. |
@@ -105,7 +106,7 @@ A position that would collapse the object — a line of no length, a circle of n
 
 Every object is on a layer; new objects go on the current one, and an object made from another — a copy, an offset, a piece of a trim — stays on its source's. `LAYER` makes and manages them. A layer that is **off** hides its objects from the screen and from the pointer. A layer that is **locked** still shows them, and they can be snapped to and trimmed against, but no command changes them.
 
-Objects are drawn in the colour of their layer (`LAYER`, `Color`, a number from 1 to 255: 1 red, 2 yellow, 3 green, 4 cyan, 5 blue, 6 magenta). Colour 7, which a new layer has, is the foreground: light on the dark canvas.
+Objects are drawn in the colour of their layer (`LAYER`, `Color`), or in a colour of their own if they were drawn after `COLOR` set one. A colour is a number from 1 to 255 or one of seven names: 1 red, 2 yellow, 3 green, 4 cyan, 5 blue, 6 magenta, 7 white. Colour 7, which a new layer has, is the foreground: light on the dark canvas.
 
 Not there yet: layers are not written to or read from DXF — an exported drawing has everything on layer `0`. That is in the [M4 plan](docs/roadmap.md).
 
