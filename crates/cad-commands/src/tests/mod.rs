@@ -7,6 +7,7 @@ mod bulged;
 mod corner;
 mod edge;
 mod grips;
+mod join;
 mod modify;
 mod offset;
 mod reconciliation;

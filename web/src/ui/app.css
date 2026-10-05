@@ -23,6 +23,9 @@ body {
 /* The canvas owns most of the screen; the command line is always present (DESIGN §5). */
 .shell {
   display: grid;
+  /* One column exactly as wide as the window: no row may widen the shell,
+     or the canvas would change size with the number of toolbar buttons. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: var(--size-header) minmax(0, 1fr) auto var(--size-status);
   height: 100%;
 }
@@ -36,6 +39,14 @@ body {
   align-items: stretch;
   padding: 0 var(--space-2);
   border-bottom: 1px solid var(--color-border);
+  /* In a window too narrow for every tool the row scrolls sideways; it
+     never wraps, so the canvas keeps its height. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.toolbar__group {
+  flex: none;
 }
 
 .toolbar__group {
@@ -53,8 +64,8 @@ body {
   display: grid;
   justify-items: center;
   gap: var(--space-1);
-  min-width: 64px;
-  padding: var(--space-2);
+  min-width: 56px;
+  padding: var(--space-2) var(--space-1);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;

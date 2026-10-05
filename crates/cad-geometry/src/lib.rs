@@ -12,6 +12,7 @@ mod crossing;
 mod curve_fillet;
 mod extend;
 pub mod intersect;
+mod join;
 mod offset;
 mod path;
 mod path_corner;
@@ -26,6 +27,9 @@ pub use corner::{Chamfer, Corner, CornerError, Fillet};
 pub use curve_fillet::{CurveFillet, fillet_curves};
 pub use extend::{extend_arc, extend_segment};
 pub use intersect::{Hits, Orientation, Primitive, orientation};
+pub use join::{
+    ArcJoinError, Chain, JoinedArcs, chain_paths, cocircular, join_arcs, join_segments,
+};
 pub use offset::{distance_to_line, offset_arc, offset_circle, offset_segment};
 pub use path::{Location, Path, PathTrimError};
 pub use path_corner::{CornerJoin, PathCornerError};

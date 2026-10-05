@@ -156,3 +156,30 @@ Rules:
 - After a refusal the command asks for the second point again.
 
 Tests: `cad-geometry/src/trim.rs` (`break_*`), `cad-geometry/src/path.rs` (`Path::broken`), `cad-document/src/editing.rs`, `cad-commands/src/tests/break_.rs`, `cad-input/src/point.rs` (the bare `@`), `web/e2e/break.spec.ts`.
+
+## JOIN
+
+Acts on a selection, made before the command or at its prompt. What happens depends on the whole selection, in this order:
+
+| The selection is… | Result | Refused when |
+| --- | --- | --- |
+| Lines, all on one line | One line from the first end to the last. **A gap between them is bridged**; overlaps are merged | — |
+| Arcs, all on one circle | One arc; or a circle, when together they go all the way round | Some of them neither touch nor overlap another: "These arcs are on one circle but do not touch. The Close option makes the whole circle." |
+| Anything else: lines, arcs, and open polylines | Those that meet end to end become polylines, one per chain; a chain that returns to its start is closed. Objects that meet nothing are left as they are | Nothing meets anything: "Nothing to join: none of these objects meet end to end." |
+| With the `Close` option: arcs of one circle, one or more | The whole circle, gaps or not | Anything else is selected: "Close makes a circle out of arcs of one circle; select only those." |
+
+Rules:
+
+- Two ends are the same point when they are within the linear tolerance (10⁻⁹) of each other — the tolerance class, not a number of its own.
+- A gap between collinear lines is bridged because there is only one way to do it. A gap between arcs is not: it could be closed either way round, and the command does not guess.
+- Lines that are not *all* collinear are chained instead: two collinear lines and a third at an angle become one polyline with a vertex where the two met.
+- Arc segments keep their shape whichever way the chain runs through them. A chain runs in the direction of its oldest member.
+- Where more than two ends meet at one point, the two oldest objects are joined there.
+- Circles and closed polylines have no ends and are never joined.
+- Each result takes the place of its oldest member and keeps that object's identity; the other members are removed. One JOIN is one transaction, however many chains it makes.
+- Fewer than two objects: "Select at least two objects to join." A refusal changes nothing.
+- JOIN undoes a BREAK at one point exactly for lines and arcs; a polyline keeps the vertex it was broken at.
+
+Not implemented: bridging a gap between arcs; joining to a chosen source object; a fuzz distance for ends that nearly meet.
+
+Tests: `cad-geometry/src/join.rs` (with a property test that a path cut into its segments, shuffled, and turned round chains back into one), `cad-document/src/joining.rs`, `cad-commands/src/tests/join.rs`, `web/e2e/join.spec.ts`.

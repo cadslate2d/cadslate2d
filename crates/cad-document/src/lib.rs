@@ -14,6 +14,7 @@ mod entity;
 mod grips;
 mod history;
 mod id_alloc;
+mod joining;
 mod revision;
 pub mod spatial;
 mod store;
@@ -25,6 +26,7 @@ pub use editing::{
 };
 pub use entity::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity, SharedEntity};
 pub use grips::{EntityGrip, GripKind};
+pub use joining::{JoinError, Joined, close_into_circle, join};
 pub use revision::Revision;
 pub use spatial::SpatialIndex;
 pub use store::{DuplicateEntityId, EntityStore};

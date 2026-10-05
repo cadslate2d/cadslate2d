@@ -128,6 +128,16 @@ const MODIFY: readonly Tool[] = [
     ),
   },
   {
+    command: "JOIN",
+    label: "Join",
+    icon: icon(
+      <>
+        <path d="M3 12h6M15 12h6" />
+        <circle cx="12" cy="12" r="2.5" />
+      </>,
+    ),
+  },
+  {
     command: "ERASE",
     label: "Erase",
     icon: icon(<path d="M5 19h14M7 15 15 5l4 3-8 10H8z" strokeLinejoin="round" />),
