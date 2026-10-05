@@ -23,6 +23,7 @@ There are two kinds:
 | [0010](0010-grip-editing-and-arc-grip-semantics.md) | Grip editing as a command, and what arc grips hold fixed | Accepted | Evidence |
 | [0011](0011-polyline-offset.md) | Polyline offset: slice the raw offset and keep what is at the distance | Accepted | Evidence |
 | [0012](0012-linear-tolerance-far-from-the-origin.md) | The linear tolerance far from the origin | Accepted | Evidence |
+| [0013](0013-entity-properties-and-tables.md) | Entity properties, tables, and one change model for both | Accepted | Bootstrap |
 
 ## Expected evidence ADRs
 

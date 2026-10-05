@@ -179,7 +179,9 @@ impl EdgeCommand {
                         .expect("the target was just read");
                 }
                 for piece in pieces {
-                    transaction.insert(piece);
+                    transaction
+                        .insert_like(target, piece)
+                        .expect("the target was just read");
                 }
                 transaction.commit();
             }

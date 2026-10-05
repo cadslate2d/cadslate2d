@@ -63,13 +63,18 @@ impl TransientEdit {
     }
 
     /// Inserts transformed copies of the sources, in one transaction, leaving
-    /// the sources as they are. Returns the new IDs.
+    /// the sources as they are. Each copy has its source's properties.
+    /// Returns the new IDs.
     pub fn commit_copies(&self, drawing: &mut Drawing, transform: Transform) -> Vec<EntityId> {
         let copies = self.transformed(drawing, transform);
         let mut transaction = drawing.transaction();
         let ids = copies
             .into_iter()
-            .map(|(_, entity)| transaction.insert(entity))
+            .map(|(source, entity)| {
+                transaction
+                    .insert_like(source, entity)
+                    .expect("sources are live")
+            })
             .collect();
         transaction.commit();
         ids

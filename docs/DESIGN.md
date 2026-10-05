@@ -494,6 +494,8 @@ pub enum Entity {
 }
 ```
 
+> **Resolved in M4:** an entity is stored as its geometry with its properties — layer, colour, linetype, lineweight — beside it; tables hold rows under stable IDs, and entities refer to rows by ID. One `Change` enum covers entities and table rows — [ADR-0013](adr/0013-entity-properties-and-tables.md).
+
 A circle remains a circle in the document.
 
 The renderer may approximate it.

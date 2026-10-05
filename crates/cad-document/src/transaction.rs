@@ -6,23 +6,26 @@
 
 use cad_core::EntityId;
 
-use crate::SharedEntity;
+use crate::EntityRecord;
+use crate::layer::Layer;
+use crate::table::TableChange;
 
-/// A reversible change to one entity. Payloads are shared, not copied.
+/// A reversible change to one entity: to its geometry, its properties, or
+/// both. Payloads are shared, not copied.
 #[derive(Clone, Debug, PartialEq)]
 pub enum EntityChange {
     Insert {
         id: EntityId,
-        entity: SharedEntity,
+        record: EntityRecord,
     },
     Remove {
         id: EntityId,
-        entity: SharedEntity,
+        record: EntityRecord,
     },
     Replace {
         id: EntityId,
-        before: SharedEntity,
-        after: SharedEntity,
+        before: EntityRecord,
+        after: EntityRecord,
     },
 }
 
@@ -38,8 +41,8 @@ impl EntityChange {
     /// The change that exactly undoes this one.
     pub fn inverse(&self) -> Self {
         match self.clone() {
-            EntityChange::Insert { id, entity } => EntityChange::Remove { id, entity },
-            EntityChange::Remove { id, entity } => EntityChange::Insert { id, entity },
+            EntityChange::Insert { id, record } => EntityChange::Remove { id, record },
+            EntityChange::Remove { id, record } => EntityChange::Insert { id, record },
             EntityChange::Replace { id, before, after } => EntityChange::Replace {
                 id,
                 before: after,
@@ -49,20 +52,23 @@ impl EntityChange {
     }
 }
 
-/// One reversible change to the saved drawing.
+/// One reversible change to the saved drawing: to an entity, or to a row of
+/// one of its tables. One enum and one history for all of them (§19.2).
 ///
-/// Non-exhaustive: layer, block, style, and settings changes join this enum in
-/// later milestones and share the same history.
+/// Non-exhaustive: linetype, text style, block, and settings changes join
+/// it as their tables arrive.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Change {
     Entity(EntityChange),
+    Layer(TableChange<Layer>),
 }
 
 impl Change {
     pub fn inverse(&self) -> Self {
         match self {
             Change::Entity(change) => Change::Entity(change.inverse()),
+            Change::Layer(change) => Change::Layer(change.inverse()),
         }
     }
 }
@@ -105,13 +111,14 @@ mod tests {
     use cad_core::Point2;
 
     use super::*;
-    use crate::{Entity, LineEntity};
+    use crate::layer::LayerId;
+    use crate::{LineEntity, Properties};
 
-    fn line(x: f64) -> SharedEntity {
-        Arc::new(Entity::Line(LineEntity::new(
-            Point2::ORIGIN,
-            Point2::new(x, 0.0),
-        )))
+    fn line(x: f64) -> EntityRecord {
+        EntityRecord::new(
+            LineEntity::new(Point2::ORIGIN, Point2::new(x, 0.0)),
+            Properties::default(),
+        )
     }
 
     fn id(raw: u64) -> EntityId {
@@ -122,11 +129,11 @@ mod tests {
     fn insert_and_remove_are_inverses() {
         let insert = EntityChange::Insert {
             id: id(1),
-            entity: line(1.0),
+            record: line(1.0),
         };
         let remove = EntityChange::Remove {
             id: id(1),
-            entity: line(1.0),
+            record: line(1.0),
         };
         assert_eq!(insert.inverse(), remove);
         assert_eq!(remove.inverse(), insert);
@@ -147,45 +154,66 @@ mod tests {
         assert_eq!(replace.inverse(), expected);
     }
 
-    #[test]
-    fn inverse_of_inverse_is_the_original_transaction() {
-        let tx = Transaction::new(vec![
+    fn mixed() -> Transaction {
+        Transaction::new(vec![
+            Change::Layer(TableChange::Insert {
+                id: LayerId::from_raw(1),
+                row: Layer::named("walls"),
+            }),
             Change::Entity(EntityChange::Insert {
                 id: id(1),
-                entity: line(1.0),
+                record: line(1.0),
             }),
             Change::Entity(EntityChange::Replace {
                 id: id(2),
                 before: line(2.0),
                 after: line(3.0),
             }),
+            Change::Layer(TableChange::Replace {
+                id: LayerId::from_raw(1),
+                before: Layer::named("walls"),
+                after: Layer::named("doors"),
+            }),
             Change::Entity(EntityChange::Remove {
                 id: id(4),
-                entity: line(4.0),
+                record: line(4.0),
             }),
-        ]);
-        assert_eq!(tx.inverse().inverse(), tx);
+        ])
     }
 
     #[test]
-    fn inverse_reverses_the_order_of_changes() {
-        let tx = Transaction::new(vec![
-            Change::Entity(EntityChange::Insert {
-                id: id(1),
-                entity: line(1.0),
-            }),
-            Change::Entity(EntityChange::Insert {
-                id: id(2),
-                entity: line(2.0),
-            }),
-        ]);
-        let ids: Vec<EntityId> = tx
-            .inverse()
+    fn inverse_of_inverse_is_the_original_transaction() {
+        let tx = mixed();
+        assert_eq!(tx.inverse().inverse(), tx);
+    }
+
+    /// Entity and table changes share one order: undoing a transaction
+    /// undoes them last to first, whichever kind each is.
+    #[test]
+    fn inverse_reverses_the_order_of_changes_of_every_kind() {
+        let inverse = mixed().inverse();
+        let kinds: Vec<&str> = inverse
             .changes()
             .iter()
-            .map(|Change::Entity(change)| change.id())
+            .map(|change| match change {
+                Change::Entity(EntityChange::Insert { .. }) => "insert entity",
+                Change::Entity(EntityChange::Remove { .. }) => "remove entity",
+                Change::Entity(EntityChange::Replace { .. }) => "replace entity",
+                Change::Layer(TableChange::Insert { .. }) => "insert layer",
+                Change::Layer(TableChange::Remove { .. }) => "remove layer",
+                Change::Layer(TableChange::Replace { .. }) => "replace layer",
+            })
             .collect();
-        assert_eq!(ids, vec![id(2), id(1)]);
+        assert_eq!(
+            kinds,
+            vec![
+                "insert entity",
+                "replace layer",
+                "replace entity",
+                "remove entity",
+                "remove layer"
+            ]
+        );
     }
 
     #[test]
@@ -193,11 +221,11 @@ mod tests {
         let payload = line(1.0);
         let change = EntityChange::Insert {
             id: id(1),
-            entity: Arc::clone(&payload),
+            record: payload.clone(),
         };
-        let EntityChange::Remove { entity, .. } = change.inverse() else {
+        let EntityChange::Remove { record, .. } = change.inverse() else {
             panic!("inverse of insert must be remove");
         };
-        assert!(Arc::ptr_eq(&payload, &entity));
+        assert!(Arc::ptr_eq(&payload.entity, &record.entity));
     }
 }

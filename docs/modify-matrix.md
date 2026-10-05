@@ -7,6 +7,22 @@ Two rules hold for every command here:
 - **A command returns its result or a reason.** The operation underneath is a pure function that produces the new geometry or says, as a typed value, why not; the command turns that reason into the message quoted in its section. A refusal leaves the drawing exactly as it was.
 - **One committed action is one undo step**, and an object that is changed rather than replaced keeps its identity.
 
+## What happens to an object's properties
+
+Every object has a layer, a colour, a linetype, and a lineweight beside its geometry ([ADR-0013](adr/0013-entity-properties-and-tables.md)). No modify command changes them except by this rule:
+
+| The object is… | Its properties |
+| --- | --- |
+| Changed: moved, rotated, scaled, mirrored, stretched, trimmed, extended, broken, filleted, chamfered, or edited by a grip | Its own, unchanged |
+| Made from another: a copy, a mirror image kept beside its original, an offset, a further piece of a trim or a break | Those of the object it was made from |
+| A fillet arc or a chamfer bevel | Those of the object picked first |
+| Joined from several | Those of its oldest member, whose identity it keeps |
+| Newly drawn | Those new objects are given |
+
+Undo brings an erased or changed object back with the properties it had.
+
+Tests: `cad-commands/src/tests/properties.rs`, one per row and command; `cad-document/src/drawing.rs`.
+
 ## At a glance
 
 | Command | Line | Arc | Circle | Open polyline | Closed polyline |

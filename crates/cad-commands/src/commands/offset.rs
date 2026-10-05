@@ -121,7 +121,7 @@ impl Command for OffsetCommand {
                     self.state = State::Place { id, source };
                 }
             }
-            (State::Place { source, .. }, CommandInput::Point(at)) => {
+            (State::Place { id, source }, CommandInput::Point(at)) => {
                 let Some(amount) = self.amount else {
                     return Step::Continue;
                 };
@@ -129,7 +129,10 @@ impl Command for OffsetCommand {
                     Ok(offsets) => {
                         let mut transaction = ctx.drawing.transaction();
                         for offset in offsets {
-                            transaction.insert(offset);
+                            // An offset is a copy: it has its source's properties.
+                            transaction
+                                .insert_like(*id, offset)
+                                .expect("the source was picked from the drawing");
                         }
                         transaction.commit();
                         self.state = State::Object;

@@ -100,7 +100,9 @@ impl Command for BreakCommand {
                                 .expect("the object was just read");
                         }
                         for piece in pieces {
-                            transaction.insert(piece);
+                            transaction
+                                .insert_like(*id, piece)
+                                .expect("the object was just read");
                         }
                         transaction.commit();
                         return Step::Finished;

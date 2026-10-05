@@ -15,9 +15,12 @@ mod grips;
 mod history;
 mod id_alloc;
 mod joining;
+mod layer;
+mod properties;
 mod revision;
 pub mod spatial;
 mod store;
+mod table;
 mod transaction;
 
 pub use drawing::{ApplyReport, Drawing, TransactionBuilder, TransactionError};
@@ -27,7 +30,10 @@ pub use editing::{
 pub use entity::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity, SharedEntity};
 pub use grips::{EntityGrip, GripKind};
 pub use joining::{JoinError, Joined, close_into_circle, join};
+pub use layer::{Layer, LayerId, LayerTable};
+pub use properties::{Color, EntityRecord, Linetype, Lineweight, Properties};
 pub use revision::Revision;
 pub use spatial::SpatialIndex;
 pub use store::{DuplicateEntityId, EntityStore};
+pub use table::{Table, TableChange, TableId};
 pub use transaction::{Change, EntityChange, Transaction};

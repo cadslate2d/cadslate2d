@@ -10,6 +10,7 @@ mod grips;
 mod join;
 mod modify;
 mod offset;
+mod properties;
 mod reconciliation;
 mod selection;
 mod selection_sets;

@@ -12,7 +12,7 @@
 //! ```
 
 use cad_core::{EntityId, Point2, ScreenPoint};
-use cad_document::{Drawing, Entity, LineEntity};
+use cad_document::{Drawing, Entity, LineEntity, Properties};
 
 use crate::{Dirty, KeyAction, Modifiers, PointerButton, Session, Toggle, Toggles};
 
@@ -40,7 +40,12 @@ impl Harness {
 
     /// A harness on a drawing that already holds `entities`.
     pub fn with_entities(entities: impl IntoIterator<Item = Entity>) -> Self {
-        let drawing = Drawing::from_entities(entities);
+        Self::with_drawing(Drawing::from_entities(entities))
+    }
+
+    /// A harness on a drawing built elsewhere: with layers, say, and
+    /// entities that have properties.
+    pub fn with_drawing(drawing: Drawing) -> Self {
         let mut session =
             Session::with_drawing(drawing).with_toggles(Toggles::only(&[Toggle::Osnap]));
         session.resize(800.0, 600.0);
@@ -157,6 +162,15 @@ impl Harness {
         self.ids()
             .into_iter()
             .filter_map(|id| drawing.entity(id).cloned())
+            .collect()
+    }
+
+    /// The properties of every entity in the drawing, in allocation order.
+    pub fn properties(&self) -> Vec<Properties> {
+        let drawing = self.session.drawing();
+        self.ids()
+            .into_iter()
+            .filter_map(|id| drawing.properties(id))
             .collect()
     }
 

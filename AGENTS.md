@@ -22,7 +22,8 @@ If code and these documents disagree, fix the code or write an ADR. Do not silen
 - **Crate layering (ADR-0001).** Dependencies point strictly downward:
   `cad-wasm → cad-render → cad-commands → cad-document → cad-geometry → cad-core`, with `cad-input → cad-core`, `cad-commands → cad-input`, and `cad-dxf → cad-document`. `scripts/check-boundaries.sh` enforces this.
 - **`wasm-bindgen`, `js-sys`, `web-sys` appear only in `cad-wasm`.** Every other crate builds and tests on the host with plain `cargo test`. `cad-wasm` contains marshalling only.
-- **The document is mutated only through transactions** (`cad-document`). No public raw mutators.
+- **The document is mutated only through transactions** (`cad-document`). No public raw mutators. Entities and table rows (layers, …) change in the same transactions and the same history; there is never a second undo stack.
+- **Properties live beside geometry, not in it** (ADR-0013). `Entity` is pure geometry; the layer, colour, linetype, and lineweight are in the stored record. `replace` keeps an object's properties. A command that makes a new object *from* an existing one — a copy, an offset, a piece — must insert it with `insert_like`, or the new object silently lands on layer 0.
 - **React holds no drawing data.** No entity geometry, selection membership, grips, or view matrices in React state or props.
 - **Coarse WASM boundary (ADR-0002).** Events in, dirty flags out, frames pulled in batches. No per-entity or per-vertex getters. Rust never issues GL calls.
 - **Two render lifetimes (DESIGN §12).** Committed geometry → `RenderScene`, re-uploaded only when the scene revision changes. Transient geometry → `OverlayFrame`. Pointer movement, pan, and zoom must never regenerate or re-upload committed geometry (ADR-0003).
@@ -77,6 +78,7 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 | A command that moves, turns, scales, or reflects a selection | An `Operation` of `TransformCommand`, or a state machine built on `TransientEdit` and `cad_geometry::Transform` | Headless tests per entity type; preview leaves the revision unchanged; one undo |
 | A geometry-heavy modify command (offset, trim, extend, fillet, break, join, stretch, …) | Maths on primitives in `cad-geometry`; the per-entity operation, returning a typed error, in `cad-document/src/editing.rs` (or `joining.rs`, for what takes several entities); the state machine in `cad-commands` | Every supported combination tested and listed in `docs/modify-matrix.md`; unsupported ones refused with a message |
 | An entity type | `cad-document` (`Entity`), then every `match` the compiler points at: rendering, picking, snapping, `transformed`, grips, DXF | Bounds and hit-test property tests; DXF fixtures |
+| A table (linetypes, text styles, blocks, …) | A row type and a `Table<Row>` in `cad-document`, a `Change` variant, one arm in `Drawing::apply`, builder methods that refuse what would leave the drawing inconsistent | The history property test in `drawing.rs` gains its operations; a test per refusal |
 | Geometry maths | `cad-geometry`, as pure functions | Unit and property tests; a regression case per fixed bug |
 | Input syntax | `cad-input` | Table-driven tests and a never-panics property test |
 | A preview of what picking an object would do | `Command::preview_pick`, computed by the same function the pick then commits | A test that the previewed result equals the committed one |

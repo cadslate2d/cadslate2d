@@ -252,7 +252,10 @@ impl CornerCommand {
             .replace(second.0, joined.second)
             .expect("the second object was just read");
         if let Some(joint) = joined.joint {
-            transaction.insert(joint);
+            // The arc or bevel belongs with the object picked first.
+            transaction
+                .insert_like(first.0, joint)
+                .expect("the first object was just read");
         }
         transaction.commit();
         Ok(())

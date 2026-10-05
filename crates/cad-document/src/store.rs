@@ -10,7 +10,7 @@ use std::fmt;
 
 use cad_core::EntityId;
 
-use crate::SharedEntity;
+use crate::{EntityRecord, SharedEntity};
 
 /// Returned when inserting an ID that is already live.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,10 +27,11 @@ impl std::error::Error for DuplicateEntityId {}
 #[derive(Debug)]
 struct Slot {
     id: EntityId,
-    entity: SharedEntity,
+    record: EntityRecord,
 }
 
-/// Dense entity storage addressed by stable ID.
+/// Dense entity storage addressed by stable ID. A slot holds an entity's
+/// shared geometry and, beside it, its properties.
 #[derive(Debug, Default)]
 pub struct EntityStore {
     slots: Vec<Slot>,
@@ -54,42 +55,68 @@ impl EntityStore {
         self.id_to_slot.contains_key(&id)
     }
 
+    /// The geometry stored under `id`.
     pub fn get(&self, id: EntityId) -> Option<&SharedEntity> {
+        self.record(id).map(|record| &record.entity)
+    }
+
+    /// The geometry and properties stored under `id`.
+    pub fn record(&self, id: EntityId) -> Option<&EntityRecord> {
         self.id_to_slot
             .get(&id)
-            .map(|&slot| &self.slots[slot].entity)
+            .map(|&slot| &self.slots[slot].record)
+    }
+
+    /// Visits the geometry of every live entity exactly once, in storage order.
+    pub fn iter(&self) -> impl Iterator<Item = (EntityId, &SharedEntity)> {
+        self.records().map(|(id, record)| (id, &record.entity))
     }
 
     /// Visits every live entity exactly once, in storage order.
-    pub fn iter(&self) -> impl Iterator<Item = (EntityId, &SharedEntity)> {
-        self.slots.iter().map(|slot| (slot.id, &slot.entity))
+    pub fn records(&self) -> impl Iterator<Item = (EntityId, &EntityRecord)> {
+        self.slots.iter().map(|slot| (slot.id, &slot.record))
     }
 
-    /// Stores `entity` under `id`. The ID may be new or previously removed.
-    pub fn insert(&mut self, id: EntityId, entity: SharedEntity) -> Result<(), DuplicateEntityId> {
+    /// Stores `record` under `id`. The ID may be new or previously removed.
+    /// Bare geometry is stored with default properties.
+    pub fn insert(
+        &mut self,
+        id: EntityId,
+        record: impl Into<EntityRecord>,
+    ) -> Result<(), DuplicateEntityId> {
         if self.contains(id) {
             return Err(DuplicateEntityId(id));
         }
         self.id_to_slot.insert(id, self.slots.len());
-        self.slots.push(Slot { id, entity });
+        self.slots.push(Slot {
+            id,
+            record: record.into(),
+        });
         Ok(())
     }
 
     /// Removes and returns the entity. The freed slot is reused immediately by
     /// moving the last entity into it, so storage stays dense.
-    pub fn remove(&mut self, id: EntityId) -> Option<SharedEntity> {
+    pub fn remove(&mut self, id: EntityId) -> Option<EntityRecord> {
         let slot = self.id_to_slot.remove(&id)?;
         let removed = self.slots.swap_remove(slot);
         if let Some(moved) = self.slots.get(slot) {
             self.id_to_slot.insert(moved.id, slot);
         }
-        Some(removed.entity)
+        Some(removed.record)
     }
 
-    /// Replaces the payload stored under `id`, returning the previous one.
-    pub fn replace(&mut self, id: EntityId, entity: SharedEntity) -> Option<SharedEntity> {
+    /// Replaces what is stored under `id`, returning what was there.
+    pub fn replace(
+        &mut self,
+        id: EntityId,
+        record: impl Into<EntityRecord>,
+    ) -> Option<EntityRecord> {
         let slot = *self.id_to_slot.get(&id)?;
-        Some(std::mem::replace(&mut self.slots[slot].entity, entity))
+        Some(std::mem::replace(
+            &mut self.slots[slot].record,
+            record.into(),
+        ))
     }
 }
 
@@ -146,8 +173,8 @@ mod tests {
             store.insert(id(raw), line(raw as f64)).unwrap();
         }
         // Removing from the front and middle forces surviving entities to move slots.
-        assert_eq!(store.remove(id(1)), Some(line(1.0)));
-        assert_eq!(store.remove(id(3)), Some(line(3.0)));
+        assert_eq!(store.remove(id(1)), Some(line(1.0).into()));
+        assert_eq!(store.remove(id(3)), Some(line(3.0).into()));
         store.insert(id(6), line(6.0)).unwrap();
 
         for raw in [2, 4, 5, 6] {
@@ -179,9 +206,37 @@ mod tests {
     fn replace_swaps_the_payload_and_keeps_the_id() {
         let mut store = EntityStore::new();
         store.insert(id(1), line(1.0)).unwrap();
-        assert_eq!(store.replace(id(1), line(9.0)), Some(line(1.0)));
+        assert_eq!(store.replace(id(1), line(9.0)), Some(line(1.0).into()));
         assert_eq!(store.get(id(1)), Some(&line(9.0)));
         assert_eq!(store.replace(id(2), line(0.0)), None);
+    }
+
+    #[test]
+    fn properties_are_stored_beside_the_geometry_and_follow_the_id() {
+        use crate::layer::LayerId;
+        use crate::{Color, Properties};
+
+        let styled = Properties {
+            color: Color::Index(3),
+            ..Properties::on(LayerId::from_raw(4))
+        };
+        let mut store = EntityStore::new();
+        store.insert(id(1), line(1.0)).unwrap();
+        store
+            .insert(id(2), EntityRecord::from(line(2.0)).with_properties(styled))
+            .unwrap();
+        assert_eq!(
+            store.record(id(1)).unwrap().properties,
+            Properties::default()
+        );
+        assert_eq!(store.record(id(2)).unwrap().properties, styled);
+        assert_eq!(store.get(id(2)), Some(&line(2.0)));
+
+        // Removing the first entity moves the second into its slot.
+        store.remove(id(1));
+        assert_eq!(store.record(id(2)).unwrap().properties, styled);
+        let listed: Vec<Properties> = store.records().map(|(_, r)| r.properties).collect();
+        assert_eq!(listed, vec![styled]);
     }
 
     #[test]
