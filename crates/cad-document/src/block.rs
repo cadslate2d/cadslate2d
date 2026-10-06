@@ -184,6 +184,30 @@ impl BlockReferenceEntity {
 }
 
 impl BlockTable {
+    /// How deep a nest of references is followed: a definition more levels
+    /// down than this is not drawn, picked, or snapped to.
+    pub const MAX_NESTING: usize = MAX_DEPTH;
+
+    /// How many levels of references lie below `block`: 0 for a definition
+    /// of curves alone, 1 for one that places such definitions, and so on,
+    /// counted no further than one past [`Self::MAX_NESTING`].
+    pub fn nesting_depth(&self, block: BlockId) -> usize {
+        self.nesting_depth_within(block, 0)
+    }
+
+    fn nesting_depth_within(&self, block: BlockId, depth: usize) -> usize {
+        if depth > MAX_DEPTH {
+            return depth;
+        }
+        self.get(block).map_or(0, |definition| {
+            definition
+                .references()
+                .map(|inner| 1 + self.nesting_depth_within(inner, depth + 1))
+                .max()
+                .unwrap_or(0)
+        })
+    }
+
     /// Whether `block` holds, directly or through the blocks it holds, a
     /// reference to `target`.
     pub fn reaches(&self, block: BlockId, target: BlockId) -> bool {

@@ -1,0 +1,98 @@
+  0
+SECTION
+  2
+HEADER
+  9
+$INSUNITS
+ 70
+1
+  9
+$CLAYER
+  8
+A
+  9
+$CECOLOR
+ 62
+1
+  9
+$CELTYPE
+  6
+BYBLOCK
+  9
+$CELWEIGHT
+370
+50
+  9
+$LTSCALE
+ 40
+2.0
+  9
+$INSUNITS
+ 70
+4
+  9
+$CLAYER
+  8
+B
+  9
+$CECOLOR
+ 62
+3
+  9
+$CELTYPE
+  6
+BYLAYER
+  9
+$CELWEIGHT
+370
+25
+  9
+$LTSCALE
+ 40
+5.0
+  0
+ENDSEC
+  0
+SECTION
+  2
+TABLES
+  0
+TABLE
+  2
+LAYER
+  0
+LAYER
+  2
+A
+ 62
+7
+  0
+LAYER
+  2
+B
+ 62
+7
+  0
+ENDTAB
+  0
+ENDSEC
+  0
+SECTION
+  2
+ENTITIES
+  0
+LINE
+  8
+B
+ 10
+0.0
+ 20
+0.0
+ 11
+1.0
+ 21
+0.0
+  0
+ENDSEC
+  0
+EOF

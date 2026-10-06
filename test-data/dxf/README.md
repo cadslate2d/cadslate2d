@@ -31,6 +31,8 @@ Files with specific expectations (entity counts, report contents, exact coordina
 | `ezdxf-r12-blocks.dxf` | ezdxf 1.4.4, `ezdxf.new("R12")` | A `BLOCKS` section with a chair (a line on layer 0 with a `ByBlock` colour, an arc on its own layer, a coloured circle) and a pair that places the chair twice; `INSERT`s of the pair as it is and scaled, turned, and coloured; of the chair mirrored by a negative X scale and by a negative Y scale; one with a non-uniform scale, one arrayed, and one of a block the file never defines (each reported). |
 | `ezdxf-r2010-block-attributes.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | A block with an `ATTDEF`, placed twice, once with an `ATTRIB` (both reported), once turned. |
 | `ezdxf-r2010-true-colour.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | True colours (group 420): on a layer (with ezdxf's default `62` of 7 beside it), on a line alone, on a line with an index beside it, and pure red; each becomes the nearest index colour and is reported. |
+| `huge-vertex-count.dxf` | hand-written | An `LWPOLYLINE` whose count (90) claims 4,294,967,296 vertices and has two: the count is never believed, nothing is allocated for it. |
+| `repeated-header.dxf` | hand-written | Every header variable the reader takes, twice: the last wins. |
 
 ## corpus/
 
@@ -77,6 +79,7 @@ The files here are generated — `generate.py`, which needs ezdxf (`python3 -m v
 | `missing-eof.dxf` | unexpected end |
 | `binary-sentinel.dxf` | binary DXF not supported |
 | `cyclic-blocks.dxf` | tables: block A places B, which places A |
+| `long-value.dxf` | value too long: a layer name of 70,000 characters, over the 64 KiB a value may have |
 
 ## Checking the writer with another reader
 

@@ -2238,6 +2238,8 @@ Parsers should eventually be hardened against:
 - oversized entities;
 - pathological input.
 
+> **Resolved in M5 (#156):** every quantity a DXF file can grow is bounded by a field of `ImportLimits`, with a test that reaches each bound — bytes, entities, rows per table, groups per record, bytes per value, levels of block nesting — and reaching one is a structured error or a report line, never an allocation in proportion to a claimed count; the reader's work is proportional to the bytes read, with a time budget run by `scripts/stress.sh`; and files of every record kind with any groups are fuzzed to never panic and to round-trip what they import. The bounds and their tests are listed in [`docs/dxf-matrix.md`](dxf-matrix.md).
+
 ---
 
 # 44. Licensing

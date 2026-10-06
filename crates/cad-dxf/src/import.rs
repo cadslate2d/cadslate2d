@@ -12,12 +12,14 @@
 //! as names, and the names are resolved — rows made for the undefined
 //! ones, and reported — once the whole file has been read.
 
+use std::collections::HashMap;
+
 use cad_core::{LengthUnit, Point2};
 use cad_document::{
-    ArcEntity, Block, BlockId, BlockReferenceEntity, CircleEntity, Color, Drawing, DrawingSettings,
-    Entity, EntityRecord, Justification, Layer, LayerId, LineEntity, Linetype, LinetypeDef,
-    LinetypeId, Lineweight, MTextEntity, PolylineEntity, Properties, TextEntity, TextStyle,
-    TextStyleId, check_name, nearest_index, same_name,
+    ArcEntity, Block, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, Drawing,
+    DrawingSettings, Entity, EntityRecord, Justification, Layer, LayerId, LineEntity, Linetype,
+    LinetypeDef, LinetypeId, Lineweight, MTextEntity, PolylineEntity, Properties, TextEntity,
+    TextStyle, TextStyleId, check_name, nearest_index, same_name,
 };
 
 use crate::export::insunits_code;
@@ -48,6 +50,9 @@ const BAD_BLOCK_NAME: &str = "(block name)";
 /// Report key for a layer whose colour is a true colour: the drawing holds
 /// the index palette, so the layer takes the nearest index (ADR-0018).
 const LAYER_TRUE_COLOUR: &str = "(layer true colour)";
+/// Report key for blocks nested deeper than the model follows: what lies
+/// below that depth is not drawn.
+const NESTING_TOO_DEEP: &str = "(blocks nested too deep)";
 /// Report keys for what an INSERT carries that a reference cannot hold:
 /// the reference is imported as far as the model holds, the rest said.
 const INSERT_NON_UNIFORM: &str = "(INSERT with a non-uniform scale)";
@@ -61,11 +66,27 @@ const LINETYPE_SHAPES: &str = "(linetype shapes)";
 /// Longest type name kept in the report.
 const MAX_KIND_LENGTH: usize = 32;
 
-/// Bounds on what an import may consume. Imported files are untrusted (§43).
+/// Bounds on what an import may consume (DESIGN §43). Imported files are
+/// untrusted: every quantity a file can grow is bounded here, and reaching
+/// a bound is a structured error or a report line, never an allocation in
+/// proportion to a claimed count.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ImportLimits {
+    /// Bytes of file.
     pub max_bytes: usize,
+    /// Entities, in the drawing and in block definitions together.
     pub max_entities: usize,
+    /// Rows of each table — layers, linetypes, text styles, blocks —
+    /// those the file defines and those made for names it uses but never
+    /// defines. Past the limit, a defined row is an error and a name that
+    /// would make one is treated as a name no row can have.
+    pub max_table_rows: usize,
+    /// Groups in one record: a polyline's vertices, a paragraph's pieces.
+    pub max_record_groups: usize,
+    /// Bytes in one group value.
+    pub max_value_bytes: usize,
+    /// Levels of block nesting the drawing follows; deeper is reported.
+    pub max_nesting: usize,
 }
 
 impl Default for ImportLimits {
@@ -73,6 +94,10 @@ impl Default for ImportLimits {
         Self {
             max_bytes: 256 * 1024 * 1024,
             max_entities: 2_000_000,
+            max_table_rows: 100_000,
+            max_record_groups: 1_000_000,
+            max_value_bytes: 64 * 1024,
+            max_nesting: BlockTable::MAX_NESTING,
         }
     }
 }
@@ -106,10 +131,10 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
     let text = String::from_utf8_lossy(bytes);
 
     let mut reader = Reader {
-        groups: Groups::new(&text),
+        groups: Groups::new(&text, limits.max_value_bytes),
         limits,
         entities: Vec::new(),
-        tables: Tables::default(),
+        tables: Tables::new(limits.max_table_rows),
         header: Header::default(),
         report: ImportReport::default(),
         open_polyline: None,
@@ -138,13 +163,15 @@ impl Group<'_> {
 struct Groups<'a> {
     lines: std::str::Lines<'a>,
     line: usize,
+    max_value_bytes: usize,
 }
 
 impl<'a> Groups<'a> {
-    fn new(text: &'a str) -> Self {
+    fn new(text: &'a str, max_value_bytes: usize) -> Self {
         Self {
             lines: text.lines(),
             line: 0,
+            max_value_bytes,
         }
     }
 
@@ -161,6 +188,12 @@ impl<'a> Groups<'a> {
             .map_err(|_| DxfError::InvalidGroupCode { line })?;
         let value = self.lines.next().ok_or(DxfError::UnexpectedEnd { line })?;
         self.line += 1;
+        if value.len() > self.max_value_bytes {
+            return Err(DxfError::ValueTooLong {
+                line: self.line,
+                limit: self.max_value_bytes,
+            });
+        }
         Ok(Some(Group {
             code,
             value: value.trim(),
@@ -237,12 +270,14 @@ struct Header {
     ltscale: Option<f64>,
 }
 
-/// The layer and linetype tables as they are built up: the file's rows,
-/// then the rows made for names the file used but never defined.
+/// The tables as they are built up: the file's rows, then the rows made
+/// for names the file used but never defined.
 ///
-/// A row named like the permanent one — `0`, `Continuous` — restyles it
-/// and takes no ID; every other row's ID is its place among the rest, from
-/// 1, which is what `Drawing::from_parts` will give it.
+/// A row named like the permanent one — `0`, `Continuous`, `Standard` —
+/// restyles it and takes no ID; every other row's ID is its place among
+/// the rest, from 1, which is what `Drawing::from_tables` will give it.
+/// Each table is indexed by lower-case name, so a file with many rows is
+/// read in time proportional to its size.
 #[derive(Debug, Default)]
 struct Tables {
     /// Each layer with the name of its linetype, resolved at the end.
@@ -251,9 +286,17 @@ struct Tables {
     text_styles: Vec<TextStyle>,
     /// The file's block definitions, in order; their IDs follow from 1.
     blocks: Vec<BlockBuilder>,
+    /// Lower-case name → the ID the row will have, or none for a row that
+    /// restyles the permanent one.
+    layer_ids: HashMap<String, Option<LayerId>>,
+    linetype_ids: HashMap<String, Option<LinetypeId>>,
+    text_style_ids: HashMap<String, Option<TextStyleId>>,
+    block_ids: HashMap<String, BlockId>,
     created_layers: usize,
     created_linetypes: usize,
     created_text_styles: usize,
+    /// Rows a table may have.
+    max_rows: usize,
 }
 
 /// A block definition as it is read: its entities with their properties
@@ -276,80 +319,136 @@ enum OpenBlock {
     Skipped,
 }
 
+/// The table is full: one more row is one too many.
+struct TableFull;
+
 impl Tables {
+    fn new(max_rows: usize) -> Self {
+        Self {
+            max_rows,
+            ..Self::default()
+        }
+    }
+
+    fn key(name: &str) -> String {
+        name.to_lowercase()
+    }
+
     fn has_block(&self, name: &str) -> bool {
-        self.blocks.iter().any(|block| same_name(&block.name, name))
+        self.block_ids.contains_key(&Self::key(name))
     }
 
     /// The ID the block of that name will have, if the file defined it.
     fn block(&self, name: &str) -> Option<BlockId> {
-        self.blocks
-            .iter()
-            .position(|block| same_name(&block.name, name))
-            .map(|index| BlockId::from_raw(index as u32 + 1))
+        self.block_ids.get(&Self::key(name)).copied()
+    }
+
+    /// Keeps a definition the file made; its ID is its place, from 1.
+    fn add_block(&mut self, block: BlockBuilder) -> Result<(), TableFull> {
+        if self.blocks.len() >= self.max_rows {
+            return Err(TableFull);
+        }
+        let id = BlockId::from_raw(self.blocks.len() as u32 + 1);
+        self.block_ids.insert(Self::key(&block.name), id);
+        self.blocks.push(block);
+        Ok(())
     }
 
     fn has_text_style(&self, name: &str) -> bool {
-        self.text_styles
-            .iter()
-            .any(|style| same_name(&style.name, name))
+        self.text_style_ids.contains_key(&Self::key(name))
+    }
+
+    /// Keeps a text style the file defined.
+    fn add_text_style(&mut self, style: TextStyle) -> Result<(), TableFull> {
+        if self.text_styles.len() >= self.max_rows {
+            return Err(TableFull);
+        }
+        let id = (!same_name(&style.name, TextStyle::STANDARD)).then(|| {
+            let with_ids = self
+                .text_style_ids
+                .values()
+                .filter(|id| id.is_some())
+                .count();
+            TextStyleId::from_raw(with_ids as u32 + 1)
+        });
+        self.text_style_ids.insert(Self::key(&style.name), id);
+        self.text_styles.push(style);
+        Ok(())
     }
 
     /// The ID the text style of that name will have, making it if the file
-    /// did not define it. `None` for a name no style can have.
+    /// did not define it. `None` for a name no style can have — or for one
+    /// there is no room left to make.
     fn text_style(&mut self, name: &str) -> Option<TextStyleId> {
         if same_name(name, TextStyle::STANDARD) {
             return Some(TextStyleId::FIRST);
         }
         if !self.has_text_style(name) {
             check_name(name).ok()?;
-            self.text_styles.push(TextStyle::named(name));
+            self.add_text_style(TextStyle::named(name)).ok()?;
             self.created_text_styles += 1;
         }
-        let index = self
-            .text_styles
-            .iter()
-            .filter(|style| !same_name(&style.name, TextStyle::STANDARD))
-            .position(|style| same_name(&style.name, name))?;
-        Some(TextStyleId::from_raw(index as u32 + 1))
+        self.text_style_ids.get(&Self::key(name)).copied().flatten()
     }
 
     fn has_layer(&self, name: &str) -> bool {
-        self.layers
-            .iter()
-            .any(|(layer, _)| same_name(&layer.name, name))
+        self.layer_ids.contains_key(&Self::key(name))
     }
 
-    fn has_linetype(&self, name: &str) -> bool {
-        self.linetypes.iter().any(|def| same_name(&def.name, name))
+    /// Keeps a layer the file defined, with the name of its linetype.
+    fn add_layer(&mut self, layer: Layer, linetype: LinetypeRef) -> Result<(), TableFull> {
+        if self.layers.len() >= self.max_rows {
+            return Err(TableFull);
+        }
+        let id = (!same_name(&layer.name, Layer::ZERO)).then(|| {
+            let with_ids = self.layer_ids.values().filter(|id| id.is_some()).count();
+            LayerId::from_raw(with_ids as u32 + 1)
+        });
+        self.layer_ids.insert(Self::key(&layer.name), id);
+        self.layers.push((layer, linetype));
+        Ok(())
     }
 
     /// The ID the layer of that name will have, making the layer with a
     /// new layer's settings if the file did not define it. `None` for a
-    /// name no layer can have.
+    /// name no layer can have — or for one there is no room left to make.
     fn layer(&mut self, name: &str) -> Option<LayerId> {
         if same_name(name, Layer::ZERO) {
             return Some(LayerId::FIRST);
         }
         if !self.has_layer(name) {
             check_name(name).ok()?;
-            self.layers.push((
+            self.add_layer(
                 Layer::named(name),
                 LinetypeRef::Named(LinetypeDef::CONTINUOUS.to_owned()),
-            ));
+            )
+            .ok()?;
             self.created_layers += 1;
         }
-        let index = self
-            .layers
-            .iter()
-            .filter(|(layer, _)| !same_name(&layer.name, Layer::ZERO))
-            .position(|(layer, _)| same_name(&layer.name, name))?;
-        Some(LayerId::from_raw(index as u32 + 1))
+        self.layer_ids.get(&Self::key(name)).copied().flatten()
+    }
+
+    fn has_linetype(&self, name: &str) -> bool {
+        self.linetype_ids.contains_key(&Self::key(name))
+    }
+
+    /// Keeps a linetype the file defined.
+    fn add_linetype(&mut self, def: LinetypeDef) -> Result<(), TableFull> {
+        if self.linetypes.len() >= self.max_rows {
+            return Err(TableFull);
+        }
+        let id = (!same_name(&def.name, LinetypeDef::CONTINUOUS)).then(|| {
+            let with_ids = self.linetype_ids.values().filter(|id| id.is_some()).count();
+            LinetypeId::from_raw(with_ids as u32 + 1)
+        });
+        self.linetype_ids.insert(Self::key(&def.name), id);
+        self.linetypes.push(def);
+        Ok(())
     }
 
     /// The linetype a reference means, making a continuous linetype of the
     /// name if the file did not define it. `None` for a name no linetype
-    /// can have.
+    /// can have — or for one there is no room left to make.
     fn linetype(&mut self, reference: &LinetypeRef) -> Option<Linetype> {
         let name = match reference {
             LinetypeRef::ByLayer => return Some(Linetype::ByLayer),
@@ -361,19 +460,19 @@ impl Tables {
         }
         if !self.has_linetype(name) {
             check_name(name).ok()?;
-            self.linetypes.push(LinetypeDef {
+            self.add_linetype(LinetypeDef {
                 name: name.clone(),
                 description: String::new(),
                 pattern: Vec::new(),
-            });
+            })
+            .ok()?;
             self.created_linetypes += 1;
         }
-        let index = self
-            .linetypes
-            .iter()
-            .filter(|def| !same_name(&def.name, LinetypeDef::CONTINUOUS))
-            .position(|def| same_name(&def.name, name))?;
-        Some(Linetype::Named(LinetypeId::from_raw(index as u32 + 1)))
+        self.linetype_ids
+            .get(&Self::key(name))
+            .copied()
+            .flatten()
+            .map(Linetype::Named)
     }
 }
 
@@ -492,10 +591,18 @@ impl<'a> Reader<'a> {
                 return Ok(());
             }
             let mut body = RecordBody::default();
+            let mut groups = 0;
             let next = loop {
                 let group = self.groups.expect()?;
                 if group.code == 0 {
                     break group;
+                }
+                groups += 1;
+                if groups > self.limits.max_record_groups {
+                    return Err(DxfError::RecordTooLarge {
+                        line: group.line,
+                        limit: self.limits.max_record_groups,
+                    });
                 }
                 body.absorb(group)?;
             };
@@ -517,10 +624,7 @@ impl<'a> Reader<'a> {
                     self.open_block(body);
                     return Ok(());
                 }
-                "ENDBLK" => {
-                    self.close_block();
-                    return Ok(());
-                }
+                "ENDBLK" => return self.close_block(),
                 _ if !matches!(self.open_block, Some(OpenBlock::User(_))) => return Ok(()),
                 _ => {}
             }
@@ -553,7 +657,7 @@ impl<'a> Reader<'a> {
                 self.push(Entity::MText(text), body.pending())?;
             }
             (_, "INSERT") if entities => self.insert(record, body)?,
-            (RecordContext::Tables, "STYLE") => self.table_text_style(body),
+            (RecordContext::Tables, "STYLE") => self.table_text_style(body)?,
             (_, "LWPOLYLINE") if entities => {
                 let mut properties = body.pending();
                 properties.dropped |= body.constant_width.is_some_and(|width| width != 0.0);
@@ -602,8 +706,8 @@ impl<'a> Reader<'a> {
             (_, kind) if entities && !SUBORDINATE_RECORDS.contains(&kind) => {
                 self.report.count_unsupported(&kind_name(kind));
             }
-            (RecordContext::Tables, "LAYER") => self.table_layer(body),
-            (RecordContext::Tables, "LTYPE") => self.table_linetype(body),
+            (RecordContext::Tables, "LAYER") => self.table_layer(body)?,
+            (RecordContext::Tables, "LTYPE") => self.table_linetype(body)?,
             _ => {}
         }
         Ok(())
@@ -638,11 +742,14 @@ impl<'a> Reader<'a> {
 
     /// An ENDBLK record: the definition is complete. A polyline left open
     /// inside it is finished with it.
-    fn close_block(&mut self) {
+    fn close_block(&mut self) -> Result<(), DxfError> {
         self.open_polyline = None;
         if let Some(OpenBlock::User(block)) = self.open_block.take() {
-            self.tables.blocks.push(block);
+            self.tables
+                .add_block(block)
+                .map_err(|TableFull| self.too_many_rows("BLOCK"))?;
         }
+        Ok(())
     }
 
     /// An INSERT: a reference to a block by name, placed. DXF scales a
@@ -694,12 +801,13 @@ impl<'a> Reader<'a> {
     /// A row of the LAYER table. Its name must be one a layer can have; the
     /// first row of a name counts. A negative colour, or the frozen flag,
     /// is a layer that is off.
-    fn table_layer(&mut self, body: &RecordBody) {
+    fn table_layer(&mut self, body: &RecordBody) -> Result<(), DxfError> {
         let Some(name) = body.name.as_deref().filter(|name| check_name(name).is_ok()) else {
-            return self.report.count_unsupported(BAD_LAYER_NAME);
+            self.report.count_unsupported(BAD_LAYER_NAME);
+            return Ok(());
         };
         if self.tables.has_layer(name) {
-            return;
+            return Ok(());
         }
         let mut layer = Layer::named(name);
         if let Some(code) = body.color {
@@ -733,21 +841,31 @@ impl<'a> Reader<'a> {
                 }
             },
         );
-        self.tables.layers.push((layer, linetype));
+        self.tables
+            .add_layer(layer, linetype)
+            .map_err(|TableFull| self.too_many_rows("LAYER"))
+    }
+
+    fn too_many_rows(&self, table: &'static str) -> DxfError {
+        DxfError::TooManyRows {
+            table,
+            limit: self.limits.max_table_rows,
+        }
     }
 
     /// A row of the LTYPE table. The dashes of a complex linetype are kept
     /// and its shapes reported; a pattern the drawing cannot hold is
     /// reported and the linetype is continuous. The `ByLayer` and
     /// `ByBlock` rows newer files carry are not linetypes.
-    fn table_linetype(&mut self, body: &RecordBody) {
+    fn table_linetype(&mut self, body: &RecordBody) -> Result<(), DxfError> {
         let Some(name) = body.name.as_deref().filter(|name| check_name(name).is_ok()) else {
-            return self.report.count_unsupported(BAD_LINETYPE_NAME);
+            self.report.count_unsupported(BAD_LINETYPE_NAME);
+            return Ok(());
         };
         if !matches!(LinetypeRef::from_dxf(name), LinetypeRef::Named(_))
             || self.tables.has_linetype(name)
         {
-            return;
+            return Ok(());
         }
         let mut pattern = pattern_from_dxf(&body.elements).unwrap_or_else(|| {
             self.report.count_unsupported(BAD_LINETYPE_PATTERN);
@@ -764,27 +882,32 @@ impl<'a> Reader<'a> {
         } else {
             name.to_owned()
         };
-        self.tables.linetypes.push(LinetypeDef {
-            name,
-            description,
-            pattern,
-        });
+        self.tables
+            .add_linetype(LinetypeDef {
+                name,
+                description,
+                pattern,
+            })
+            .map_err(|TableFull| self.too_many_rows("LTYPE"))
     }
 
     /// A row of the STYLE table: a name is all the drawing keeps of it.
-    fn table_text_style(&mut self, body: &RecordBody) {
+    fn table_text_style(&mut self, body: &RecordBody) -> Result<(), DxfError> {
         let Some(name) = body.name.as_deref().filter(|name| check_name(name).is_ok()) else {
-            return self.report.count_unsupported(BAD_TEXT_STYLE_NAME);
+            self.report.count_unsupported(BAD_TEXT_STYLE_NAME);
+            return Ok(());
         };
         if self.tables.has_text_style(name) {
-            return;
+            return Ok(());
         }
         let name = if same_name(name, TextStyle::STANDARD) {
             TextStyle::STANDARD
         } else {
             name
         };
-        self.tables.text_styles.push(TextStyle::named(name));
+        self.tables
+            .add_text_style(TextStyle::named(name))
+            .map_err(|TableFull| self.too_many_rows("STYLE"))
     }
 
     fn import(&mut self, entity: Entity, body: &RecordBody) -> Result<(), DxfError> {
@@ -944,6 +1067,15 @@ impl<'a> Reader<'a> {
         self.report.linetypes = drawing.linetypes().len() - 1;
         self.report.text_styles = drawing.text_styles().len() - 1;
         self.report.blocks = drawing.blocks().len() - 1;
+        let deepest = drawing
+            .blocks()
+            .iter()
+            .map(|(id, _)| drawing.blocks().nesting_depth(id))
+            .max()
+            .unwrap_or(0);
+        if deepest > self.limits.max_nesting {
+            self.report.count_unsupported(NESTING_TOO_DEEP);
+        }
         self.report.created_layers = self.tables.created_layers;
         self.report.created_linetypes = self.tables.created_linetypes;
         self.report.created_text_styles = self.tables.created_text_styles;
@@ -2643,6 +2775,211 @@ mod tests {
         assert_eq!(import(&bytes).unwrap().report.lines, 1);
     }
 
+    // ── hostile files (§43, #156): every bound is reached by a test ──
+
+    fn layer_rows(names: &[&str]) -> Vec<(i32, &'static str)> {
+        let mut groups = vec![(0, "SECTION"), (2, "TABLES"), (0, "TABLE"), (2, "LAYER")];
+        for name in names {
+            let name: &'static str = Box::leak((*name).to_owned().into_boxed_str());
+            groups.extend([(0, "LAYER"), (2, name), (62, "7")]);
+        }
+        groups.extend([(0, "ENDTAB"), (0, "ENDSEC")]);
+        groups
+    }
+
+    #[test]
+    fn a_table_with_more_rows_than_the_limit_is_refused() {
+        let mut groups = layer_rows(&["A", "B", "C"]);
+        groups.extend([(0, "SECTION"), (2, "ENTITIES"), (0, "ENDSEC"), (0, "EOF")]);
+        let text = dxf(&groups);
+        let limits = ImportLimits {
+            max_table_rows: 2,
+            ..Default::default()
+        };
+        assert_eq!(
+            import_with_limits(text.as_bytes(), &limits).unwrap_err(),
+            DxfError::TooManyRows {
+                table: "LAYER",
+                limit: 2
+            }
+        );
+        assert_eq!(import(text.as_bytes()).unwrap().report.layers, 3);
+    }
+
+    #[test]
+    fn rows_made_for_undefined_names_stop_at_the_limit_and_are_reported() {
+        let mut groups = vec![(0, "SECTION"), (2, "ENTITIES")];
+        for layer in ["L1", "L2", "L3", "L4", "L5"] {
+            groups.extend([
+                (0, "LINE"),
+                (8, layer),
+                (10, "0"),
+                (20, "0"),
+                (11, "1"),
+                (21, "1"),
+            ]);
+        }
+        groups.extend([(0, "ENDSEC"), (0, "EOF")]);
+        let text = dxf(&groups);
+        let limits = ImportLimits {
+            max_table_rows: 3,
+            ..Default::default()
+        };
+        let imported = import_with_limits(text.as_bytes(), &limits).unwrap();
+        assert_eq!(imported.report.lines, 5, "every line is imported");
+        assert_eq!(imported.report.created_layers, 3);
+        assert_eq!(
+            imported.report.with_dropped_properties, 2,
+            "two lines fell to layer 0, and it is said"
+        );
+        let on_zero = imported
+            .drawing
+            .records()
+            .filter(|(_, record)| record.properties.layer == LayerId::FIRST)
+            .count();
+        assert_eq!(on_zero, 2);
+    }
+
+    #[test]
+    fn a_record_with_more_groups_than_the_limit_is_refused() {
+        let text = entities(&LINE_0_0_TO_10_5);
+        let limits = ImportLimits {
+            max_record_groups: 3,
+            ..Default::default()
+        };
+        assert!(matches!(
+            import_with_limits(text.as_bytes(), &limits).unwrap_err(),
+            DxfError::RecordTooLarge { limit: 3, .. }
+        ));
+    }
+
+    #[test]
+    fn a_value_longer_than_the_limit_is_refused() {
+        let text = entities(&[
+            (0, "LWPOLYLINE"),
+            (8, "ABCDEFGHIJ"),
+            (10, "0"),
+            (20, "0"),
+            (10, "1"),
+            (20, "1"),
+        ]);
+        let limits = ImportLimits {
+            max_value_bytes: 5,
+            ..Default::default()
+        };
+        assert!(matches!(
+            import_with_limits(text.as_bytes(), &limits).unwrap_err(),
+            DxfError::ValueTooLong { limit: 5, .. }
+        ));
+    }
+
+    /// A chain of blocks, each placing the next; the model places the first.
+    fn insert_chain(depth: usize) -> String {
+        let names: Vec<String> = (0..depth).map(|i| format!("B{i}")).collect();
+        let mut groups: Vec<(i32, &str)> = vec![(0, "SECTION"), (2, "BLOCKS")];
+        for (i, name) in names.iter().enumerate() {
+            groups.extend([(0, "BLOCK"), (2, name.as_str()), (10, "0"), (20, "0")]);
+            match names.get(i + 1) {
+                Some(next) => {
+                    groups.extend([(0, "INSERT"), (2, next.as_str()), (10, "1"), (20, "0")])
+                }
+                None => groups.extend([(0, "LINE"), (10, "0"), (20, "0"), (11, "1"), (21, "0")]),
+            }
+            groups.push((0, "ENDBLK"));
+        }
+        groups.extend([(0, "ENDSEC"), (0, "SECTION"), (2, "ENTITIES")]);
+        groups.extend([
+            (0, "INSERT"),
+            (2, "B0"),
+            (10, "0"),
+            (20, "0"),
+            (0, "ENDSEC"),
+            (0, "EOF"),
+        ]);
+        dxf(&groups)
+    }
+
+    #[test]
+    fn blocks_nested_deeper_than_the_limit_are_reported() {
+        let shallow = import(insert_chain(3).as_bytes()).unwrap();
+        assert_eq!(shallow.report.blocks, 3);
+        assert!(!shallow.report.unsupported.contains_key(NESTING_TOO_DEEP));
+
+        let limits = ImportLimits {
+            max_nesting: 1,
+            ..Default::default()
+        };
+        let tight = import_with_limits(insert_chain(3).as_bytes(), &limits).unwrap();
+        assert_eq!(tight.report.unsupported.get(NESTING_TOO_DEEP), Some(&1));
+
+        // Forty deep is more than the model follows: imported, and said.
+        let deep = import(insert_chain(40).as_bytes()).unwrap();
+        assert_eq!((deep.report.blocks, deep.report.block_references), (40, 1));
+        assert_eq!(deep.report.unsupported.get(NESTING_TOO_DEEP), Some(&1));
+        assert!(deep.report.has_unsupported_content());
+    }
+
+    #[test]
+    fn a_flood_of_empty_blocks_stops_at_the_row_limit() {
+        let mut text = String::from("  0\nSECTION\n  2\nBLOCKS\n");
+        for i in 0..150_000 {
+            text.push_str(&format!("  0\nBLOCK\n  2\nB{i}\n  0\nENDBLK\n"));
+        }
+        text.push_str("  0\nENDSEC\n  0\nEOF\n");
+        let started = std::time::Instant::now();
+        assert_eq!(
+            import(text.as_bytes()).unwrap_err(),
+            DxfError::TooManyRows {
+                table: "BLOCK",
+                limit: ImportLimits::default().max_table_rows
+            }
+        );
+        assert!(started.elapsed().as_secs() < 30, "{:?}", started.elapsed());
+    }
+
+    #[test]
+    fn a_polyline_claiming_billions_of_vertices_imports_the_two_it_has() {
+        let text = entities(&[
+            (0, "LWPOLYLINE"),
+            (90, "4294967296"),
+            (70, "0"),
+            (10, "0"),
+            (20, "0"),
+            (10, "10"),
+            (20, "0"),
+        ]);
+        let imported = import(text.as_bytes()).unwrap();
+        assert_eq!(polylines_of(&imported)[0].vertices.len(), 2);
+        assert!(!imported.report.has_unsupported_content());
+    }
+
+    /// The reader's work is proportional to the bytes read.
+    fn groups_of_nothing(megabytes: usize) -> String {
+        let group = "999\nx\n";
+        let mut text = group.repeat(megabytes * 1024 * 1024 / group.len());
+        text.push_str("  0\nEOF\n");
+        text
+    }
+
+    #[test]
+    fn ten_megabytes_of_groups_import_in_bounded_time() {
+        let text = groups_of_nothing(10);
+        let started = std::time::Instant::now();
+        assert!(import(text.as_bytes()).unwrap().drawing.is_empty());
+        assert!(started.elapsed().as_secs() < 60, "{:?}", started.elapsed());
+    }
+
+    /// Run by `scripts/stress.sh`, in release: a hundred megabytes within
+    /// the budget. A minute is generous; the point is that it is bounded.
+    #[test]
+    #[ignore = "a hundred megabytes: the time budget, run by scripts/stress.sh"]
+    fn a_hundred_megabytes_of_groups_import_within_the_budget() {
+        let text = groups_of_nothing(100);
+        let started = std::time::Instant::now();
+        assert!(import(text.as_bytes()).unwrap().drawing.is_empty());
+        assert!(started.elapsed().as_secs() < 60, "{:?}", started.elapsed());
+    }
+
     fn coordinate() -> impl Strategy<Value = f64> {
         prop_oneof![-1.0e9..1.0e9_f64, proptest::num::f64::NORMAL]
     }
@@ -2660,6 +2997,66 @@ mod tests {
         ) {
             let text: String = groups.iter().map(|(code, value)| format!("{code}\n{value}\n")).collect();
             let _ = import(text.as_bytes());
+        }
+
+        /// #156: files of every record kind with any groups never panic,
+        /// and whatever they import survives export → import → export.
+        #[test]
+        fn arbitrary_records_of_every_kind_never_panic_and_round_trip(
+            records in proptest::collection::vec(
+                (
+                    prop_oneof![
+                        Just("SECTION"), Just("ENDSEC"), Just("TABLE"), Just("ENDTAB"),
+                        Just("LAYER"), Just("LTYPE"), Just("STYLE"), Just("BLOCK_RECORD"),
+                        Just("BLOCK"), Just("ENDBLK"), Just("LINE"), Just("CIRCLE"), Just("ARC"),
+                        Just("LWPOLYLINE"), Just("POLYLINE"), Just("VERTEX"), Just("SEQEND"),
+                        Just("TEXT"), Just("MTEXT"), Just("INSERT"), Just("ATTRIB"), Just("HATCH"),
+                        Just("EOF"), Just("DICTIONARY"), Just("LAYOUT"),
+                    ],
+                    proptest::collection::vec(
+                        (
+                            prop_oneof![
+                                Just(1), Just(2), Just(3), Just(5), Just(6), Just(7), Just(8), Just(9),
+                                Just(10), Just(20), Just(30), Just(11), Just(21), Just(40), Just(41),
+                                Just(42), Just(43), Just(48), Just(49), Just(50), Just(51), Just(62),
+                                Just(66), Just(70), Just(71), Just(72), Just(73), Just(74), Just(90),
+                                Just(100), Just(330), Just(370), Just(420), Just(1001), 0..2000i32,
+                            ],
+                            prop_oneof![
+                                (-1000i64..1000).prop_map(|n| n.to_string()),
+                                (-100_000i64..100_000).prop_map(|n| format!("{}.{:03}", n / 1000, (n % 1000).abs())),
+                                Just("1e308".to_owned()), Just("-1e308".to_owned()), Just("1e999".to_owned()),
+                                Just("inf".to_owned()), Just("nan".to_owned()), Just(String::new()),
+                                Just("4294967296".to_owned()),
+                                "[A-Z]{1,6}", "[A-Za-z0-9 *$_.-]{0,10}",
+                                Just("BYLAYER".to_owned()), Just("ByBlock".to_owned()),
+                                Just("Continuous".to_owned()), Just("*Model_Space".to_owned()),
+                                Just("ENTITIES".to_owned()), Just("TABLES".to_owned()),
+                                Just("BLOCKS".to_owned()), Just("HEADER".to_owned()),
+                                Just("\\P{a\\}".to_owned()),
+                            ],
+                        ),
+                        0..10,
+                    ),
+                ),
+                0..40,
+            )
+        ) {
+            let mut text = String::new();
+            for (kind, groups) in &records {
+                text.push_str(&format!("  0\n{kind}\n"));
+                for (code, value) in groups {
+                    text.push_str(&format!("{code:>3}\n{value}\n"));
+                }
+            }
+            text.push_str("  0\nEOF\n");
+            if let Ok(imported) = import(text.as_bytes()) {
+                let first = export(&imported.drawing);
+                let again = import(first.as_bytes()).unwrap();
+                prop_assert!(!again.report.has_unsupported_content(), "{:?}", again.report.summary());
+                prop_assert_eq!(again.drawing.len(), imported.drawing.len());
+                prop_assert_eq!(export(&again.drawing), first);
+            }
         }
 
         /// #139: tables and property groups of any shape never panic, and

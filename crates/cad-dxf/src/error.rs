@@ -23,6 +23,12 @@ pub enum DxfError {
         entity: &'static str,
         group: i32,
     },
+    /// A table has more rows than the configured limit.
+    TooManyRows { table: &'static str, limit: usize },
+    /// A record has more groups than the configured limit.
+    RecordTooLarge { line: usize, limit: usize },
+    /// A group value is longer than the configured limit, in bytes.
+    ValueTooLong { line: usize, limit: usize },
     /// The file's layers and linetypes cannot be held as a drawing.
     Tables(String),
 }
@@ -52,6 +58,15 @@ impl fmt::Display for DxfError {
                 group,
             } => {
                 write!(f, "line {line}: {entity} is missing group {group}")
+            }
+            Self::TooManyRows { table, limit } => {
+                write!(f, "the {table} table has more than {limit} rows")
+            }
+            Self::RecordTooLarge { line, limit } => {
+                write!(f, "line {line}: a record has more than {limit} groups")
+            }
+            Self::ValueTooLong { line, limit } => {
+                write!(f, "line {line}: a value is longer than {limit} bytes")
             }
             Self::Tables(reason) => write!(f, "the file's tables cannot be held: {reason}"),
         }

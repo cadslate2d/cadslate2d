@@ -17,7 +17,9 @@ Two rules hold throughout:
 | Binary DXF | Refused: "save as ASCII DXF" | — | `binary_dxf_is_rejected_with_a_clear_message()`, `binary-sentinel.dxf` |
 | Encoding | Bytes decoded as UTF-8, lossily: a name that does not decode is still a name | ASCII, `$DWGCODEPAGE` `ANSI_1252` | `non_utf8_bytes_do_not_stop_an_import()` |
 | Line endings, padding, number forms | LF or CRLF; padded codes; exponents and leading dots | LF; codes right-aligned in three columns; the shortest decimal that reads back exactly, always with a point | `tolerates_crlf_padding_exponents_and_missing_sections()`, `crlf-exponent-notation.dxf`, `reals_always_carry_a_decimal_point()`, `formatted_reals_parse_back_exactly()` |
-| Limits | 256 MB of file; 2,000,000 entities, in the drawing and in blocks together; a type name is kept to 32 printable characters | — | `limits_are_enforced()`, `hostile_type_names_are_sanitised()` |
+| Limits (§43) | Every quantity a file can grow is bounded by an `ImportLimits` field: 256 MB of file; 2,000,000 entities, in the drawing and in blocks together; 100,000 rows per table, the file's and those made for undefined names (past it, a defined row is an error and a name that would make one is treated as one no row can have); 1,000,000 groups in one record; 64 KiB in one value; 32 levels of block nesting (deeper is reported, `(blocks nested too deep)`). A type name is kept to 32 printable characters; the unsupported-kinds report keeps 64 distinct names. Reaching a bound is an error or a report line, never an allocation in proportion to a claimed count — a polyline's count (90) is never believed | — | `limits_are_enforced()`, `a_table_with_more_rows_than_the_limit_is_refused()`, `rows_made_for_undefined_names_stop_at_the_limit_and_are_reported()`, `a_record_with_more_groups_than_the_limit_is_refused()`, `a_value_longer_than_the_limit_is_refused()`, `blocks_nested_deeper_than_the_limit_are_reported()`, `a_flood_of_empty_blocks_stops_at_the_row_limit()`, `a_polyline_claiming_billions_of_vertices_imports_the_two_it_has()`, `hostile_type_names_are_sanitised()`, `distinct_unsupported_kinds_are_bounded()`, `long-value.dxf`, `huge-vertex-count.dxf` |
+| Time | The reader's work is proportional to the bytes read: tables are indexed by name, and nothing is re-scanned per record. Ten megabytes of groups import within a minute in a debug build; a hundred within a minute in release, run by `scripts/stress.sh` | — | `ten_megabytes_of_groups_import_in_bounded_time()`, `a_hundred_megabytes_of_groups_import_within_the_budget()` |
+| Fuzz | Files of every record kind with any groups never panic, and whatever they import survives export → import → export; `scripts/stress.sh` runs it with many more cases | — | `arbitrary_bytes_never_panic()`, `arbitrary_dxf_shaped_text_never_panics()`, `arbitrary_records_of_every_kind_never_panic_and_round_trip()`, `arbitrary_tables_and_properties_never_panic()` |
 | Sections | `HEADER`, `TABLES`, `BLOCKS`, `ENTITIES`; everything else skipped | `HEADER`, `CLASSES` (empty), `TABLES`, `BLOCKS`, `ENTITIES`, `OBJECTS` | `a_file_with_no_entities_section_is_an_empty_drawing()`, `an_empty_drawing_is_a_complete_file_with_its_permanent_rows()` |
 | Order | Entities and blocks in file order; names resolved once the file is read, so a table may follow what uses it and a block may place one defined after it | Entities in `EntityId` order; handles in writing order | `output_is_deterministic_and_ordered_by_entity_id()`, `names_the_file_uses_but_never_defines_are_created_and_reported()`, `nested_blocks_from_another_writer()` |
 
@@ -104,6 +106,7 @@ What the reader could not hold is counted under these keys and named in the comm
 | `(layer true colour)` | A layer with a true colour: it has the nearest index |
 | `(INSERT with a non-uniform scale)`, `(INSERT array)`, `(INSERT attributes)` | A reference imported as far as the model holds |
 | `(INSERT of an undefined block)` | A reference the file gives no block for: not imported |
+| `(blocks nested too deep)` | Blocks nested deeper than the 32 levels the drawing follows: what lies below is not drawn |
 
 Beside the keys, the report counts the entities imported by kind, the entities whose properties were dropped (colour, lineweight, linetype scale, elevation, thickness, constant width, true colour, a layer or linetype name no row can have, aligned or fit text), the paragraphs whose formatting was dropped, the tables and the rows made for undefined names, and the unit (`skipped_entities_are_listed_by_kind()`, `tables_are_counted_and_rows_the_file_did_not_define_are_named()`).
 
@@ -114,7 +117,7 @@ A file the reader cannot read at all is refused with one of these, each with the
 | Error | When | Fixture |
 | --- | --- | --- |
 | Binary DXF | The file starts with the binary sentinel | `binary-sentinel.dxf` |
-| File too large; too many entities | Over the limits | `limits_are_enforced()` |
+| File too large; too many entities; too many rows; record too large; value too long | Over a limit | `limits_are_enforced()`, `a_table_with_more_rows_than_the_limit_is_refused()`, `a_record_with_more_groups_than_the_limit_is_refused()`, `long-value.dxf` |
 | Invalid group code | A code line that is not an integer | `not-dxf.dxf`, `bad-group-code.dxf` |
 | Unexpected end | The file ends inside a group, a record, or a section, or without `EOF` | `empty.dxf`, `truncated-mid-entity.dxf`, `missing-eof.dxf` |
 | Invalid number | A coordinate, radius, or angle that is not a finite number | `bad-coordinate.dxf` |

@@ -444,6 +444,34 @@ fn malformed_fixtures_fail_for_the_documented_reason() {
         "cyclic-blocks.dxf",
         |e| matches!(e, DxfError::Tables(reason) if reason.contains("contain itself")),
     );
+    expect("long-value.dxf", |e| {
+        matches!(e, DxfError::ValueTooLong { limit: 65_536, .. })
+    });
+}
+
+// ── hostile files (#156) ──
+
+/// A polyline whose count claims four billion vertices has two: the count
+/// is never trusted, and nothing is allocated for it.
+#[test]
+fn a_claimed_vertex_count_is_not_believed() {
+    let loaded = load("valid", "huge-vertex-count.dxf").unwrap();
+    assert_eq!(polylines(&loaded.drawing)[0].0.len(), 2);
+    assert!(!loaded.report.has_unsupported_content());
+}
+
+/// Every header variable twice: the last one wins, and nothing grows.
+#[test]
+fn a_repeated_header_takes_the_last_of_each_variable() {
+    let loaded = load("valid", "repeated-header.dxf").unwrap();
+    let drawing = &loaded.drawing;
+    let settings = drawing.settings();
+    assert_eq!(loaded.report.unit, Some(cad_core::LengthUnit::Millimetres));
+    assert_eq!(settings.current_layer, layer_named(drawing, "B").0);
+    assert_eq!(settings.current_color, Color::Index(3));
+    assert_eq!(settings.current_linetype, Linetype::ByLayer);
+    assert_eq!(settings.current_lineweight, Lineweight::Hundredths(25));
+    assert_eq!(settings.ltscale, 5.0);
 }
 
 // ── blocks (#149) ──
