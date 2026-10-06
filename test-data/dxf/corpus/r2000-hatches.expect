@@ -1,0 +1,8 @@
+imported hatches 4
+unsupported "(HATCH boundary with a spline or ellipse)" 1
+unsupported "(HATCH pattern not in the table)" 1
+entities 4
+hatch 0 SOLID 2
+hatch 1 ANSI31 1
+hatch 2 NET 1
+hatch 3 SOLID 1  # AR-CONC

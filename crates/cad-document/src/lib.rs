@@ -40,6 +40,8 @@ mod transaction;
 
 pub use aci::{FOREGROUND_INDEX, Paint, index_paint, nearest_index};
 pub use block::{Block, BlockChange, BlockId, BlockReferenceEntity, BlockTable, empty_blocks};
+/// A hatch's boundary loop: a closed path of straight and arc segments.
+pub use cad_geometry::Path;
 pub use dim_style::{DimStyle, DimStyleChange, DimStyleError, DimStyleId, DimStyleTable};
 pub use dimension::{DimensionEntity, DimensionError, DimensionLayout, Measure};
 pub use drawing::{ApplyReport, Drawing, TransactionBuilder, TransactionError};

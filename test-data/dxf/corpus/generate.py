@@ -239,9 +239,7 @@ def unsupported(release: str) -> None:
     if modern(release):
         msp.add_spline([(0, 0), (10, 10), (20, 0)])
         msp.add_ellipse((50, 50), major_axis=(20, 0), ratio=0.5)
-        hatch = msp.add_hatch(color=2)
-        hatch.paths.add_polyline_path([(0, 0), (10, 0), (10, 10)], is_closed=True)
-        expect += ["unsupported SPLINE 1", "unsupported ELLIPSE 1", "unsupported HATCH 1"]
+        expect += ["unsupported SPLINE 1", "unsupported ELLIPSE 1"]
     save(doc, f"{release.lower()}-unsupported", expect)
 
 
@@ -297,6 +295,54 @@ def dimensions(release: str) -> None:
         "dimension 5 radius 30",
         "dimension 6 diameter 60",
         "dimension 7 linear 60",
+    ])
+
+
+def hatches(release: str) -> None:
+    """Solid and pattern hatches on polyline and edge paths — lines, arcs
+    either way round, a full circle as a hole — with a spline boundary, a
+    gradient, and a pattern CadSlate2D's table lacks, each reported. R12 has
+    no HATCH."""
+    doc, msp = new(release)
+    h = msp.add_hatch()
+    h.paths.add_polyline_path([(0, 0), (100, 0), (100, 100), (0, 100)], is_closed=True, flags=1)
+    e = h.paths.add_edge_path(flags=16)
+    e.add_arc((50, 50), 20, 0, 360)
+    h = msp.add_hatch()
+    h.set_pattern_fill("ANSI31", scale=2, angle=30)
+    h.paths.add_polyline_path([(200, 0, 0), (300, 0, 1), (300, 100, 0), (200, 100, 0)], is_closed=True)
+    h = msp.add_hatch()
+    h.set_pattern_fill("NET", scale=3)
+    e = h.paths.add_edge_path()
+    e.add_line((600, 0), (600, 100))
+    e.add_arc((650, 100), 50, 0, 180, ccw=False)
+    e.add_line((700, 100), (700, 0))
+    e.add_line((700, 0), (600, 0))
+    h = msp.add_hatch()
+    e = h.paths.add_edge_path()
+    e.add_spline(fit_points=[(800, 0), (850, 50), (900, 0)])
+    e.add_line((900, 0), (800, 0))
+    h = msp.add_hatch()
+    h.set_pattern_fill("AR-CONC", scale=1)
+    h.paths.add_polyline_path([(200, 200), (300, 200), (300, 300), (200, 300)], is_closed=True)
+    # Gradients came with R2004: ezdxf writes none for R2000.
+    gradient = release != "R2000"
+    if gradient:
+        h = msp.add_hatch()
+        h.set_gradient((255, 0, 0), (0, 0, 255))
+        h.paths.add_polyline_path([(0, 200), (100, 200), (100, 300), (0, 300)], is_closed=True)
+    count = 5 if gradient else 4
+    save(doc, f"{release.lower()}-hatches", [
+        f"imported hatches {count}",
+        'unsupported "(HATCH boundary with a spline or ellipse)" 1',
+        'unsupported "(HATCH pattern not in the table)" 1',
+        'unsupported "(gradient HATCH)" 1' if gradient else None,
+        f"entities {count}",
+        "hatch 0 SOLID 2",
+        "hatch 1 ANSI31 1",
+        "hatch 2 NET 1",
+        "hatch 3 SOLID 1  # AR-CONC",
+        "hatch 4 SOLID 1  # the gradient" if gradient else None,
     ])
 
 
@@ -377,6 +423,7 @@ def main() -> None:
             kind(release)
         if modern(release):
             mtext(release)
+            hatches(release)
         # True colour (group 420) came with R2004: ezdxf writes none for R2000.
         if release in ("R2010", "R2018"):
             true_colour(release)

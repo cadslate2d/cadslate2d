@@ -26,8 +26,8 @@ const mixedFile = dxf(
   [0, "SECTION"],
   [2, "ENTITIES"],
   ...LINE,
-  [0, "HATCH"],
-  [2, "SOLID"],
+  [0, "SPLINE"],
+  [70, "8"],
   [0, "ENDSEC"],
   [0, "EOF"],
 );
@@ -451,7 +451,7 @@ describe("unsupported content", () => {
     enter("OPEN");
     await tick();
 
-    const losses = ["Not imported (unsupported): 1 HATCH."];
+    const losses = ["Not imported (unsupported): 1 SPLINE."];
     expect(app.ui.getSnapshot().exportLosses).toEqual(losses);
     expect(app.ui.getSnapshot().importReport).toEqual({
       serial: 1,

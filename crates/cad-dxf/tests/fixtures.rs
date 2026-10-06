@@ -1114,6 +1114,97 @@ fn dimensions_from_another_writer() {
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }
 
+/// HATCH from another writer (ADR-0021, #169): polyline and edge paths —
+/// lines, arcs either way round, a full circle — solid and pattern fills
+/// with their angle and scale; a spline boundary, a gradient, and a
+/// pattern the table lacks reported. What came in goes out and comes back
+/// the same.
+#[test]
+fn hatches_from_another_writer() {
+    use cad_document::HatchStyle;
+    let import = load("valid", "ezdxf-r2010-hatches.dxf").unwrap();
+    let hatches: Vec<_> = in_file_order(&import.drawing)
+        .into_iter()
+        .filter_map(|entity| match entity {
+            Entity::Hatch(hatch) => Some(hatch),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(hatches.len(), 6, "all but the spline-bounded one");
+    let report = &import.report;
+    assert_eq!(report.hatches, 6);
+    for key in [
+        "(HATCH boundary with a spline or ellipse)",
+        "(gradient HATCH)",
+        "(HATCH pattern not in the table)",
+    ] {
+        assert_eq!(report.unsupported.get(key), Some(&1), "{key}");
+    }
+
+    // A square with a round hole: the hole an edge path of one full arc.
+    let holed = &hatches[0];
+    assert_eq!(holed.style, HatchStyle::Solid);
+    assert_eq!(holed.loops.len(), 2);
+    let expected = 10_000.0 - std::f64::consts::PI * 400.0;
+    assert!((holed.area() - expected).abs() < 5.0, "{}", holed.area());
+    assert!(!holed.contains(Point2::new(50.0, 50.0)));
+
+    // ANSI31 at 30° and scale 2 on a path with a half-circle bulge.
+    let HatchStyle::Pattern {
+        name, angle, scale, ..
+    } = &hatches[1].style
+    else {
+        panic!("a pattern");
+    };
+    assert_eq!(name, "ANSI31");
+    assert!((angle.to_degrees() - 30.0).abs() < 1e-9);
+    assert_eq!(*scale, 2.0);
+    let half_circle = 10_000.0 + std::f64::consts::PI * 2500.0 / 2.0;
+    assert!((hatches[1].area() - half_circle).abs() < 10.0);
+
+    // Lines and an arc counter-clockwise, and the same shape wound the
+    // other way with a clockwise arc: the same region.
+    for hatch in &hatches[2..4] {
+        assert!(
+            (hatch.area() - half_circle).abs() < 10.0,
+            "{}",
+            hatch.area()
+        );
+        assert_eq!(hatch.style, HatchStyle::Solid);
+    }
+    assert!(
+        hatches[2].contains(Point2::new(450.0, 140.0)),
+        "under the arc"
+    );
+    assert!(
+        hatches[3].contains(Point2::new(650.0, 140.0)),
+        "under the clockwise arc"
+    );
+    // The gradient and the pattern the table lacks are filled solid.
+    assert_eq!(hatches[4].style, HatchStyle::Solid);
+    assert_eq!(hatches[5].style, HatchStyle::Solid);
+
+    let text = export(&import.drawing);
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(back.report.hatches, 6);
+    assert!(
+        !back.report.has_unsupported_content(),
+        "our own hatches are whole"
+    );
+    let again: Vec<_> = in_file_order(&back.drawing)
+        .into_iter()
+        .filter_map(|entity| match entity {
+            Entity::Hatch(hatch) => Some(hatch),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        again[1].style, hatches[1].style,
+        "the pattern's origin survives"
+    );
+    assert_eq!(export(&back.drawing), text, "export → import → export");
+}
+
 /// A newer file's MTEXT: words and line breaks kept, formatting dropped
 /// and reported, attachment points placed, long text in pieces joined.
 #[test]

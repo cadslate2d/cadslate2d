@@ -22,6 +22,8 @@ pub struct ImportReport {
     pub block_references: usize,
     /// DIMENSION entities imported.
     pub dimensions: usize,
+    /// HATCH entities imported.
+    pub hatches: usize,
     /// Entities that were skipped, by DXF type name, in name order.
     pub unsupported: BTreeMap<String, usize>,
     /// Imported entities that carried properties the drawing cannot hold
@@ -87,6 +89,7 @@ impl ImportReport {
             + self.texts
             + self.block_references
             + self.dimensions
+            + self.hatches
     }
 
     pub(crate) fn count_unsupported(&mut self, kind: &str) {
@@ -107,6 +110,7 @@ impl ImportReport {
             (self.texts, "text", "texts"),
             (self.block_references, "block reference", "block references"),
             (self.dimensions, "dimension", "dimensions"),
+            (self.hatches, "hatch", "hatches"),
         ];
         let imported: Vec<String> = kinds
             .into_iter()

@@ -17,10 +17,10 @@ use std::collections::HashMap;
 use cad_core::{LengthUnit, Point2};
 use cad_document::{
     ArcEntity, Block, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, DimStyle,
-    DimStyleId, DimensionEntity, Drawing, DrawingSettings, Entity, EntityRecord, Justification,
-    Layer, LayerId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity,
-    Measure, PolylineEntity, Properties, TextEntity, TextStyle, TextStyleId, check_name,
-    nearest_index, same_name,
+    DimStyleId, DimensionEntity, Drawing, DrawingSettings, Entity, EntityRecord, HatchEntity,
+    HatchStyle, Justification, Layer, LayerId, LineEntity, Linetype, LinetypeDef, LinetypeId,
+    Lineweight, MTextEntity, Measure, PolylineEntity, Properties, TextEntity, TextStyle,
+    TextStyleId, check_name, nearest_index, same_name,
 };
 
 use crate::export::insunits_code;
@@ -41,7 +41,7 @@ const POLYLINE_NOT_2D: i64 = 8 | 16 | 32 | 64;
 /// Polyline flag bit: closed.
 const POLYLINE_CLOSED: i64 = 1;
 /// Report key for supported entity types with geometry the drawing cannot hold.
-const INVALID: &str = "(invalid geometry)";
+pub(crate) const INVALID: &str = "(invalid geometry)";
 /// Report keys for table rows the drawing cannot hold as written.
 const BAD_LAYER_NAME: &str = "(layer name)";
 const BAD_LINETYPE_NAME: &str = "(linetype name)";
@@ -53,6 +53,8 @@ const BAD_DIM_STYLE_NAME: &str = "(dimension style name)";
 const BAD_DIM_STYLE: &str = "(dimension style values)";
 /// Report keys for the DIMENSION kinds the drawing has no measure for.
 const ORDINATE: &str = "(ordinate DIMENSION)";
+/// Report key for a pattern too fine for its region at its scale: filled solid.
+const TOO_DENSE: &str = "(HATCH pattern too dense)";
 const UNKNOWN_DIMENSION: &str = "(DIMENSION of an unknown kind)";
 const BAD_BLOCK_NAME: &str = "(block name)";
 /// Report key for a layer whose colour is a true colour: the drawing holds
@@ -644,6 +646,9 @@ impl<'a> Reader<'a> {
                 return Ok(());
             }
             let mut body = RecordBody::default();
+            if record.value == "HATCH" {
+                body.raw = Some(Vec::new());
+            }
             let mut groups = 0;
             let next = loop {
                 let group = self.groups.expect()?;
@@ -656,6 +661,9 @@ impl<'a> Reader<'a> {
                         line: group.line,
                         limit: self.limits.max_record_groups,
                     });
+                }
+                if let Some(raw) = &mut body.raw {
+                    raw.push((group.code, group.value.to_owned()));
                 }
                 body.absorb(group)?;
             };
@@ -711,6 +719,7 @@ impl<'a> Reader<'a> {
             }
             (_, "INSERT") if entities => self.insert(record, body)?,
             (_, "DIMENSION") if entities => self.dimension(body)?,
+            (_, "HATCH") if entities => self.hatch(body)?,
             (RecordContext::Tables, "STYLE") => self.table_text_style(body)?,
             (RecordContext::Tables, "DIMSTYLE") => self.table_dim_style(body)?,
             (_, "LWPOLYLINE") if entities => {
@@ -1041,6 +1050,41 @@ impl<'a> Reader<'a> {
         self.push(Entity::Dimension(dimension), pending)
     }
 
+    /// A HATCH (ADR-0021), read from its groups in order by
+    /// `crate::hatch`: its polyline and edge boundary paths — lines and
+    /// arcs; a path with an ellipse or a spline is reported and left out —
+    /// and its fill, solid or a pattern from the table with its angle,
+    /// scale, and origin. A pattern the table lacks is filled solid and
+    /// reported; so is a gradient. A hatch with no boundary left, or one
+    /// that bounds no region, is reported.
+    fn hatch(&mut self, body: &RecordBody) -> Result<(), DxfError> {
+        let Some(read) = body.raw.as_deref().and_then(crate::hatch::read) else {
+            self.report.count_unsupported(INVALID);
+            return Ok(());
+        };
+        for key in &read.dropped {
+            self.report.count_unsupported(key);
+        }
+        let hatch = HatchEntity::solid(read.loops).styled(read.style.unwrap_or(HatchStyle::Solid));
+        match hatch.check() {
+            Ok(()) => self.push(Entity::Hatch(hatch), body.pending()),
+            // A pattern too fine to draw is filled solid instead.
+            Err(cad_document::HatchError::TooDense) => {
+                self.report.count_unsupported(TOO_DENSE);
+                self.push(
+                    Entity::Hatch(hatch.styled(HatchStyle::Solid)),
+                    body.pending(),
+                )
+            }
+            Err(_) => {
+                if read.dropped.is_empty() {
+                    self.report.count_unsupported(INVALID);
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// A row of the DIMSTYLE table: the name and the variables the drawing
     /// holds — text height (140), arrow size (41), text gap (147), extension
     /// offset (42) and overshoot (44), decimals (271), and the suffix
@@ -1157,8 +1201,7 @@ impl<'a> Reader<'a> {
                     // Counted once its block is found.
                     Entity::BlockRef(_) => {}
                     Entity::Dimension(_) => self.report.dimensions += 1,
-                    // Not read yet (#169): a HATCH is reported by name.
-                    Entity::Hatch(_) => {}
+                    Entity::Hatch(_) => self.report.hatches += 1,
                 }
                 self.entities.push((entity, properties));
             }
@@ -1373,6 +1416,9 @@ enum RecordContext {
 /// The groups of one record that matter to this reader.
 #[derive(Debug, Default)]
 struct RecordBody {
+    /// Every group in order, kept only for a record whose groups mean
+    /// different things where they stand: a HATCH (`crate::hatch`).
+    raw: Option<Vec<(i32, String)>>,
     /// Every group 10 and 20 of the record, in order: one point for most
     /// entities, one per vertex for an LWPOLYLINE.
     xs: Vec<f64>,
@@ -1960,7 +2006,7 @@ mod tests {
     fn unsupported_entities_are_counted_by_kind_and_supported_ones_still_import() {
         let mut body = vec![(0, "ELLIPSE"), (10, "0"), (20, "0"), (40, "5")];
         body.extend_from_slice(&LINE_0_0_TO_10_5);
-        body.extend_from_slice(&[(0, "HATCH"), (2, "SOLID"), (0, "ELLIPSE"), (40, "1")]);
+        body.extend_from_slice(&[(0, "SPLINE"), (70, "8"), (0, "ELLIPSE"), (40, "1")]);
         // A 3D polyline is unsupported; its vertices belong to it and are not counted separately.
         body.extend_from_slice(&[
             (0, "POLYLINE"),
@@ -1979,8 +2025,37 @@ mod tests {
             .iter()
             .map(|(kind, count)| (kind.as_str(), *count))
             .collect();
-        assert_eq!(counts, vec![("ELLIPSE", 2), ("HATCH", 1), ("POLYLINE", 1)]);
+        assert_eq!(counts, vec![("ELLIPSE", 2), ("POLYLINE", 1), ("SPLINE", 1)]);
         assert!(import.report.has_unsupported_content());
+    }
+
+    #[test]
+    fn a_hatch_with_no_boundary_is_invalid_geometry_and_never_panics() {
+        let body = [(0, "HATCH"), (2, "SOLID")];
+        let empty = import(entities(&body).as_bytes()).unwrap();
+        assert_eq!(empty.report.unsupported.get(INVALID), Some(&1));
+        // Claimed counts far beyond the groups present read what is there.
+        let body = [
+            (0, "HATCH"),
+            (2, "SOLID"),
+            (70, "1"),
+            (91, "999999999"),
+            (92, "2"),
+            (72, "0"),
+            (73, "1"),
+            (93, "999999999"),
+            (10, "0"),
+            (20, "0"),
+            (10, "10"),
+            (20, "0"),
+            (10, "10"),
+            (20, "10"),
+            (97, "0"),
+            (75, "0"),
+            (76, "1"),
+        ];
+        let claimed = import(entities(&body).as_bytes()).unwrap();
+        assert_eq!(claimed.report.hatches, 1);
     }
 
     #[test]

@@ -15,6 +15,7 @@
 
 mod error;
 mod export;
+mod hatch;
 mod import;
 mod properties;
 mod report;
