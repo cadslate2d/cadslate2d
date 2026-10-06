@@ -1,0 +1,9 @@
+imported lines 2
+imported circles 1
+tables layers 3
+tables linetypes 2
+layer WALLS colour 1 on locked linetype DASHED lineweight 50
+layer HIDDEN colour 4 off unlocked linetype CENTER lineweight default
+entity 0 layer WALLS colour bylayer linetype bylayer lineweight bylayer
+entity 1 layer HIDDEN colour 5 linetype DASHED lineweight 35
+entity 2 layer 0 colour byblock linetype byblock lineweight bylayer

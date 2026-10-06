@@ -1,0 +1,9 @@
+imported polylines 3
+unsupported POLYLINE 1
+entities 3
+polyline 0 open 3
+polyline 1 closed 4
+polyline 2 closed 4
+bulge 2 0 1
+bulge 2 1 0
+bulge 2 2 1

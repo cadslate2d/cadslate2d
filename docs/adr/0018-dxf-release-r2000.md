@@ -11,7 +11,7 @@ ADR-0005 chose ASCII DXF release 12 as the M0 baseline because a line is a line 
 
 - **Lineweights** (#136). R12 has no group 370. The writer counted them and the command log said *Lineweights are not written in DXF R12: dropped from 2 objects and 1 layer.* on every save of a drawing that used them.
 - **Paragraphs** (#144). R12 has no MTEXT. A paragraph was written as one TEXT per line; reopened, it was single lines with no width and no unity.
-- **True colour**, deferred to M5 because group 420 needs a newer release (#153).
+- **True colour**, deferred to M5 because group 420 needs a release newer than R12 (#153).
 
 So a drawing saved and reopened was not the drawing. §24.2 (LOCKED) forbids pretending otherwise, and the writer did not pretend — but the honest report is not a fix. The issue (#152) asks for the release that holds what the drawing does, chosen with evidence.
 
@@ -19,7 +19,7 @@ So a drawing saved and reopened was not the drawing. §24.2 (LOCKED) forbids pre
 
 **R12 (`AC1009`)**, kept, with the losses reported. Simplest; what every tool reads; and the one release in which the file is only the drawing, with no handles, dictionaries, or layouts.
 
-**R2000 (`AC1015`)**. The first release with lineweights (370 on entities, layers, and `$CELWEIGHT`), MTEXT, LWPOLYLINE, and true colour; the release most tools default to when asked for "an old DXF"; still read by everything. It requires: a handle (group 5) on every record and an owner (330); subclass markers (100); a `CLASSES` section; nine tables including `BLOCK_RECORD`; `*Model_Space` and `*Paper_Space` blocks; and an `OBJECTS` section with the named-object dictionary and the layouts that tie the spaces together.
+**R2000 (`AC1015`)**. The first release with lineweights (370 on entities, layers, and `$CELWEIGHT`), MTEXT, and LWPOLYLINE (true colour, group 420, came with R2004); the release most tools default to when asked for "an old DXF"; still read by everything. It requires: a handle (group 5) on every record and an owner (330); subclass markers (100); a `CLASSES` section; nine tables including `BLOCK_RECORD`; `*Model_Space` and `*Paper_Space` blocks; and an `OBJECTS` section with the named-object dictionary and the layouts that tie the spaces together.
 
 **R2010 (`AC1024`) or later**. Nothing the drawing holds needs them; they add more objects to write and nothing to gain until M6 (dimension styles are in R2000 too).
 
@@ -72,7 +72,7 @@ Lineweights on entities (370), on layers (370, `-3` for the default), and in the
 
 ### 2026-10-06 — True colour is not adopted; a file's true colour is read as the nearest index
 
-The roadmap deferred true colour to this decision because group 420 needs R2000 (#153). With the release here, the question is the colour model's, not the file's, and the answer is no — for now.
+The roadmap deferred true colour to this decision because group 420 needs a release newer than R12 — R2004, in fact, one more than the R2000 chosen above (#153). With the release here, the question is the colour model's, not the file's, and the answer is no — for now.
 
 Why: the drawing's colour model is the index palette — 255 numbered colours, `ByLayer`, `ByBlock` — because that is what command-driven drafting uses: a colour is a number you type, a layer's colour is a number in a list, and the palette is the same in every drawing. A true colour would be a second kind of colour in every place the first appears: `COLOR`, `LAYER Color`, `CHPROP`, the two panels, the style table (which carries RGB already), the DXF reader and writer, and the ACI names. None of M5's work needs it; nothing a drafter has asked for needs it; and §45 asks that the product stay small. It stays out until a drawing that needs it shows up.
 

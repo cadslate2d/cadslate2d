@@ -32,6 +32,38 @@ Files with specific expectations (entity counts, report contents, exact coordina
 | `ezdxf-r2010-block-attributes.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | A block with an `ATTDEF`, placed twice, once with an `ATTRIB` (both reported), once turned. |
 | `ezdxf-r2010-true-colour.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | True colours (group 420): on a layer (with ezdxf's default `62` of 7 beside it), on a line alone, on a line with an index beside it, and pure red; each becomes the nearest index colour and is reported. |
 
+## corpus/
+
+The round-trip corpus (#155): files written by ezdxf 1.4.4 for four releases — R12, R2000, R2010, R2018 — and every kind of content the drawing holds or reports, each with a `.expect` sidecar saying what CadSlate2D must make of it. A case is two files; **adding a case is adding two files**, no Rust.
+
+The runner is `crates/cad-dxf/tests/corpus.rs` (`cargo test -p cad-dxf --test corpus`). For every `.dxf` it imports the file, checks each line of the sidecar, and then exports, imports, and exports again: the second import must hold nothing unsupported and the second export must be byte for byte the first. A failure is reported by file and line, every failing line listed:
+
+```text
+r2000-blocks.dxf:7: mirrored: got "plain", expected "mirrored"
+    reference 2 CHAIR 0 50 1 180 mirrored
+```
+
+A sidecar line is a word and its arguments; `#` starts a comment. The grammar is at the top of `corpus.rs`: counts (`imported lines 3`, `tables layers 2`, `unsupported HATCH 1`, `dropped 2`), the drawing's settings (`unit mm`, `current layer PIPES`, `ltscale 5`), and the i-th entity of a kind in file order (`line 0 0 0 100 0`, `circle 0 50 50 25`, `polyline 1 closed 4`, `bulge 2 0 1`, `text 0 "Left" 2.5`, `reference 2 CHAIR 0 50 1 180 mirrored`), a layer's row (`layer WALLS colour 1 on locked linetype DASHED lineweight 50`), and an entity's properties (`entity 1 layer HIDDEN colour 5 linetype DASHED lineweight 35`).
+
+The files here are generated — `generate.py`, which needs ezdxf (`python3 -m venv .venv && .venv/bin/pip install ezdxf==1.4.4`, then `.venv/bin/python3 test-data/dxf/corpus/generate.py` from the repository root) — so the whole corpus can be rewritten when a kind of content is added; the sidecars are written by the same script, by hand per kind of content, and are the contract. A file saved by an interactive CAD program (AutoCAD, BricsCAD, LibreCAD, QCAD) goes here too, with a sidecar written by hand; none exists yet, for want of someone with the program.
+
+`audit.py` re-exports every corpus file through our writer and reads the result with ezdxf's recovery audit. Recorded 2026-10-06: 45 files, 0 errors, 0 fixes — every export read back as `AC1015` with its entities. The check has no Python, so this is run and recorded by hand when the writer changes.
+
+| Kind | Files | What it covers |
+| --- | --- | --- |
+| `curves` | 4 | Lines, circles, an arc, with exact coordinates |
+| `polylines` | 4 | Open, closed, and bulged polylines (`POLYLINE`/`VERTEX` in R12, `LWPOLYLINE` after), and a 3D polyline that is reported |
+| `text` | 4 | `TEXT` left, centred (turned, in a style), right, and fit (reported); a `STYLE` row |
+| `mtext` | 3 | `MTEXT` with a break, with formatting (reported), and 300 characters in pieces — R2000 and later |
+| `layers` | 4 | Layers with colours, linetypes, one off and one locked, lineweights where the release has them; entities with their own properties and `ByBlock` |
+| `blocks` | 4 | Nested blocks placed every way: scaled and turned, mirrored by either sign, non-uniform, arrayed, undefined (the last three reported) |
+| `header` | 4 | `$CLAYER`, `$CECOLOR`, `$CELTYPE`, `$LTSCALE`; `$INSUNITS` and `$CELWEIGHT` where the release has them |
+| `unsupported` | 4 | `POINT`, `SOLID`, `3DFACE`, and from R2000 `SPLINE`, `ELLIPSE`, `HATCH`: counted by name |
+| `true-colour` | 2 | Group 420 on a layer and on entities, read as the nearest index and reported — R2010 and R2018, since true colour came with R2004 |
+| `attributes` | 4 | A block with an `ATTDEF`, placed with an `ATTRIB` and without |
+| `mixed` | 4 | A little of everything, counted |
+| `degenerate` | 4 | A circle of radius 0, an arc of negative radius, a polyline of one vertex: reported, not imported |
+
 ## malformed/
 
 | File | Expected error |

@@ -1,0 +1,6 @@
+imported block_references 2
+tables blocks 1
+block TAG 1
+unsupported ATTDEF 1
+unsupported "(INSERT attributes)" 1
+reference 1 TAG 50 0 1 45 plain

@@ -1,0 +1,7 @@
+imported lines 2
+imported circles 1
+dropped 2
+unsupported "(layer true colour)" 1
+entity 0 layer 0 colour 30 linetype bylayer lineweight bylayer
+entity 1 layer 0 colour 1 linetype bylayer lineweight bylayer
+entity 2 layer TEAL colour 3 linetype bylayer lineweight bylayer

@@ -1,0 +1,10 @@
+imported lines 3
+imported circles 2
+imported arcs 1
+entities 6
+line 0 0 0 100 0
+line 2 -10.5 2.25 10.5 -2.25
+circle 0 50 50 25
+circle 1 0 0 0.5
+arc 0 0 0 30 0 90
+tables layers 1

@@ -7,7 +7,7 @@ Every row names the test or fixture that backs it: a test by its name followed b
 Two rules hold throughout:
 
 - **The reader is release-agnostic.** It reads group pairs and looks only at what is listed here, so a file of any release — R12 through R2018 are in the fixtures — imports, and a group it does not know is skipped. Handles, owners, and subclass markers are never read.
-- **The writer writes one release, R2000 (`AC1015`)**, complete: every record with a handle and an owner, the nine tables, both spaces, and the objects that tie them together. Export → import → export is byte-identical for every fixture (`every_valid_fixture_round_trips_stably()`).
+- **The writer writes one release, R2000 (`AC1015`)**, complete: every record with a handle and an owner, the nine tables, both spaces, and the objects that tie them together. Export → import → export is byte-identical for every fixture (`every_valid_fixture_round_trips_stably()`) and every file of the round-trip corpus, whose sidecars say what each must import as (`every_corpus_file_imports_as_its_sidecar_says_and_round_trips()`, [`test-data/dxf/README.md`](../test-data/dxf/README.md#corpus)).
 
 ## The file
 

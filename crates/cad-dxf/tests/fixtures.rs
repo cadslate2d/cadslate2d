@@ -130,6 +130,7 @@ fn the_matrix_names_only_tests_and_fixtures_that_exist() {
         "src/export.rs",
         "src/report.rs",
         "tests/fixtures.rs",
+        "tests/corpus.rs",
     ]
     .iter()
     .map(|file| fs::read_to_string(root.join("crates/cad-dxf").join(file)).unwrap())

@@ -1,0 +1,14 @@
+imported block_references 6
+tables blocks 2
+block CHAIR 2
+block PAIR 2
+entities 6
+reference 0 PAIR 100 0 1 0 plain
+reference 1 PAIR 100 100 2 90 plain
+reference 2 CHAIR 0 50 1 180 mirrored
+reference 3 CHAIR 0 80 1 0 mirrored
+reference 4 CHAIR 50 50 2 0 plain
+reference 5 CHAIR 0 -50 1 0 plain
+unsupported "(INSERT with a non-uniform scale)" 1
+unsupported "(INSERT array)" 1
+unsupported "(INSERT of an undefined block)" 1
