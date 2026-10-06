@@ -1,5 +1,13 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { clickWorld, downloadFrom, enter, logLines, openApp, prompt } from "./support";
+import {
+  clickWorld,
+  downloadFrom,
+  enter,
+  entitiesSection,
+  logLines,
+  openApp,
+  prompt,
+} from "./support";
 
 const exported = async (page: Page) => (await downloadFrom(page, () => enter(page, "DXFOUT"))).text;
 
@@ -99,7 +107,7 @@ test.describe("corners of a polyline", () => {
     let text = await exported(page);
     expect(text.match(/^POLYLINE$/gm)).toHaveLength(1);
     expect(text.match(/^VERTEX$/gm)).toHaveLength(5);
-    expect(text.match(/^ 42$/gm)).toHaveLength(1);
+    expect(entitiesSection(text).match(/^ 42$/gm)).toHaveLength(1);
 
     await page.keyboard.press("Control+z");
     await enter(page, "F", "P");
@@ -108,7 +116,7 @@ test.describe("corners of a polyline", () => {
     await expect(logLines(page).last()).toHaveText("4 corners filleted, 0 skipped.");
     text = await exported(page);
     expect(text.match(/^VERTEX$/gm)).toHaveLength(8);
-    expect(text.match(/^ 42$/gm)).toHaveLength(4);
+    expect(entitiesSection(text).match(/^ 42$/gm)).toHaveLength(4);
   });
 });
 

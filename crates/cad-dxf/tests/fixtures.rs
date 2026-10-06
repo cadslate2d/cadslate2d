@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use cad_core::Point2;
 use cad_document::{
-    Color, Drawing, Entity, Layer, LayerId, LineEntity, Linetype, LinetypeDef, LinetypeId,
-    Lineweight, Properties,
+    Color, Drawing, Entity, Justification, Layer, LayerId, LineEntity, Linetype, LinetypeDef,
+    LinetypeId, Lineweight, MTextEntity, Properties, TextEntity, TextStyleId,
 };
 use cad_dxf::{DxfError, Import, export, export_with_report, import};
 
@@ -88,9 +88,20 @@ fn every_valid_fixture_round_trips_stably() {
             polylines(&first.drawing),
             "{name}: polylines changed"
         );
+        // A paragraph is written as one TEXT per line (ADR-0005, amended):
+        // the count grows by its lines less itself, and nothing else changes.
+        let lines_of_paragraphs: usize = first
+            .drawing
+            .entities()
+            .filter_map(|(_, entity)| match entity {
+                Entity::MText(text) => Some(text.lines().len()),
+                _ => None,
+            })
+            .sum();
+        let paragraph_count = paragraphs(&first.drawing).len();
         assert_eq!(
             second.drawing.len(),
-            first.drawing.len(),
+            first.drawing.len() - paragraph_count + lines_of_paragraphs,
             "{name}: entity count changed"
         );
         assert_eq!(
@@ -184,7 +195,11 @@ fn unsupported_content_is_counted_and_reported() {
         .iter()
         .map(|(kind, count)| (kind.as_str(), *count))
         .collect();
-    assert_eq!(counts, vec![("BLOCK", 1), ("INSERT", 1), ("TEXT", 1)]);
+    assert_eq!(
+        counts,
+        vec![("BLOCK", 1), ("INSERT", 1)],
+        "TEXT is imported since #145"
+    );
     // Since #139 the layer WALLS and the colour are held, not dropped.
     assert_eq!(report.with_dropped_properties, 0);
     let walls = import.drawing.layers().find("WALLS").unwrap();
@@ -207,8 +222,8 @@ fn unsupported_content_is_counted_and_reported() {
     assert_eq!(
         report.summary(),
         vec![
-            "Imported 3 lines, 2 circles, 1 arc, 1 polyline.",
-            "Not imported (unsupported): 1 BLOCK, 1 INSERT, 1 TEXT.",
+            "Imported 3 lines, 2 circles, 1 arc, 1 polyline, 1 text.",
+            "Not imported (unsupported): 1 BLOCK, 1 INSERT.",
             // ezdxf's Defpoints layer and WALLS.
             "With 2 layers.",
             // ezdxf wrote `$INSUNITS 6` into this file's header.
@@ -562,6 +577,174 @@ fn lineweights_scales_and_undefined_names_from_another_writer() {
         export.text,
         "export → import → export"
     );
+}
+
+// ── text (#145) ──
+
+fn texts(drawing: &Drawing) -> Vec<TextEntity> {
+    in_file_order(drawing)
+        .into_iter()
+        .filter_map(|entity| match entity {
+            Entity::Text(text) => Some(text),
+            _ => None,
+        })
+        .collect()
+}
+
+fn paragraphs(drawing: &Drawing) -> Vec<MTextEntity> {
+    in_file_order(drawing)
+        .into_iter()
+        .filter_map(|entity| match entity {
+            Entity::MText(text) => Some(text),
+            _ => None,
+        })
+        .collect()
+}
+
+/// An R12 file from another writer with TEXT in every justification and
+/// a STYLE table imports as written; what the drawing cannot hold — fit
+/// text — is reported.
+#[test]
+fn text_and_styles_from_another_writer() {
+    let import = load("valid", "ezdxf-r12-text.dxf").unwrap();
+    let drawing = &import.drawing;
+    let texts = texts(drawing);
+    assert_eq!(import.report.texts, 7);
+    assert_eq!(texts.len(), 7);
+
+    let (roman, _) = {
+        let id = drawing.text_styles().find("ROMAN").unwrap();
+        (id, drawing.text_styles().get(id).unwrap())
+    };
+    assert_eq!(
+        drawing.text_styles().len(),
+        3,
+        "Standard, ROMAN, and the ghost"
+    );
+    let ghost = drawing.text_styles().find("GHOST").unwrap();
+
+    let left = &texts[0];
+    assert_eq!((left.content.as_str(), left.height), ("Left", 2.5));
+    assert_eq!(left.insertion, Point2::new(0.0, 0.0));
+    assert_eq!(left.justification, Justification::Left);
+    assert_eq!(left.style, TextStyleId::FIRST);
+
+    let centre = &texts[1];
+    assert_eq!(centre.justification, Justification::Center);
+    assert_eq!(
+        centre.insertion,
+        Point2::new(50.0, 0.0),
+        "the alignment point"
+    );
+    assert_eq!(centre.style, roman);
+
+    let right = &texts[2];
+    assert_eq!(right.justification, Justification::Right);
+    assert_eq!(right.insertion, Point2::new(100.0, 0.0));
+    assert!((right.rotation - 30f64.to_radians()).abs() < 1e-12);
+    assert_eq!(right.height, 5.0);
+    assert_eq!(properties(drawing)[2].color, Color::Index(1));
+
+    // Middle: centred, with the baseline half a height below the point.
+    let middle = &texts[3];
+    assert_eq!(middle.justification, Justification::Center);
+    assert!(
+        (middle.insertion.y - 18.0).abs() < 1e-9,
+        "{:?}",
+        middle.insertion
+    );
+    // Top left: the baseline a height below the point.
+    let top = &texts[4];
+    assert_eq!(top.justification, Justification::Left);
+    assert!((top.insertion.y - 36.0).abs() < 1e-9, "{:?}", top.insertion);
+    // Fit: read as left text at its first point; the stretch is dropped.
+    let fit = &texts[5];
+    assert_eq!(fit.insertion, Point2::new(0.0, 60.0));
+    assert_eq!(
+        texts[6].style, ghost,
+        "a style the file never defined is made"
+    );
+
+    let report = &import.report;
+    assert_eq!(report.with_dropped_properties, 1, "the fit text");
+    assert_eq!((report.text_styles, report.created_text_styles), (2, 1));
+    assert_eq!(
+        report.summary(),
+        vec![
+            "Imported 7 texts.",
+            "With 1 layer and 2 text styles.",
+            "Named but not defined in the file, so created: 1 text style.",
+            "Properties the drawing cannot hold were dropped from 1 entity.",
+        ]
+    );
+    // What came in goes out, and comes back the same.
+    let text = export(drawing);
+    assert!(text.contains("  0\nSTYLE\n  2\nROMAN\n"));
+    assert!(text.contains("  7\nROMAN\n"));
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(export(&back.drawing), text, "export → import → export");
+}
+
+/// A newer file's MTEXT: words and line breaks kept, formatting dropped
+/// and reported, attachment points placed, long text in pieces joined.
+#[test]
+fn paragraphs_from_another_writer() {
+    let import = load("valid", "ezdxf-r2010-mtext.dxf").unwrap();
+    let drawing = &import.drawing;
+    let notes = paragraphs(drawing);
+    assert_eq!(notes.len(), 5);
+    assert_eq!(import.report.texts, 5);
+
+    assert_eq!(notes[0].content, "First line\nSecond line");
+    assert_eq!((notes[0].width, notes[0].height), (60.0, 2.5));
+    assert_eq!(notes[0].insertion, Point2::new(0.0, 0.0));
+
+    // The source has a space before the non-breaking space: two spaces.
+    assert_eq!(notes[1].content, "Bold and tall\nred a/b stacked  tied");
+    assert!((notes[1].rotation - 30f64.to_radians()).abs() < 1e-12);
+
+    // Attached at its middle centre (5): the top left is up and to the left.
+    let centred = &notes[2];
+    assert_eq!(centred.content, "Centred middle");
+    assert!(
+        centred.insertion.x < 100.0 && centred.insertion.y > 0.0,
+        "{:?}",
+        centred.insertion
+    );
+    let frame = centred.frame();
+    let middle = centred.insertion + frame.along * (frame.width / 2.0)
+        - frame.up * ((centred.insertion - frame.start).dot(frame.up) / 2.0);
+    assert!(middle.distance_to(Point2::new(100.0, 0.0)) < 1e-9);
+    // Bottom right (9): the box ends at the point.
+    let corner = &notes[3];
+    let frame = corner.frame();
+    assert!(
+        frame.start.x + frame.width - 200.0 < 1e-9
+            && (frame.start.x + frame.width - 200.0).abs() < 1e-9
+    );
+    assert!((frame.start.y - 0.0).abs() < 1e-9, "{:?}", frame.start);
+
+    assert_eq!(notes[4].content.len(), 304, "pieces of 250 joined");
+    assert!(notes[4].content.ends_with("\nend"));
+
+    let report = &import.report;
+    assert_eq!(report.formatting_dropped, 1);
+    assert!(report.has_unsupported_content());
+    assert_eq!(
+        report.summary(),
+        vec![
+            "Imported 5 texts.",
+            "With 1 layer.",
+            "Formatting — fonts, heights, colours, stacking — was dropped from 1 paragraph; the words and line breaks were kept.",
+            "Drawing unit: metres.",
+        ]
+    );
+    // Written back as R12 a paragraph is one TEXT per line, and stays so.
+    let text = export(drawing);
+    assert!(!text.contains("MTEXT"));
+    assert!(text.contains("  1\nFirst line\n") && text.contains("  1\nSecond line\n"));
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(export(&back.drawing), text, "export → import → export");
 }
 
 /// Golden file: the exact bytes written for the M0 user-story line.

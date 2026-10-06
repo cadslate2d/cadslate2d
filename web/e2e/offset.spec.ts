@@ -3,6 +3,7 @@ import {
   clickWorld,
   downloadFrom,
   enter,
+  entitiesSection,
   hoverWorld,
   litPixels,
   logLines,
@@ -81,7 +82,7 @@ test.describe("OFFSET", () => {
     // The inner one: four plain vertices, one of them the corner (10, 10).
     expect(file.text).toContain("VERTEX\n  8\n0\n 10\n10.0\n 20\n10.0\n  0\n");
     // The outer one: four quarter-arc corners, each a bulge of tan(22.5°).
-    const bulges = [...file.text.matchAll(/^ 42\n(.+)$/gm)].map((match) =>
+    const bulges = [...entitiesSection(file.text).matchAll(/^ 42\n(.+)$/gm)].map((match) =>
       Math.abs(Number(match[1])),
     );
     expect(bulges).toHaveLength(4);

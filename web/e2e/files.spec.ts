@@ -3,6 +3,7 @@ import {
   chooseFile,
   downloadFrom,
   enter,
+  entitiesSection,
   fixturePath,
   litPixels,
   logLines,
@@ -62,7 +63,7 @@ test.describe("open", () => {
     const first = await downloadFrom(page, () => enter(page, "DXFOUT"));
     expect(first.text.match(/^POLYLINE$/gm)).toHaveLength(3);
     // Two semicircles, one quarter arc, one clockwise arc.
-    expect(first.text.match(/^ 42$/gm)).toHaveLength(4);
+    expect(entitiesSection(first.text).match(/^ 42$/gm)).toHaveLength(4);
     expect(first.text).toContain(" 42\n-0.5\n");
 
     // Reopening our own export gives the same file again.
@@ -123,7 +124,7 @@ test.describe("unsupported content", () => {
     );
 
     await expect(
-      logLines(page).filter({ hasText: "Imported 3 lines, 2 circles, 1 arc, 1 polyline." }),
+      logLines(page).filter({ hasText: "Imported 3 lines, 2 circles, 1 arc, 1 polyline, 1 text." }),
     ).toHaveCount(1);
     await expect(
       logLines(page).filter({ hasText: "Not imported (unsupported): 1 BLOCK" }),
@@ -152,7 +153,8 @@ test.describe("unsupported content", () => {
     // R12 has no LWPOLYLINE: the imported polyline is written as POLYLINE/VERTEX.
     expect(file.text.match(/^POLYLINE$/gm)).toHaveLength(1);
     expect(file.text).not.toContain("LWPOLYLINE");
-    expect(file.text).not.toContain("TEXT");
+    // The file's one TEXT is imported and written again since #145.
+    expect(file.text.match(/^TEXT$/gm)).toHaveLength(1);
   });
 });
 

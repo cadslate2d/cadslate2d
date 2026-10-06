@@ -37,6 +37,32 @@ ENDTAB
   0
 TABLE
   2
+STYLE
+ 70
+1
+  0
+STYLE
+  2
+Standard
+ 70
+0
+ 40
+0.0
+ 41
+1.0
+ 50
+0.0
+ 71
+0
+ 42
+2.5
+  3
+txt
+  0
+ENDTAB
+  0
+TABLE
+  2
 LAYER
  70
 1

@@ -5,6 +5,7 @@ import {
   clickWorld,
   downloadFrom,
   enter,
+  entitiesSection,
   highlightPixels,
   litPixels,
   logLines,
@@ -38,7 +39,9 @@ test.describe("PLINE arc segments", () => {
     expect(first.text.match(/^POLYLINE$/gm)).toHaveLength(1);
     expect(first.text.match(/^VERTEX$/gm)).toHaveLength(4);
     // Two semicircular ends: bulge 1 on the vertices that start them.
-    const bulges = [...first.text.matchAll(/^ 42\n(.+)$/gm)].map((match) => Number(match[1]));
+    const bulges = [...entitiesSection(first.text).matchAll(/^ 42\n(.+)$/gm)].map((match) =>
+      Number(match[1]),
+    );
     expect(bulges).toHaveLength(2);
     for (const bulge of bulges) expect(bulge).toBeCloseTo(1, 12);
 

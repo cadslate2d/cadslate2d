@@ -18,6 +18,7 @@ mod export;
 mod import;
 mod properties;
 mod report;
+mod text_codes;
 
 pub use error::DxfError;
 pub use export::{Export, ExportReport, export, export_with_report};

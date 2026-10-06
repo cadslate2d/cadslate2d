@@ -15,6 +15,8 @@ pub struct ImportReport {
     pub arcs: usize,
     /// POLYLINE and LWPOLYLINE entities imported.
     pub polylines: usize,
+    /// TEXT and MTEXT entities imported.
+    pub texts: usize,
     /// Entities that were skipped, by DXF type name, in name order.
     pub unsupported: BTreeMap<String, usize>,
     /// Imported entities that carried properties the drawing cannot hold
@@ -31,6 +33,13 @@ pub struct ImportReport {
     /// Linetypes that an entity or a layer named but the file did not
     /// define, made continuous.
     pub created_linetypes: usize,
+    /// Text styles besides `Standard` in the drawing after the import.
+    pub text_styles: usize,
+    /// Text styles a text named but the file did not define.
+    pub created_text_styles: usize,
+    /// MTEXT entities whose formatting — fonts, heights, colours,
+    /// stacking — was dropped, their words and breaks kept.
+    pub formatting_dropped: usize,
     /// The drawing unit the file declares, when it is one the drawing can
     /// be in.
     pub unit: Option<LengthUnit>,
@@ -50,6 +59,7 @@ impl ImportReport {
     pub fn has_unsupported_content(&self) -> bool {
         !self.unsupported.is_empty()
             || self.with_dropped_properties > 0
+            || self.formatting_dropped > 0
             || self.unsupported_unit.is_some()
     }
 
@@ -59,7 +69,7 @@ impl ImportReport {
 
     /// Entities brought into the drawing.
     pub fn imported_total(&self) -> usize {
-        self.lines + self.circles + self.arcs + self.polylines
+        self.lines + self.circles + self.arcs + self.polylines + self.texts
     }
 
     pub(crate) fn count_unsupported(&mut self, kind: &str) {
@@ -77,6 +87,7 @@ impl ImportReport {
             (self.circles, "circle", "circles"),
             (self.arcs, "arc", "arcs"),
             (self.polylines, "polyline", "polylines"),
+            (self.texts, "text", "texts"),
         ];
         let imported: Vec<String> = kinds
             .into_iter()
@@ -100,21 +111,23 @@ impl ImportReport {
                 skipped.join(", ")
             ));
         }
-        if self.layers + self.linetypes > 0 {
+        if self.layers + self.linetypes + self.text_styles > 0 {
             let tables: Vec<String> = [
                 (self.layers, "layer", "layers"),
                 (self.linetypes, "linetype", "linetypes"),
+                (self.text_styles, "text style", "text styles"),
             ]
             .into_iter()
             .filter(|(count, ..)| *count > 0)
             .map(|(count, one, many)| counted(count, one, many))
             .collect();
-            lines.push(format!("With {}.", tables.join(" and ")));
+            lines.push(format!("With {}.", joined(&tables)));
         }
-        if self.created_layers + self.created_linetypes > 0 {
+        if self.created_layers + self.created_linetypes + self.created_text_styles > 0 {
             let created: Vec<String> = [
                 (self.created_layers, "layer", "layers"),
                 (self.created_linetypes, "linetype", "linetypes"),
+                (self.created_text_styles, "text style", "text styles"),
             ]
             .into_iter()
             .filter(|(count, ..)| *count > 0)
@@ -122,7 +135,13 @@ impl ImportReport {
             .collect();
             lines.push(format!(
                 "Named but not defined in the file, so created: {}.",
-                created.join(" and ")
+                joined(&created)
+            ));
+        }
+        if self.formatting_dropped > 0 {
+            let texts = counted(self.formatting_dropped, "paragraph", "paragraphs");
+            lines.push(format!(
+                "Formatting — fonts, heights, colours, stacking — was dropped from {texts}; the words and line breaks were kept."
             ));
         }
         if self.with_dropped_properties > 0 {
@@ -145,6 +164,16 @@ impl ImportReport {
 
 fn counted(count: usize, one: &str, many: &str) -> String {
     format!("{count} {}", if count == 1 { one } else { many })
+}
+
+/// "a", "a and b", "a, b, and c".
+fn joined(parts: &[String]) -> String {
+    match parts {
+        [] => String::new(),
+        [one] => one.clone(),
+        [a, b] => format!("{a} and {b}"),
+        [rest @ .., last] => format!("{}, and {last}", rest.join(", ")),
+    }
 }
 
 #[cfg(test)]

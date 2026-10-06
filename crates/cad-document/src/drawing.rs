@@ -204,7 +204,39 @@ impl Drawing {
         linetypes: impl IntoIterator<Item = LinetypeDef>,
         entities: impl IntoIterator<Item = (Entity, Properties)>,
     ) -> Result<Self, TransactionError> {
+        Self::from_tables(layers, linetypes, [], entities)
+    }
+
+    /// [`from_parts`](Self::from_parts) with text styles as well, after
+    /// `Standard`, which take the IDs 1, 2, … in the order given. A text
+    /// with a style that is not among them is refused.
+    pub fn from_tables(
+        layers: impl IntoIterator<Item = Layer>,
+        linetypes: impl IntoIterator<Item = LinetypeDef>,
+        text_styles: impl IntoIterator<Item = TextStyle>,
+        entities: impl IntoIterator<Item = (Entity, Properties)>,
+    ) -> Result<Self, TransactionError> {
         let mut drawing = Self::new();
+        for style in text_styles {
+            check_name(&style.name).map_err(TransactionError::BadTextStyleName)?;
+            match drawing.text_styles.find(&style.name) {
+                Some(id) if id == TextStyleId::FIRST => {
+                    let before = drawing.text_styles.get(TextStyleId::FIRST).cloned();
+                    drawing.text_styles.apply(&TableChange::Replace {
+                        id: TextStyleId::FIRST,
+                        before: before.expect("Standard is always there"),
+                        after: style,
+                    });
+                    continue;
+                }
+                Some(taken) => return Err(TransactionError::DuplicateTextStyleName(taken)),
+                None => {}
+            }
+            let id = drawing.text_styles.allocate();
+            drawing
+                .text_styles
+                .apply(&TableChange::Insert { id, row: style });
+        }
         for linetype in linetypes {
             linetype.check().map_err(TransactionError::BadLinetype)?;
             match drawing.linetypes.find(&linetype.name) {
@@ -257,6 +289,16 @@ impl Drawing {
                 return Err(TransactionError::UnknownLayer(properties.layer));
             }
             known_linetype(&drawing, properties.linetype)?;
+            let style = match &entity {
+                Entity::Text(text) => Some(text.style),
+                Entity::MText(text) => Some(text.style),
+                _ => None,
+            };
+            if let Some(style) = style
+                && !drawing.text_styles.contains(style)
+            {
+                return Err(TransactionError::UnknownTextStyle(style));
+            }
             let id = drawing.ids.allocate();
             drawing
                 .entities
@@ -2541,6 +2583,44 @@ mod tests {
         assert_eq!(
             drawing.linetypes().find("dashed"),
             Some(LinetypeId::from_raw(1))
+        );
+    }
+
+    #[test]
+    fn a_drawing_from_a_file_can_have_text_styles_that_its_texts_refer_to() {
+        let roman = TextStyleId::from_raw(1);
+        let text = |style| {
+            Entity::Text(TextEntity {
+                style,
+                ..TextEntity::new(Point2::ORIGIN, 2.5, 0.0, "Hi")
+            })
+        };
+        let drawing = Drawing::from_tables(
+            [],
+            [],
+            [TextStyle::named("standard"), TextStyle::named("Roman")],
+            [(text(roman), Properties::default())],
+        )
+        .unwrap();
+        assert_eq!(
+            drawing.text_styles().len(),
+            2,
+            "standard restyled the permanent row"
+        );
+        assert_eq!(
+            drawing.text_styles().get(TextStyleId::FIRST).unwrap().name,
+            "standard"
+        );
+        assert_eq!(drawing.text_styles().find("roman"), Some(roman));
+        assert_eq!(
+            Drawing::from_tables([], [], [], [(text(roman), Properties::default())]).err(),
+            Some(TransactionError::UnknownTextStyle(roman))
+        );
+        assert_eq!(
+            Drawing::from_tables([], [], [TextStyle::named("a"), TextStyle::named("A")], []).err(),
+            Some(TransactionError::DuplicateTextStyleName(
+                TextStyleId::from_raw(1)
+            ))
         );
     }
 

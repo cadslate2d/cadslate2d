@@ -126,6 +126,11 @@ pub fn export_with_report(drawing: &Drawing) -> Export {
                 write_linetype(out, def);
             }
         });
+        table(out, "STYLE", drawing.text_styles().len(), |out| {
+            for (_, style) in drawing.text_styles().iter() {
+                write_text_style(out, style);
+            }
+        });
         table(out, "LAYER", drawing.layers().len(), |out| {
             for (_, layer) in drawing.layers().iter() {
                 write_layer(out, layer, linetypes);
@@ -214,6 +219,20 @@ fn write_linetype(out: &mut String, def: &LinetypeDef) {
     for element in pattern_to_dxf(&def.pattern) {
         real(out, 49, element);
     }
+}
+
+/// A STYLE row: name, flags, no fixed height, a width factor of one, no
+/// oblique angle, and the stroke font every style draws with.
+fn write_text_style(out: &mut String, style: &TextStyle) {
+    group(out, 0, "STYLE");
+    group(out, 2, &style.name);
+    group(out, 70, "0");
+    real(out, 40, 0.0);
+    real(out, 41, 1.0);
+    real(out, 50, 0.0);
+    group(out, 71, "0");
+    real(out, 42, 2.5);
+    group(out, 3, "txt");
 }
 
 /// A LAYER row: name, flags, colour — negative when the layer is off, the
@@ -408,11 +427,14 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_drawing_is_a_valid_file_with_its_two_permanent_rows() {
+    fn an_empty_drawing_is_a_valid_file_with_its_three_permanent_rows() {
         let expected = "  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1009\n  0\nENDSEC\n\
                         \x20 0\nSECTION\n  2\nTABLES\n\
                         \x20 0\nTABLE\n  2\nLTYPE\n 70\n1\n\
                         \x20 0\nLTYPE\n  2\nContinuous\n 70\n0\n  3\nSolid line\n 72\n65\n 73\n0\n 40\n0.0\n\
+                        \x20 0\nENDTAB\n\
+                        \x20 0\nTABLE\n  2\nSTYLE\n 70\n1\n\
+                        \x20 0\nSTYLE\n  2\nStandard\n 70\n0\n 40\n0.0\n 41\n1.0\n 50\n0.0\n 71\n0\n 42\n2.5\n  3\ntxt\n\
                         \x20 0\nENDTAB\n\
                         \x20 0\nTABLE\n  2\nLAYER\n 70\n1\n\
                         \x20 0\nLAYER\n  2\n0\n 70\n0\n 62\n7\n  6\nContinuous\n\
@@ -465,7 +487,9 @@ mod tests {
             true,
         );
         let dxf = export(&Drawing::from_entities([Entity::Polyline(slot)]));
-        assert_eq!(dxf.matches("\n 42\n").count(), 2);
+        // Bulges are the only group 42 among the entities (a STYLE row has one too).
+        let entities = &dxf[dxf.find("ENTITIES").unwrap()..];
+        assert_eq!(entities.matches("\n 42\n").count(), 2);
         assert!(dxf.contains("VERTEX\n  8\n0\n 10\n10.0\n 20\n0.0\n 42\n1.0\n"));
         assert!(dxf.contains("VERTEX\n  8\n0\n 10\n0.0\n 20\n4.0\n 42\n-0.5\n"));
         assert!(dxf.contains("VERTEX\n  8\n0\n 10\n0.0\n 20\n0.0\n  0\nVERTEX"));
@@ -615,6 +639,9 @@ mod tests {
              \x20 0\nLTYPE\n  2\nContinuous\n 70\n0\n  3\nSolid line\n 72\n65\n 73\n0\n 40\n0.0\n\
              \x20 0\nLTYPE\n  2\nDashed\n 70\n0\n  3\n__ __ __ __ __ __ __\n 72\n65\n 73\n2\n 40\n0.75\n 49\n0.5\n 49\n-0.25\n\
              \x20 0\nLTYPE\n  2\nDot\n 70\n0\n  3\n. . . . . . . . . . . .\n 72\n65\n 73\n2\n 40\n0.25\n 49\n0.0\n 49\n-0.25\n\
+             \x20 0\nENDTAB\n\
+             \x20 0\nTABLE\n  2\nSTYLE\n 70\n1\n\
+             \x20 0\nSTYLE\n  2\nStandard\n 70\n0\n 40\n0.0\n 41\n1.0\n 50\n0.0\n 71\n0\n 42\n2.5\n  3\ntxt\n\
              \x20 0\nENDTAB\n\
              \x20 0\nTABLE\n  2\nLAYER\n 70\n3\n\
              \x20 0\nLAYER\n  2\n0\n 70\n0\n 62\n7\n  6\nContinuous\n\

@@ -86,3 +86,15 @@ Evidence:
 - Two fixtures written by ezdxf 1.4.4 — `ezdxf-r12-layers-linetypes.dxf` and `ezdxf-r2010-properties.dxf` — import as written: switches, patterns, colours, lineweights (R2010), header settings.
 - Our export of the R12 fixture is read back by ezdxf with every layer, linetype, pattern, header setting, and entity property intact, and ezdxf's recovery audit reports no errors and no fixes.
 - Export → import → export is byte-identical for everything R12 holds (`everything_r12_holds_survives_export_import_export_byte_for_byte`, and a property test over arbitrary tables and property groups).
+
+### 2026-10-06 — Text: TEXT and the STYLE table both ways, MTEXT read and written as lines
+
+M4's text entities (ADR-0016, #143, #144) travel through DXF as follows (#145).
+
+**TEXT** is written and read with its first point, height, words, rotation, style (group 7, when not `Standard`), and — for centred and right-justified text — group 72 and the alignment point in 11/21. Reading, the vertical justifications (middle, top, bottom) are placed by moving the baseline so the words land where they were; aligned and fit text, which is stretched between two points, is read as left text at its first point and the stretch is reported as dropped. `%%d`, `%%p`, and `%%c` become their signs.
+
+**STYLE** rows are written for every text style — name, no fixed height, a width factor of one, the stroke font — and read by name; a style a text names but the table lacks is made, as for layers.
+
+**MTEXT has no place in R12.** It is read from any release — the words in their pieces (groups 3 then 1), `\P` as a line break, `\~` as a space, a stacked fraction as `a/b`, every other formatting code dropped and the import report saying so, the nine attachment points placed by moving the top left — and **written as one TEXT per line as set**, at the paragraph's height and rotation. That keeps the baseline release and loses the paragraph's wrap width and its unity: reopened, it is single lines. Export → import → export is byte-identical, as the acceptance asked, because the second export is of those lines. Writing MTEXT itself waits on the release decision in M5, with the lineweights.
+
+Evidence: two fixtures from ezdxf 1.4.4 — `ezdxf-r12-text.dxf` (every justification, a style, a style the file never defines) and `ezdxf-r2010-mtext.dxf` (breaks, formatting, stacking, attachment points, a rotation, three hundred characters in pieces) — import as described, and the property test over arbitrary tables and text bodies never panics.

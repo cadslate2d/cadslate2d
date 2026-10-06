@@ -12,9 +12,9 @@
 
 use cad_core::{LengthUnit, Point2};
 use cad_document::{
-    ArcEntity, CircleEntity, Color, Drawing, DrawingSettings, Entity, Layer, LayerId, LineEntity,
-    Linetype, LinetypeDef, LinetypeId, Lineweight, PolylineEntity, Properties, check_name,
-    same_name,
+    ArcEntity, CircleEntity, Color, Drawing, DrawingSettings, Entity, Justification, Layer,
+    LayerId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity,
+    PolylineEntity, Properties, TextEntity, TextStyle, TextStyleId, check_name, same_name,
 };
 
 use crate::export::insunits_code;
@@ -22,6 +22,7 @@ use crate::properties::{
     LAYER_FROZEN, LAYER_LOCKED, LINETYPE_BY_BLOCK, LINETYPE_BY_LAYER, color_from_dxf,
     lineweight_from_dxf, pattern_from_dxf,
 };
+use crate::text_codes::{plain_mtext, plain_text};
 use crate::{DxfError, ImportReport};
 
 /// Start of every binary DXF file.
@@ -39,6 +40,7 @@ const INVALID: &str = "(invalid geometry)";
 const BAD_LAYER_NAME: &str = "(layer name)";
 const BAD_LINETYPE_NAME: &str = "(linetype name)";
 const BAD_LINETYPE_PATTERN: &str = "(linetype pattern)";
+const BAD_TEXT_STYLE_NAME: &str = "(text style name)";
 /// Report key for the text and shapes of a complex linetype: the dashes
 /// are kept, the rest is not.
 const LINETYPE_SHAPES: &str = "(linetype shapes)";
@@ -187,6 +189,8 @@ struct Pending {
     color: Color,
     linetype: LinetypeRef,
     lineweight: Lineweight,
+    /// A text's style, by name.
+    style: Option<String>,
     /// It carried something the drawing cannot hold.
     dropped: bool,
 }
@@ -198,6 +202,7 @@ impl Default for Pending {
             color: Color::ByLayer,
             linetype: LinetypeRef::ByLayer,
             lineweight: Lineweight::ByLayer,
+            style: None,
             dropped: false,
         }
     }
@@ -224,11 +229,38 @@ struct Tables {
     /// Each layer with the name of its linetype, resolved at the end.
     layers: Vec<(Layer, LinetypeRef)>,
     linetypes: Vec<LinetypeDef>,
+    text_styles: Vec<TextStyle>,
     created_layers: usize,
     created_linetypes: usize,
+    created_text_styles: usize,
 }
 
 impl Tables {
+    fn has_text_style(&self, name: &str) -> bool {
+        self.text_styles
+            .iter()
+            .any(|style| same_name(&style.name, name))
+    }
+
+    /// The ID the text style of that name will have, making it if the file
+    /// did not define it. `None` for a name no style can have.
+    fn text_style(&mut self, name: &str) -> Option<TextStyleId> {
+        if same_name(name, TextStyle::STANDARD) {
+            return Some(TextStyleId::FIRST);
+        }
+        if !self.has_text_style(name) {
+            check_name(name).ok()?;
+            self.text_styles.push(TextStyle::named(name));
+            self.created_text_styles += 1;
+        }
+        let index = self
+            .text_styles
+            .iter()
+            .filter(|style| !same_name(&style.name, TextStyle::STANDARD))
+            .position(|style| same_name(&style.name, name))?;
+        Some(TextStyleId::from_raw(index as u32 + 1))
+    }
+
     fn has_layer(&self, name: &str) -> bool {
         self.layers
             .iter()
@@ -440,6 +472,22 @@ impl<'a> Reader<'a> {
                 }
                 None => self.report.count_unsupported(INVALID),
             },
+            (RecordContext::Entities, "TEXT") => {
+                let (text, dropped) = body.text(record.line)?;
+                self.report.texts += 1;
+                let mut pending = body.pending();
+                pending.dropped |= dropped;
+                self.push(Entity::Text(text), pending)?;
+            }
+            (RecordContext::Entities, "MTEXT") => {
+                let (text, formatting) = body.mtext(record.line)?;
+                self.report.texts += 1;
+                if formatting {
+                    self.report.formatting_dropped += 1;
+                }
+                self.push(Entity::MText(text), body.pending())?;
+            }
+            (RecordContext::Tables, "STYLE") => self.table_text_style(body),
             (RecordContext::Entities, "LWPOLYLINE") => {
                 let builder = PolylineBuilder {
                     vertices: body.points(record.line, "LWPOLYLINE")?,
@@ -574,6 +622,22 @@ impl<'a> Reader<'a> {
         });
     }
 
+    /// A row of the STYLE table: a name is all the drawing keeps of it.
+    fn table_text_style(&mut self, body: &RecordBody) {
+        let Some(name) = body.name.as_deref().filter(|name| check_name(name).is_ok()) else {
+            return self.report.count_unsupported(BAD_TEXT_STYLE_NAME);
+        };
+        if self.tables.has_text_style(name) {
+            return;
+        }
+        let name = if same_name(name, TextStyle::STANDARD) {
+            TextStyle::STANDARD
+        } else {
+            name
+        };
+        self.tables.text_styles.push(TextStyle::named(name));
+    }
+
     fn import(&mut self, entity: Entity, body: &RecordBody) -> Result<(), DxfError> {
         self.push(entity, body.pending())
     }
@@ -618,8 +682,20 @@ impl<'a> Reader<'a> {
         }
 
         let mut entities: Vec<(Entity, Properties)> = Vec::with_capacity(self.entities.len());
-        for (entity, pending) in std::mem::take(&mut self.entities) {
+        for (mut entity, pending) in std::mem::take(&mut self.entities) {
             let mut dropped = pending.dropped;
+            // A text's style: the file's, or Standard when it names none
+            // or one no style can be called.
+            let style = pending
+                .style
+                .as_deref()
+                .and_then(|name| self.tables.text_style(name))
+                .unwrap_or(TextStyleId::FIRST);
+            match &mut entity {
+                Entity::Text(text) => text.style = style,
+                Entity::MText(text) => text.style = style,
+                _ => {}
+            }
             let layer = self.tables.layer(&pending.layer).unwrap_or_else(|| {
                 dropped = true;
                 LayerId::FIRST
@@ -652,13 +728,16 @@ impl<'a> Reader<'a> {
                 }),
         );
         let linetypes = std::mem::take(&mut self.tables.linetypes);
+        let text_styles = std::mem::take(&mut self.tables.text_styles);
 
-        let drawing = Drawing::from_parts(layers, linetypes, entities)
+        let drawing = Drawing::from_tables(layers, linetypes, text_styles, entities)
             .map_err(|error| DxfError::Tables(error.to_string()))?;
         self.report.layers = drawing.layers().len() - 1;
         self.report.linetypes = drawing.linetypes().len() - 1;
+        self.report.text_styles = drawing.text_styles().len() - 1;
         self.report.created_layers = self.tables.created_layers;
         self.report.created_linetypes = self.tables.created_linetypes;
+        self.report.created_text_styles = self.tables.created_text_styles;
 
         // Settings the header names something for; what it names must be
         // usable, or the default stands.
@@ -745,6 +824,18 @@ struct RecordBody {
     elements: Vec<f64>,
     /// Any group 74 that is not zero: the linetype has text or shapes in it.
     has_shapes: bool,
+    /// Group 1: a text's words, or the last piece of a paragraph's.
+    text: Option<String>,
+    /// Groups 3 of a paragraph: its words, 250 characters at a time.
+    chunks: Vec<String>,
+    /// Group 7: a text's style, by name.
+    style: Option<String>,
+    /// Group 41: a paragraph's width.
+    width: Option<f64>,
+    /// Groups 71, 72, 73: attachment, and horizontal and vertical justification.
+    attachment: Option<i64>,
+    halign: Option<i64>,
+    valign: Option<i64>,
     has_dropped_properties: bool,
 }
 
@@ -781,7 +872,16 @@ impl RecordBody {
                 self.name = Some(group.value.to_owned());
                 self.name_is_reserved = is_structural_block(group.value);
             }
-            3 => self.description = Some(group.value.to_owned()),
+            3 => {
+                self.description = Some(group.value.to_owned());
+                self.chunks.push(group.value.to_owned());
+            }
+            1 => self.text = Some(group.value.to_owned()),
+            7 => self.style = Some(group.value.to_owned()),
+            41 => self.width = Some(real(group)?),
+            71 => self.attachment = group.value.parse().ok(),
+            72 => self.halign = group.value.parse().ok(),
+            73 => self.valign = group.value.parse().ok(),
             8 => self.layer = Some(group.value.to_owned()),
             6 => self.linetype = Some(group.value.to_owned()),
             // A colour or lineweight that is not one is dropped.
@@ -823,8 +923,93 @@ impl RecordBody {
                 .lineweight
                 .and_then(lineweight_from_dxf)
                 .unwrap_or(Lineweight::ByLayer),
+            style: self.style.clone(),
             dropped: self.has_dropped_properties,
         }
+    }
+
+    /// A TEXT: its words at its height. Left, centre, and right
+    /// justification along the baseline are what the drawing holds; the
+    /// vertical justifications are placed by moving the baseline, so the
+    /// words land where they were; aligned and fit text — stretched to a
+    /// second point — is read as left text at its first point, and the
+    /// stretch is dropped. Whether anything was dropped is the second value.
+    fn text(&self, at: usize) -> Result<(TextEntity, bool), DxfError> {
+        let need = |value, group| required(value, at, "TEXT", group);
+        let first = Point2::new(need(self.x0, 10)?, need(self.y0, 20)?);
+        let height = need(self.radius, 40)?;
+        let (content, mut dropped) = plain_text(self.text.as_deref().unwrap_or(""));
+        let rotation = self.start_degrees.unwrap_or(0.0).to_radians();
+        let (halign, valign) = (self.halign.unwrap_or(0), self.valign.unwrap_or(0));
+        let alignment = match (self.x1, self.y1) {
+            (Some(x), Some(y)) => Point2::new(x, y),
+            _ => first,
+        };
+        // Middle (4) is centred both ways. Aligned (3) and fit (5) stretch
+        // the text between the two points: not held.
+        let justification = match halign {
+            1 | 4 => Justification::Center,
+            2 => Justification::Right,
+            3 | 5 => {
+                dropped = true;
+                Justification::Left
+            }
+            _ => Justification::Left,
+        };
+        // Fit and aligned text is read at its first point; the rest at the
+        // alignment point when there is one.
+        let placed = (halign != 0 || valign != 0) && !matches!(halign, 3 | 5);
+        let anchor = if placed { alignment } else { first };
+        let up = cad_core::Vec2::new(-rotation.sin(), rotation.cos());
+        // The vertical justification says where the anchor is on the text:
+        // the baseline moves so that it is.
+        let drop = match (halign, valign) {
+            (4, _) | (_, 2) => 0.5 * height,
+            (_, 3) => height,
+            // Bottom: the anchor is the descent below the baseline.
+            (_, 1) => -TextEntity::new(first, height, rotation, "").frame().descent,
+            _ => 0.0,
+        };
+        let insertion = anchor - up * drop;
+        let text = TextEntity::new(insertion, height, rotation, content).justified(justification);
+        Ok((text, dropped || !height.is_finite() || height <= 0.0))
+    }
+
+    /// An MTEXT: its words, in pieces, with the formatting taken out; its
+    /// top left worked out from whichever of the nine attachment points the
+    /// insertion is. The second value says whether formatting was dropped.
+    fn mtext(&self, at: usize) -> Result<(MTextEntity, bool), DxfError> {
+        let need = |value, group| required(value, at, "MTEXT", group);
+        let insertion = Point2::new(need(self.x0, 10)?, need(self.y0, 20)?);
+        let height = need(self.radius, 40)?;
+        let mut raw = self.chunks.concat();
+        raw.push_str(self.text.as_deref().unwrap_or(""));
+        let (content, dropped) = plain_mtext(&raw);
+        // The direction may be given as a vector (11, 21) instead of an angle.
+        let rotation = match (self.start_degrees, self.x1, self.y1) {
+            (Some(degrees), ..) => degrees.to_radians(),
+            (None, Some(x), Some(y)) if x != 0.0 || y != 0.0 => y.atan2(x),
+            _ => 0.0,
+        };
+        let width = self.width.unwrap_or(0.0).max(0.0);
+        let mut text = MTextEntity::new(insertion, width, height, rotation, content);
+        // Attachment points: 1 2 3 across the top, 4 5 6 the middle, 7 8 9
+        // the bottom; the insertion is that point of the box.
+        let attachment = self.attachment.unwrap_or(1).clamp(1, 9);
+        let frame = text.frame();
+        let cap_depth = (text.insertion - frame.start).dot(frame.up);
+        let across = match (attachment - 1) % 3 {
+            1 => 0.5 * frame.width,
+            2 => frame.width,
+            _ => 0.0,
+        };
+        let down = match (attachment - 1) / 3 {
+            1 => 0.5 * cap_depth,
+            2 => cap_depth,
+            _ => 0.0,
+        };
+        text.insertion = insertion - frame.along * across + frame.up * down;
+        Ok((text, dropped))
     }
 
     fn line(&self, at: usize) -> Result<LineEntity, DxfError> {
@@ -1137,7 +1322,7 @@ mod tests {
     fn unsupported_entities_are_counted_by_kind_and_supported_ones_still_import() {
         let mut body = vec![(0, "ELLIPSE"), (10, "0"), (20, "0"), (40, "5")];
         body.extend_from_slice(&LINE_0_0_TO_10_5);
-        body.extend_from_slice(&[(0, "TEXT"), (1, "hello"), (0, "ELLIPSE"), (40, "1")]);
+        body.extend_from_slice(&[(0, "HATCH"), (2, "SOLID"), (0, "ELLIPSE"), (40, "1")]);
         // A 3D polyline is unsupported; its vertices belong to it and are not counted separately.
         body.extend_from_slice(&[
             (0, "POLYLINE"),
@@ -1156,7 +1341,7 @@ mod tests {
             .iter()
             .map(|(kind, count)| (kind.as_str(), *count))
             .collect();
-        assert_eq!(counts, vec![("ELLIPSE", 2), ("POLYLINE", 1), ("TEXT", 1)]);
+        assert_eq!(counts, vec![("ELLIPSE", 2), ("HATCH", 1), ("POLYLINE", 1)]);
         assert!(import.report.has_unsupported_content());
     }
 
@@ -1341,7 +1526,8 @@ mod tests {
         );
 
         let text = export(&first.drawing);
-        assert_eq!(text.matches("\n 42\n").count(), 2);
+        let entities = &text[text.find("ENTITIES").unwrap()..];
+        assert_eq!(entities.matches("\n 42\n").count(), 2);
         assert_eq!(
             polylines_of(&import(text.as_bytes()).unwrap()),
             vec![circle]
@@ -2185,7 +2371,7 @@ mod tests {
         #[test]
         fn arbitrary_tables_and_properties_never_panic(
             rows in proptest::collection::vec(
-                (prop_oneof![Just("LAYER"), Just("LTYPE")],
+                (prop_oneof![Just("LAYER"), Just("LTYPE"), Just("STYLE")],
                  proptest::collection::vec(
                      (prop_oneof![Just(2), Just(3), Just(6), Just(62), Just(70), Just(370), Just(49), Just(74), Just(40), Just(73)],
                       "[A-Za-z0-9 .*,<-]{0,8}"),
@@ -2196,6 +2382,13 @@ mod tests {
                     (prop_oneof![Just(8), Just(6), Just(62), Just(370), Just(48)], "[A-Za-z0-9 .<-]{0,8}"),
                     0..5),
                 0..6),
+            texts in proptest::collection::vec(
+                (prop_oneof![Just("TEXT"), Just("MTEXT")],
+                 proptest::collection::vec(
+                     (prop_oneof![Just(1), Just(3), Just(7), Just(8), Just(40), Just(41), Just(50), Just(71), Just(72), Just(73), Just(11), Just(21)],
+                      "[A-Za-z0-9 .^;{}\\\\P~<-]{0,10}"),
+                     0..8)),
+                0..4),
         ) {
             let mut groups: Vec<(i32, String)> = vec![(0, "SECTION".into()), (2, "TABLES".into())];
             for (kind, body) in &rows {
@@ -2208,11 +2401,26 @@ mod tests {
                 groups.extend(body.iter().map(|(code, value)| (*code, value.clone())));
                 groups.extend([(10, "0".into()), (20, "0".into()), (11, "1".into()), (21, "1".into())]);
             }
+            for (kind, body) in &texts {
+                groups.push((0, (*kind).into()));
+                groups.extend([(10, "0".into()), (20, "0".into()), (40, "2.5".into())]);
+                groups.extend(body.iter().map(|(code, value)| (*code, value.clone())));
+            }
             groups.extend([(0, "ENDSEC".into()), (0, "EOF".into())]);
             let text: String = groups.iter().map(|(code, value)| format!("{code}\n{value}\n")).collect();
             if let Ok(imported) = import(text.as_bytes()) {
                 let drawing = &imported.drawing;
-                prop_assert_eq!(drawing.len(), lines.len());
+                prop_assert_eq!(drawing.len(), lines.len() + texts.len());
+                for (_, entity) in drawing.entities() {
+                    let style = match entity {
+                        Entity::Text(t) => Some(t.style),
+                        Entity::MText(t) => Some(t.style),
+                        _ => None,
+                    };
+                    if let Some(style) = style {
+                        prop_assert!(drawing.text_styles().contains(style));
+                    }
+                }
                 for (_, record) in drawing.records() {
                     prop_assert!(drawing.layers().contains(record.properties.layer));
                     if let Linetype::Named(id) = record.properties.linetype {

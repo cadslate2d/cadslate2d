@@ -25,6 +25,8 @@ Files with specific expectations (entity counts, report contents, exact coordina
 | `ezdxf-r12-bulged-polylines.dxf` | ezdxf 1.4.4, `add_polyline2d(..., format="xyb")` | Arc segments as group 42 on `VERTEX` records: a closed slot with two semicircular ends (bulge 1), an open run with a quarter-arc corner (bulge tan 22.5°), and a clockwise arc (bulge −0.5). |
 | `ezdxf-r2010-bulged-lwpolylines.dxf` | ezdxf 1.4.4, `add_lwpolyline(..., format="xyb")` | The same three shapes as `LWPOLYLINE`, where group 42 follows the vertex it belongs to. |
 | `ezdxf-r12-layers-linetypes.dxf` | ezdxf 1.4.4, `ezdxf.new("R12")` | `LAYER` and `LTYPE` tables: layers with colours, linetypes, one off and one locked; the DASHED, CENTER, and DOT patterns; entities with a layer, a colour, a linetype of their own, `ByBlock`; `$CLAYER`, `$CECOLOR`, `$CELTYPE`, `$LTSCALE`. |
+| `ezdxf-r12-text.dxf` | ezdxf 1.4.4, `ezdxf.new("R12")` | A `STYLE` table with `ROMAN`; `TEXT` left, centred, right (rotated, coloured), middle, top-left, and fit, and one in a style the file never defines. |
+| `ezdxf-r2010-mtext.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | `MTEXT`: a paragraph break (`\P`), font, height, colour, and stacking codes, a non-breaking space, attachment points 5 and 9, a rotation, and 300 characters written in pieces (groups 3 then 1). |
 | `ezdxf-r2010-properties.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | Lineweights (group 370) on a layer, on entities, and in `$CELWEIGHT`; a linetype scale of an entity's own (dropped); a complex linetype with text (dashes kept, shapes reported); a layer and a linetype entities name but the file never defines. |
 
 ## malformed/

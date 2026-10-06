@@ -52,8 +52,8 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `OSNAP` | `OS` | Chooses which object snaps run. Each mode is switched by its keyword; Enter finishes. |
 | `GRID` | | Sets the grid spacing (10 at start). |
 | `POLARANG` | | Sets the angle between polar tracking directions (90° at start). |
-| `OPEN` | `DXFIN`, Ctrl+O | Opens an ASCII DXF file. Lines, circles, arcs, and polylines — including their arc segments — are imported with their layers, colours, linetypes, and lineweights, and the layer and linetype tables with them; everything else is counted and reported. |
-| `DXFOUT` | `SAVE`, `SAVEAS`, `EXPORT`, Ctrl+S | Downloads the drawing as ASCII DXF (R12), with its layers and linetypes. Polyline arc segments are written as bulges. R12 has no lineweights: the command log says how many were dropped. |
+| `OPEN` | `DXFIN`, Ctrl+O | Opens an ASCII DXF file. Lines, circles, arcs, polylines — including their arc segments — and text (TEXT and MTEXT, with their styles) are imported with their layers, colours, linetypes, and lineweights, and the tables with them; a paragraph's formatting codes are dropped and reported, its words and line breaks kept. Everything else is counted and reported. |
+| `DXFOUT` | `SAVE`, `SAVEAS`, `EXPORT`, Ctrl+S | Downloads the drawing as ASCII DXF (R12), with its layers, linetypes, and text styles. Polyline arc segments are written as bulges; a paragraph is written as one TEXT per line, since R12 has no MTEXT. R12 has no lineweights either: the command log says how many were dropped. |
 
 Whenever a command asks you to pick one object — OFFSET, TRIM, EXTEND, FILLET, CHAMFER, BREAK — the object under the pointer is highlighted before you click.
 

@@ -226,3 +226,8 @@ export function recordRequests(page: Page): { url: string; method: string }[] {
   page.on("request", (request) => requests.push({ url: request.url(), method: request.method() }));
   return requests;
 }
+
+/** The ENTITIES section of a DXF export: where group 42 is a bulge and nothing else. */
+export function entitiesSection(text: string): string {
+  return text.slice(text.indexOf("ENTITIES"));
+}
