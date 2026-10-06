@@ -13,6 +13,25 @@
 //! `fonts/LICENSE.md`. Its glyphs cover printable ASCII. A character it
 //! does not have is drawn as a box the size of a digit, so a string is
 //! never silently shorter than it is.
+//!
+//! # What a layout engine may rely on (DESIGN §34)
+//!
+//! A dimension places its text, the gap around it, its arrowheads, and its
+//! extension lines from these, and must get the same answer the renderer
+//! draws. They are held under property tests, here and where they are used:
+//!
+//! - [`Font::metrics`] gives a string's **width**, **ascent**, and
+//!   **descent** at a height. The width is [`Font::advance`] times the
+//!   height: additive over concatenation, linear in the height, the same
+//!   at every angle. The ascent and descent are the font's, times the
+//!   height: a capital is exactly one height tall on the baseline; brackets
+//!   rise to the ascent, descenders fall to the descent, and nothing further.
+//! - [`Font::strokes`] lays the string along a baseline from an origin at an
+//!   angle, and every point of every stroke lies in the box the metrics
+//!   describe — `[0, width]` along the baseline, `[-descent, ascent]` up
+//!   from it — rotated with it. A character the font lacks keeps that too.
+//! - [`Font::wrap`] breaks a paragraph into lines no wider than a width, by
+//!   the same advance.
 
 use std::sync::OnceLock;
 
@@ -47,6 +66,19 @@ pub struct Font {
     ascent: f64,
     /// How far below the baseline any glyph reaches, in cap heights.
     descent: f64,
+}
+
+/// A string's measurements at a height, in drawing units: the box its
+/// strokes lie in, as a layout engine needs them (DESIGN §34).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Metrics {
+    /// From the baseline's start to where the pen ends up.
+    pub width: f64,
+    /// How far above the baseline the box reaches: the height, and a
+    /// little more for brackets.
+    pub ascent: f64,
+    /// How far below the baseline the box reaches.
+    pub descent: f64,
 }
 
 /// Why a glyph line could not be read.
@@ -133,6 +165,16 @@ impl Font {
                     .map_or_else(|| self.missing().advance, |g| g.advance)
             })
             .sum()
+    }
+
+    /// The box `text` occupies at `height` (the cap height, in drawing
+    /// units), in those units: what a dimension lays itself out from.
+    pub fn metrics(&self, text: &str, height: f64) -> Metrics {
+        Metrics {
+            width: self.advance(text) * height,
+            ascent: self.ascent * height,
+            descent: self.descent * height,
+        }
     }
 
     /// How far above the baseline the font reaches, in cap heights: at
@@ -457,6 +499,60 @@ mod tests {
                 prop_assert!(!line.ends_with(' '));
             }
             prop_assert!(lines.len() > text.matches('\n').count(), "one line per break at least");
+        }
+
+        /// The metrics are linear in the height and the same at every
+        /// angle; a capital is one height tall; nothing reaches beyond
+        /// the ascent or the descent.
+        #[test]
+        fn metrics_are_linear_in_the_height_and_bound_every_glyph(
+            text in "[ -~]{0,12}",
+            height in 0.01..1000.0f64,
+            factor in 0.1..10.0f64,
+        ) {
+            let font = Font::simplex();
+            let one = font.metrics(&text, height);
+            let scaled = font.metrics(&text, height * factor);
+            prop_assert!(close(scaled.width, one.width * factor));
+            prop_assert!(close(scaled.ascent, one.ascent * factor));
+            prop_assert!(close(scaled.descent, one.descent * factor));
+            prop_assert!(one.ascent >= height - 1e-9 && one.descent >= 0.0);
+            prop_assert!(close(one.width, font.advance(&text) * height));
+            // The metrics are the height times the font's: the font's are the
+            // greatest reach of any glyph, so no glyph exceeds them.
+            for c in text.chars() {
+                if let Some(glyph) = font.glyph(c) {
+                    for point in glyph.strokes.iter().flatten() {
+                        prop_assert!(point.y * height <= one.ascent + 1e-9);
+                        prop_assert!(-point.y * height <= one.descent + 1e-9);
+                    }
+                }
+            }
+        }
+
+        /// Every stroke of a string lies in the box its metrics describe,
+        /// measured along and up from the baseline, at any angle — the
+        /// characters the font lacks included.
+        #[test]
+        fn strokes_lie_within_the_metrics_box_at_any_angle(
+            text in "[ -~é€]{0,12}",
+            height in 0.1..100.0f64,
+            angle in -7.0..7.0f64,
+            ox in -1000.0..1000.0f64,
+            oy in -1000.0..1000.0f64,
+        ) {
+            let font = Font::simplex();
+            let origin = Point2::new(ox, oy);
+            let metrics = font.metrics(&text, height);
+            let (sin, cos) = angle.sin_cos();
+            let slack = 1e-9 * (1.0 + height + ox.abs() + oy.abs());
+            for point in font.strokes(&text, origin, height, angle).iter().flatten() {
+                let local = *point - origin;
+                let along = local.x * cos + local.y * sin;
+                let up = -local.x * sin + local.y * cos;
+                prop_assert!(along >= -slack && along <= metrics.width + slack, "{along} of {}", metrics.width);
+                prop_assert!(up >= -metrics.descent - slack && up <= metrics.ascent + slack, "{up}");
+            }
         }
 
         /// Width is additive over concatenation, and the strokes of a

@@ -161,17 +161,17 @@ impl TextEntity {
         Vec2::new(self.rotation.cos(), self.rotation.sin())
     }
 
-    /// The box the glyphs sit in.
+    /// The box the glyphs sit in: the font's metrics, placed (DESIGN §34).
     pub fn frame(&self) -> TextFrame {
         let along = self.along();
-        let font = Font::simplex();
+        let metrics = Font::simplex().metrics(&self.content, self.height);
         TextFrame {
             start: self.start(),
             along,
             up: Vec2::new(-along.y, along.x),
-            width: self.width(),
-            ascent: font.ascent() * self.height,
-            descent: font.descent() * self.height,
+            width: metrics.width,
+            ascent: metrics.ascent,
+            descent: metrics.descent,
         }
     }
 
@@ -421,6 +421,84 @@ mod tests {
             let mirrored = text.transformed(&Transform::mirror(p(0.0, 0.0), p(1.0, 1.0)).unwrap());
             prop_assert!(mirrored.rotation.cos() >= -1e-6, "never upside down");
             prop_assert!((mirrored.width() - text.width()).abs() < 1e-9);
+        }
+    }
+}
+
+/// What a dimension's layout may rely on of a text (DESIGN §34; #161): its
+/// frame is where its strokes are, whatever its justification and angle,
+/// and the frame turns and moves with the text.
+#[cfg(test)]
+mod layout_metrics {
+    use cad_core::Point2;
+    use cad_geometry::Transform;
+    use proptest::prelude::*;
+
+    use super::*;
+
+    fn close(a: Point2, b: Point2, slack: f64) -> bool {
+        a.distance_to(b) <= slack
+    }
+
+    proptest! {
+        #[test]
+        fn every_stroke_lies_in_the_frame_for_every_justification(
+            content in "[ -~é]{0,12}",
+            height in 0.1..100.0f64,
+            rotation in -7.0..7.0f64,
+            x in -1000.0..1000.0f64,
+            y in -1000.0..1000.0f64,
+            justification in prop_oneof![
+                Just(Justification::Left),
+                Just(Justification::Center),
+                Just(Justification::Right),
+            ],
+        ) {
+            let text = TextEntity::new(Point2::new(x, y), height, rotation, content)
+                .justified(justification);
+            let frame = text.frame();
+            let slack = 1e-9 * (1.0 + height + x.abs() + y.abs());
+            for point in text.strokes().iter().flatten() {
+                let local = *point - frame.start;
+                let along = local.dot(frame.along);
+                let up = local.dot(frame.up);
+                prop_assert!(along >= -slack && along <= frame.width + slack);
+                prop_assert!(up >= -frame.descent - slack && up <= frame.ascent + slack);
+            }
+            // The insertion point is on the baseline, at the justification's share.
+            let share = -justification.start_fraction();
+            prop_assert!(close(
+                frame.start + frame.along * (share * frame.width),
+                text.insertion,
+                slack
+            ));
+        }
+
+        /// Moving, turning, and scaling a text moves, turns, and scales its
+        /// frame: the corners of the transformed text are the transformed
+        /// corners.
+        #[test]
+        fn the_frame_follows_the_text_through_a_transform(
+            content in "[ -~]{1,12}",
+            height in 0.1..100.0f64,
+            rotation in -7.0..7.0f64,
+            degrees in -360.0..360.0f64,
+            factor in 0.1..10.0f64,
+            dx in -500.0..500.0f64,
+            dy in -500.0..500.0f64,
+        ) {
+            let text = TextEntity::new(Point2::new(3.0, -4.0), height, rotation, content);
+            let about = Point2::new(dx, dy);
+            let turn = Transform::rotation(about, degrees);
+            let scale = Transform::scaling(about, factor).unwrap();
+            for transform in [turn, scale, Transform::translation(cad_core::Vec2::new(dx, dy))] {
+                let moved = text.transformed(&transform);
+                let expected = text.frame().corners().map(|corner| transform.apply(corner));
+                let slack = 1e-7 * (1.0 + height * factor + dx.abs() + dy.abs());
+                for (a, b) in expected.iter().zip(moved.frame().corners()) {
+                    prop_assert!(close(*a, b, slack), "{a:?} vs {b:?}");
+                }
+            }
         }
     }
 }

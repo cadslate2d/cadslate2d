@@ -669,3 +669,59 @@ mod blocks {
         assert_eq!(highlighted, 4, "the whole pair, both chairs");
     }
 }
+
+/// DESIGN §34 (#161): what the renderer draws for a text is inside the box
+/// the document computes for it — at every justification and angle, after
+/// the float conversion the scene makes.
+#[test]
+fn the_scenes_text_segments_lie_inside_the_documents_text_box() {
+    use cad_document::{Drawing, Entity, Justification, TextEntity};
+    use cad_render::{PackedFrame, SceneCache};
+
+    let mut texts = Vec::new();
+    for (index, justification) in [
+        Justification::Left,
+        Justification::Center,
+        Justification::Right,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for step in 0..8 {
+            let angle = f64::from(step) * std::f64::consts::FRAC_PI_4 + 0.3;
+            let at = cad_core::Point2::new(f64::from(step) * 300.0, index as f64 * 200.0 - 50.0);
+            texts.push(
+                TextEntity::new(at, 7.5 + f64::from(step), angle, "Slate [12.5] gy")
+                    .justified(justification),
+            );
+        }
+    }
+    let drawing = Drawing::from_entities(texts.iter().cloned().map(Entity::Text));
+    let mut cache = SceneCache::new();
+    let frame = cache.scene(&drawing).frame();
+    let (segments, _) = frame
+        .segments()
+        .as_chunks::<{ PackedFrame::FLOATS_PER_SEGMENT }>();
+    assert!(!segments.is_empty());
+    let boxes: Vec<_> = texts.iter().map(TextEntity::frame).collect();
+    // Segments are offsets from the frame's f64 origin (ADR-0003).
+    let origin = frame.origin();
+    let inside = |x: f32, y: f32| {
+        let point = origin + cad_core::Vec2::new(f64::from(x), f64::from(y));
+        boxes.iter().any(|frame| {
+            let local = point - frame.start;
+            let along = local.dot(frame.along);
+            let up = local.dot(frame.up);
+            // Single precision at coordinates in the thousands: a thousandth.
+            let slack = 1e-3;
+            along >= -slack
+                && along <= frame.width + slack
+                && up >= -frame.descent - slack
+                && up <= frame.ascent + slack
+        })
+    };
+    for segment in segments {
+        assert!(inside(segment[0], segment[1]), "{segment:?}");
+        assert!(inside(segment[2], segment[3]), "{segment:?}");
+    }
+}
