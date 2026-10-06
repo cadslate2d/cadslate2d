@@ -775,7 +775,7 @@ impl Session {
                     id,
                     self.drawing
                         .entity(id)?
-                        .distance_to(point, self.drawing.blocks()),
+                        .distance_to(point, self.drawing.tables()),
                 ))
             })
             .filter(|(_, distance)| *distance <= reach)
@@ -830,9 +830,9 @@ impl Session {
             .filter(|&id| {
                 self.drawing.entity(id).is_some_and(|entity| {
                     if crossing {
-                        entity.crosses(&bounds, self.drawing.blocks())
+                        entity.crosses(&bounds, self.drawing.tables())
                     } else {
-                        entity.is_inside(&bounds, self.drawing.blocks())
+                        entity.is_inside(&bounds, self.drawing.tables())
                     }
                 })
             })

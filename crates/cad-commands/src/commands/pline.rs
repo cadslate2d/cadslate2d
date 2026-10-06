@@ -380,7 +380,7 @@ mod tests {
         assert!(close_to(polyline.bulge(0), 1.0));
         assert!(
             Entity::Polyline(polyline.clone())
-                .distance_to(p(5.0, 5.0), cad_document::empty_blocks())
+                .distance_to(p(5.0, 5.0), cad_document::Tables::none())
                 < 1e-9
         );
     }

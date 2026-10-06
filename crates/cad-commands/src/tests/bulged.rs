@@ -63,7 +63,7 @@ fn rotate_and_mirror_keep_the_slot_a_slot() {
         vec![0.0, 1.0, 0.0, 1.0]
     );
     // The far end still bulges outwards: its middle is 40 beyond the vertices.
-    assert!(Entity::from(turned).distance_to(p(-40.0, 240.0), cad_document::empty_blocks()) < 1e-9);
+    assert!(Entity::from(turned).distance_to(p(-40.0, 240.0), cad_document::Tables::none()) < 1e-9);
 
     h.click_world(p(0.0, 100.0));
     h.enter_all(&["MI", "0,0", "0,10", "Y"]);
@@ -73,7 +73,7 @@ fn rotate_and_mirror_keep_the_slot_a_slot() {
         vec![0.0, -1.0, 0.0, -1.0]
     );
     assert!(
-        Entity::from(mirrored).distance_to(p(40.0, 240.0), cad_document::empty_blocks()) < 1e-9,
+        Entity::from(mirrored).distance_to(p(40.0, 240.0), cad_document::Tables::none()) < 1e-9,
         "still bulging outwards"
     );
 }

@@ -11,6 +11,7 @@
 mod aci;
 mod block;
 mod dim_style;
+mod dimension;
 mod drawing;
 mod editing;
 mod entity;
@@ -30,6 +31,7 @@ mod settings;
 pub mod spatial;
 mod store;
 mod table;
+mod tables;
 mod text;
 mod text_style;
 mod transaction;
@@ -37,6 +39,7 @@ mod transaction;
 pub use aci::{FOREGROUND_INDEX, Paint, index_paint, nearest_index};
 pub use block::{Block, BlockChange, BlockId, BlockReferenceEntity, BlockTable, empty_blocks};
 pub use dim_style::{DimStyle, DimStyleChange, DimStyleError, DimStyleId, DimStyleTable};
+pub use dimension::{DimensionEntity, DimensionError, DimensionLayout, Measure};
 pub use drawing::{ApplyReport, Drawing, TransactionBuilder, TransactionError};
 pub use editing::{
     BreakError, CornerError, Cornered, ExtendError, OffsetError, StretchHold, TrimError, TrimParts,
@@ -59,6 +62,7 @@ pub use settings::{DrawingSettings, SettingsChange};
 pub use spatial::SpatialIndex;
 pub use store::{DuplicateEntityId, EntityStore};
 pub use table::{Table, TableChange, TableId};
+pub use tables::Tables;
 pub use text::{Justification, TextFrame};
 pub use text_style::{TextStyle, TextStyleChange, TextStyleId, TextStyleTable};
 pub use transaction::{Change, EntityChange, Transaction};

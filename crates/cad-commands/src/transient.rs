@@ -163,7 +163,7 @@ mod tests {
             drawing
                 .entity(ids[0])
                 .unwrap()
-                .bounds(cad_document::empty_blocks())
+                .bounds(cad_document::Tables::none())
                 .min(),
             Point2::new(100.0, 0.0)
         );
@@ -171,7 +171,7 @@ mod tests {
             drawing
                 .entity(ids[1])
                 .unwrap()
-                .bounds(cad_document::empty_blocks())
+                .bounds(cad_document::Tables::none())
                 .min(),
             Point2::new(103.0, 3.0)
         );
@@ -182,7 +182,7 @@ mod tests {
             drawing
                 .entity(ids[0])
                 .unwrap()
-                .bounds(cad_document::empty_blocks())
+                .bounds(cad_document::Tables::none())
                 .min(),
             Point2::new(0.0, 0.0)
         );
@@ -234,7 +234,7 @@ mod tests {
             drawing
                 .entity(edit.sources()[0])
                 .unwrap()
-                .bounds(cad_document::empty_blocks())
+                .bounds(cad_document::Tables::none())
                 .min(),
             Point2::new(0.0, 0.0)
         );
@@ -242,7 +242,7 @@ mod tests {
             drawing
                 .entity(copies[0])
                 .unwrap()
-                .bounds(cad_document::empty_blocks())
+                .bounds(cad_document::Tables::none())
                 .min(),
             Point2::new(0.0, 50.0)
         );

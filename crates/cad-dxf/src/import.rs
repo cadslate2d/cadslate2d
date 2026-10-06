@@ -1038,6 +1038,8 @@ impl<'a> Reader<'a> {
                     Entity::Text(_) | Entity::MText(_) => self.report.texts += 1,
                     // Counted once its block is found.
                     Entity::BlockRef(_) => {}
+                    // Not read yet (#166): a DIMENSION is reported by name.
+                    Entity::Dimension(_) => {}
                 }
                 self.entities.push((entity, properties));
             }
@@ -2007,10 +2009,10 @@ mod tests {
         let circle = polylines_of(&first)[0].clone();
         assert_eq!(circle.bulges().collect::<Vec<_>>(), vec![1.0, 1.0]);
         let shape = Entity::Polyline(circle.clone());
-        assert_eq!(shape.primitives(cad_document::empty_blocks()).len(), 2);
+        assert_eq!(shape.primitives(cad_document::Tables::none()).len(), 2);
         assert!(
-            shape.distance_to(p(50.0, 50.0), cad_document::empty_blocks()) < 1e-12
-                && shape.distance_to(p(50.0, -50.0), cad_document::empty_blocks()) < 1e-12
+            shape.distance_to(p(50.0, 50.0), cad_document::Tables::none()) < 1e-12
+                && shape.distance_to(p(50.0, -50.0), cad_document::Tables::none()) < 1e-12
         );
 
         let text = export(&first.drawing);
@@ -2040,7 +2042,7 @@ mod tests {
         // Finite but far too large to square: imported, as a straight segment.
         let import = with_bulge("1e200").unwrap();
         let bounds =
-            Entity::Polyline(polylines_of(&import)[0].clone()).bounds(cad_document::empty_blocks());
+            Entity::Polyline(polylines_of(&import)[0].clone()).bounds(cad_document::Tables::none());
         assert!(bounds.min().is_finite() && bounds.max().is_finite());
         // Not a finite number, or not a number: a malformed file, as for a coordinate.
         for bulge in ["1e400", "round"] {

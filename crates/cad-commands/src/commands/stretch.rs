@@ -42,7 +42,7 @@ impl Held {
             let Some(entity) = ctx
                 .drawing
                 .entity(id)
-                .filter(|entity| entity.crosses(&window, ctx.drawing.blocks()))
+                .filter(|entity| entity.crosses(&window, ctx.drawing.tables()))
             else {
                 continue;
             };

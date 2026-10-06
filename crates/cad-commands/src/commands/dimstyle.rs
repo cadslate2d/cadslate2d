@@ -164,10 +164,13 @@ fn explain(ctx: &CommandContext<'_>, error: TransactionError) -> String {
             "Dimension style \"{}\" cannot be deleted or renamed.",
             DimStyle::STANDARD
         ),
-        TransactionError::DimStyleInUse(id) => format!(
+        TransactionError::DimStyleInUse(id) if ctx.drawing.current_dim_style() == id => format!(
             "Dimension style \"{}\" is current: set another first.",
             name(id)
         ),
+        TransactionError::DimStyleInUse(id) => {
+            format!("Dimension style \"{}\" is used by a dimension.", name(id))
+        }
         other => other.to_string(),
     }
 }

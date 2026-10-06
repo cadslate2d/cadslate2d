@@ -41,6 +41,10 @@ pub enum GripKind {
     Quadrant,
     /// The insertion point of a text.
     Insertion,
+    /// A point a dimension measures.
+    Definition,
+    /// Where a dimension is placed: its line, arc, or text.
+    Placement,
 }
 
 /// One grip of one entity. Its index in [`Entity::grips`] identifies it.
@@ -94,6 +98,22 @@ impl Entity {
             Entity::Text(text) => vec![grip(GripKind::Insertion, text.insertion)],
             Entity::MText(text) => vec![grip(GripKind::Insertion, text.insertion)],
             Entity::BlockRef(reference) => vec![grip(GripKind::Insertion, reference.insertion)],
+            Entity::Dimension(dimension) => {
+                let measured = dimension.measure.points().len();
+                dimension
+                    .points()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, point)| {
+                        let kind = if index < measured {
+                            GripKind::Definition
+                        } else {
+                            GripKind::Placement
+                        };
+                        grip(kind, point)
+                    })
+                    .collect()
+            }
         }
     }
 
@@ -192,6 +212,12 @@ impl Entity {
                 }
                 .into()
             }),
+            // A measured point or the placement moves; the result must
+            // still be a dimension that can be laid out.
+            Entity::Dimension(dimension) => dimension
+                .with_point(index, to)
+                .filter(|moved| moved.check().is_ok())
+                .map(Entity::from),
         }
     }
 

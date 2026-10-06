@@ -359,22 +359,22 @@ fn bulged_polylines_in_both_encodings() {
         let shapes = in_file_order(&import.drawing);
         // The slot's ends are semicircles of radius 2 reaching x = 12 and x = -2.
         assert!(
-            shapes[0].distance_to(Point2::new(12.0, 2.0), cad_document::empty_blocks()) < 1e-9,
+            shapes[0].distance_to(Point2::new(12.0, 2.0), cad_document::Tables::none()) < 1e-9,
             "{file}"
         );
         assert!(
-            shapes[0].distance_to(Point2::new(-2.0, 2.0), cad_document::empty_blocks()) < 1e-9,
+            shapes[0].distance_to(Point2::new(-2.0, 2.0), cad_document::Tables::none()) < 1e-9,
             "{file}"
         );
         // The rounded corner is a quarter arc of radius 5 about (30, 5).
         let on_the_corner = Point2::new(30.0 + 5.0 * 0.5f64.sqrt(), 5.0 - 5.0 * 0.5f64.sqrt());
         assert!(
-            shapes[1].distance_to(on_the_corner, cad_document::empty_blocks()) < 1e-9,
+            shapes[1].distance_to(on_the_corner, cad_document::Tables::none()) < 1e-9,
             "{file}"
         );
         // The clockwise arc rises above its chord: sagitta 0.5 × 10 / 2.
         assert!(
-            shapes[2].distance_to(Point2::new(55.0, 2.5), cad_document::empty_blocks()) < 1e-9,
+            shapes[2].distance_to(Point2::new(55.0, 2.5), cad_document::Tables::none()) < 1e-9,
             "{file}"
         );
     }

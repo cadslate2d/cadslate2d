@@ -61,6 +61,9 @@ pub struct Glyph {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Font {
     glyphs: Vec<Glyph>,
+    /// Glyphs beyond the file's run of characters, built from its own:
+    /// the degree sign and the diameter sign a dimension needs.
+    extras: Vec<(char, Glyph)>,
     /// How far above the baseline any glyph reaches, in cap heights:
     /// brackets and parentheses go above the capitals.
     ascent: f64,
@@ -79,6 +82,53 @@ pub struct Metrics {
     pub ascent: f64,
     /// How far below the baseline the box reaches.
     pub descent: f64,
+}
+
+/// The glyphs the file lacks that a dimension's text needs, drawn from
+/// its own: `°` as a small circle at the cap height, `Ø` as the `O` with a
+/// stroke from its bottom left to its top right. Both lie within the box
+/// of the glyphs they are made from, so the font's reach is unchanged.
+fn synthesized(glyphs: &[Glyph]) -> Vec<(char, Glyph)> {
+    let of = |c: char| glyphs.get((c as u32 - FIRST_CHAR) as usize);
+    let mut extras = Vec::new();
+    if let Some(digit) = of('0') {
+        let advance = digit.advance * 0.6;
+        let radius = 0.12;
+        let center = Vec2::new(advance / 2.0, 1.0 - radius);
+        let ring: Vec<Vec2> = (0..=12)
+            .map(|step| {
+                let angle = f64::from(step) / 12.0 * std::f64::consts::TAU;
+                center + Vec2::new(radius * angle.cos(), radius * angle.sin())
+            })
+            .collect();
+        extras.push((
+            '°',
+            Glyph {
+                strokes: vec![ring],
+                advance,
+            },
+        ));
+    }
+    if let Some(o) = of('O') {
+        let points = || o.strokes.iter().flatten();
+        let (mut low, mut high) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
+        for point in points() {
+            low = Vec2::new(low.x.min(point.x), low.y.min(point.y));
+            high = Vec2::new(high.x.max(point.x), high.y.max(point.y));
+        }
+        if low.x < high.x {
+            let mut strokes = o.strokes.clone();
+            strokes.push(vec![low, high]);
+            extras.push((
+                'Ø',
+                Glyph {
+                    strokes,
+                    advance: o.advance,
+                },
+            ));
+        }
+    }
+    extras
 }
 
 /// Why a glyph line could not be read.
@@ -113,8 +163,10 @@ impl Font {
         };
         let ascent = ys().fold(1.0_f64, f64::max);
         let descent = -ys().fold(0.0_f64, f64::min);
+        let extras = synthesized(&glyphs);
         Ok(Font {
             glyphs,
+            extras,
             ascent,
             descent,
         })
@@ -135,8 +187,14 @@ impl Font {
         if c.is_control() {
             return None;
         }
-        let index = (c as u32).checked_sub(FIRST_CHAR)?;
-        self.glyphs.get(index as usize)
+        match (c as u32).checked_sub(FIRST_CHAR) {
+            Some(index) if (index as usize) < self.glyphs.len() => self.glyphs.get(index as usize),
+            _ => self
+                .extras
+                .iter()
+                .find(|(extra, _)| *extra == c)
+                .map(|(_, glyph)| glyph),
+        }
     }
 
     /// The glyph drawn for a character the font lacks: a box the width of

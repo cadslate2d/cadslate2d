@@ -12,7 +12,7 @@ use cad_document::{Drawing, Entity, Properties};
 use crate::Selection;
 
 /// The kinds an entity can be, in the order they are listed.
-const KINDS: [(&str, &str); 7] = [
+const KINDS: [(&str, &str); 8] = [
     ("line", "lines"),
     ("circle", "circles"),
     ("arc", "arcs"),
@@ -20,6 +20,7 @@ const KINDS: [(&str, &str); 7] = [
     ("text", "texts"),
     ("multiline text", "multiline texts"),
     ("block reference", "block references"),
+    ("dimension", "dimensions"),
 ];
 
 fn kind_index(entity: &Entity) -> usize {
@@ -31,6 +32,7 @@ fn kind_index(entity: &Entity) -> usize {
         Entity::Text(_) => 4,
         Entity::MText(_) => 5,
         Entity::BlockRef(_) => 6,
+        Entity::Dimension(_) => 7,
     }
 }
 
@@ -221,6 +223,27 @@ fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, String)> {
             row("Rotation", degrees(text.rotation)),
             row("Lines", text.lines().len().to_string()),
         ],
+        Entity::Dimension(dimension) => {
+            let style = drawing.tables().dim_style(dimension.style);
+            let value = dimension.value();
+            vec![
+                row("Kind", {
+                    let mut kind = dimension.measure.kind().to_owned();
+                    kind[..1].make_ascii_uppercase();
+                    kind
+                }),
+                row(
+                    "Value",
+                    if matches!(dimension.measure, cad_document::Measure::Angular { .. }) {
+                        degrees(value.to_radians())
+                    } else {
+                        number(value)
+                    },
+                ),
+                row("Text", dimension.content(style)),
+                row("Style", style.name.clone()),
+            ]
+        }
         Entity::BlockRef(reference) => vec![
             row(
                 "Block",

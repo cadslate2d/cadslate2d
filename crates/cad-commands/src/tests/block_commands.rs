@@ -197,7 +197,7 @@ fn an_existing_name_asks_before_redefining_and_every_reference_follows() {
     assert_eq!(drawing.blocks().get(chair).unwrap().entities.len(), 1);
     let bounds: Vec<Point2> = references(&h)
         .iter()
-        .map(|reference| drawing.blocks().bounds_of(reference).max())
+        .map(|reference| drawing.tables().bounds_of(reference).max())
         .collect();
     assert_eq!(bounds, vec![p(100.0, 30.0), p(200.0, 60.0), p(0.0, 30.0)]);
 

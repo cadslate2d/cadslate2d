@@ -121,7 +121,7 @@ impl EdgeCommand {
                 let cuts: Vec<Point2> =
                     Self::edges_near(edges, drawing, target, &drawing.bounds_of(shape))
                         .into_iter()
-                        .flat_map(|edge| shape.intersections(edge, drawing.blocks()))
+                        .flat_map(|edge| shape.intersections(edge, drawing.tables()))
                         .collect();
                 let parts = shape
                     .trim_parts_at(&cuts, pick)
@@ -152,7 +152,7 @@ impl EdgeCommand {
                     .map(|reach| Self::edges_near(edges, drawing, target, &reach))
                     .unwrap_or_default()
                     .into_iter()
-                    .flat_map(|edge| edge.primitives(drawing.blocks()))
+                    .flat_map(|edge| edge.primitives(drawing.tables()))
                     .collect();
                 let longer = shape
                     .extended_to(&boundary, pick)

@@ -11,6 +11,8 @@ use cad_core::{Aabb, Point2, Vec2};
 use cad_geometry::Transform;
 use cad_text::Font;
 
+#[cfg(test)]
+use crate::tables::Tables;
 use crate::text::TextFrame;
 use crate::text_style::TextStyleId;
 
@@ -284,7 +286,7 @@ mod tests {
                 .all(|point| point.x >= 10.0 - 1e-9)
         );
         let as_entity = crate::Entity::MText(note.clone());
-        assert!(as_entity.primitives(crate::block::no_blocks()).is_empty());
+        assert!(as_entity.primitives(Tables::none()).is_empty());
         assert_eq!(as_entity.kind_name(), "multiline text");
     }
 

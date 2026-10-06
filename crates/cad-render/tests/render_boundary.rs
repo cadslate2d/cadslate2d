@@ -670,6 +670,55 @@ mod blocks {
     }
 }
 
+/// ADR-0020: a dimension is drawn from its style — extension lines,
+/// arrowheads, the arc, the strokes of its text — and drawn afresh when
+/// the style changes; the pointer leaves the committed scene alone.
+#[test]
+fn a_dimension_is_drawn_by_its_style_and_redrawn_when_the_style_changes() {
+    use cad_document::{DimensionEntity, Entity, Measure};
+    let angle = DimensionEntity::new(
+        Measure::Angular {
+            vertex: cad_core::Point2::new(0.0, 0.0),
+            a: cad_core::Point2::new(100.0, 0.0),
+            b: cad_core::Point2::new(0.0, 100.0),
+        },
+        cad_core::Point2::new(60.0, 60.0),
+    );
+    let mut h = Harness::with_entities([Entity::from(angle)]);
+    let mut cache = SceneCache::new();
+    let (revision, segments, arcs) = {
+        let scene = cache.scene(h.session.drawing());
+        assert_frame_is_consistent(scene.frame(), "a dimension");
+        (
+            scene.revision(),
+            scene.frame().segments().to_vec(),
+            scene.frame().arc_count(),
+        )
+    };
+    assert_eq!(arcs, 1, "the dimension arc");
+    // Two extension lines, two arrowheads of three sides, and the text.
+    assert!(segments.len() / PackedFrame::FLOATS_PER_SEGMENT > 8);
+
+    h.move_to(100.0, 100.0);
+    h.move_to(300.0, 200.0);
+    assert_eq!(cache.scene(h.session.drawing()).revision(), revision);
+
+    h.enter_all(&["DIMSTYLE", "H", "10", ""]);
+    let scene = cache.scene(h.session.drawing());
+    assert_ne!(
+        scene.revision(),
+        revision,
+        "one row changed; the scene follows"
+    );
+    assert_frame_is_consistent(scene.frame(), "a dimension restyled");
+    assert_ne!(
+        scene.frame().segments(),
+        &segments[..],
+        "the text is drawn taller"
+    );
+    assert_eq!(scene.frame().arc_count(), 1);
+}
+
 /// DESIGN §34 (#161): what the renderer draws for a text is inside the box
 /// the document computes for it — at every justification and angle, after
 /// the float conversion the scene makes.

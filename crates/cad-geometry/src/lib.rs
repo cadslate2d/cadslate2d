@@ -10,6 +10,7 @@ mod construct;
 mod corner;
 mod crossing;
 mod curve_fillet;
+mod dimension;
 mod extend;
 pub mod intersect;
 mod join;
@@ -25,6 +26,7 @@ mod trim;
 pub use arc::{Arc, Circle, normalize_angle};
 pub use corner::{Chamfer, Corner, CornerError, Fillet};
 pub use curve_fillet::{CurveFillet, fillet_curves};
+pub use dimension::{Arrowhead, foot_on_line, normalized, perpendicular, readable_angle};
 pub use extend::{extend_arc, extend_segment};
 pub use intersect::{Hits, Orientation, Primitive, orientation};
 pub use join::{

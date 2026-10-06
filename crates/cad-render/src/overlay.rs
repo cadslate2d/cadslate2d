@@ -116,18 +116,18 @@ impl OverlayFrame {
                 OverlayItem::Highlight(id) => {
                     if let Some(entity) = drawing.entity(*id) {
                         self.frame
-                            .push_entity(StyleRole::Selection, entity, drawing.blocks());
+                            .push_entity(StyleRole::Selection, entity, drawing.tables());
                     }
                 }
                 OverlayItem::Hover(id) => {
                     if let Some(entity) = drawing.entity(*id) {
                         self.frame
-                            .push_entity(StyleRole::Hover, entity, drawing.blocks());
+                            .push_entity(StyleRole::Hover, entity, drawing.tables());
                     }
                 }
                 OverlayItem::PreviewRemoval(entity) => {
                     self.frame
-                        .push_entity(StyleRole::Removal, entity, drawing.blocks());
+                        .push_entity(StyleRole::Removal, entity, drawing.tables());
                 }
                 OverlayItem::Grips { at } => {
                     for grip in at {
@@ -143,7 +143,7 @@ impl OverlayFrame {
                         .and_then(|entity| entity.grip_preview(id.index, *to));
                     if let Some(preview) = preview {
                         self.frame
-                            .push_entity(StyleRole::Preview, &preview, drawing.blocks());
+                            .push_entity(StyleRole::Preview, &preview, drawing.tables());
                     }
                 }
                 OverlayItem::PreviewSegment { start, end } => {
@@ -151,14 +151,14 @@ impl OverlayFrame {
                 }
                 OverlayItem::PreviewEntity(entity) => {
                     self.frame
-                        .push_entity(StyleRole::Preview, entity, drawing.blocks())
+                        .push_entity(StyleRole::Preview, entity, drawing.tables())
                 }
                 OverlayItem::PreviewTransformed { ids, transform } => {
                     for entity in ids.iter().filter_map(|id| drawing.entity(*id)) {
                         self.frame.push_entity(
                             StyleRole::Preview,
                             &entity.transformed(transform),
-                            drawing.blocks(),
+                            drawing.tables(),
                         );
                     }
                 }

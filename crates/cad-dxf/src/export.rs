@@ -16,9 +16,9 @@ use std::fmt::Write;
 use cad_core::{EntityId, LengthUnit, Point2};
 use cad_document::{
     ArcEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, DimStyle,
-    DimStyleId, Drawing, DrawingSettings, Entity, EntityRecord, Justification, Layer, LineEntity,
-    Linetype, LinetypeDef, LinetypeTable, Lineweight, MTextEntity, PolylineEntity, Properties,
-    TextEntity, TextStyle, TextStyleTable,
+    DimStyleId, DimensionEntity, Drawing, DrawingSettings, Entity, EntityRecord, Justification,
+    Layer, LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight, MTextEntity, Measure,
+    PolylineEntity, Properties, TextEntity, TextStyle, TextStyleTable,
 };
 
 use crate::properties::{
@@ -554,6 +554,7 @@ impl Writer {
             Entity::Text(_) => "TEXT",
             Entity::MText(_) => "MTEXT",
             Entity::BlockRef(_) => "INSERT",
+            Entity::Dimension(_) => "DIMENSION",
         };
         self.entity(kind, owner, layer, &record.properties, drawing.linetypes());
         match &*record.entity {
@@ -564,6 +565,81 @@ impl Writer {
             Entity::Text(text) => self.text(text, drawing.text_styles()),
             Entity::MText(text) => self.mtext(text, drawing.text_styles()),
             Entity::BlockRef(reference) => self.insert(reference, drawing.blocks()),
+            Entity::Dimension(dimension) => self.dimension(dimension, drawing),
+        }
+    }
+
+    /// A DIMENSION (ADR-0020), as far as this release writes one: its
+    /// kind (70), its definition points, its style (3), its text (1) when
+    /// it has words of its own, its measured value (42), and where its text
+    /// is (11). A linear dimension is a rotated one — the aligned subclass,
+    /// then the rotation (50). The anonymous block a reader that does not
+    /// lay dimensions out expects is not written yet (#166).
+    fn dimension(&mut self, dimension: &DimensionEntity, drawing: &Drawing) {
+        let style = drawing
+            .dim_styles()
+            .get(dimension.style)
+            .map_or(DimStyle::STANDARD, |style| style.name.as_str())
+            .to_owned();
+        let layout = dimension.layout(drawing.tables().dim_style(dimension.style));
+        self.group(100, "AcDbDimension");
+        let (kind, definition) = match dimension.measure {
+            Measure::Linear { .. } => (0, dimension.line_point),
+            Measure::Aligned { .. } => (1, dimension.line_point),
+            Measure::Angular { .. } => (5, dimension.line_point),
+            Measure::Radius { center, .. } => (4, center),
+            // The point on the circle opposite the leader.
+            Measure::Diameter { .. } => (
+                3,
+                dimension
+                    .circle_points()
+                    .map_or(dimension.line_point, |(_, far)| far),
+            ),
+        };
+        self.point(10, definition);
+        self.point(11, layout.text.insertion);
+        // 32: the block is this dimension's own; 128: the text is where the
+        // drafter put it.
+        self.int(70, kind | 32 | 128);
+        self.int(71, 5);
+        self.real(42, layout.value);
+        if let Some(text) = &dimension.text_override {
+            self.group(1, text);
+        }
+        self.group(3, &style);
+        match dimension.measure {
+            Measure::Linear { a, b, rotation } => {
+                self.group(100, "AcDbAlignedDimension");
+                self.point(13, a);
+                self.point(14, b);
+                self.group(100, "AcDbRotatedDimension");
+                self.real(50, rotation.to_degrees());
+            }
+            Measure::Aligned { a, b } => {
+                self.group(100, "AcDbAlignedDimension");
+                self.point(13, a);
+                self.point(14, b);
+            }
+            Measure::Angular { vertex, a, b } => {
+                self.group(100, "AcDb3PointAngularDimension");
+                self.point(13, a);
+                self.point(14, b);
+                self.point(15, vertex);
+            }
+            Measure::Radius { .. } | Measure::Diameter { .. } => {
+                self.group(
+                    100,
+                    if matches!(dimension.measure, Measure::Radius { .. }) {
+                        "AcDbRadialDimension"
+                    } else {
+                        "AcDbDiametricDimension"
+                    },
+                );
+                if let Some((near, _)) = dimension.circle_points() {
+                    self.point(15, near);
+                }
+                self.real(40, 0.0);
+            }
         }
     }
 

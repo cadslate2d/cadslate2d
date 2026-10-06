@@ -168,7 +168,7 @@ fn a_closed_polyline_offsets_inwards_sharp_and_outwards_rounded() {
     let outer_entity = Entity::Polyline(outer.clone());
     for corner in [p(0.0, 0.0), p(100.0, 0.0), p(100.0, 60.0), p(0.0, 60.0)] {
         assert!(
-            (outer_entity.distance_to(corner, cad_document::empty_blocks()) - 10.0).abs() < 1e-9
+            (outer_entity.distance_to(corner, cad_document::Tables::none()) - 10.0).abs() < 1e-9
         );
     }
 }

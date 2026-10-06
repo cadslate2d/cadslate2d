@@ -161,7 +161,10 @@ impl RenderScene {
         {
             // A linetype is for curves: a text is drawn continuous, or its
             // glyphs would fall apart into dashes.
-            if matches!(entity, Entity::Text(_) | Entity::MText(_)) {
+            if matches!(
+                entity,
+                Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_)
+            ) {
                 properties.linetype = Linetype::CONTINUOUS;
             }
             let style = *indices.entry(properties).or_insert_with(|| {
@@ -175,7 +178,7 @@ impl RenderScene {
             });
             let (segments, arcs) = (self.frame.segment_count(), self.frame.arc_count());
             self.frame
-                .push_entity(StyleRole::Entity, entity, drawing.blocks());
+                .push_entity(StyleRole::Entity, entity, drawing.tables());
             let added = |before: u32, after: u32| (after - before) as usize;
             self.segment_styles.extend(std::iter::repeat_n(
                 style,

@@ -17,13 +17,17 @@
 
 use std::sync::Arc;
 
-use cad_core::{Aabb, Point2};
+#[cfg(test)]
+use cad_core::Aabb;
+use cad_core::Point2;
 use cad_geometry::Transform;
 
 use crate::layer::LayerId;
 use crate::names::Named;
 use crate::properties::{Color, Linetype, Lineweight};
 use crate::table::{Table, TableChange, TableId};
+#[cfg(test)]
+use crate::tables::Tables;
 use crate::{Entity, EntityRecord, Properties};
 
 /// Nesting deeper than this is not followed. Cycles are refused when a
@@ -90,8 +94,6 @@ pub fn empty_blocks() -> &'static BlockTable {
     static EMPTY: std::sync::OnceLock<BlockTable> = std::sync::OnceLock::new();
     EMPTY.get_or_init(initial_blocks)
 }
-
-pub(crate) use empty_blocks as no_blocks;
 
 /// A placed block: an entity of the drawing.
 #[derive(Clone, Debug, PartialEq)]
@@ -269,16 +271,6 @@ impl BlockTable {
             }
         }
     }
-
-    /// The bounds of a reference: those of its geometry, or a point at
-    /// its insertion when it has none.
-    pub fn bounds_of(&self, reference: &BlockReferenceEntity) -> Aabb {
-        self.flatten(reference, Properties::default())
-            .iter()
-            .map(|(entity, _)| entity.bounds(self))
-            .reduce(|a, b| a.union(&b))
-            .unwrap_or_else(|| Aabb::from_points(reference.insertion, reference.insertion))
-    }
 }
 
 #[cfg(test)]
@@ -343,7 +335,7 @@ mod tests {
         };
         assert!(close(circle.center, p(90.0, 60.0)));
         assert_eq!(circle.radius, 4.0);
-        let bounds = table.bounds_of(&reference);
+        let bounds = Tables::of_blocks(&table).bounds_of(&reference);
         // The circle, radius 4, at (90, 60); the line up to (100, 70).
         assert!(close(bounds.min(), p(86.0, 50.0)) && close(bounds.max(), p(100.0, 70.0)));
     }
@@ -425,7 +417,7 @@ mod tests {
         let reference = BlockReferenceEntity::new(BlockId::from_raw(9), p(3.0, 4.0), 1.0, 0.0);
         assert!(table.flatten(&reference, Properties::default()).is_empty());
         assert_eq!(
-            table.bounds_of(&reference),
+            Tables::of_blocks(&table).bounds_of(&reference),
             Aabb::from_points(p(3.0, 4.0), p(3.0, 4.0))
         );
     }
@@ -449,7 +441,10 @@ mod tests {
             .map(|(entity, _)| entity)
             .collect();
         for (a, b) in expected.iter().zip(&actual) {
-            let (ba, bb) = (a.bounds(&table), b.bounds(&table));
+            let (ba, bb) = (
+                a.bounds(Tables::of_blocks(&table)),
+                b.bounds(Tables::of_blocks(&table)),
+            );
             assert!(
                 close(ba.min(), bb.min()) && close(ba.max(), bb.max()),
                 "{a:?} vs {b:?}"

@@ -20,7 +20,7 @@
 //! handing a frame to JavaScript needs no conversion and no allocation.
 
 use cad_core::Point2;
-use cad_document::{BlockTable, Entity, Properties};
+use cad_document::{Entity, Properties, Tables};
 use cad_geometry::{Arc, Primitive, bulge_primitive, polyline_spans};
 
 /// What a batch of geometry *is*. TypeScript resolves each role to a colour
@@ -258,7 +258,7 @@ impl PackedFrame {
     /// how each entity kind becomes segments, shared by scene and overlay. A
     /// block reference is its definition's entities, placed, read from
     /// `blocks` (ADR-0017).
-    pub fn push_entity(&mut self, style: StyleRole, entity: &Entity, blocks: &BlockTable) {
+    pub fn push_entity(&mut self, style: StyleRole, entity: &Entity, tables: Tables<'_>) {
         match entity {
             Entity::Line(line) => self.push_segment(style, line.start, line.end),
             Entity::Circle(circle) => {
@@ -315,9 +315,21 @@ impl PackedFrame {
             Entity::Text(text) => self.push_strokes(style, text.strokes()),
             Entity::MText(text) => self.push_strokes(style, text.strokes()),
             Entity::BlockRef(reference) => {
-                for (part, _) in blocks.flatten(reference, Properties::default()) {
-                    self.push_entity(style, &part, blocks);
+                for (part, _) in tables.blocks.flatten(reference, Properties::default()) {
+                    self.push_entity(style, &part, tables);
                 }
+            }
+            // A dimension is what its style lays out (ADR-0020): lines,
+            // arrowhead outlines, an arc, and the strokes of its text.
+            Entity::Dimension(dimension) => {
+                let layout = dimension.layout(tables.dim_style(dimension.style));
+                for segment in layout.segments() {
+                    self.push_segment(style, segment.start, segment.end);
+                }
+                for arc in &layout.arcs {
+                    self.push_arc(style, arc);
+                }
+                self.push_strokes(style, layout.text.strokes());
             }
         }
     }
@@ -423,17 +435,17 @@ mod tests {
         frame.push_entity(
             StyleRole::Entity,
             &CircleEntity::new(p(110.0, 95.0), 4.0).into(),
-            cad_document::empty_blocks(),
+            cad_document::Tables::none(),
         );
         frame.push_entity(
             StyleRole::Entity,
             &ArcEntity::new(p(100.0, 100.0), 2.0, FRAC_PI_2, PI).into(),
-            cad_document::empty_blocks(),
+            cad_document::Tables::none(),
         );
         frame.push_entity(
             StyleRole::Preview,
             &CircleEntity::new(p(0.0, 0.0), 1.0).into(),
-            cad_document::empty_blocks(),
+            cad_document::Tables::none(),
         );
 
         assert_eq!(frame.arc_count(), 3);
@@ -484,7 +496,7 @@ mod tests {
         frame.push_entity(
             StyleRole::Entity,
             &slot.into(),
-            cad_document::empty_blocks(),
+            cad_document::Tables::none(),
         );
 
         assert_eq!(
@@ -519,7 +531,7 @@ mod tests {
         frame.push_entity(
             StyleRole::Entity,
             &slot.into(),
-            cad_document::empty_blocks(),
+            cad_document::Tables::none(),
         );
 
         let half = (2.0 * PI) as f32;
@@ -535,17 +547,17 @@ mod tests {
         frame.push_entity(
             StyleRole::Entity,
             &LineEntity::new(p(0.0, 0.0), p(5.0, 0.0)).into(),
-            cad_document::empty_blocks(),
+            cad_document::Tables::none(),
         );
         frame.push_entity(
             StyleRole::Entity,
             &CircleEntity::new(p(0.0, 0.0), 3.0).into(),
-            cad_document::empty_blocks(),
+            cad_document::Tables::none(),
         );
         frame.push_entity(
             StyleRole::Entity,
             &ArcEntity::new(p(0.0, 0.0), 3.0, 0.0, PI).into(),
-            cad_document::empty_blocks(),
+            cad_document::Tables::none(),
         );
         frame.push_segment(StyleRole::Preview, p(0.0, 0.0), p(1.0, 1.0));
         assert_eq!(frame.segment_distances(), &[0.0, 0.0]);
@@ -566,7 +578,7 @@ mod tests {
         frame.push_entity(
             StyleRole::Entity,
             &PolylineEntity::new(corners.clone(), false).into(),
-            cad_document::empty_blocks(),
+            cad_document::Tables::none(),
         );
         assert_eq!(frame.segments(), &[0.0, 0.0, 4.0, 0.0, 4.0, 0.0, 4.0, 3.0]);
 
@@ -574,7 +586,7 @@ mod tests {
         frame.push_entity(
             StyleRole::Entity,
             &PolylineEntity::new(corners, true).into(),
-            cad_document::empty_blocks(),
+            cad_document::Tables::none(),
         );
         assert_eq!(frame.segment_count(), 3);
         assert_eq!(
@@ -596,7 +608,7 @@ mod tests {
     fn a_line_entity_becomes_one_segment() {
         let mut frame = PackedFrame::default();
         let line = Entity::Line(LineEntity::new(p(0.0, 0.0), p(3.0, 4.0)));
-        frame.push_entity(StyleRole::Entity, &line, cad_document::empty_blocks());
+        frame.push_entity(StyleRole::Entity, &line, cad_document::Tables::none());
         assert_eq!(frame.segments(), &[0.0, 0.0, 3.0, 4.0]);
     }
 }

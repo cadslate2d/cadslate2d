@@ -8,8 +8,12 @@
 
 use cad_geometry::Primitive;
 
+#[cfg(test)]
+use crate::BlockTable;
+use crate::tables::Tables;
+
 use crate::{
-    ArcEntity, BlockReferenceEntity, BlockTable, CircleEntity, Entity, LineEntity, Properties,
+    ArcEntity, BlockReferenceEntity, CircleEntity, Entity, LineEntity, PolylineEntity, Properties,
 };
 
 /// Why an entity could not be exploded.
@@ -29,14 +33,38 @@ impl Entity {
     /// the reference's own properties (ADR-0013) — the properties the scene
     /// drew them with — and nested references still references. A
     /// polyline's parts are its segments, as lines and arcs, each with the
-    /// polyline's properties. Anything else is refused by name.
+    /// polyline's properties. A dimension's parts are what its style lays
+    /// out: its lines, its arrowheads as closed polylines, its arc, and
+    /// its text. Anything else is refused by name.
     pub fn exploded(
         &self,
         properties: Properties,
-        blocks: &BlockTable,
+        tables: Tables<'_>,
     ) -> Result<Vec<(Entity, Properties)>, ExplodeError> {
         match self {
-            Entity::BlockRef(reference) => Ok(blocks
+            Entity::Dimension(dimension) => {
+                let layout = dimension.layout(tables.dim_style(dimension.style));
+                let lines = layout
+                    .lines
+                    .iter()
+                    .map(|segment| Entity::from(LineEntity::new(segment.start, segment.end)));
+                let arcs = layout
+                    .arcs
+                    .iter()
+                    .map(|arc| Entity::from(ArcEntity::from(*arc)));
+                let arrowheads = layout.arrowheads.iter().map(|arrow| {
+                    let corners = arrow.corners().to_vec();
+                    Entity::from(PolylineEntity::with_bulges(corners, vec![0.0; 3], true))
+                });
+                Ok(lines
+                    .chain(arcs)
+                    .chain(arrowheads)
+                    .chain(std::iter::once(Entity::from(layout.text)))
+                    .map(|part| (part, properties))
+                    .collect())
+            }
+            Entity::BlockRef(reference) => Ok(tables
+                .blocks
                 .get(reference.block)
                 .map(|definition| {
                     definition
@@ -150,7 +178,9 @@ mod tests {
         };
         let reference: Entity =
             BlockReferenceEntity::new(CHAIR, p(100.0, 50.0), 2.0, FRAC_PI_2).into();
-        let parts = reference.exploded(outer, &blocks).unwrap();
+        let parts = reference
+            .exploded(outer, Tables::of_blocks(&blocks))
+            .unwrap();
         assert_eq!(parts.len(), 3);
         // The seat, (0,0)-(10,0), scaled to 20, turned up, moved: on the
         // reference's layer and in its colour; its ByLayer lineweight is
@@ -182,7 +212,9 @@ mod tests {
     fn a_nest_comes_apart_one_level_at_a_time() {
         let blocks = chairs();
         let reference: Entity = BlockReferenceEntity::new(PAIR, p(0.0, 100.0), 1.0, 0.0).into();
-        let parts = reference.exploded(Properties::default(), &blocks).unwrap();
+        let parts = reference
+            .exploded(Properties::default(), Tables::of_blocks(&blocks))
+            .unwrap();
         assert_eq!(parts.len(), 2, "two chairs, still references");
         let Entity::BlockRef(second) = &parts[1].0 else {
             panic!("a reference");
@@ -200,7 +232,7 @@ mod tests {
         )
         .into();
         let mine = Properties::on(LayerId::from_raw(2));
-        let parts = polyline.exploded(mine, crate::empty_blocks()).unwrap();
+        let parts = polyline.exploded(mine, crate::Tables::none()).unwrap();
         let kinds: Vec<&str> = parts.iter().map(|(part, _)| part.kind_name()).collect();
         assert_eq!(kinds, ["line", "arc", "line"]);
         assert!(parts.iter().all(|(_, properties)| *properties == mine));
@@ -224,7 +256,7 @@ mod tests {
             (TextEntity::new(p(0.0, 0.0), 2.5, 0.0, "a").into(), "text"),
         ] {
             assert_eq!(
-                entity.exploded(Properties::default(), &blocks),
+                entity.exploded(Properties::default(), Tables::of_blocks(&blocks)),
                 Err(ExplodeError::Unsupported(name))
             );
         }
@@ -235,7 +267,7 @@ mod tests {
         let reference: Entity =
             BlockReferenceEntity::new(BlockId::from_raw(9), p(0.0, 0.0), 1.0, 0.0).into();
         assert_eq!(
-            reference.exploded(Properties::default(), crate::empty_blocks()),
+            reference.exploded(Properties::default(), crate::Tables::none()),
             Ok(Vec::new())
         );
     }
@@ -293,18 +325,18 @@ mod tests {
             ) {
                 let blocks = chairs();
                 let whole: Entity = reference.clone().into();
-                let parts = whole.exploded(Properties::default(), &blocks).unwrap();
+                let parts = whole.exploded(Properties::default(), Tables::of_blocks(&blocks)).unwrap();
                 prop_assert!(!parts.is_empty());
 
                 let together = parts
                     .iter()
-                    .map(|(part, _)| part.bounds(&blocks))
+                    .map(|(part, _)| part.bounds(Tables::of_blocks(&blocks)))
                     .reduce(|a, b| a.union(&b))
                     .unwrap();
-                prop_assert!(same_box(&together, &whole.bounds(&blocks)), "{together:?} vs {:?}", whole.bounds(&blocks));
+                prop_assert!(same_box(&together, &whole.bounds(Tables::of_blocks(&blocks))), "{together:?} vs {:?}", whole.bounds(Tables::of_blocks(&blocks)));
 
-                let mine = whole.primitives(&blocks);
-                let theirs: Vec<Primitive> = parts.iter().flat_map(|(part, _)| part.primitives(&blocks)).collect();
+                let mine = whole.primitives(Tables::of_blocks(&blocks));
+                let theirs: Vec<Primitive> = parts.iter().flat_map(|(part, _)| part.primitives(Tables::of_blocks(&blocks))).collect();
                 prop_assert_eq!(mine.len(), theirs.len());
                 for (a, b) in mine.iter().zip(&theirs) {
                     prop_assert!(same_box(&a.bounds(), &b.bounds()), "{a:?} vs {b:?}");
@@ -312,10 +344,10 @@ mod tests {
 
                 // Exploding the moved reference is moving the parts.
                 let moved = whole.transformed(&Transform::translation(cad_core::Vec2::new(dx, 0.0)));
-                let moved_parts = moved.exploded(Properties::default(), &blocks).unwrap();
+                let moved_parts = moved.exploded(Properties::default(), Tables::of_blocks(&blocks)).unwrap();
                 for ((part, _), (moved_part, _)) in parts.iter().zip(&moved_parts) {
-                    let expected = part.translated(cad_core::Vec2::new(dx, 0.0)).bounds(&blocks);
-                    prop_assert!(same_box(&expected, &moved_part.bounds(&blocks)));
+                    let expected = part.translated(cad_core::Vec2::new(dx, 0.0)).bounds(Tables::of_blocks(&blocks));
+                    prop_assert!(same_box(&expected, &moved_part.bounds(Tables::of_blocks(&blocks))));
                 }
             }
         }

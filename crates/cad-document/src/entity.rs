@@ -6,8 +6,9 @@ use cad_geometry::{
 };
 
 pub use crate::block::BlockReferenceEntity;
-use crate::block::BlockTable;
+use crate::dimension::DimensionEntity;
 pub use crate::mtext::MTextEntity;
+use crate::tables::Tables;
 pub use crate::text::TextEntity;
 
 /// A straight line between two points.
@@ -183,12 +184,17 @@ pub enum Entity {
     /// A placed block (ADR-0017). Its geometry is its definition's, read
     /// from the block table whenever it is asked for.
     BlockRef(BlockReferenceEntity),
+    /// A dimension (ADR-0020). Its lines, arrowheads, and text are laid
+    /// out from its points by its style, read from the dimension style
+    /// table whenever it is asked for.
+    Dimension(DimensionEntity),
 }
 
 impl Entity {
     /// World-space bounding box, used by the spatial index. A block
-    /// reference's comes from its definition in `blocks`.
-    pub fn bounds(&self, blocks: &BlockTable) -> Aabb {
+    /// reference's comes from its definition, a dimension's from its
+    /// style, in `tables`.
+    pub fn bounds(&self, tables: Tables<'_>) -> Aabb {
         match self {
             Entity::Line(line) => line.segment().bounds(),
             Entity::Circle(circle) => circle.circle().bounds(),
@@ -202,12 +208,15 @@ impl Entity {
                 .unwrap_or_else(|| Aabb::from_points(Point2::ORIGIN, Point2::ORIGIN)),
             Entity::Text(text) => text.bounds(),
             Entity::MText(text) => text.bounds(),
-            Entity::BlockRef(reference) => blocks.bounds_of(reference),
+            Entity::BlockRef(reference) => tables.bounds_of(reference),
+            Entity::Dimension(dimension) => {
+                dimension.layout(tables.dim_style(dimension.style)).bounds()
+            }
         }
     }
 
     /// Exact distance from `point` to the entity's geometry, used for picking.
-    pub fn distance_to(&self, point: Point2, blocks: &BlockTable) -> f64 {
+    pub fn distance_to(&self, point: Point2, tables: Tables<'_>) -> f64 {
         match self {
             Entity::Line(line) => line.segment().distance_to_point(point),
             Entity::Circle(circle) => circle.circle().distance_to_point(point),
@@ -218,67 +227,74 @@ impl Entity {
                 .fold(f64::INFINITY, f64::min),
             Entity::Text(text) => text.distance_to(point),
             Entity::MText(text) => text.distance_to(point),
-            Entity::BlockRef(reference) => blocks
+            Entity::BlockRef(reference) => tables
+                .blocks
                 .flatten(reference, crate::Properties::default())
                 .iter()
-                .map(|(entity, _)| entity.distance_to(point, blocks))
+                .map(|(entity, _)| entity.distance_to(point, tables))
                 .fold(f64::INFINITY, f64::min),
+            // A dimension is picked by its lines, arrowheads, and text box.
+            Entity::Dimension(dimension) => dimension
+                .layout(tables.dim_style(dimension.style))
+                .distance_to(point),
         }
     }
 
     /// The entity as lines, circles, and arcs: the common currency of
     /// intersection, snapping, and trimming. A block reference's are its
     /// definition's, placed.
-    pub fn primitives(&self, blocks: &BlockTable) -> Vec<Primitive> {
+    pub fn primitives(&self, tables: Tables<'_>) -> Vec<Primitive> {
         match self {
             Entity::Line(line) => vec![Primitive::Segment(line.segment())],
             Entity::Circle(circle) => vec![Primitive::Circle(circle.circle())],
             Entity::Arc(arc) => vec![Primitive::Arc(arc.arc())],
             Entity::Polyline(polyline) => polyline.primitives().collect(),
             // Nothing intersects, trims against, or snaps to the strokes
-            // of a text.
-            Entity::Text(_) | Entity::MText(_) => Vec::new(),
-            Entity::BlockRef(reference) => blocks
+            // of a text, nor to the lines of a dimension: an annotation is
+            // not geometry of the drawing.
+            Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_) => Vec::new(),
+            Entity::BlockRef(reference) => tables
+                .blocks
                 .flatten(reference, crate::Properties::default())
                 .iter()
-                .flat_map(|(entity, _)| entity.primitives(blocks))
+                .flat_map(|(entity, _)| entity.primitives(tables))
                 .collect(),
         }
     }
 
     /// Every point where this entity's geometry meets `other`'s.
-    pub fn intersections(&self, other: &Entity, blocks: &BlockTable) -> Vec<Point2> {
-        let theirs = other.primitives(blocks);
-        self.primitives(blocks)
+    pub fn intersections(&self, other: &Entity, tables: Tables<'_>) -> Vec<Point2> {
+        let theirs = other.primitives(tables);
+        self.primitives(tables)
             .iter()
             .flat_map(|mine| theirs.iter().map(move |their| mine.intersect(their)))
             .flat_map(|hits| hits.as_slice().to_vec())
             .collect()
     }
 
-    /// The geometry of an entity that is not a block reference, for the
-    /// editing operations, which never take one: a reference has none of
-    /// its own.
+    /// The geometry of an entity that is not a block reference or a
+    /// dimension, for the editing operations, which never take one: a
+    /// reference has none of its own, and a dimension's is not a curve.
     pub(crate) fn own_primitives(&self) -> Vec<Primitive> {
-        self.primitives(crate::block::no_blocks())
+        self.primitives(Tables::none())
     }
 
     pub(crate) fn own_distance_to(&self, point: Point2) -> f64 {
-        self.distance_to(point, crate::block::no_blocks())
+        self.distance_to(point, Tables::none())
     }
 
     pub(crate) fn own_bounds(&self) -> Aabb {
-        self.bounds(crate::block::no_blocks())
+        self.bounds(Tables::none())
     }
 
     /// True when the whole entity lies within `bounds` (window selection).
-    pub fn is_inside(&self, bounds: &Aabb, blocks: &BlockTable) -> bool {
-        bounds.contains(&self.bounds(blocks))
+    pub fn is_inside(&self, bounds: &Aabb, tables: Tables<'_>) -> bool {
+        bounds.contains(&self.bounds(tables))
     }
 
     /// True when any part of the entity's geometry lies within `bounds`
     /// (crossing selection). Interiors do not count.
-    pub fn crosses(&self, bounds: &Aabb, blocks: &BlockTable) -> bool {
+    pub fn crosses(&self, bounds: &Aabb, tables: Tables<'_>) -> bool {
         match self {
             Entity::Line(line) => line.segment().intersects_aabb(bounds),
             Entity::Circle(circle) => circle.circle().intersects_aabb(bounds),
@@ -288,10 +304,14 @@ impl Entity {
                 .any(|primitive| primitive.intersects_aabb(bounds)),
             Entity::Text(text) => text.crosses(bounds),
             Entity::MText(text) => text.crosses(bounds),
-            Entity::BlockRef(reference) => blocks
+            Entity::BlockRef(reference) => tables
+                .blocks
                 .flatten(reference, crate::Properties::default())
                 .iter()
-                .any(|(entity, _)| entity.crosses(bounds, blocks)),
+                .any(|(entity, _)| entity.crosses(bounds, tables)),
+            Entity::Dimension(dimension) => dimension
+                .layout(tables.dim_style(dimension.style))
+                .crosses(bounds),
         }
     }
 
@@ -351,6 +371,7 @@ impl Entity {
             Entity::Text(text) => text.transformed(transform).into(),
             Entity::MText(text) => text.transformed(transform).into(),
             Entity::BlockRef(reference) => reference.transformed(transform).into(),
+            Entity::Dimension(dimension) => dimension.transformed(transform).into(),
         }
     }
 
@@ -404,6 +425,12 @@ impl From<BlockReferenceEntity> for Entity {
     }
 }
 
+impl From<DimensionEntity> for Entity {
+    fn from(dimension: DimensionEntity) -> Self {
+        Entity::Dimension(dimension)
+    }
+}
+
 /// An immutable entity payload shared between the store and undo history, so
 /// history never deep-copies large entities (DESIGN §19.4).
 pub type SharedEntity = std::sync::Arc<Entity>;
@@ -420,7 +447,7 @@ mod tests {
 
     #[test]
     fn line_bounds_cover_its_endpoints() {
-        let bounds = line().bounds(crate::block::no_blocks());
+        let bounds = line().bounds(Tables::none());
         assert_eq!(bounds.min(), Point2::new(0.0, 0.0));
         assert_eq!(bounds.max(), Point2::new(10.0, 0.0));
     }
@@ -428,7 +455,7 @@ mod tests {
     #[test]
     fn line_distance_is_point_to_segment_distance() {
         assert_eq!(
-            line().distance_to(Point2::new(5.0, 2.0), crate::block::no_blocks()),
+            line().distance_to(Point2::new(5.0, 2.0), Tables::none()),
             2.0
         );
     }
@@ -437,16 +464,16 @@ mod tests {
     fn a_circle_is_bounded_and_picked_by_its_curve() {
         let circle: Entity = CircleEntity::new(Point2::new(10.0, 10.0), 4.0).into();
         assert_eq!(
-            circle.bounds(crate::block::no_blocks()),
+            circle.bounds(Tables::none()),
             Aabb::from_points(Point2::new(6.0, 6.0), Point2::new(14.0, 14.0))
         );
         assert_eq!(
-            circle.distance_to(Point2::new(10.0, 10.0), crate::block::no_blocks()),
+            circle.distance_to(Point2::new(10.0, 10.0), Tables::none()),
             4.0,
             "the interior is not the circle"
         );
         assert_eq!(
-            circle.distance_to(Point2::new(15.0, 10.0), crate::block::no_blocks()),
+            circle.distance_to(Point2::new(15.0, 10.0), Tables::none()),
             1.0
         );
     }
@@ -455,11 +482,9 @@ mod tests {
     fn an_arc_runs_counter_clockwise_between_its_angles() {
         let arc = ArcEntity::new(Point2::ORIGIN, 10.0, 0.0, FRAC_PI_2);
         let entity: Entity = arc.into();
-        assert!(
-            entity.distance_to(Point2::new(0.0, 12.0), crate::block::no_blocks()) - 2.0 < 1e-12
-        );
+        assert!(entity.distance_to(Point2::new(0.0, 12.0), Tables::none()) - 2.0 < 1e-12);
         // Opposite the arc: far from it, although on its circle.
-        assert!(entity.distance_to(Point2::new(-10.0, 0.0), crate::block::no_blocks()) > 14.0);
+        assert!(entity.distance_to(Point2::new(-10.0, 0.0), Tables::none()) > 14.0);
         assert!((arc.arc().sweep - FRAC_PI_2).abs() < 1e-12);
 
         // The geometry type and the entity agree in both directions.
@@ -480,16 +505,16 @@ mod tests {
         )
         .into();
         assert_eq!(
-            rectangle.bounds(crate::block::no_blocks()),
+            rectangle.bounds(Tables::none()),
             Aabb::from_points(Point2::new(0.0, 0.0), Point2::new(10.0, 5.0))
         );
         assert_eq!(
-            rectangle.distance_to(Point2::new(5.0, 2.5), crate::block::no_blocks()),
+            rectangle.distance_to(Point2::new(5.0, 2.5), Tables::none()),
             2.5,
             "the interior is not the polyline"
         );
         assert_eq!(
-            rectangle.distance_to(Point2::new(-1.0, 2.5), crate::block::no_blocks()),
+            rectangle.distance_to(Point2::new(-1.0, 2.5), Tables::none()),
             1.0,
             "the closing segment counts"
         );
@@ -526,6 +551,7 @@ mod tests {
             Entity::Text(text) => text.frame().corners().to_vec(),
             Entity::MText(text) => text.frame().corners().to_vec(),
             Entity::BlockRef(reference) => vec![reference.insertion],
+            Entity::Dimension(dimension) => dimension.points(),
         }
     }
 
@@ -536,9 +562,9 @@ mod tests {
                 .zip(samples(b))
                 .all(|(a, b)| a.distance_to(b) < 1e-9)
             && (a
-                .bounds(crate::block::no_blocks())
+                .bounds(Tables::none())
                 .max()
-                .distance_to(b.bounds(crate::block::no_blocks()).max())
+                .distance_to(b.bounds(Tables::none()).max())
                 < 1e-9)
     }
 
@@ -563,8 +589,7 @@ mod tests {
                     if matches!(entity, Entity::Circle(_)) {
                         continue; // the centre is not on the curve
                     }
-                    let distance =
-                        image.distance_to(transform.apply(point), crate::block::no_blocks());
+                    let distance = image.distance_to(transform.apply(point), Tables::none());
                     assert!(
                         distance < 1e-9,
                         "{entity:?} under {transform:?}: {distance}"
@@ -711,42 +736,39 @@ mod tests {
         let circle = PolylineEntity::with_bulges(ends(), vec![1.0, 1.0], true);
         assert_eq!(circle.bulges().collect::<Vec<_>>(), vec![1.0, 1.0]);
         let entity = Entity::from(circle);
-        assert_eq!(entity.primitives(crate::block::no_blocks()).len(), 2);
+        assert_eq!(entity.primitives(Tables::none()).len(), 2);
         assert_eq!(
-            entity.bounds(crate::block::no_blocks()),
+            entity.bounds(Tables::none()),
             Aabb::from_points(Point2::new(0.0, -50.0), Point2::new(100.0, 50.0))
         );
         assert!(
-            entity.distance_to(Point2::new(50.0, 50.0), crate::block::no_blocks()) < 1e-12,
+            entity.distance_to(Point2::new(50.0, 50.0), Tables::none()) < 1e-12,
             "the closing arc is there"
         );
-        assert!(entity.distance_to(Point2::new(50.0, -50.0), crate::block::no_blocks()) < 1e-12);
+        assert!(entity.distance_to(Point2::new(50.0, -50.0), Tables::none()) < 1e-12);
 
         // Without an arc, two vertices are one line, closed or not.
         let line = Entity::from(PolylineEntity::new(ends(), true));
-        assert_eq!(line.primitives(crate::block::no_blocks()).len(), 1);
+        assert_eq!(line.primitives(Tables::none()).len(), 1);
         // A bulge on the closing segment alone is enough.
         let lens = Entity::from(PolylineEntity::with_bulges(ends(), vec![0.0, 0.5], true));
-        assert_eq!(lens.primitives(crate::block::no_blocks()).len(), 2);
+        assert_eq!(lens.primitives(Tables::none()).len(), 2);
     }
 
     #[test]
     fn an_arc_segment_reaches_beyond_the_vertices() {
         let slot = Entity::from(slot());
         assert_eq!(
-            slot.bounds(crate::block::no_blocks()),
+            slot.bounds(Tables::none()),
             Aabb::from_points(Point2::new(-2.0, 0.0), Point2::new(12.0, 4.0))
         );
         // On the right end's arc, 2 from its centre (10, 2).
-        assert!(slot.distance_to(Point2::new(12.0, 2.0), crate::block::no_blocks()) < 1e-12);
+        assert!(slot.distance_to(Point2::new(12.0, 2.0), Tables::none()) < 1e-12);
         // The chord between vertices 1 and 2 is not part of the polyline.
-        assert!(
-            (slot.distance_to(Point2::new(10.0, 2.0), crate::block::no_blocks()) - 2.0).abs()
-                < 1e-12
-        );
-        assert_eq!(slot.primitives(crate::block::no_blocks()).len(), 4);
+        assert!((slot.distance_to(Point2::new(10.0, 2.0), Tables::none()) - 2.0).abs() < 1e-12);
+        assert_eq!(slot.primitives(Tables::none()).len(), 4);
         assert_eq!(
-            slot.primitives(crate::block::no_blocks())
+            slot.primitives(Tables::none())
                 .iter()
                 .filter(|primitive| matches!(primitive, Primitive::Arc(_)))
                 .count(),
@@ -759,14 +781,14 @@ mod tests {
         let slot = Entity::from(slot());
         // A box over the bulge of the right end only.
         let over_the_bulge = Aabb::from_points(Point2::new(11.5, 1.5), Point2::new(13.0, 2.5));
-        assert!(slot.crosses(&over_the_bulge, crate::block::no_blocks()));
+        assert!(slot.crosses(&over_the_bulge, Tables::none()));
         // A box over the chord, inside the bulge: nothing is there.
         let over_the_chord = Aabb::from_points(Point2::new(9.8, 1.5), Point2::new(10.4, 2.5));
-        assert!(!slot.crosses(&over_the_chord, crate::block::no_blocks()));
+        assert!(!slot.crosses(&over_the_chord, Tables::none()));
         // Window selection needs the bulges inside too.
         let vertices_only = Aabb::from_points(Point2::new(-0.5, -0.5), Point2::new(10.5, 4.5));
-        assert!(!slot.is_inside(&vertices_only, crate::block::no_blocks()));
-        assert!(slot.is_inside(&vertices_only.expanded(2.0), crate::block::no_blocks()));
+        assert!(!slot.is_inside(&vertices_only, Tables::none()));
+        assert!(slot.is_inside(&vertices_only.expanded(2.0), Tables::none()));
     }
 
     #[test]
@@ -775,7 +797,7 @@ mod tests {
         // A horizontal line through the middle crosses both semicircular ends.
         let through: Entity =
             LineEntity::new(Point2::new(-20.0, 2.0), Point2::new(20.0, 2.0)).into();
-        let mut hits = slot.intersections(&through, crate::block::no_blocks());
+        let mut hits = slot.intersections(&through, Tables::none());
         hits.sort_by(|a, b| a.x.total_cmp(&b.x));
         assert_eq!(hits.len(), 2);
         assert!(hits[0].distance_to(Point2::new(-2.0, 2.0)) < 1e-9);
@@ -887,10 +909,10 @@ mod tests {
                         return Err(TestCaseError::fail("a polyline stays a polyline"));
                     };
                     prop_assert_eq!(image_polyline.vertices.len(), polyline.vertices.len());
-                    prop_assert_eq!(image.primitives(crate::block::no_blocks()).len(), entity.primitives(crate::block::no_blocks()).len());
-                    let size = image.bounds(crate::block::no_blocks()).min().distance_to(image.bounds(crate::block::no_blocks()).max());
+                    prop_assert_eq!(image.primitives(Tables::none()).len(), entity.primitives(Tables::none()).len());
+                    let size = image.bounds(Tables::none()).min().distance_to(image.bounds(Tables::none()).max());
                     for point in samples(&polyline) {
-                        let off = image.distance_to(transform.apply(point), crate::block::no_blocks());
+                        let off = image.distance_to(transform.apply(point), Tables::none());
                         prop_assert!(off < 1e-6 * (1.0 + size), "{:?}: off by {}", transform, off);
                     }
                 }
@@ -915,10 +937,10 @@ mod tests {
             #[test]
             fn bounds_contain_the_whole_polyline(polyline in polyline()) {
                 let entity = Entity::from(polyline.clone());
-                let bounds = entity.bounds(crate::block::no_blocks()).expanded(1e-6);
+                let bounds = entity.bounds(Tables::none()).expanded(1e-6);
                 for point in samples(&polyline) {
                     prop_assert!(bounds.contains_point(point), "{:?} outside {:?}", point, bounds);
-                    prop_assert!(entity.distance_to(point, crate::block::no_blocks()) < 1e-6);
+                    prop_assert!(entity.distance_to(point, Tables::none()) < 1e-6);
                 }
             }
         }
@@ -930,13 +952,13 @@ mod tests {
         for entity in one_of_each() {
             let moved = entity.translated(offset);
             assert_eq!(
-                moved.bounds(crate::block::no_blocks()).min(),
-                entity.bounds(crate::block::no_blocks()).min() + offset,
+                moved.bounds(Tables::none()).min(),
+                entity.bounds(Tables::none()).min() + offset,
                 "{entity:?}"
             );
             assert_eq!(
-                moved.bounds(crate::block::no_blocks()).max(),
-                entity.bounds(crate::block::no_blocks()).max() + offset,
+                moved.bounds(Tables::none()).max(),
+                entity.bounds(Tables::none()).max() + offset,
                 "{entity:?}"
             );
             assert_eq!(
@@ -954,13 +976,13 @@ mod tests {
         let far_away = Aabb::from_points(Point2::new(500.0, 500.0), Point2::new(600.0, 600.0));
         for entity in one_of_each() {
             assert!(
-                entity.is_inside(&around_everything, crate::block::no_blocks())
-                    && entity.crosses(&around_everything, crate::block::no_blocks()),
+                entity.is_inside(&around_everything, Tables::none())
+                    && entity.crosses(&around_everything, Tables::none()),
                 "{entity:?}"
             );
             assert!(
-                !entity.is_inside(&far_away, crate::block::no_blocks())
-                    && !entity.crosses(&far_away, crate::block::no_blocks()),
+                !entity.is_inside(&far_away, Tables::none())
+                    && !entity.crosses(&far_away, Tables::none()),
                 "{entity:?}"
             );
         }
@@ -969,14 +991,14 @@ mod tests {
         let line = &one_of_each()[0];
         let right_half = Aabb::from_points(Point2::new(5.0, -1.0), Point2::new(20.0, 1.0));
         assert!(
-            line.crosses(&right_half, crate::block::no_blocks())
-                && !line.is_inside(&right_half, crate::block::no_blocks())
+            line.crosses(&right_half, Tables::none())
+                && !line.is_inside(&right_half, Tables::none())
         );
 
         // A box inside the circle touches nothing.
         let circle = &one_of_each()[1];
         let inside_disc = Aabb::from_points(Point2::new(4.5, 4.5), Point2::new(5.5, 5.5));
-        assert!(!circle.crosses(&inside_disc, crate::block::no_blocks()));
+        assert!(!circle.crosses(&inside_disc, Tables::none()));
     }
 
     #[test]
@@ -985,7 +1007,7 @@ mod tests {
         let (line, circle, triangle) = (&all[0], &all[1], &all[3]);
         assert_eq!(
             all.iter()
-                .map(|entity| entity.primitives(crate::block::no_blocks()).len())
+                .map(|entity| entity.primitives(Tables::none()).len())
                 .collect::<Vec<_>>(),
             vec![1, 1, 1, 3]
         );
@@ -993,7 +1015,7 @@ mod tests {
         // A vertical line through the circle's centre crosses it twice.
         let vertical: Entity =
             LineEntity::new(Point2::new(5.0, -10.0), Point2::new(5.0, 20.0)).into();
-        let mut hits = vertical.intersections(circle, crate::block::no_blocks());
+        let mut hits = vertical.intersections(circle, Tables::none());
         hits.sort_by(|a, b| a.y.total_cmp(&b.y));
         assert_eq!(hits.len(), 2);
         assert!(
@@ -1002,28 +1024,13 @@ mod tests {
         );
 
         // It also crosses the bottom line once.
-        assert_eq!(
-            vertical
-                .intersections(line, crate::block::no_blocks())
-                .len(),
-            1
-        );
+        assert_eq!(vertical.intersections(line, Tables::none()).len(), 1);
         // A vertical through the closed triangle crosses its base and its hypotenuse.
         let through: Entity =
             LineEntity::new(Point2::new(2.0, -10.0), Point2::new(2.0, 20.0)).into();
-        assert_eq!(
-            triangle
-                .intersections(&through, crate::block::no_blocks())
-                .len(),
-            2
-        );
+        assert_eq!(triangle.intersections(&through, Tables::none()).len(), 2);
         // Symmetric.
-        assert_eq!(
-            circle
-                .intersections(&vertical, crate::block::no_blocks())
-                .len(),
-            2
-        );
+        assert_eq!(circle.intersections(&vertical, Tables::none()).len(), 2);
     }
 
     #[test]

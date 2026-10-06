@@ -13,6 +13,8 @@ use cad_core::{Aabb, Point2, Vec2};
 use cad_geometry::{Segment, Transform};
 use cad_text::Font;
 
+#[cfg(test)]
+use crate::tables::Tables;
 use crate::text_style::TextStyleId;
 
 /// Where a text's insertion point is relative to its box.
@@ -320,11 +322,8 @@ mod tests {
         assert!((text.distance_to(p(text.width() / 2.0, above)) - 3.0).abs() < 1e-9);
         assert!(!text.strokes().is_empty());
         let as_entity = crate::Entity::Text(text.clone());
-        assert!(as_entity.primitives(crate::block::no_blocks()).is_empty());
-        assert_eq!(
-            as_entity.distance_to(p(-4.0, 5.0), crate::block::no_blocks()),
-            4.0
-        );
+        assert!(as_entity.primitives(Tables::none()).is_empty());
+        assert_eq!(as_entity.distance_to(p(-4.0, 5.0), Tables::none()), 4.0);
     }
 
     #[test]
@@ -333,21 +332,21 @@ mod tests {
         let width = text.width();
         let around = Aabb::from_points(p(-1.0, -5.0), p(width + 1.0, 13.0));
         let entity = crate::Entity::Text(text);
-        assert!(entity.is_inside(&around, crate::block::no_blocks()));
-        assert!(entity.crosses(&around, crate::block::no_blocks()));
+        assert!(entity.is_inside(&around, Tables::none()));
+        assert!(entity.crosses(&around, Tables::none()));
         let clipping = Aabb::from_points(p(-1.0, 5.0), p(1.0, 6.0));
-        assert!(!entity.is_inside(&clipping, crate::block::no_blocks()));
+        assert!(!entity.is_inside(&clipping, Tables::none()));
         assert!(
-            entity.crosses(&clipping, crate::block::no_blocks()),
+            entity.crosses(&clipping, Tables::none()),
             "an edge crosses it"
         );
         let within = Aabb::from_points(p(2.0, 2.0), p(3.0, 3.0));
         assert!(
-            entity.crosses(&within, crate::block::no_blocks()),
+            entity.crosses(&within, Tables::none()),
             "a box inside the text takes it"
         );
         let away = Aabb::from_points(p(-10.0, -10.0), p(-5.0, -5.0));
-        assert!(!entity.crosses(&away, crate::block::no_blocks()));
+        assert!(!entity.crosses(&away, Tables::none()));
     }
 
     #[test]

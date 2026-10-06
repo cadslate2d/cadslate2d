@@ -99,7 +99,7 @@ fn references(c: &mut Criterion) {
                 .filter(|id| {
                     drawing
                         .entity(*id)
-                        .is_some_and(|e| e.distance_to(probe, drawing.blocks()) < 2.0)
+                        .is_some_and(|e| e.distance_to(probe, drawing.tables()) < 2.0)
                 })
                 .count()
         })

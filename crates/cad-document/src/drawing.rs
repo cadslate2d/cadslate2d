@@ -8,6 +8,7 @@ use cad_core::{Aabb, EntityId, LengthUnit};
 
 use crate::block::{Block, BlockId, BlockTable, initial_blocks};
 use crate::dim_style::{DimStyle, DimStyleError, DimStyleId, DimStyleTable, initial_dim_styles};
+use crate::dimension::DimensionError;
 use crate::history::History;
 use crate::id_alloc::EntityIdAllocator;
 use crate::layer::{Layer, LayerId, LayerTable, initial_layers};
@@ -15,6 +16,7 @@ use crate::linetype::{LinetypeDef, LinetypeError, LinetypeId, LinetypeTable, ini
 use crate::names::{NameError, check_name, same_name};
 use crate::spatial::RTreeIndex;
 use crate::table::TableChange;
+use crate::tables::Tables;
 use crate::text_style::{TextStyle, TextStyleId, TextStyleTable, initial_text_styles};
 use crate::{
     Change, Color, DrawingSettings, Entity, EntityChange, EntityRecord, EntityStore, Linetype,
@@ -114,6 +116,8 @@ pub enum TransactionError {
     DuplicateDimStyleName(DimStyleId),
     /// A value of the style is not one a dimension can be drawn by.
     BadDimStyle(DimStyleError),
+    /// A dimension that cannot be laid out.
+    BadDimension(DimensionError),
     /// The text style does not exist, in the drawing or earlier in this
     /// transaction.
     UnknownTextStyle(TextStyleId),
@@ -182,6 +186,7 @@ impl fmt::Display for TransactionError {
                 write!(f, "dimension style {id} already has that name")
             }
             Self::BadDimStyle(error) => write!(f, "{}", error.explain()),
+            Self::BadDimension(error) => write!(f, "{}", error.explain()),
             Self::UnknownTextStyle(id) => write!(f, "text style {id} does not exist"),
             Self::PermanentTextStyle => write!(f, "text style Standard cannot be removed"),
             Self::TextStyleInUse(id) => write!(f, "text style {id} has texts"),
@@ -395,6 +400,12 @@ impl Drawing {
                 Entity::BlockRef(reference) if !drawing.blocks.contains(reference.block) => {
                     Err(TransactionError::UnknownBlock(reference.block))
                 }
+                Entity::Dimension(dimension) if !drawing.dim_styles.contains(dimension.style) => {
+                    Err(TransactionError::UnknownDimStyle(dimension.style))
+                }
+                Entity::Dimension(dimension) if dimension.check().is_err() => Err(
+                    TransactionError::BadDimension(dimension.check().unwrap_err()),
+                ),
                 Entity::BlockRef(reference)
                     if !(reference.scale.is_finite() && reference.scale > 0.0) =>
                 {
@@ -419,12 +430,16 @@ impl Drawing {
                 .insert(id, EntityRecord::new(entity, properties))
                 .expect("freshly allocated IDs are unique");
         }
-        drawing.index.rebuild(
-            &mut drawing
-                .entities
-                .iter()
-                .map(|(id, entity)| (id, entity.bounds(&drawing.blocks))),
-        );
+        let tables = Tables {
+            blocks: &drawing.blocks,
+            dim_styles: &drawing.dim_styles,
+        };
+        let bounds: Vec<(EntityId, Aabb)> = drawing
+            .entities
+            .iter()
+            .map(|(id, entity)| (id, entity.bounds(tables)))
+            .collect();
+        drawing.index.rebuild(&mut bounds.into_iter());
         Ok(drawing)
     }
 
@@ -498,6 +513,15 @@ impl Drawing {
     }
 
     /// The block table. It always holds `*Model_Space`, the drawing itself.
+    /// The tables an entity's geometry is read through: the blocks a
+    /// reference places and the styles a dimension is drawn by.
+    pub fn tables(&self) -> Tables<'_> {
+        Tables {
+            blocks: &self.blocks,
+            dim_styles: &self.dim_styles,
+        }
+    }
+
     pub fn blocks(&self) -> &BlockTable {
         &self.blocks
     }
@@ -505,7 +529,7 @@ impl Drawing {
     /// The bounds of an entity of this drawing, as the spatial index holds
     /// them: a block reference's come from its definition.
     pub fn bounds_of(&self, entity: &Entity) -> Aabb {
-        entity.bounds(&self.blocks)
+        entity.bounds(self.tables())
     }
 
     /// The drawing's settings.
@@ -616,7 +640,7 @@ impl Drawing {
     /// The bounding box of all entities, or `None` for an empty drawing.
     pub fn extents(&self) -> Option<Aabb> {
         self.entities()
-            .map(|(_, entity)| entity.bounds(&self.blocks))
+            .map(|(_, entity)| entity.bounds(self.tables()))
             .reduce(|a, b| a.union(&b))
     }
 
@@ -697,8 +721,10 @@ impl Drawing {
                 Change::Entity(_) => true,
                 Change::Layer(TableChange::Replace { before, after, .. }) => before.on != after.on,
                 // A layer that is made or removed has nothing on it.
-                // A block redefined changes the geometry of every reference.
-                Change::Block(TableChange::Replace { .. }) => true,
+                // A block redefined changes the geometry of every reference;
+                // a dimension style changed, of every dimension drawn by it.
+                Change::Block(TableChange::Replace { .. })
+                | Change::DimStyle(TableChange::Replace { .. }) => true,
                 Change::Layer(_)
                 | Change::Linetype(_)
                 | Change::TextStyle(_)
@@ -708,7 +734,7 @@ impl Drawing {
             };
             match change {
                 Change::Entity(EntityChange::Insert { id, record }) => {
-                    self.index.insert(*id, record.entity.bounds(&self.blocks));
+                    self.index.insert(*id, record.entity.bounds(self.tables()));
                     self.entities
                         .insert(*id, record.clone())
                         .expect("transactions never insert a live ID");
@@ -724,7 +750,7 @@ impl Drawing {
                 Change::Entity(EntityChange::Replace { id, before, after }) => {
                     // A change of properties alone leaves the index as it is.
                     if !Arc::ptr_eq(&before.entity, &after.entity) {
-                        self.index.update(*id, after.entity.bounds(&self.blocks));
+                        self.index.update(*id, after.entity.bounds(self.tables()));
                     }
                     self.entities
                         .replace(*id, after.clone())
@@ -746,6 +772,30 @@ impl Drawing {
                 Change::DimStyle(change) => {
                     self.dim_styles.apply(change);
                     report.tables_changed = true;
+                    // One change to the row; every dimension drawn by it is
+                    // laid out afresh, so its index entry is (§19.6).
+                    if let TableChange::Replace { id, .. } = change {
+                        let dependents: Vec<EntityId> = self
+                            .entities
+                            .iter()
+                            .filter_map(|(entity_id, entity)| match &**entity {
+                                Entity::Dimension(dimension) if dimension.style == *id => {
+                                    Some(entity_id)
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        for entity_id in dependents {
+                            if let Some(entity) = self.entities.get(entity_id) {
+                                let tables = Tables {
+                                    blocks: &self.blocks,
+                                    dim_styles: &self.dim_styles,
+                                };
+                                self.index.update(entity_id, entity.bounds(tables));
+                            }
+                            report.replaced.push(entity_id);
+                        }
+                    }
                 }
                 Change::Block(change) => {
                     self.blocks.apply(change);
@@ -769,7 +819,7 @@ impl Drawing {
                             .collect();
                         for entity_id in dependents {
                             if let Some(entity) = self.entities.get(entity_id) {
-                                self.index.update(entity_id, entity.bounds(&self.blocks));
+                                self.index.update(entity_id, entity.bounds(self.tables()));
                             }
                             report.replaced.push(entity_id);
                         }
@@ -1195,8 +1245,8 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
-    /// Removes a dimension style that is not `Standard` and not the one
-    /// new dimensions take.
+    /// Removes a dimension style that is not `Standard`, not the one new
+    /// dimensions take, and not one any dimension is drawn by.
     pub fn remove_dim_style(&mut self, id: DimStyleId) -> Result<(), TransactionError> {
         if id == DimStyleId::FIRST {
             return Err(TransactionError::PermanentDimStyle);
@@ -1206,6 +1256,20 @@ impl TransactionBuilder<'_> {
             .cloned()
             .ok_or(TransactionError::UnknownDimStyle(id))?;
         if self.settings_now().current_dim_style == id {
+            return Err(TransactionError::DimStyleInUse(id));
+        }
+        let uses = |entity: &Entity| matches!(entity, Entity::Dimension(dimension) if dimension.style == id);
+        let pending = self.changes.iter().any(|change| match change {
+            Change::Entity(EntityChange::Insert { record, .. }) => uses(&record.entity),
+            Change::Entity(EntityChange::Replace { after, .. }) => uses(&after.entity),
+            _ => false,
+        });
+        if pending
+            || self
+                .drawing
+                .records()
+                .any(|(_, record)| uses(&record.entity))
+        {
             return Err(TransactionError::DimStyleInUse(id));
         }
         self.push_other(Change::DimStyle(TableChange::Remove { id, row }));
@@ -1520,11 +1584,19 @@ impl TransactionBuilder<'_> {
     }
 
     /// Whether the entity may be stored: a text's style must exist once
-    /// this transaction commits.
+    /// this transaction commits; a dimension's too, and the dimension must
+    /// be one that can be laid out.
     fn known_text_style(&self, entity: &Entity) -> Result<(), TransactionError> {
         let style = match entity {
             Entity::Text(text) => text.style,
             Entity::MText(text) => text.style,
+            Entity::Dimension(dimension) => {
+                dimension.check().map_err(TransactionError::BadDimension)?;
+                if self.dim_style_now(dimension.style).is_none() {
+                    return Err(TransactionError::UnknownDimStyle(dimension.style));
+                }
+                return Ok(());
+            }
             _ => return Ok(()),
         };
         if self.text_style_now(style).is_none() {

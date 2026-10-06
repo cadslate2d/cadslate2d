@@ -437,7 +437,7 @@ impl ExplodeCommand {
                 Some((
                     id,
                     entity.kind_name(),
-                    entity.exploded(properties, ctx.drawing.blocks()),
+                    entity.exploded(properties, ctx.drawing.tables()),
                 ))
             })
             .collect();
