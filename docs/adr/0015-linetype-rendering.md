@@ -98,6 +98,10 @@ Previews, highlights, and the rest of the overlay have no path distances and are
 - Zooming a dashed drawing is a redraw: nothing is rebuilt or uploaded.
 - The experiment's shaders are the starting point for the real ones, and stay runnable with the probe.
 
+## Implementation (2026-10-05)
+
+Shipped with the linetype table (#138). The path distance is one `f32` per segment and two per arc (the distance at the arc's counter-clockwise start, and `±1` for the direction the path runs) in buffers of `PackedFrame`, filled where an entity becomes instances; the committed scene exposes them, the overlay never does. The pattern table is ten floats per row — period, count, eight lengths — one row per linetype the style table names plus row 0 for continuous, resolved with the style table and multiplied by `LTSCALE` there, so both change together and the geometry never does. Across the boundary it is a third small buffer; on the GPU a float texture of three texels per pattern, fetched in the fragment shader by the row the style's second texel names. Visual baselines of every built-in pattern on a line and on an arc are under `test-data/screenshots/linetype-*.png`.
+
 ## Revisit when
 
 - Rendering is measured on a real GPU, and the fragment loop turns out to matter.

@@ -1,17 +1,22 @@
 // The style table (ADR-0014): what each committed instance is drawn with.
 //
 // Every committed instance carries the index of a style. The styles
-// themselves — a colour and a width each — are texels of a small texture
-// that the vertex shader looks its index up in. So one draw call draws a
-// whole layer of geometry in any number of colours and weights, and
-// restyling a layer uploads a few bytes of this table and none of the
-// geometry.
-import { BYTES_PER_STYLE, STYLE_FOREGROUND, STYLE_WEIGHT_DEFAULT } from "../../cad/engine";
+// themselves — a colour, a width, and a linetype pattern each — are texels
+// of a small texture that the vertex shader looks its index up in. So one
+// draw call draws a whole layer of geometry in any number of colours,
+// weights, and linetypes, and restyling a layer uploads a few bytes of this
+// table and none of the geometry.
+import {
+  BYTES_PER_STYLE,
+  PATTERN_CONTINUOUS,
+  STYLE_FOREGROUND,
+  STYLE_WEIGHT_DEFAULT,
+} from "../../cad/engine";
 import type { Rgba } from "../palette";
 
 /** Texels per row of the table texture. */
 export const STYLE_TABLE_WIDTH = 1024;
-/** A style is two texels: its colour, then its width. */
+/** A style is two texels: its colour, then its width and its pattern. */
 const TEXELS_PER_STYLE = 2;
 /** Styles per row of the texture; more wrap to further rows. */
 export const STYLES_PER_ROW = STYLE_TABLE_WIDTH / TEXELS_PER_STYLE;
@@ -26,7 +31,8 @@ const HALF_WIDTH_STEPS = 16;
  * Vertex-shader declarations for a styled program. `u_styled` chooses where
  * the colour and the width come from: the table, for committed geometry, or
  * `u_color` and `u_half_width`, for the overlay, whose instances have no
- * style index.
+ * style index and are always continuous (ADR-0015 §5). The program must
+ * declare `u_scale` and `u_viewport` first.
  */
 export const STYLE_VERTEX_DECLARATIONS = `
 layout(location = ${STYLE_ATTRIBUTE_LOCATION}) in float a_style; // a row of the style table
@@ -36,18 +42,24 @@ uniform vec4 u_color;         // straight alpha
 uniform float u_half_width;   // device pixels
 flat out vec4 v_color;        // straight alpha
 flat out float v_half_width;  // device pixels
+flat out float v_pattern;     // a row of the pattern table; 0 for continuous
+flat out float v_unit_px;     // device pixels per drawing unit
 `;
 
-/** Vertex-shader statements that set `v_color` and `v_half_width`. */
+/** Vertex-shader statements that set `v_color`, `v_half_width`, `v_pattern`, and `v_unit_px`. */
 export const STYLE_VERTEX_RESOLVE = `
+  v_unit_px = u_scale.x * u_viewport.x * 0.5;
   if (u_styled > 0.5) {
     int style = int(a_style);
     ivec2 texel = ivec2((style % ${STYLES_PER_ROW}) * ${TEXELS_PER_STYLE}, style / ${STYLES_PER_ROW});
     v_color = texelFetch(u_styles, texel, 0);
-    v_half_width = texelFetch(u_styles, texel + ivec2(1, 0), 0).r * 255.0 / ${HALF_WIDTH_STEPS}.0;
+    vec4 look = texelFetch(u_styles, texel + ivec2(1, 0), 0);
+    v_half_width = look.r * 255.0 / ${HALF_WIDTH_STEPS}.0;
+    v_pattern = look.g * 255.0;
   } else {
     v_color = u_color;
     v_half_width = u_half_width;
+    v_pattern = ${PATTERN_CONTINUOUS}.0;
   }
 `;
 
@@ -83,7 +95,7 @@ export interface StyleTexels {
 
 /**
  * Lays the style rows out as texels: two per style, its colour and then its
- * half width in the red channel.
+ * half width in the red channel with its pattern row in the green.
  *
  * A row whose kind is "foreground" has no colour of its own: it takes the
  * theme's, which is how colour 7 is light on a dark canvas and dark on a
@@ -111,6 +123,7 @@ export function styleTexels(rows: Uint8Array, look: StyleLook): StyleTexels {
         : look.defaultWidth;
     const halfWidth = (width * look.devicePixelRatio) / 2;
     data[texel + 4] = Math.min(255, Math.round(halfWidth * HALF_WIDTH_STEPS));
+    data[texel + 5] = rows[row + 5] ?? PATTERN_CONTINUOUS;
     data[texel + 7] = 255;
   }
   return { width: STYLE_TABLE_WIDTH, height, data };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { FrameBuffers } from "../cad/engine";
+import type { FrameBuffers, StyleTables } from "../cad/engine";
 import { renderFrame, type FrameSink, type FrameSource } from "./render-frame";
 
 const emptyFrame = (): FrameBuffers => ({
@@ -16,10 +16,10 @@ class FakeSource implements FrameSource {
   sceneReads = 0;
   styleReads = 0;
 
-  readStyles<T>(consume: (rows: Uint8Array) => T): T {
+  readStyles<T>(consume: (tables: StyleTables) => T): T {
     this.calls += 1;
     this.styleReads += 1;
-    return consume(new Uint8Array(4));
+    return consume({ styles: new Uint8Array(8), patterns: new Float32Array(10) });
   }
 
   readScene<T>(consume: (frame: FrameBuffers) => T): T {

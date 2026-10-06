@@ -45,7 +45,7 @@ fn blue() -> Properties {
 
 /// A drawing with two layers besides `0`, holding `entities` as styled.
 fn styled(entities: impl IntoIterator<Item = (Entity, Properties)>) -> Harness {
-    let drawing = Drawing::from_parts([Layer::named("walls"), Layer::named("doors")], entities)
+    let drawing = Drawing::from_parts([Layer::named("walls"), Layer::named("doors")], [], entities)
         .expect("the layers exist");
     Harness::with_drawing(drawing)
 }

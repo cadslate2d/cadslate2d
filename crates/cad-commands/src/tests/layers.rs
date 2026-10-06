@@ -46,6 +46,7 @@ fn layers() -> [Layer; 2] {
 fn crossed_by(layer: LayerId) -> Harness {
     let drawing = Drawing::from_parts(
         layers(),
+        [],
         [
             (line(0.0, 0.0, 100.0, 0.0), Properties::default()),
             (line(40.0, -50.0, 40.0, 50.0), Properties::on(layer)),
@@ -271,6 +272,7 @@ fn new_objects_are_put_on_the_current_layer_and_derived_ones_follow_their_source
     // An offset of an object on layer 0 stays on layer 0, whatever is current.
     let drawing = Drawing::from_parts(
         [Layer::named("walls")],
+        [],
         [(
             CircleEntity::new(p(0.0, 0.0), 20.0).into(),
             Properties::default(),
@@ -337,6 +339,7 @@ fn a_selected_object_whose_layer_is_switched_off_or_locked_leaves_the_selection(
     for command in ["WALLSOFF", "WALLSLOCK"] {
         let drawing = Drawing::from_parts(
             [Layer::named("walls")],
+            [],
             [
                 (line(0.0, 0.0, 100.0, 0.0), Properties::default()),
                 (

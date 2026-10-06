@@ -6,6 +6,7 @@ use cad_core::{EntityId, Point2};
 use cad_document::{Entity, OffsetError};
 use cad_input::{ExpectedInput, Keyword};
 
+use super::ltscale::display;
 use crate::{Command, CommandContext, CommandInput, OverlayItem, Prompt, Step};
 
 const THROUGH: Keyword = Keyword::new("Through");
@@ -55,12 +56,6 @@ impl OffsetCommand {
             amount: None,
         }
     }
-}
-
-/// `5`, `2.5`: as short as the value allows.
-fn display(value: f64) -> String {
-    let text = format!("{value:.4}");
-    text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 fn explain(error: OffsetError) -> String {

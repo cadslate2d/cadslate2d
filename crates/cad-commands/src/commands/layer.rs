@@ -7,10 +7,13 @@
 //! is, and the refusal says which name was the trouble. What the layer
 //! table allows is decided by `cad-document`; this is the conversation.
 
-use cad_document::{Color, Layer, LayerId, Lineweight, TransactionBuilder, TransactionError};
+use cad_document::{
+    Color, Layer, LayerId, Linetype, Lineweight, TransactionBuilder, TransactionError, same_name,
+};
 use cad_input::{ExpectedInput, InputKind, Keyword};
 
 use super::color::NOT_A_COLOR;
+use super::linetype::unknown_linetype;
 use super::lweight::NOT_A_LINEWEIGHT;
 use crate::{Command, CommandContext, CommandInput, Prompt, Step};
 
@@ -19,14 +22,15 @@ const NEW: Keyword = Keyword::new("New");
 const SET: Keyword = Keyword::new("Set");
 const COLOR: Keyword = Keyword::new("Color");
 const LWEIGHT: Keyword = Keyword::new("LWeight");
+const LTYPE: Keyword = Keyword::new("LType");
 const ON: Keyword = Keyword::new("ON");
 const OFF: Keyword = Keyword::new("OFF");
 const LOCK: Keyword = Keyword::new("Lock");
 const UNLOCK: Keyword = Keyword::new("Unlock");
 const RENAME: Keyword = Keyword::new("Rename");
 const DELETE: Keyword = Keyword::new("Delete");
-const OPTIONS: [Keyword; 11] = [
-    LIST, NEW, SET, COLOR, LWEIGHT, ON, OFF, LOCK, UNLOCK, RENAME, DELETE,
+const OPTIONS: [Keyword; 12] = [
+    LIST, NEW, SET, COLOR, LWEIGHT, LTYPE, ON, OFF, LOCK, UNLOCK, RENAME, DELETE,
 ];
 
 /// A switch that some options throw on every layer named.
@@ -80,6 +84,9 @@ enum State {
     /// The lineweight, then the layers to give it to.
     Weight,
     WeightLayers(Lineweight),
+    /// The linetype, then the layers to give it to.
+    Ltype,
+    LtypeLayers(Linetype),
     Switch(Switch),
     RenameFrom,
     RenameTo(LayerId),
@@ -104,7 +111,7 @@ fn layers(count: usize) -> String {
 fn names(text: &str) -> Vec<&str> {
     let mut names: Vec<&str> = Vec::new();
     for name in text.split(',').map(str::trim) {
-        if !names.iter().any(|seen| Layer::same_name(seen, name)) {
+        if !names.iter().any(|seen| same_name(seen, name)) {
             names.push(name);
         }
     }
@@ -128,7 +135,7 @@ fn explain(ctx: &CommandContext<'_>, error: TransactionError) -> String {
             .map_or_else(|| id.to_string(), |layer| layer.name.clone())
     };
     match error {
-        TransactionError::BadLayerName(error) => error.to_string(),
+        TransactionError::BadLayerName(error) => error.explain("layer"),
         TransactionError::DuplicateLayerName(id) => {
             format!("There is already a layer \"{}\".", name(id))
         }
@@ -182,6 +189,12 @@ impl LayerCommand {
                 );
                 if layer.lineweight != Lineweight::Default {
                     line.push_str(&format!(", {}", layer.lineweight.describe()));
+                }
+                if layer.linetype != Linetype::CONTINUOUS {
+                    line.push_str(&format!(
+                        ", {}",
+                        layer.linetype.describe(ctx.drawing.linetypes())
+                    ));
                 }
                 if layer.locked {
                     line.push_str(", locked");
@@ -296,6 +309,16 @@ impl LayerCommand {
                     },
                 );
             }
+            State::LtypeLayers(linetype) => {
+                let linetype = *linetype;
+                let shown = linetype.describe(ctx.drawing.linetypes());
+                Self::edit_layers(
+                    ctx,
+                    text,
+                    |layer| layer.linetype = linetype,
+                    |count| format!("{} set to linetype {shown}.", layers(count)),
+                );
+            }
             State::Switch(switch) => {
                 let switch = *switch;
                 Self::edit_layers(
@@ -340,7 +363,7 @@ impl LayerCommand {
                     Err(message) => ctx.message(message),
                 }
             }
-            State::Option | State::ColorNumber | State::Weight => {}
+            State::Option | State::ColorNumber | State::Weight | State::Ltype => {}
         }
         self.state = State::Option;
     }
@@ -366,6 +389,8 @@ impl Command for LayerCommand {
                 "Enter name(s) of layer(s) for lineweight {}",
                 lineweight.describe()
             )),
+            State::Ltype => Prompt::new("Enter linetype (a loaded name)"),
+            State::LtypeLayers(_) => Prompt::new("Enter name(s) of layer(s) for that linetype"),
             State::Switch(switch) => Prompt::new(format!(
                 "Enter name(s) of layer(s) to {}",
                 switch.infinitive()
@@ -392,6 +417,7 @@ impl Command for LayerCommand {
                     SET => State::Set,
                     COLOR => State::ColorNumber,
                     LWEIGHT => State::Weight,
+                    LTYPE => State::Ltype,
                     ON => State::Switch(Switch::On),
                     OFF => State::Switch(Switch::Off),
                     LOCK => State::Switch(Switch::Lock),
@@ -422,6 +448,18 @@ impl Command for LayerCommand {
                 }
                 None => ctx.message(format!("{NOT_A_LINEWEIGHT} Or Default.")),
             },
+            (State::Ltype, CommandInput::Text(text)) => {
+                match Linetype::parse(&text, ctx.drawing.linetypes()) {
+                    Some(linetype) if linetype.is_concrete() => {
+                        self.state = State::LtypeLayers(linetype);
+                    }
+                    // A layer's linetype is what ByLayer means.
+                    Some(_) => {
+                        ctx.message("A layer needs a linetype of its own, not ByLayer or ByBlock.");
+                    }
+                    None => ctx.message(unknown_linetype(text.trim())),
+                }
+            }
             (_, CommandInput::Text(text)) => self.text(&text, ctx),
             // Enter at any other prompt goes back to the options.
             (_, CommandInput::Accept) => self.state = State::Option,

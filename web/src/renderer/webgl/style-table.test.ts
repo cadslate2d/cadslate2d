@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   BYTES_PER_STYLE,
+  PATTERN_CONTINUOUS,
   STYLE_FOREGROUND,
   STYLE_RGB,
   STYLE_WEIGHT_DEFAULT,
@@ -20,20 +21,25 @@ const LOOK: StyleLook = {
   devicePixelRatio: 1,
 };
 
-/** A style row: a colour, or the foreground, and a weight. */
-function row(colour: [number, number, number] | "foreground", weight = STYLE_WEIGHT_DEFAULT) {
+/** A style row: a colour, or the foreground, a weight, and a pattern. */
+function row(
+  colour: [number, number, number] | "foreground",
+  weight = STYLE_WEIGHT_DEFAULT,
+  pattern = PATTERN_CONTINUOUS,
+) {
   const [red, green, blue] = colour === "foreground" ? [9, 9, 9] : colour;
   const kind = colour === "foreground" ? STYLE_FOREGROUND : STYLE_RGB;
-  return [red, green, blue, kind, weight, 0, 0, 0];
+  return [red, green, blue, kind, weight, pattern, 0, 0];
 }
 
-/** The colour texel and the half width, in device pixels, of style `index`. */
+/** The colour texel, the half width in device pixels, and the pattern of style `index`. */
 function style(rows: number[][], index: number, look: StyleLook = LOOK) {
   const texels = styleTexels(new Uint8Array(rows.flat()), look);
   const at = index * 8;
   return {
     colour: [...texels.data.slice(at, at + 4)],
     halfWidth: (texels.data[at + 4] ?? 0) / 16,
+    pattern: texels.data[at + 5],
     texels,
   };
 }
@@ -106,5 +112,16 @@ describe("styleTexels: width", () => {
     const dense = { ...LOOK, devicePixelRatio: 2 };
     expect(style([row([255, 0, 0], 100)], 0, dense).halfWidth).toBeCloseTo(3.7795, 1);
     expect(style([row([255, 0, 0])], 0, dense).halfWidth).toBeCloseTo(1.25, 1);
+  });
+
+  // ADR-0015: the pattern row travels beside the width, untouched by the
+  // theme, the LWT toggle, or the device pixel ratio.
+  test("a row's pattern is the green channel of its second texel", () => {
+    const rows = [row([255, 0, 0]), row("foreground", 50, 3), row([0, 0, 255], 25, 255)];
+    expect(style(rows, 0).pattern).toBe(PATTERN_CONTINUOUS);
+    expect(style(rows, 1).pattern).toBe(3);
+    expect(style(rows, 2).pattern).toBe(255);
+    const off = { ...LOOK, lineweights: false, devicePixelRatio: 2 };
+    expect(style(rows, 1, off).pattern).toBe(3);
   });
 });

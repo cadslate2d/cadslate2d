@@ -315,7 +315,7 @@ fn objects_on_a_layer_that_is_off_are_not_in_the_scene() {
                 ..Layer::named("locked")
             },
         ];
-        let drawing = Drawing::from_parts(layers, entities(LayerId::from_raw(1))).unwrap();
+        let drawing = Drawing::from_parts(layers, [], entities(LayerId::from_raw(1))).unwrap();
         let mut cache = SceneCache::default();
         let scene = cache.scene(&drawing);
         assert_frame_is_consistent(scene.frame(), "scene");

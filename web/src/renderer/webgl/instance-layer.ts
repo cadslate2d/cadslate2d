@@ -1,6 +1,7 @@
 import { WORDS_PER_BATCH, type ClipTransform, type StyleRole } from "../../cad/engine";
 import type { CanvasPalette } from "../palette";
 import { nextCapacity } from "./buffer-capacity";
+import { DISTANCE_ATTRIBUTE_LOCATION } from "./linetypes";
 import { STYLE_ATTRIBUTE_LOCATION } from "./style-table";
 
 export interface StrokeUniforms {
@@ -13,6 +14,8 @@ export interface StrokeUniforms {
   readonly styled: WebGLUniformLocation;
   /** The sampler the style table is bound to. */
   readonly styles: WebGLUniformLocation;
+  /** The sampler the pattern table is bound to. */
+  readonly patterns: WebGLUniformLocation;
 }
 
 /** One per-instance vertex attribute: where it is bound and where it sits in an instance. */
@@ -36,13 +39,17 @@ export interface InstanceLayout {
   readonly verticesPerInstance: number;
   /** A per-vertex buffer bound at location 0, for shaders that need one. */
   readonly perVertex?: { readonly buffer: WebGLBuffer; readonly size: number };
+  /** Floats per instance in the path distance buffer of a styled layer (ADR-0015). */
+  readonly floatsPerDistance: number;
 }
 
 /**
  * GPU-side storage for one kind of primitive in one render lifetime: an
  * instance buffer plus the batches that say how to draw it. A *styled* layer
- * — committed geometry — has a second buffer with a style index per
- * instance, and takes its colours from the style table (ADR-0014).
+ * — committed geometry — has two more buffers: a style index per instance,
+ * which picks its colour, width, and linetype from the style table
+ * (ADR-0014), and the distance along its entity's path at which each
+ * instance begins, which places the linetype on it (ADR-0015).
  */
 export class InstanceLayer {
   readonly #gl: WebGL2RenderingContext;
@@ -51,6 +58,8 @@ export class InstanceLayer {
   readonly #buffer: WebGLBuffer;
   /** One style index per instance; absent for a layer styled by its batches. */
   readonly #styles: WebGLBuffer | undefined;
+  /** The path distance of each instance; present exactly when `#styles` is. */
+  readonly #distances: WebGLBuffer | undefined;
   readonly #usage: number;
   #capacityBytes: number;
   // Batches are copied out of WASM memory; views must not outlive the upload.
@@ -63,6 +72,7 @@ export class InstanceLayer {
     this.#vao = gl.createVertexArray();
     this.#buffer = gl.createBuffer();
     this.#styles = styled ? gl.createBuffer() : undefined;
+    this.#distances = styled ? gl.createBuffer() : undefined;
 
     gl.bindVertexArray(this.#vao);
     if (layout.perVertex) {
@@ -81,6 +91,8 @@ export class InstanceLayer {
     if (this.#styles) {
       gl.enableVertexAttribArray(STYLE_ATTRIBUTE_LOCATION);
       gl.vertexAttribDivisor(STYLE_ATTRIBUTE_LOCATION, 1);
+      gl.enableVertexAttribArray(DISTANCE_ATTRIBUTE_LOCATION);
+      gl.vertexAttribDivisor(DISTANCE_ATTRIBUTE_LOCATION, 1);
     }
     this.#pointAt(0);
     gl.bindVertexArray(null);
@@ -88,10 +100,15 @@ export class InstanceLayer {
 
   /**
    * Copies instances and batches — and, for a styled layer, the style index
-   * of each instance — to the GPU. Returns true when the instance buffer was
-   * reallocated.
+   * and path distance of each instance — to the GPU. Returns true when the
+   * instance buffer was reallocated.
    */
-  upload(instances: Float32Array, batches: Uint32Array, styles?: Uint16Array): boolean {
+  upload(
+    instances: Float32Array,
+    batches: Uint32Array,
+    styles?: Uint16Array,
+    distances?: Float32Array,
+  ): boolean {
     const gl = this.#gl;
     const capacity = nextCapacity(this.#capacityBytes, instances.byteLength);
     const reallocated = capacity !== this.#capacityBytes;
@@ -106,6 +123,10 @@ export class InstanceLayer {
     if (this.#styles && styles) {
       gl.bindBuffer(gl.ARRAY_BUFFER, this.#styles);
       gl.bufferData(gl.ARRAY_BUFFER, styles, this.#usage);
+    }
+    if (this.#distances && distances) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.#distances);
+      gl.bufferData(gl.ARRAY_BUFFER, distances, this.#usage);
     }
 
     if (this.#batches.length === batches.length) {
@@ -157,6 +178,7 @@ export class InstanceLayer {
   dispose(): void {
     this.#gl.deleteBuffer(this.#buffer);
     if (this.#styles) this.#gl.deleteBuffer(this.#styles);
+    if (this.#distances) this.#gl.deleteBuffer(this.#distances);
     this.#gl.deleteVertexArray(this.#vao);
   }
 
@@ -182,7 +204,19 @@ export class InstanceLayer {
         bytesPerStyle,
         first * bytesPerStyle,
       );
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.#buffer);
     }
+    if (this.#distances) {
+      const size = this.#layout.floatsPerDistance;
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.#distances);
+      gl.vertexAttribPointer(
+        DISTANCE_ATTRIBUTE_LOCATION,
+        size,
+        gl.FLOAT,
+        false,
+        size * bytesPerFloat,
+        first * size * bytesPerFloat,
+      );
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.#buffer);
   }
 }

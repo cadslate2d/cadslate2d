@@ -1415,6 +1415,8 @@ Linetypes must remain stable across entity segments and zoom.
 
 Render data should carry accumulated path distance where required.
 
+> **Resolved in M4 (linetypes):** every committed instance carries the distance along its entity's path at which it begins — accumulated through a polyline's vertices by chord and by arc length, with the direction the path runs round an arc — and the fragment shader draws each dash as a capsule from that and the pattern. Patterns are dash and gap lengths in drawing units, multiplied by `LTSCALE`, and reach the shader as a small table beside the style table; the overlay is always continuous; a period under four pixels is drawn solid — [ADR-0015](adr/0015-linetype-rendering.md). The linetype table has `Continuous` as its permanent first row and loads the standard patterns by name; a linetype in use by an object, a layer, or the setting for new objects cannot be removed.
+
 ## 23.3 Curve rendering — EXPERIMENT
 
 M0 should evaluate two approaches for circles/arcs when the renderer spike is performed.

@@ -43,11 +43,17 @@ describe("WASM API surface", () => {
       "pointer_up",
       "resize",
       "scene_arc_batches",
+      // ADR-0015: the path distance and direction of every arc instance, as one buffer.
+      "scene_arc_distances",
       // ADR-0014: one style index per arc instance, as one buffer.
       "scene_arc_styles",
       "scene_arcs",
       "scene_batches",
+      // ADR-0015: the linetype patterns the style table names, as one buffer.
+      "scene_patterns",
       "scene_revision",
+      // ADR-0015: the path distance of every segment instance, as one buffer.
+      "scene_segment_distances",
       // ADR-0014: one style index per segment instance, as one buffer.
       "scene_segment_styles",
       "scene_segments",

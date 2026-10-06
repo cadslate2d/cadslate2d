@@ -7,6 +7,7 @@
 use cad_core::EntityId;
 
 use crate::layer::LayerChange;
+use crate::linetype::LinetypeChange;
 use crate::{EntityRecord, SettingsChange};
 
 /// A reversible change to one entity: to its geometry, its properties, or
@@ -54,13 +55,14 @@ impl EntityChange {
 /// One reversible change to the saved drawing: to an entity, or to a row of
 /// one of its tables. One enum and one history for all of them (§19.2).
 ///
-/// Non-exhaustive: linetype, text style, and block changes join it as
-/// their tables arrive.
+/// Non-exhaustive: text style and block changes join it as their tables
+/// arrive.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Change {
     Entity(EntityChange),
     Layer(LayerChange),
+    Linetype(LinetypeChange),
     Settings(SettingsChange),
 }
 
@@ -69,6 +71,7 @@ impl Change {
         match self {
             Change::Entity(change) => Change::Entity(change.inverse()),
             Change::Layer(change) => Change::Layer(change.inverse()),
+            Change::Linetype(change) => Change::Linetype(change.inverse()),
             Change::Settings(change) => Change::Settings(change.inverse()),
         }
     }
@@ -113,6 +116,7 @@ mod tests {
 
     use super::*;
     use crate::layer::{Layer, LayerId};
+    use crate::linetype::{LinetypeDef, LinetypeId};
     use crate::table::TableChange;
     use crate::{DrawingSettings, LineEntity, Properties};
 
@@ -180,6 +184,10 @@ mod tests {
                 id: id(4),
                 record: line(4.0),
             }),
+            Change::Linetype(TableChange::Insert {
+                id: LinetypeId::from_raw(1),
+                row: LinetypeDef::built_in_named("Dashed").unwrap(),
+            }),
             Change::Settings(SettingsChange {
                 before: DrawingSettings::default(),
                 after: DrawingSettings {
@@ -211,6 +219,9 @@ mod tests {
                 Change::Layer(TableChange::Insert { .. }) => "insert layer",
                 Change::Layer(TableChange::Remove { .. }) => "remove layer",
                 Change::Layer(TableChange::Replace { .. }) => "replace layer",
+                Change::Linetype(TableChange::Insert { .. }) => "insert linetype",
+                Change::Linetype(TableChange::Remove { .. }) => "remove linetype",
+                Change::Linetype(TableChange::Replace { .. }) => "replace linetype",
                 Change::Settings(_) => "settings",
             })
             .collect();
@@ -218,6 +229,7 @@ mod tests {
             kinds,
             vec![
                 "settings",
+                "remove linetype",
                 "insert entity",
                 "replace layer",
                 "replace entity",

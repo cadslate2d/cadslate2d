@@ -2,15 +2,18 @@
 // buffers, and the draw calls; it never reads or writes CAD state.
 import {
   FLOATS_PER_ARC,
+  FLOATS_PER_ARC_DISTANCE,
   FLOATS_PER_SEGMENT,
   StyleRole,
   type ClipTransform,
   type FrameBuffers,
+  type StyleTables,
 } from "../../cad/engine";
 import type { CanvasPalette } from "../palette";
 import type { FrameSink } from "../render-frame";
 import { ARC_FRAGMENT_SHADER, ARC_STRIP_VERTICES, ARC_VERTEX_SHADER } from "./arc-shaders";
 import { InstanceLayer, type InstanceLayout, type StrokeUniforms } from "./instance-layer";
+import { patternTexels } from "./linetypes";
 import { linkProgram } from "./program";
 import { STROKE_FRAGMENT_SHADER, STROKE_VERTEX_SHADER } from "./shaders";
 import { styleTexels } from "./style-table";
@@ -58,8 +61,18 @@ class FrameLayers {
 
   /** Returns how many of the buffers had to be reallocated. */
   upload(frame: FrameBuffers): number {
-    const segments = this.segments.upload(frame.segments, frame.batches, frame.segmentStyles);
-    const arcs = this.arcs.upload(frame.arcs, frame.arcBatches, frame.arcStyles);
+    const segments = this.segments.upload(
+      frame.segments,
+      frame.batches,
+      frame.segmentStyles,
+      frame.segmentDistances,
+    );
+    const arcs = this.arcs.upload(
+      frame.arcs,
+      frame.arcBatches,
+      frame.arcStyles,
+      frame.arcDistances,
+    );
     return Number(segments) + Number(arcs);
   }
 
@@ -81,8 +94,10 @@ interface GpuResources {
   readonly scene: FrameLayers;
   /** Transient geometry: small, rewritten on most frames. */
   readonly overlay: FrameLayers;
-  /** What each committed instance is drawn with: one texel per style (ADR-0014). */
+  /** What each committed instance is drawn with: two texels per style (ADR-0014). */
   readonly styles: WebGLTexture;
+  /** The linetype patterns the styles name: three float texels per pattern (ADR-0015). */
+  readonly patterns: WebGLTexture;
 }
 
 export class WebGlRenderer implements FrameSink {
@@ -106,6 +121,7 @@ export class WebGlRenderer implements FrameSink {
   #styleRevision: number | undefined;
   /** The style rows last received, kept so the table can be laid out again. */
   #styleRows = new Uint8Array(0);
+  #patternRows = new Float32Array(0);
   #showLineweights = false;
   #devicePixelRatio = 1;
 
@@ -150,11 +166,13 @@ export class WebGlRenderer implements FrameSink {
     return this.#styleRevision;
   }
 
-  updateStyles(revision: number, rows: Uint8Array): void {
-    // The rows are a view into WASM memory: copy them before anything else runs.
-    this.#styleRows = rows.slice();
+  updateStyles(revision: number, tables: StyleTables): void {
+    // The rows are views into WASM memory: copy them before anything else runs.
+    this.#styleRows = tables.styles.slice();
+    this.#patternRows = tables.patterns.slice();
     this.#styleRevision = revision;
     this.#uploadStyles();
+    this.#uploadPatterns();
   }
 
   /**
@@ -198,6 +216,23 @@ export class WebGlRenderer implements FrameSink {
     this.stats.styleUploads += 1;
   }
 
+  #uploadPatterns(): void {
+    const gl = this.#gl;
+    const texels = patternTexels(this.#patternRows);
+    gl.bindTexture(gl.TEXTURE_2D, this.#resources.patterns);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA32F,
+      texels.width,
+      texels.height,
+      0,
+      gl.RGBA,
+      gl.FLOAT,
+      texels.data,
+    );
+  }
+
   updateOverlay(frame: FrameBuffers): void {
     this.stats.bufferReallocations += this.#resources.overlay.upload(frame);
     this.stats.overlayUploads += 1;
@@ -213,6 +248,8 @@ export class WebGlRenderer implements FrameSink {
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied alpha
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.#resources.patterns);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.#resources.styles);
 
@@ -236,10 +273,11 @@ export class WebGlRenderer implements FrameSink {
   dispose(): void {
     this.#canvas.removeEventListener("webglcontextlost", this.#onContextLost);
     this.#canvas.removeEventListener("webglcontextrestored", this.#onContextRestored);
-    const { pipelines, quad, scene, overlay, styles } = this.#resources;
+    const { pipelines, quad, scene, overlay, styles, patterns } = this.#resources;
     scene.dispose();
     overlay.dispose();
     this.#gl.deleteTexture(styles);
+    this.#gl.deleteTexture(patterns);
     this.#gl.deleteBuffer(quad);
     this.#gl.deleteProgram(pipelines.segments.program);
     this.#gl.deleteProgram(pipelines.arcs.program);
@@ -255,6 +293,7 @@ export class WebGlRenderer implements FrameSink {
     gl.useProgram(pipeline.program);
     gl.uniform2f(pipeline.uniforms.viewport, this.#canvas.width, this.#canvas.height);
     gl.uniform1i(pipeline.uniforms.styles, 0); // texture unit 0: the style table
+    gl.uniform1i(pipeline.uniforms.patterns, 1); // texture unit 1: the pattern table
     return layer.draw(pipeline.uniforms, transform, this.#palette, this.#devicePixelRatio, include);
   }
 
@@ -296,6 +335,7 @@ function createPipeline(
       color: uniform("u_color"),
       styled: uniform("u_styled"),
       styles: uniform("u_styles"),
+      patterns: uniform("u_patterns"),
     },
   };
 }
@@ -313,6 +353,7 @@ function createResources(gl: WebGL2RenderingContext): GpuResources {
       attributes: [{ location: 1, size: 4, offset: 0 }],
       verticesPerInstance: 4,
       perVertex: { buffer: quad, size: 2 },
+      floatsPerDistance: 1,
     }),
     // An arc generates its own covering strip from gl_VertexID (ADR-0009).
     arcs: createPipeline(gl, ARC_VERTEX_SHADER, ARC_FRAGMENT_SHADER, {
@@ -322,16 +363,22 @@ function createResources(gl: WebGL2RenderingContext): GpuResources {
         { location: 1, size: 1, offset: 4 },
       ],
       verticesPerInstance: ARC_STRIP_VERTICES,
+      floatsPerDistance: FLOATS_PER_ARC_DISTANCE,
     }),
   };
 
-  // One opaque texel until the first table arrives, so the sampler is always complete.
-  const styles = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, styles);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  // One texel each until the first tables arrive, so the samplers are
+  // always complete: an opaque white style, and a pattern with no period.
+  const lookup = (): WebGLTexture => {
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return texture;
+  };
+  const styles = lookup();
   gl.texImage2D(
     gl.TEXTURE_2D,
     0,
@@ -343,6 +390,8 @@ function createResources(gl: WebGL2RenderingContext): GpuResources {
     gl.UNSIGNED_BYTE,
     new Uint8Array([255, 255, 255, 255]),
   );
+  const patterns = lookup();
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 1, 1, 0, gl.RGBA, gl.FLOAT, new Float32Array(4));
 
   return {
     pipelines,
@@ -350,5 +399,6 @@ function createResources(gl: WebGL2RenderingContext): GpuResources {
     scene: new FrameLayers(gl, pipelines, gl.STATIC_DRAW, true),
     overlay: new FrameLayers(gl, pipelines, gl.DYNAMIC_DRAW, false),
     styles,
+    patterns,
   };
 }

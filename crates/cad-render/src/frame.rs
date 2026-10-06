@@ -9,12 +9,19 @@
 //! start, sweep`, evaluated exactly in the shader. They travel in their own
 //! buffer with their own batches.
 //!
+//! Beside each instance travels where along its entity's path it begins
+//! (ADR-0015), so a linetype pattern can run on through the vertices of a
+//! polyline instead of starting again at each: one `f32` per segment, and
+//! for an arc that distance at its counter-clockwise start plus the
+//! direction the path runs round it. Only the committed scene draws them;
+//! the overlay is always continuous.
+//!
 //! All buffers are stored exactly as they cross the WASM boundary, so
 //! handing a frame to JavaScript needs no conversion and no allocation.
 
 use cad_core::Point2;
 use cad_document::Entity;
-use cad_geometry::{Arc, Primitive};
+use cad_geometry::{Arc, Primitive, bulge_primitive, polyline_spans};
 
 /// What a batch of geometry *is*. TypeScript resolves each role to a colour
 /// and lineweight from the theme, so Rust never hard-codes theme colours.
@@ -95,6 +102,13 @@ pub struct PackedFrame {
     arcs: Vec<f32>,
     /// `style, first, count` per arc batch.
     arc_batch_words: Vec<u32>,
+    /// Per segment instance: the distance along its entity's path at its
+    /// start, in drawing units.
+    segment_distances: Vec<f32>,
+    /// Per arc instance: that distance at the arc's counter-clockwise
+    /// start, then `1` when the path runs counter-clockwise round it and
+    /// `-1` when clockwise.
+    arc_distances: Vec<f32>,
 }
 
 /// Appends one instance to a batch list, extending the last batch when the
@@ -122,6 +136,8 @@ impl PackedFrame {
     pub const FLOATS_PER_SEGMENT: usize = 4;
     pub const WORDS_PER_BATCH: usize = 3;
     pub const FLOATS_PER_ARC: usize = 5;
+    /// Per arc in [`Self::arc_distances`]: the distance and the direction.
+    pub const FLOATS_PER_ARC_DISTANCE: usize = 2;
 
     /// Empties the frame and sets a new origin. Buffer capacity is kept, so
     /// rebuilding a frame of similar size does not allocate.
@@ -131,6 +147,8 @@ impl PackedFrame {
         self.batch_words.clear();
         self.arcs.clear();
         self.arc_batch_words.clear();
+        self.segment_distances.clear();
+        self.arc_distances.clear();
     }
 
     /// The `f64` world position that segment coordinates are relative to.
@@ -176,19 +194,52 @@ impl PackedFrame {
         decode_batches(&self.arc_batch_words)
     }
 
-    /// Appends one segment. Consecutive segments of the same style share a batch.
+    /// Per segment instance, the distance along its entity's path at its
+    /// start, in drawing units (ADR-0015).
+    pub fn segment_distances(&self) -> &[f32] {
+        &self.segment_distances
+    }
+
+    /// Per arc instance, [`Self::FLOATS_PER_ARC_DISTANCE`] floats: the
+    /// distance along its entity's path at the arc's counter-clockwise
+    /// start, and `1` or `-1` for the direction the path runs round it.
+    pub fn arc_distances(&self) -> &[f32] {
+        &self.arc_distances
+    }
+
+    /// Appends one segment at the start of its path. Consecutive segments
+    /// of the same style share a batch.
     pub fn push_segment(&mut self, style: StyleRole, start: Point2, end: Point2) {
+        self.push_segment_along(style, start, end, 0.0);
+    }
+
+    /// Appends one segment that begins `distance` along its entity's path.
+    pub fn push_segment_along(
+        &mut self,
+        style: StyleRole,
+        start: Point2,
+        end: Point2,
+        distance: f64,
+    ) {
         let first = self.segment_count();
         let a = start - self.origin;
         let b = end - self.origin;
         self.segments
             .extend([a.x as f32, a.y as f32, b.x as f32, b.y as f32]);
-
+        self.segment_distances.push(distance as f32);
         extend_batches(&mut self.batch_words, style, first);
     }
 
-    /// Appends one arc instance. A full circle is an arc with a sweep of 2π.
+    /// Appends one arc instance at the start of its path, run
+    /// counter-clockwise. A full circle is an arc with a sweep of 2π.
     pub fn push_arc(&mut self, style: StyleRole, arc: &Arc) {
+        self.push_arc_along(style, arc, 0.0, true);
+    }
+
+    /// Appends one arc instance whose entity's path is `distance` long at
+    /// the arc's counter-clockwise start and runs `forwards`
+    /// (counter-clockwise) or back round it.
+    pub fn push_arc_along(&mut self, style: StyleRole, arc: &Arc, distance: f64, forwards: bool) {
         let index = self.arc_count();
         let center = arc.center - self.origin;
         self.arcs.extend([
@@ -198,6 +249,8 @@ impl PackedFrame {
             arc.start as f32,
             arc.sweep as f32,
         ]);
+        self.arc_distances
+            .extend([distance as f32, if forwards { 1.0 } else { -1.0 }]);
         extend_batches(&mut self.arc_batch_words, style, index);
     }
 
@@ -215,18 +268,42 @@ impl PackedFrame {
             Entity::Arc(arc) => self.push_arc(style, &arc.arc()),
             // Round caps on every segment meet at the vertices, so joints have
             // neither gaps nor spikes at any angle. Arc segments are drawn
-            // as arcs, exactly like arc entities (ADR-0009).
+            // as arcs, exactly like arc entities (ADR-0009). The path
+            // distance runs on through the vertices — by chord along a
+            // straight segment, by arc length along an arc segment — so a
+            // linetype pattern does not start again at each.
             Entity::Polyline(polyline) => {
-                for primitive in polyline.primitives() {
-                    match primitive {
+                let vertices = &polyline.vertices;
+                let mut distance = 0.0;
+                for (from, to) in polyline_spans(vertices.len(), polyline.closed, |index| {
+                    polyline.bulge(index)
+                }) {
+                    let bulge = polyline.bulge(from);
+                    match bulge_primitive(vertices[from], vertices[to], bulge) {
                         Primitive::Segment(segment) => {
-                            self.push_segment(style, segment.start, segment.end);
+                            self.push_segment_along(style, segment.start, segment.end, distance);
+                            distance += segment.length();
                         }
-                        Primitive::Arc(arc) => self.push_arc(style, &arc),
-                        Primitive::Circle(circle) => self.push_arc(
-                            style,
-                            &Arc::new(circle.center, circle.radius, 0.0, std::f64::consts::TAU),
-                        ),
+                        Primitive::Arc(arc) => {
+                            let length = arc.radius * arc.sweep;
+                            // A clockwise segment runs from the arc's end
+                            // back to its start: the path is `length` further
+                            // along at the start than where this segment began.
+                            let forwards = bulge > 0.0;
+                            let at_start = if forwards {
+                                distance
+                            } else {
+                                distance + length
+                            };
+                            self.push_arc_along(style, &arc, at_start, forwards);
+                            distance += length;
+                        }
+                        Primitive::Circle(circle) => {
+                            let full =
+                                Arc::new(circle.center, circle.radius, 0.0, std::f64::consts::TAU);
+                            self.push_arc_along(style, &full, distance, true);
+                            distance += circle.radius * std::f64::consts::TAU;
+                        }
                     }
                 }
             }
@@ -392,6 +469,58 @@ mod tests {
         assert_eq!(&frame.arcs()[5..8], &[0.0, 2.0, 2.0]);
         assert_eq!(frame.batches().len(), 1);
         assert_eq!(frame.arc_batches().len(), 1);
+    }
+
+    /// #138: a polyline's pattern does not restart at its vertices — the
+    /// distance along the path runs on through them, by chord and by arc
+    /// length, and a clockwise arc segment says so.
+    #[test]
+    fn path_distances_run_on_through_the_vertices_of_a_polyline() {
+        use std::f64::consts::PI;
+
+        use cad_document::{ArcEntity, CircleEntity, PolylineEntity};
+        // Along the bottom, a counter-clockwise half circle up the right
+        // (radius 2, length 2π), back along the top, then a *clockwise*
+        // half circle down the left closing it.
+        let slot = PolylineEntity::with_bulges(
+            vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 4.0), p(0.0, 4.0)],
+            vec![0.0, 1.0, 0.0, -1.0],
+            true,
+        );
+        let mut frame = PackedFrame::default();
+        frame.push_entity(StyleRole::Entity, &slot.into());
+
+        let half = (2.0 * PI) as f32;
+        assert_eq!(frame.segment_distances(), &[0.0, 10.0 + half]);
+        // The right arc runs forwards from distance 10. The left one is
+        // stored counter-clockwise from (0,0) to (0,4) but the path runs it
+        // backwards, so at its counter-clockwise start the path is at the
+        // closing end: 20 + 2 half circles.
+        assert_eq!(frame.arc_distances(), &[10.0, 1.0, 20.0 + 2.0 * half, -1.0]);
+
+        // Entities on their own start at zero, forwards.
+        let mut frame = PackedFrame::default();
+        frame.push_entity(
+            StyleRole::Entity,
+            &LineEntity::new(p(0.0, 0.0), p(5.0, 0.0)).into(),
+        );
+        frame.push_entity(
+            StyleRole::Entity,
+            &CircleEntity::new(p(0.0, 0.0), 3.0).into(),
+        );
+        frame.push_entity(
+            StyleRole::Entity,
+            &ArcEntity::new(p(0.0, 0.0), 3.0, 0.0, PI).into(),
+        );
+        frame.push_segment(StyleRole::Preview, p(0.0, 0.0), p(1.0, 1.0));
+        assert_eq!(frame.segment_distances(), &[0.0, 0.0]);
+        assert_eq!(frame.arc_distances(), &[0.0, 1.0, 0.0, 1.0]);
+        assert_eq!(
+            frame.arc_distances().len(),
+            frame.arc_count() as usize * PackedFrame::FLOATS_PER_ARC_DISTANCE
+        );
+        frame.reset(Point2::ORIGIN);
+        assert!(frame.segment_distances().is_empty() && frame.arc_distances().is_empty());
     }
 
     #[test]

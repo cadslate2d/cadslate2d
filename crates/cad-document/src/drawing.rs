@@ -7,12 +7,14 @@ use cad_core::{Aabb, EntityId, LengthUnit};
 
 use crate::history::History;
 use crate::id_alloc::EntityIdAllocator;
-use crate::layer::{Layer, LayerId, LayerNameError, LayerTable, initial_layers};
+use crate::layer::{Layer, LayerId, LayerTable, initial_layers};
+use crate::linetype::{LinetypeDef, LinetypeError, LinetypeId, LinetypeTable, initial_linetypes};
+use crate::names::{NameError, check_name, same_name};
 use crate::spatial::RTreeIndex;
 use crate::table::TableChange;
 use crate::{
-    Change, Color, DrawingSettings, Entity, EntityChange, EntityRecord, EntityStore, Lineweight,
-    Properties, Revision, SettingsChange, SpatialIndex, Transaction,
+    Change, Color, DrawingSettings, Entity, EntityChange, EntityRecord, EntityStore, Linetype,
+    Lineweight, Properties, Revision, SettingsChange, SpatialIndex, Transaction,
 };
 
 /// A 2D drawing.
@@ -28,6 +30,7 @@ use crate::{
 pub struct Drawing {
     entities: EntityStore,
     layers: LayerTable,
+    linetypes: LinetypeTable,
     settings: DrawingSettings,
     ids: EntityIdAllocator,
     index: Box<dyn SpatialIndex>,
@@ -66,13 +69,29 @@ pub enum TransactionError {
     /// An entity is on the layer, so it cannot be removed.
     LayerInUse(LayerId),
     /// The name cannot be a layer's name.
-    BadLayerName(LayerNameError),
+    BadLayerName(NameError),
     /// This layer already has the name, give or take its case.
     DuplicateLayerName(LayerId),
     /// The layer is the current one, so it cannot be removed or switched off.
     CurrentLayer(LayerId),
     /// The layer is off, so it cannot be made the current one.
     LayerIsOff(LayerId),
+    /// The linetype does not exist, in the drawing or earlier in this
+    /// transaction.
+    UnknownLinetype(LinetypeId),
+    /// The linetype was already changed earlier in this transaction.
+    LinetypeAlreadyChanged(LinetypeId),
+    /// `Continuous` is always there: it cannot be removed.
+    PermanentLinetype,
+    /// An entity or a layer has the linetype, or new objects are given
+    /// it, so it cannot be removed.
+    LinetypeInUse(LinetypeId),
+    /// The row cannot be a linetype.
+    BadLinetype(LinetypeError),
+    /// This linetype already has the name, give or take its case.
+    DuplicateLinetypeName(LinetypeId),
+    /// `LTSCALE` must be a positive number.
+    BadLtscale,
 }
 
 impl fmt::Display for TransactionError {
@@ -88,10 +107,21 @@ impl fmt::Display for TransactionError {
             }
             Self::PermanentLayer => write!(f, "layer 0 cannot be removed or renamed"),
             Self::LayerInUse(id) => write!(f, "layer {id} has entities on it"),
-            Self::BadLayerName(error) => write!(f, "{error}"),
+            Self::BadLayerName(error) => write!(f, "{}", error.explain("layer")),
             Self::DuplicateLayerName(id) => write!(f, "layer {id} already has that name"),
             Self::CurrentLayer(id) => write!(f, "layer {id} is the current layer"),
             Self::LayerIsOff(id) => write!(f, "layer {id} is off"),
+            Self::UnknownLinetype(id) => write!(f, "linetype {id} does not exist"),
+            Self::LinetypeAlreadyChanged(id) => {
+                write!(f, "linetype {id} was already changed in this transaction")
+            }
+            Self::PermanentLinetype => write!(f, "linetype Continuous cannot be removed"),
+            Self::LinetypeInUse(id) => write!(f, "linetype {id} is in use"),
+            Self::BadLinetype(error) => write!(f, "{error}"),
+            Self::DuplicateLinetypeName(id) => {
+                write!(f, "linetype {id} already has that name")
+            }
+            Self::BadLtscale => write!(f, "LTSCALE must be a positive number"),
         }
     }
 }
@@ -115,6 +145,7 @@ impl Drawing {
         Self {
             entities: EntityStore::new(),
             layers: initial_layers(),
+            linetypes: initial_linetypes(),
             settings: DrawingSettings::default(),
             ids: EntityIdAllocator::new(),
             index,
@@ -133,26 +164,45 @@ impl Drawing {
         let entities = entities
             .into_iter()
             .map(|entity| (entity, Properties::default()));
-        Self::from_parts([], entities).expect("layer 0 always exists")
+        Self::from_parts([], [], entities).expect("layer 0 always exists")
     }
 
-    /// A drawing pre-populated with layers and with entities that have
-    /// properties, and an empty history.
+    /// A drawing pre-populated with layers, linetypes, and entities that
+    /// have properties, and an empty history.
     ///
     /// `layers` come after layer `0`, which is always there, and take the
-    /// IDs 1, 2, … in the order given. A layer with a name that is not
-    /// allowed or is already taken, and an entity on a layer that is not
-    /// among them, are refused.
+    /// IDs 1, 2, … in the order given; `linetypes` likewise after
+    /// `Continuous`. A row with a name that is not allowed or is already
+    /// taken, a layer with a linetype that is not among them, and an entity
+    /// on a layer or with a linetype that is not among them, are refused.
     pub fn from_parts(
         layers: impl IntoIterator<Item = Layer>,
+        linetypes: impl IntoIterator<Item = LinetypeDef>,
         entities: impl IntoIterator<Item = (Entity, Properties)>,
     ) -> Result<Self, TransactionError> {
         let mut drawing = Self::new();
+        for linetype in linetypes {
+            linetype.check().map_err(TransactionError::BadLinetype)?;
+            if let Some(taken) = drawing.linetypes.find(&linetype.name) {
+                return Err(TransactionError::DuplicateLinetypeName(taken));
+            }
+            let id = drawing.linetypes.allocate();
+            drawing
+                .linetypes
+                .apply(&TableChange::Insert { id, row: linetype });
+        }
+        let known_linetype = |drawing: &Self, linetype: Linetype| match linetype {
+            Linetype::Named(id) if !drawing.linetypes.contains(id) => {
+                Err(TransactionError::UnknownLinetype(id))
+            }
+            _ => Ok(()),
+        };
         for layer in layers {
-            Layer::check_name(&layer.name).map_err(TransactionError::BadLayerName)?;
+            check_name(&layer.name).map_err(TransactionError::BadLayerName)?;
             if let Some(taken) = drawing.layers.find(&layer.name) {
                 return Err(TransactionError::DuplicateLayerName(taken));
             }
+            known_linetype(&drawing, layer.linetype)?;
             let id = drawing.layers.allocate();
             drawing
                 .layers
@@ -162,6 +212,7 @@ impl Drawing {
             if !drawing.layers.contains(properties.layer) {
                 return Err(TransactionError::UnknownLayer(properties.layer));
             }
+            known_linetype(&drawing, properties.linetype)?;
             let id = drawing.ids.allocate();
             drawing
                 .entities
@@ -226,6 +277,11 @@ impl Drawing {
         &self.layers
     }
 
+    /// The linetype table. It always holds `Continuous`.
+    pub fn linetypes(&self) -> &LinetypeTable {
+        &self.linetypes
+    }
+
     /// The drawing's settings.
     pub fn settings(&self) -> DrawingSettings {
         self.settings
@@ -241,9 +297,19 @@ impl Drawing {
         self.settings.current_color
     }
 
+    /// The linetype new objects are given.
+    pub fn current_linetype(&self) -> Linetype {
+        self.settings.current_linetype
+    }
+
     /// The lineweight new objects are given.
     pub fn current_lineweight(&self) -> Lineweight {
         self.settings.current_lineweight
+    }
+
+    /// What every linetype pattern is multiplied by.
+    pub fn ltscale(&self) -> f64 {
+        self.settings.ltscale
     }
 
     /// The drawing's unit, or `None` if it is unitless.
@@ -378,7 +444,7 @@ impl Drawing {
                 Change::Entity(_) => true,
                 Change::Layer(TableChange::Replace { before, after, .. }) => before.on != after.on,
                 // A layer that is made or removed has nothing on it.
-                Change::Layer(_) | Change::Settings(_) => false,
+                Change::Layer(_) | Change::Linetype(_) | Change::Settings(_) => false,
             };
             match change {
                 Change::Entity(EntityChange::Insert { id, record }) => {
@@ -409,6 +475,10 @@ impl Drawing {
                     self.layers.apply(change);
                     report.tables_changed = true;
                 }
+                Change::Linetype(change) => {
+                    self.linetypes.apply(change);
+                    report.tables_changed = true;
+                }
                 Change::Settings(change) => self.settings = change.after,
             }
         }
@@ -436,15 +506,17 @@ impl TransactionBuilder<'_> {
     /// transaction is abandoned; sparse IDs are fine (DESIGN §10.2).
     ///
     /// The entity gets the properties new objects are given: the current
-    /// layer, colour, and lineweight; the linetype by layer. An object made *from* another — a copy,
-    /// an offset, the second piece of a break — takes that object's
-    /// properties with [`insert_like`](Self::insert_like) instead.
+    /// layer, colour, linetype, and lineweight. An object made *from*
+    /// another — a copy, an offset, the second piece of a break — takes
+    /// that object's properties with [`insert_like`](Self::insert_like)
+    /// instead.
     pub fn insert(&mut self, entity: impl Into<Entity>) -> EntityId {
         let settings = self.settings_now();
         let properties = Properties {
+            layer: settings.current_layer,
             color: settings.current_color,
+            linetype: settings.current_linetype,
             lineweight: settings.current_lineweight,
-            ..Properties::on(settings.current_layer)
         };
         self.insert_record(EntityRecord::new(entity, properties))
     }
@@ -456,6 +528,7 @@ impl TransactionBuilder<'_> {
         properties: Properties,
     ) -> Result<EntityId, TransactionError> {
         self.known_layer(properties.layer)?;
+        self.known_linetype(properties.linetype)?;
         Ok(self.insert_record(EntityRecord::new(entity, properties)))
     }
 
@@ -501,6 +574,7 @@ impl TransactionBuilder<'_> {
         properties: Properties,
     ) -> Result<(), TransactionError> {
         self.known_layer(properties.layer)?;
+        self.known_linetype(properties.linetype)?;
         let before = self.existing(id)?;
         let after = before.with_properties(properties);
         self.push(EntityChange::Replace { id, before, after });
@@ -508,10 +582,11 @@ impl TransactionBuilder<'_> {
     }
 
     /// Adds a layer and returns its ID. Its name must be allowed and not
-    /// taken. Like an entity's, the ID is consumed even if the transaction
-    /// is abandoned.
+    /// taken, and its linetype must exist. Like an entity's, the ID is
+    /// consumed even if the transaction is abandoned.
     pub fn add_layer(&mut self, layer: Layer) -> Result<LayerId, TransactionError> {
         self.free_name(&layer.name, None)?;
+        self.known_linetype(layer.linetype)?;
         let id = self.drawing.layers.allocate();
         self.changes
             .push(Change::Layer(TableChange::Insert { id, row: layer }));
@@ -521,7 +596,8 @@ impl TransactionBuilder<'_> {
     /// Replaces an existing layer's row — its name or any of its settings —
     /// keeping its ID, and so every entity on it.
     ///
-    /// Layer `0` keeps its name, and the current layer stays on.
+    /// Layer `0` keeps its name, the current layer stays on, and the
+    /// layer's linetype must exist.
     pub fn replace_layer(&mut self, id: LayerId, layer: Layer) -> Result<(), TransactionError> {
         let before = self.existing_layer(id)?;
         if layer.name != before.name {
@@ -530,6 +606,7 @@ impl TransactionBuilder<'_> {
             }
             self.free_name(&layer.name, Some(id))?;
         }
+        self.known_linetype(layer.linetype)?;
         if !layer.on && self.settings_now().current_layer == id {
             return Err(TransactionError::CurrentLayer(id));
         }
@@ -560,6 +637,7 @@ impl TransactionBuilder<'_> {
             Change::Entity(EntityChange::Replace { after, .. }) => on_layer(after),
             Change::Entity(EntityChange::Remove { .. })
             | Change::Layer(_)
+            | Change::Linetype(_)
             | Change::Settings(_) => false,
         });
         if pending || self.drawing.records().any(|(_, record)| on_layer(record)) {
@@ -603,6 +681,109 @@ impl TransactionBuilder<'_> {
         });
     }
 
+    /// Loads a linetype and returns its ID. It must be valid and its name
+    /// not taken. Like a layer's, the ID is consumed even if the
+    /// transaction is abandoned.
+    pub fn add_linetype(&mut self, linetype: LinetypeDef) -> Result<LinetypeId, TransactionError> {
+        linetype.check().map_err(TransactionError::BadLinetype)?;
+        let added = self.changes.iter().filter_map(|change| match change {
+            Change::Linetype(TableChange::Insert { row, .. }) => Some(row),
+            _ => None,
+        });
+        let taken = self
+            .drawing
+            .linetypes
+            .iter()
+            .filter(|(id, _)| self.linetype_now(*id).is_some())
+            .map(|(id, row)| (Some(id), row))
+            .chain(added.map(|row| (None, row)))
+            .find(|(_, row)| same_name(&row.name, &linetype.name));
+        if let Some((id, _)) = taken {
+            // A row added earlier in this transaction has no ID to report
+            // that the drawing knows; its name will do.
+            return Err(TransactionError::DuplicateLinetypeName(
+                id.unwrap_or(LinetypeId::FIRST),
+            ));
+        }
+        let id = self.drawing.linetypes.allocate();
+        self.changes
+            .push(Change::Linetype(TableChange::Insert { id, row: linetype }));
+        Ok(id)
+    }
+
+    /// Removes a linetype that nothing refers to: no entity, no layer, and
+    /// not the setting for new objects. `Continuous` stays.
+    pub fn remove_linetype(&mut self, id: LinetypeId) -> Result<(), TransactionError> {
+        if id == LinetypeId::FIRST {
+            return Err(TransactionError::PermanentLinetype);
+        }
+        if self.linetype_change(id).is_some() {
+            return Err(TransactionError::LinetypeAlreadyChanged(id));
+        }
+        let row = self
+            .drawing
+            .linetypes
+            .get(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownLinetype(id))?;
+        let named = Linetype::Named(id);
+        // In use in the drawing, or by what this transaction adds or
+        // changes. (What this transaction takes *off* it still counts:
+        // remove the linetype in a transaction of its own.)
+        let pending = self.changes.iter().any(|change| match change {
+            Change::Entity(EntityChange::Insert { record, .. }) => {
+                record.properties.linetype == named
+            }
+            Change::Entity(EntityChange::Replace { after, .. }) => {
+                after.properties.linetype == named
+            }
+            Change::Layer(TableChange::Insert { row, .. }) => row.linetype == named,
+            Change::Layer(TableChange::Replace { after, .. }) => after.linetype == named,
+            _ => false,
+        });
+        let in_use = pending
+            || self.settings_now().current_linetype == named
+            || self
+                .drawing
+                .records()
+                .any(|(_, record)| record.properties.linetype == named)
+            || self
+                .drawing
+                .layers
+                .iter()
+                .any(|(_, layer)| layer.linetype == named);
+        if in_use {
+            return Err(TransactionError::LinetypeInUse(id));
+        }
+        self.changes
+            .push(Change::Linetype(TableChange::Remove { id, row }));
+        Ok(())
+    }
+
+    /// Sets the linetype new objects are given. `ByLayer`, the default,
+    /// means each takes its layer's. A named linetype must exist.
+    pub fn set_current_linetype(&mut self, linetype: Linetype) -> Result<(), TransactionError> {
+        self.known_linetype(linetype)?;
+        self.set_settings(DrawingSettings {
+            current_linetype: linetype,
+            ..self.settings_now()
+        });
+        Ok(())
+    }
+
+    /// Sets what every linetype pattern is multiplied by. It must be a
+    /// positive number.
+    pub fn set_ltscale(&mut self, ltscale: f64) -> Result<(), TransactionError> {
+        if !(ltscale.is_finite() && ltscale > 0.0) {
+            return Err(TransactionError::BadLtscale);
+        }
+        self.set_settings(DrawingSettings {
+            ltscale,
+            ..self.settings_now()
+        });
+        Ok(())
+    }
+
     /// Says what the drawing's numbers are numbers of; `None` makes it
     /// unitless. No geometry changes: the unit is what the numbers mean.
     pub fn set_unit(&mut self, unit: Option<LengthUnit>) {
@@ -637,7 +818,7 @@ impl TransactionBuilder<'_> {
     fn existing(&self, id: EntityId) -> Result<EntityRecord, TransactionError> {
         let already_changed = self.changes.iter().any(|change| match change {
             Change::Entity(change) => change.id() == id,
-            Change::Layer(_) | Change::Settings(_) => false,
+            Change::Layer(_) | Change::Linetype(_) | Change::Settings(_) => false,
         });
         if already_changed {
             return Err(TransactionError::AlreadyChanged(id));
@@ -664,6 +845,36 @@ impl TransactionBuilder<'_> {
             Some(TableChange::Insert { row, .. }) => Some(row),
             Some(TableChange::Replace { after, .. }) => Some(after),
             None => self.drawing.layers.get(id),
+        }
+    }
+
+    /// How this transaction has changed the linetype `id` so far, if it has.
+    fn linetype_change(&self, id: LinetypeId) -> Option<&TableChange<LinetypeDef>> {
+        self.changes.iter().find_map(|change| match change {
+            Change::Linetype(change) if change.id() == id => Some(change),
+            _ => None,
+        })
+    }
+
+    /// The linetype `id` as it will be once this transaction commits.
+    fn linetype_now(&self, id: LinetypeId) -> Option<&LinetypeDef> {
+        match self.linetype_change(id) {
+            Some(TableChange::Remove { .. }) => None,
+            Some(TableChange::Insert { row, .. }) => Some(row),
+            Some(TableChange::Replace { after, .. }) => Some(after),
+            None => self.drawing.linetypes.get(id),
+        }
+    }
+
+    /// Whether `linetype` may be given to an entity, a layer, or new
+    /// objects: it is an indirection, or a row that exists once this
+    /// transaction commits.
+    fn known_linetype(&self, linetype: Linetype) -> Result<(), TransactionError> {
+        match linetype {
+            Linetype::Named(id) if self.linetype_now(id).is_none() => {
+                Err(TransactionError::UnknownLinetype(id))
+            }
+            _ => Ok(()),
         }
     }
 
@@ -720,7 +931,7 @@ impl TransactionBuilder<'_> {
     /// one: it is allowed, and no other layer has it once this transaction
     /// commits.
     fn free_name(&self, name: &str, renamed: Option<LayerId>) -> Result<(), TransactionError> {
-        Layer::check_name(name).map_err(TransactionError::BadLayerName)?;
+        check_name(name).map_err(TransactionError::BadLayerName)?;
         let added = self.changes.iter().filter_map(|change| match change {
             Change::Layer(TableChange::Insert { id, .. }) => Some(*id),
             _ => None,
@@ -734,7 +945,7 @@ impl TransactionBuilder<'_> {
             .filter(|id| Some(*id) != renamed)
             .find(|id| {
                 self.layer_now(*id)
-                    .is_some_and(|layer| Layer::same_name(&layer.name, name))
+                    .is_some_and(|layer| same_name(&layer.name, name))
             });
         match taken {
             Some(id) => Err(TransactionError::DuplicateLayerName(id)),
@@ -1215,6 +1426,7 @@ mod tests {
         let walls = LayerId::from_raw(1);
         let drawing = Drawing::from_parts(
             [Layer::named("walls")],
+            [],
             [
                 (Entity::Line(line(0.0, 0.0, 10.0, 0.0)), red_on(walls)),
                 (
@@ -1235,6 +1447,7 @@ mod tests {
 
         let nowhere = LayerId::from_raw(7);
         let refused = Drawing::from_parts(
+            [],
             [],
             [(
                 Entity::Line(line(0.0, 0.0, 1.0, 0.0)),
@@ -1548,13 +1761,11 @@ mod tests {
         );
         assert_eq!(
             tx.add_layer(Layer::named("a*b")),
-            Err(TransactionError::BadLayerName(LayerNameError::Forbidden(
-                '*'
-            )))
+            Err(TransactionError::BadLayerName(NameError::Forbidden('*')))
         );
         assert_eq!(
             tx.add_layer(Layer::named("")),
-            Err(TransactionError::BadLayerName(LayerNameError::Empty))
+            Err(TransactionError::BadLayerName(NameError::Empty))
         );
         // Two new layers in one transaction cannot share a name either.
         let windows = tx.add_layer(Layer::named("windows")).unwrap();
@@ -1571,7 +1782,7 @@ mod tests {
         assert_eq!(
             change_layer(&mut drawing, doors, |layer| layer.name =
                 " doors".to_owned()),
-            Err(TransactionError::BadLayerName(LayerNameError::Padded))
+            Err(TransactionError::BadLayerName(NameError::Padded))
         );
         // Changing only the case of a layer's own name is a rename like any other.
         change_layer(&mut drawing, doors, |layer| layer.name = "Doors".to_owned()).unwrap();
@@ -1873,6 +2084,272 @@ mod tests {
         });
     }
 
+    // ── linetypes (#138) ──
+
+    fn load(drawing: &mut Drawing, name: &str) -> LinetypeId {
+        let mut tx = drawing.transaction();
+        let id = tx
+            .add_linetype(LinetypeDef::built_in_named(name).expect("a built-in linetype"))
+            .unwrap();
+        tx.commit();
+        id
+    }
+
+    #[test]
+    fn linetypes_are_loaded_once_each_and_continuous_stays() {
+        let mut drawing = Drawing::new();
+        assert_eq!(drawing.linetypes().len(), 1);
+        let dashed = load(&mut drawing, "Dashed");
+        assert_eq!(dashed, LinetypeId::from_raw(1));
+        assert_eq!(drawing.linetypes().find("dashed"), Some(dashed));
+
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.add_linetype(LinetypeDef::built_in_named("DASHED").unwrap()),
+            Err(TransactionError::DuplicateLinetypeName(dashed))
+        );
+        assert_eq!(
+            tx.add_linetype(LinetypeDef {
+                name: "continuous".to_owned(),
+                ..LinetypeDef::built_in_named("Hidden").unwrap()
+            }),
+            Err(TransactionError::DuplicateLinetypeName(LinetypeId::FIRST))
+        );
+        assert_eq!(
+            tx.add_linetype(LinetypeDef {
+                pattern: vec![0.5],
+                ..LinetypeDef::built_in_named("Hidden").unwrap()
+            }),
+            Err(TransactionError::BadLinetype(LinetypeError::Odd))
+        );
+        // Two of the same name in one transaction: the second is refused.
+        tx.add_linetype(LinetypeDef::built_in_named("Hidden").unwrap())
+            .unwrap();
+        assert!(matches!(
+            tx.add_linetype(LinetypeDef::built_in_named("hidden").unwrap()),
+            Err(TransactionError::DuplicateLinetypeName(_))
+        ));
+        assert_eq!(
+            tx.remove_linetype(LinetypeId::FIRST),
+            Err(TransactionError::PermanentLinetype)
+        );
+        tx.commit();
+        assert_eq!(drawing.linetypes().len(), 3);
+
+        drawing.undo();
+        assert_eq!(drawing.linetypes().len(), 2, "one transaction, one step");
+        drawing.undo();
+        assert_eq!(drawing.linetypes().len(), 1);
+        drawing.redo();
+        drawing.redo();
+        assert_eq!(
+            drawing.linetypes().find("hidden"),
+            Some(LinetypeId::from_raw(2))
+        );
+        // IDs are never reused, even after an undo.
+        drawing.undo();
+        drawing.undo();
+        assert_eq!(load(&mut drawing, "Center"), LinetypeId::from_raw(3));
+    }
+
+    #[test]
+    fn a_linetype_in_use_cannot_be_removed() {
+        let mut drawing = Drawing::new();
+        let dashed = load(&mut drawing, "Dashed");
+        let hidden = load(&mut drawing, "Hidden");
+        let center = load(&mut drawing, "Center");
+        let phantom = load(&mut drawing, "Phantom");
+
+        // By an entity.
+        let mut tx = drawing.transaction();
+        let id = tx
+            .insert_with(
+                line(0.0, 0.0, 1.0, 0.0),
+                Properties {
+                    linetype: Linetype::Named(dashed),
+                    ..Properties::default()
+                },
+            )
+            .unwrap();
+        tx.commit();
+        // By a layer.
+        let mut tx = drawing.transaction();
+        let walls = tx
+            .add_layer(Layer {
+                linetype: Linetype::Named(hidden),
+                ..Layer::named("walls")
+            })
+            .unwrap();
+        tx.commit();
+        // As the setting for new objects.
+        let mut tx = drawing.transaction();
+        tx.set_current_linetype(Linetype::Named(center)).unwrap();
+        tx.commit();
+
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.remove_linetype(dashed),
+            Err(TransactionError::LinetypeInUse(dashed))
+        );
+        assert_eq!(
+            tx.remove_linetype(hidden),
+            Err(TransactionError::LinetypeInUse(hidden))
+        );
+        assert_eq!(
+            tx.remove_linetype(center),
+            Err(TransactionError::LinetypeInUse(center))
+        );
+        assert_eq!(
+            tx.remove_linetype(LinetypeId::from_raw(40)),
+            Err(TransactionError::UnknownLinetype(LinetypeId::from_raw(40)))
+        );
+        // Given to something in this very transaction counts too.
+        tx.set_properties(
+            id,
+            Properties {
+                linetype: Linetype::Named(phantom),
+                ..Properties::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            tx.remove_linetype(phantom),
+            Err(TransactionError::LinetypeInUse(phantom))
+        );
+        drop(tx);
+
+        // Taken off everything, it goes — in a transaction of its own.
+        let mut tx = drawing.transaction();
+        tx.set_properties(id, Properties::default()).unwrap();
+        tx.replace_layer(walls, Layer::named("walls")).unwrap();
+        tx.set_current_linetype(Linetype::ByLayer).unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.remove_linetype(dashed).unwrap();
+        tx.remove_linetype(hidden).unwrap();
+        tx.remove_linetype(center).unwrap();
+        assert_eq!(
+            tx.remove_linetype(dashed),
+            Err(TransactionError::LinetypeAlreadyChanged(dashed))
+        );
+        tx.commit();
+        assert_eq!(drawing.linetypes().len(), 2);
+        drawing.undo();
+        assert_eq!(drawing.linetypes().len(), 5);
+    }
+
+    #[test]
+    fn nothing_can_refer_to_a_linetype_that_does_not_exist() {
+        let mut drawing = Drawing::new();
+        let gone = LinetypeId::from_raw(9);
+        let unknown = TransactionError::UnknownLinetype(gone);
+        let mut tx = drawing.transaction();
+        assert_eq!(tx.set_current_linetype(Linetype::Named(gone)), Err(unknown));
+        assert_eq!(
+            tx.add_layer(Layer {
+                linetype: Linetype::Named(gone),
+                ..Layer::named("walls")
+            }),
+            Err(unknown)
+        );
+        assert_eq!(
+            tx.replace_layer(
+                LayerId::FIRST,
+                Layer {
+                    linetype: Linetype::Named(gone),
+                    ..Layer::named("0")
+                }
+            ),
+            Err(unknown)
+        );
+        let dotted = Properties {
+            linetype: Linetype::Named(gone),
+            ..Properties::default()
+        };
+        assert_eq!(
+            tx.insert_with(line(0.0, 0.0, 1.0, 0.0), dotted),
+            Err(unknown)
+        );
+        let id = tx.insert(line(0.0, 0.0, 1.0, 0.0));
+        tx.commit();
+        let mut tx = drawing.transaction();
+        assert_eq!(tx.set_properties(id, dotted), Err(unknown));
+        // A linetype loaded in this transaction can be used in it.
+        let dashed = tx
+            .add_linetype(LinetypeDef::built_in_named("Dashed").unwrap())
+            .unwrap();
+        tx.set_current_linetype(Linetype::Named(dashed)).unwrap();
+        let second = tx.insert(line(0.0, 1.0, 1.0, 1.0));
+        tx.commit();
+        assert_eq!(
+            drawing.properties(second).unwrap().linetype,
+            Linetype::Named(dashed),
+            "new objects are given the current linetype"
+        );
+        assert_eq!(drawing.properties(id).unwrap().linetype, Linetype::ByLayer);
+
+        assert_eq!(
+            Drawing::from_parts(
+                [Layer {
+                    linetype: Linetype::Named(gone),
+                    ..Layer::named("walls")
+                }],
+                [],
+                []
+            )
+            .err(),
+            Some(TransactionError::UnknownLinetype(gone))
+        );
+        assert_eq!(
+            Drawing::from_parts([], [], [(Entity::Line(line(0.0, 0.0, 1.0, 0.0)), dotted)]).err(),
+            Some(TransactionError::UnknownLinetype(gone))
+        );
+        let loaded = Drawing::from_parts(
+            [],
+            [LinetypeDef::built_in_named("Hidden").unwrap()],
+            [(
+                Entity::Line(line(0.0, 0.0, 1.0, 0.0)),
+                Properties {
+                    linetype: Linetype::Named(LinetypeId::from_raw(1)),
+                    ..Properties::default()
+                },
+            )],
+        )
+        .unwrap();
+        assert_eq!(
+            loaded.linetypes().find("hidden"),
+            Some(LinetypeId::from_raw(1))
+        );
+        assert!(!loaded.can_undo());
+    }
+
+    #[test]
+    fn ltscale_is_a_positive_setting_with_its_own_undo() {
+        let mut drawing = Drawing::new();
+        assert_eq!(drawing.ltscale(), 1.0);
+        let mut tx = drawing.transaction();
+        assert_eq!(tx.set_ltscale(0.0), Err(TransactionError::BadLtscale));
+        assert_eq!(tx.set_ltscale(-2.0), Err(TransactionError::BadLtscale));
+        assert_eq!(tx.set_ltscale(f64::NAN), Err(TransactionError::BadLtscale));
+        assert_eq!(
+            tx.set_ltscale(f64::INFINITY),
+            Err(TransactionError::BadLtscale)
+        );
+        tx.set_ltscale(2.5).unwrap();
+        tx.commit();
+        assert_eq!(drawing.ltscale(), 2.5);
+        let shown = drawing.shown_revision();
+        drawing.undo();
+        assert_eq!(drawing.ltscale(), 1.0);
+        assert_eq!(
+            drawing.shown_revision(),
+            shown,
+            "a setting changes no geometry"
+        );
+        drawing.redo();
+        assert_eq!(drawing.ltscale(), 2.5);
+    }
+
     #[test]
     fn what_is_on_an_off_layer_is_not_shown_and_what_is_on_a_locked_one_is_locked() {
         let (off, locked) = (LayerId::from_raw(1), LayerId::from_raw(2));
@@ -1887,6 +2364,7 @@ mod tests {
                     ..Layer::named("locked")
                 },
             ],
+            [],
             [
                 (
                     Entity::Line(line(0.0, 0.0, 10.0, 0.0)),
@@ -1933,17 +2411,15 @@ mod tests {
         let ghost = EntityId::from_raw(999);
         assert!(!drawing.is_shown(ghost) && !drawing.is_locked(ghost));
 
-        let duplicate = Drawing::from_parts([Layer::named("a"), Layer::named("A")], []);
+        let duplicate = Drawing::from_parts([Layer::named("a"), Layer::named("A")], [], []);
         assert_eq!(
             duplicate.err(),
             Some(TransactionError::DuplicateLayerName(LayerId::from_raw(1)))
         );
-        let bad = Drawing::from_parts([Layer::named("a,b")], []);
+        let bad = Drawing::from_parts([Layer::named("a,b")], [], []);
         assert_eq!(
             bad.err(),
-            Some(TransactionError::BadLayerName(LayerNameError::Forbidden(
-                ','
-            )))
+            Some(TransactionError::BadLayerName(NameError::Forbidden(',')))
         );
     }
 
@@ -1960,6 +2436,14 @@ mod tests {
         RemoveLayer(usize),
         SetCurrent(usize),
         SetUnit(usize),
+        /// A built-in linetype, by index.
+        LoadLinetype(usize),
+        RemoveLinetype(usize),
+        /// An entity given a linetype; a layer given one; the setting.
+        Dash(usize, usize),
+        DashLayer(usize, usize),
+        SetCurrentLinetype(usize),
+        SetLtscale(f64),
         /// A layer, an entity on it, and an edit of another, as one step.
         Together(usize, f64),
         Undo,
@@ -1984,6 +2468,12 @@ mod tests {
             1 => any::<usize>().prop_map(Op::RemoveLayer),
             1 => any::<usize>().prop_map(Op::SetCurrent),
             1 => any::<usize>().prop_map(Op::SetUnit),
+            2 => any::<usize>().prop_map(Op::LoadLinetype),
+            1 => any::<usize>().prop_map(Op::RemoveLinetype),
+            1 => (any::<usize>(), any::<usize>()).prop_map(|(i, lt)| Op::Dash(i, lt)),
+            1 => (any::<usize>(), any::<usize>()).prop_map(|(i, lt)| Op::DashLayer(i, lt)),
+            1 => any::<usize>().prop_map(Op::SetCurrentLinetype),
+            1 => (-1.0..5.0_f64).prop_map(Op::SetLtscale),
             1 => (any::<usize>(), coordinate()).prop_map(|(i, x)| Op::Together(i, x)),
             3 => Just(Op::Undo),
             2 => Just(Op::Redo),
@@ -1991,10 +2481,11 @@ mod tests {
     }
 
     /// Everything that is saved: every entity with its geometry and
-    /// properties, every layer, and the settings.
+    /// properties, every layer, every linetype, and the settings.
     type Saved = (
         Vec<(EntityId, Entity, Properties)>,
         Vec<(LayerId, Layer)>,
+        Vec<(LinetypeId, LinetypeDef)>,
         DrawingSettings,
     );
 
@@ -2009,7 +2500,12 @@ mod tests {
             .iter()
             .map(|(id, layer)| (id, layer.clone()))
             .collect();
-        (entities, layers, drawing.settings())
+        let linetypes = drawing
+            .linetypes()
+            .iter()
+            .map(|(id, linetype)| (id, linetype.clone()))
+            .collect();
+        (entities, layers, linetypes, drawing.settings())
     }
 
     proptest! {
@@ -2020,6 +2516,8 @@ mod tests {
         ///  - the allocator never decreases;
         ///  - every entity is on a layer that exists; layer names are
         ///    unique; the current layer exists and is on;
+        ///  - every linetype an entity, a layer, or the settings name
+        ///    exists; linetype names are unique;
         ///  - undoing everything gives back the empty drawing, and redoing
         ///    everything gives back exactly the drawing there was (§19.2):
         ///    one history for entities, tables, and settings.
@@ -2033,6 +2531,7 @@ mod tests {
             let empty = saved(&drawing);
             let mut allocated: Vec<EntityId> = Vec::new();
             let mut layers_made: Vec<LayerId> = Vec::new();
+            let mut linetypes_made: Vec<LinetypeId> = Vec::new();
             let mut high_water = drawing.next_entity_id();
             let mut together = 0;
 
@@ -2040,6 +2539,18 @@ mod tests {
                 let live = live_ids(&drawing);
                 let layers: Vec<LayerId> = drawing.layers().iter().map(|(id, _)| id).collect();
                 let layer = |pick: usize| layers[pick % layers.len()];
+                let linetypes: Vec<LinetypeId> = drawing.linetypes().iter().map(|(id, _)| id).collect();
+                // One past the table: a linetype that does not exist.
+                let linetype = |pick: usize| {
+                    let index = pick % (linetypes.len() + 1);
+                    linetypes.get(index).copied().unwrap_or(LinetypeId::from_raw(u32::MAX))
+                };
+                let in_use = |drawing: &Drawing, id: LinetypeId| {
+                    let named = Linetype::Named(id);
+                    drawing.records().any(|(_, record)| record.properties.linetype == named)
+                        || drawing.layers().iter().any(|(_, layer)| layer.linetype == named)
+                        || drawing.current_linetype() == named
+                };
                 match op {
                     Op::Create(x0, y0, x1, y1) => {
                         let id = create(&mut drawing, line(x0, y0, x1, y1));
@@ -2131,6 +2642,61 @@ mod tests {
                         prop_assert_eq!(drawing.unit(), unit);
                         prop_assert_eq!(drawing.current_layer(), layer_before);
                     }
+                    Op::LoadLinetype(pick) => {
+                        let built_in = LinetypeDef::built_in();
+                        let def = built_in[pick % built_in.len()].clone();
+                        let taken = drawing.linetypes().find(&def.name);
+                        let mut tx = drawing.transaction();
+                        let added = tx.add_linetype(def);
+                        tx.commit();
+                        match (added, taken) {
+                            (Ok(id), None) => {
+                                prop_assert!(!linetypes_made.contains(&id), "linetype ID {} was reused", id);
+                                linetypes_made.push(id);
+                            }
+                            (Err(TransactionError::DuplicateLinetypeName(id)), Some(existing)) => {
+                                prop_assert_eq!(id, existing);
+                            }
+                            other => prop_assert!(false, "loading a linetype: {:?}", other),
+                        }
+                    }
+                    Op::RemoveLinetype(pick) => {
+                        let id = linetype(pick);
+                        let exists = drawing.linetypes().contains(id);
+                        let used = in_use(&drawing, id);
+                        let mut tx = drawing.transaction();
+                        let removed = tx.remove_linetype(id);
+                        tx.commit();
+                        prop_assert_eq!(removed.is_ok(), exists && id != LinetypeId::FIRST && !used, "{:?}", removed);
+                    }
+                    Op::Dash(pick, lt) if !live.is_empty() => {
+                        let id = live[pick % live.len()];
+                        let named = Linetype::Named(linetype(lt));
+                        let before = drawing.properties(id).unwrap();
+                        let mut tx = drawing.transaction();
+                        let set = tx.set_properties(id, Properties { linetype: named, ..before });
+                        tx.commit();
+                        prop_assert_eq!(set.is_ok(), drawing.linetypes().contains(linetype(lt)));
+                    }
+                    Op::DashLayer(pick, lt) => {
+                        let named = Linetype::Named(linetype(lt));
+                        let set = change_layer(&mut drawing, layer(pick), |layer| layer.linetype = named);
+                        prop_assert_eq!(set.is_ok(), drawing.linetypes().contains(linetype(lt)), "{:?}", set);
+                    }
+                    Op::SetCurrentLinetype(pick) => {
+                        let named = Linetype::Named(linetype(pick));
+                        let mut tx = drawing.transaction();
+                        let set = tx.set_current_linetype(named);
+                        tx.commit();
+                        prop_assert_eq!(set.is_ok(), drawing.linetypes().contains(linetype(pick)));
+                    }
+                    Op::SetLtscale(scale) => {
+                        let mut tx = drawing.transaction();
+                        let set = tx.set_ltscale(scale);
+                        tx.commit();
+                        prop_assert_eq!(set.is_ok(), scale > 0.0);
+                        prop_assert!(drawing.ltscale() > 0.0);
+                    }
                     Op::Together(pick, x) => {
                         together += 1;
                         let mut tx = drawing.transaction();
@@ -2143,7 +2709,7 @@ mod tests {
                         tx.commit();
                         layers_made.push(new_layer);
                     }
-                    Op::Erase(_) | Op::Modify(..) | Op::Restyle(..) => {}
+                    Op::Erase(_) | Op::Modify(..) | Op::Restyle(..) | Op::Dash(..) => {}
                     Op::Undo => { drawing.undo(); }
                     Op::Redo => { drawing.redo(); }
                 }
@@ -2157,6 +2723,22 @@ mod tests {
                 }
                 let current = drawing.layers().get(drawing.current_layer());
                 prop_assert!(current.is_some_and(|layer| layer.on), "the current layer is {:?}", current);
+                let known = |linetype: Linetype| match linetype {
+                    Linetype::Named(id) => drawing.linetypes().contains(id),
+                    Linetype::ByLayer | Linetype::ByBlock => true,
+                };
+                for (id, record) in drawing.records() {
+                    prop_assert!(known(record.properties.linetype), "entity {} has a linetype that does not exist", id);
+                }
+                for (id, layer) in drawing.layers().iter() {
+                    prop_assert!(known(layer.linetype), "layer {} has a linetype that does not exist", id);
+                }
+                prop_assert!(known(drawing.current_linetype()));
+                let mut linetype_names: Vec<String> = drawing.linetypes().iter().map(|(_, lt)| lt.name.to_lowercase()).collect();
+                linetype_names.sort();
+                let count = linetype_names.len();
+                linetype_names.dedup();
+                prop_assert_eq!(linetype_names.len(), count, "two linetypes share a name");
                 let mut names: Vec<String> = drawing.layers().iter().map(|(_, layer)| layer.name.to_lowercase()).collect();
                 names.sort();
                 let count = names.len();

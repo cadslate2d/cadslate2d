@@ -9,15 +9,17 @@
 //! - the **style table**: one row per distinct set of properties in use,
 //!   saying what an instance with that index is drawn with. It depends on
 //!   the layers too — `ByLayer` is resolved here — and is re-resolved when
-//!   anything in the drawing changes.
+//!   anything in the drawing changes. With it travels the **pattern
+//!   table** (ADR-0015): the dash and gap lengths of every linetype a
+//!   style names, already multiplied by `LTSCALE`.
 //!
-//! So recolouring a layer changes a few bytes of the table and none of the
-//! geometry, however large the drawing is.
+//! So recolouring a layer, or changing `LTSCALE`, changes a few bytes of
+//! the tables and none of the geometry, however large the drawing is.
 
 use std::collections::HashMap;
 
 use cad_core::Point2;
-use cad_document::{Drawing, Paint, Properties, Revision, Weight};
+use cad_document::{Drawing, LinetypeDef, LinetypeId, Paint, Properties, Revision, Weight};
 
 use crate::{PackedFrame, StyleRole};
 
@@ -38,6 +40,8 @@ pub struct RenderScene {
     style_revision: Revision,
     /// The style table as it crosses the boundary: see [`Self::styles`].
     styles: Vec<u8>,
+    /// The pattern table: see [`Self::patterns`].
+    patterns: Vec<f32>,
 }
 
 impl RenderScene {
@@ -52,6 +56,14 @@ impl RenderScene {
     /// other value is a lineweight in hundredths of a millimetre, of which
     /// the heaviest standard one is 211.
     pub const STYLE_WEIGHT_DEFAULT: u8 = 255;
+    /// Floats per row of the pattern table: the period, the number of
+    /// lengths, then the lengths — dash, gap, dash, gap … — with zeros
+    /// after the last.
+    pub const FLOATS_PER_PATTERN: usize = 2 + LinetypeDef::MAX_LENGTHS;
+    /// The pattern of a continuous line: row 0, whose period is zero. A
+    /// drawing with more distinct patterns in use than a byte can index
+    /// draws the surplus continuous.
+    pub const PATTERN_CONTINUOUS: u8 = 0;
 
     /// Identifies the geometry: the drawing's shown revision it was built
     /// from. TypeScript re-uploads committed instance buffers only when
@@ -81,17 +93,30 @@ impl RenderScene {
     }
 
     /// The style table: [`Self::BYTES_PER_STYLE`] bytes per row — `red,
-    /// green, blue, kind, weight`, then three bytes kept for what a style
-    /// gains next. `kind` is [`Self::STYLE_RGB`] or
+    /// green, blue, kind, weight, pattern`, then two bytes kept for what a
+    /// style gains next. `kind` is [`Self::STYLE_RGB`] or
     /// [`Self::STYLE_FOREGROUND`]; `weight` is a lineweight in hundredths of
-    /// a millimetre or [`Self::STYLE_WEIGHT_DEFAULT`]. Row `i` is what an
-    /// instance with style index `i` is drawn with.
+    /// a millimetre or [`Self::STYLE_WEIGHT_DEFAULT`]; `pattern` is a row of
+    /// [`Self::patterns`]. Row `i` is what an instance with style index `i`
+    /// is drawn with.
     pub fn styles(&self) -> &[u8] {
         &self.styles
     }
 
+    /// The pattern table: [`Self::FLOATS_PER_PATTERN`] floats per row, in
+    /// drawing units with `LTSCALE` applied. Row [`Self::PATTERN_CONTINUOUS`]
+    /// is always there and has no period; the others are the linetypes the
+    /// styles name, each once.
+    pub fn patterns(&self) -> &[f32] {
+        &self.patterns
+    }
+
     pub fn style_count(&self) -> usize {
         self.properties.len()
+    }
+
+    pub fn pattern_count(&self) -> usize {
+        self.patterns.len() / Self::FLOATS_PER_PATTERN
     }
 
     fn build_geometry(&mut self, drawing: &Drawing) {
@@ -133,15 +158,43 @@ impl RenderScene {
         self.revision = drawing.shown_revision();
     }
 
-    /// Resolves every style in use against the layers as they are now.
+    /// Resolves every style in use against the layers, linetypes, and
+    /// settings as they are now.
     fn resolve_styles(&mut self, drawing: &Drawing) {
         self.styles.clear();
+        self.patterns.clear();
+        self.patterns
+            .extend(std::iter::repeat_n(0.0, Self::FLOATS_PER_PATTERN));
+        let mut pattern_rows: HashMap<LinetypeId, u8> = HashMap::new();
         for properties in &self.properties {
             let layer = drawing.layers().get(properties.layer);
             let paint = layer.map_or(Paint::Foreground, |layer| properties.color.paint_on(layer));
             let weight = layer.map_or(Weight::Default, |layer| {
                 properties.lineweight.weight_on(layer)
             });
+            let linetype =
+                layer.map_or(LinetypeId::FIRST, |layer| properties.linetype.row_on(layer));
+            let pattern = match drawing.linetypes().get(linetype) {
+                Some(def) if !def.is_continuous() => {
+                    *pattern_rows.entry(linetype).or_insert_with(|| {
+                        let row = self.patterns.len() / Self::FLOATS_PER_PATTERN;
+                        if row > usize::from(u8::MAX) {
+                            return Self::PATTERN_CONTINUOUS;
+                        }
+                        let lengths = def.pattern.iter().map(|length| *length * drawing.ltscale());
+                        self.patterns
+                            .push((def.period() * drawing.ltscale()) as f32);
+                        self.patterns.push(def.pattern.len() as f32);
+                        self.patterns.extend(lengths.map(|length| length as f32));
+                        self.patterns.extend(std::iter::repeat_n(
+                            0.0,
+                            LinetypeDef::MAX_LENGTHS - def.pattern.len(),
+                        ));
+                        row as u8
+                    })
+                }
+                _ => Self::PATTERN_CONTINUOUS,
+            };
             let [red, green, blue, kind] = match paint {
                 Paint::Rgb([red, green, blue]) => [red, green, blue, Self::STYLE_RGB],
                 Paint::Foreground => [0, 0, 0, Self::STYLE_FOREGROUND],
@@ -155,7 +208,7 @@ impl RenderScene {
                 }
             };
             self.styles
-                .extend([red, green, blue, kind, weight, 0, 0, 0]);
+                .extend([red, green, blue, kind, weight, pattern, 0, 0]);
         }
         self.style_revision = drawing.revision();
     }
@@ -190,6 +243,7 @@ impl SceneCache {
                 properties: Vec::new(),
                 style_revision: drawing.revision(),
                 styles: Vec::new(),
+                patterns: Vec::new(),
             });
             scene.build_geometry(drawing);
             self.builds += 1;
@@ -399,6 +453,7 @@ mod tests {
         );
         Drawing::from_parts(
             layers,
+            [],
             [
                 (Entity::Line(line(0.0, 0.0, 100.0, 0.0)), on(1)),
                 (
@@ -604,6 +659,7 @@ mod tests {
         };
         let mut drawing = Drawing::from_parts(
             layers,
+            [],
             [
                 (
                     Entity::Line(line(0.0, 0.0, 10.0, 0.0)),
@@ -637,5 +693,111 @@ mod tests {
             vec![default, 100, 211, default]
         );
         assert_eq!(cache.build_count(), 1, "no geometry was rebuilt");
+    }
+
+    // ── linetypes (#138) ──
+
+    /// The pattern byte of every row.
+    fn patterns_of(scene: &RenderScene) -> Vec<u8> {
+        let (rows, _) = scene
+            .styles()
+            .as_chunks::<{ RenderScene::BYTES_PER_STYLE }>();
+        rows.iter().map(|row| row[5]).collect()
+    }
+
+    fn pattern_rows(scene: &RenderScene) -> Vec<Vec<f32>> {
+        let (rows, rest) = scene
+            .patterns()
+            .as_chunks::<{ RenderScene::FLOATS_PER_PATTERN }>();
+        assert!(rest.is_empty(), "whole rows only");
+        rows.iter().map(|row| row.to_vec()).collect()
+    }
+
+    #[test]
+    fn a_style_row_names_its_pattern_and_the_table_holds_each_once() {
+        use cad_document::{Linetype, LinetypeDef, LinetypeId};
+
+        let (dashed, hidden) = (LinetypeId::from_raw(1), LinetypeId::from_raw(2));
+        let layers = [Layer {
+            linetype: Linetype::Named(dashed),
+            ..Layer::named("dashed")
+        }];
+        let linetypes = [
+            LinetypeDef::built_in_named("Dashed").unwrap(),
+            LinetypeDef::built_in_named("Hidden").unwrap(),
+        ];
+        let with = |linetype: Linetype, layer: u32| Properties {
+            linetype,
+            ..on(layer)
+        };
+        let mut drawing = Drawing::from_parts(
+            layers,
+            linetypes,
+            [
+                // Continuous by layer 0; dashed by its layer; its own
+                // hidden on that layer; dashed by name on layer 0; and
+                // continuous by name on the dashed layer.
+                (
+                    Entity::Line(line(0.0, 0.0, 10.0, 0.0)),
+                    Properties::default(),
+                ),
+                (Entity::Line(line(0.0, 1.0, 10.0, 1.0)), on(1)),
+                (
+                    Entity::Line(line(0.0, 2.0, 10.0, 2.0)),
+                    with(Linetype::Named(hidden), 1),
+                ),
+                (
+                    Entity::Line(line(0.0, 3.0, 10.0, 3.0)),
+                    with(Linetype::Named(dashed), 0),
+                ),
+                (
+                    Entity::Line(line(0.0, 4.0, 10.0, 4.0)),
+                    with(Linetype::CONTINUOUS, 1),
+                ),
+                (
+                    Entity::Line(line(0.0, 5.0, 10.0, 5.0)),
+                    with(Linetype::ByBlock, 1),
+                ),
+            ],
+        )
+        .unwrap();
+        let mut cache = SceneCache::new();
+        let scene = cache.scene(&drawing);
+        let solid = RenderScene::PATTERN_CONTINUOUS;
+        assert_eq!(patterns_of(scene), vec![solid, 1, 2, 1, solid, solid]);
+        let rows = pattern_rows(scene);
+        assert_eq!(rows.len(), 3, "continuous, then each pattern in use once");
+        assert_eq!(rows[0], vec![0.0; RenderScene::FLOATS_PER_PATTERN]);
+        assert_eq!(
+            rows[1],
+            vec![0.75, 2.0, 0.5, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        );
+        assert_eq!(
+            rows[2],
+            vec![0.375, 2.0, 0.25, 0.125, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        );
+        assert_eq!(scene.pattern_count(), 3);
+
+        // LTSCALE multiplies the table and rebuilds no geometry.
+        let mut tx = drawing.transaction();
+        tx.set_ltscale(4.0).unwrap();
+        tx.commit();
+        let scene = cache.scene(&drawing);
+        assert_eq!(&pattern_rows(scene)[1][..4], &[3.0, 2.0, 2.0, 1.0]);
+        assert_eq!(patterns_of(scene), vec![solid, 1, 2, 1, solid, solid]);
+        assert_eq!(cache.build_count(), 1);
+        assert_eq!(cache.style_build_count(), 2);
+
+        // So does giving the layer another linetype.
+        let id = drawing.layers().find("dashed").unwrap();
+        let mut layer = drawing.layers().get(id).cloned().unwrap();
+        layer.linetype = Linetype::CONTINUOUS;
+        let mut tx = drawing.transaction();
+        tx.replace_layer(id, layer).unwrap();
+        tx.commit();
+        let scene = cache.scene(&drawing);
+        assert_eq!(patterns_of(scene), vec![solid, solid, 1, 2, solid, solid]);
+        assert_eq!(pattern_rows(scene).len(), 3);
+        assert_eq!(cache.build_count(), 1);
     }
 }

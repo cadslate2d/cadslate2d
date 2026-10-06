@@ -12,9 +12,9 @@ use crate::Command;
 use crate::commands::{
     ArcCommand, BreakCommand, CircleCommand, ColorCommand, CornerCommand, EdgeCommand,
     EraseCommand, ExportCommand, GridCommand, JoinCommand, LayerCommand, LineCommand,
-    LweightCommand, MirrorCommand, OffsetCommand, OpenCommand, OsnapCommand, PlineCommand,
-    PolarAngleCommand, RectangCommand, RedoCommand, StretchCommand, TransformCommand, UndoCommand,
-    UnitsCommand,
+    LinetypeCommand, LtscaleCommand, LweightCommand, MirrorCommand, OffsetCommand, OpenCommand,
+    OsnapCommand, PlineCommand, PolarAngleCommand, RectangCommand, RedoCommand, StretchCommand,
+    TransformCommand, UndoCommand, UnitsCommand,
 };
 
 type CommandFactory = fn() -> Box<dyn Command>;
@@ -50,7 +50,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 30] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 32] = [
             ("ERASE", &["E"], || Box::new(EraseCommand)),
             ("MOVE", &["M"], || Box::new(TransformCommand::moving())),
             ("COPY", &["CO", "CP"], || {
@@ -70,6 +70,10 @@ impl CommandRegistry {
             ("LWEIGHT", &["LW", "LINEWEIGHT"], || {
                 Box::new(LweightCommand::new())
             }),
+            ("LINETYPE", &["LT", "LTYPE"], || {
+                Box::new(LinetypeCommand::new())
+            }),
+            ("LTSCALE", &["LTS"], || Box::new(LtscaleCommand::new())),
             (
                 "COLOR",
                 &["COL", "COLOUR"],

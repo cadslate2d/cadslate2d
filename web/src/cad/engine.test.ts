@@ -157,7 +157,7 @@ describe("commands", () => {
     const cad = engine();
     enter(cad, "LA", "N", "walls", "S", "walls", "");
     enter(cad, "L", "0,0", "100,0", "");
-    const styles = () => cad.readStyles((rows) => [...rows]);
+    const styles = () => cad.readStyles(({ styles }) => [...styles]);
     const indices = () => cad.readScene((frame) => [...(frame.segmentStyles ?? [])]);
     expect(indices()).toEqual([0]);
     // Colour 7 is the theme's foreground; the weight is the ordinary one.

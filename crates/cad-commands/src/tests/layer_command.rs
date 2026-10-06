@@ -9,7 +9,7 @@ use cad_document::{Color, Layer, LayerId, Properties};
 use crate::testing::Harness;
 
 const OPTIONS: &str =
-    "Press Enter to finish or [?/New/Set/Color/LWeight/ON/OFF/Lock/Unlock/Rename/Delete]:";
+    "Press Enter to finish or [?/New/Set/Color/LWeight/LType/ON/OFF/Lock/Unlock/Rename/Delete]:";
 
 fn last(h: &Harness) -> String {
     h.log().last().cloned().unwrap_or_default()

@@ -295,13 +295,49 @@ impl CadSession {
     }
 
     /// The style table: eight bytes per row — `red, green, blue, kind,
-    /// weight`, and three kept for later. Kind 255 is that colour and kind 0
-    /// the theme's foreground; weight is a lineweight in hundredths of a
-    /// millimetre, or 255 for the theme's ordinary width. Row `i` is what an
+    /// weight, pattern`, and two kept for later. Kind 255 is that colour
+    /// and kind 0 the theme's foreground; weight is a lineweight in
+    /// hundredths of a millimetre, or 255 for the theme's ordinary width;
+    /// pattern is a row of [`Self::scene_patterns`]. Row `i` is what an
     /// instance with style index `i` is drawn with. A view into WASM memory
     /// — consume before the next call.
     pub fn scene_styles(&mut self) -> Uint8Array {
         u8_view(self.scene.scene(self.session.drawing()).styles())
+    }
+
+    /// The pattern table (ADR-0015): ten floats per row — the period, the
+    /// number of lengths, then dash, gap, dash, gap … in drawing units with
+    /// `LTSCALE` applied, zeros after the last. Row 0 is a continuous line.
+    /// Changes with the style table. A view into WASM memory — consume
+    /// before the next call.
+    pub fn scene_patterns(&mut self) -> Float32Array {
+        f32_view(self.scene.scene(self.session.drawing()).patterns())
+    }
+
+    /// Per committed segment instance, the distance along its entity's
+    /// path at its start, in drawing units: where its linetype pattern is
+    /// (ADR-0015). Changes with the geometry. A view into WASM memory —
+    /// consume before the next call.
+    pub fn scene_segment_distances(&mut self) -> Float32Array {
+        f32_view(
+            self.scene
+                .scene(self.session.drawing())
+                .frame()
+                .segment_distances(),
+        )
+    }
+
+    /// Per committed arc instance, two floats: the distance along its
+    /// entity's path at the arc's counter-clockwise start, and `1` or `-1`
+    /// for the direction the path runs round it. A view into WASM memory —
+    /// consume before the next call.
+    pub fn scene_arc_distances(&mut self) -> Float32Array {
+        f32_view(
+            self.scene
+                .scene(self.session.drawing())
+                .frame()
+                .arc_distances(),
+        )
     }
 
     /// One style index per committed segment instance. A view into WASM

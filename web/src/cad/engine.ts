@@ -106,7 +106,7 @@ export type StyleRole = (typeof StyleRole)[keyof typeof StyleRole];
 export const FLOATS_PER_SEGMENT = 4;
 export const FLOATS_PER_ARC = 5;
 export const WORDS_PER_BATCH = 3;
-/** Bytes per row of the style table: red, green, blue, kind, weight, and three spare (ADR-0014). */
+/** Bytes per row of the style table: red, green, blue, kind, weight, pattern, and two spare (ADR-0014). */
 export const BYTES_PER_STYLE = 8;
 /** The kind of a style row whose colour is the theme's foreground. */
 export const STYLE_FOREGROUND = 0;
@@ -114,6 +114,20 @@ export const STYLE_FOREGROUND = 0;
 export const STYLE_RGB = 255;
 /** The weight of a style row drawn at the theme's ordinary width; else hundredths of a millimetre. */
 export const STYLE_WEIGHT_DEFAULT = 255;
+/** The pattern of a style row drawn continuous: row 0 of the pattern table (ADR-0015). */
+export const PATTERN_CONTINUOUS = 0;
+/** Floats per row of the pattern table: period, count, then up to eight dash and gap lengths. */
+export const FLOATS_PER_PATTERN = 10;
+/** Floats per arc instance in the arc distance buffer: the path distance and the direction. */
+export const FLOATS_PER_ARC_DISTANCE = 2;
+
+/** The style table and the linetype patterns it names, which change together (ADR-0014, ADR-0015). */
+export interface StyleTables {
+  /** `BYTES_PER_STYLE` bytes per row: `red, green, blue, kind, weight, pattern`. */
+  readonly styles: Uint8Array;
+  /** `FLOATS_PER_PATTERN` floats per row, in drawing units with LTSCALE applied. */
+  readonly patterns: Float32Array;
+}
 
 /**
  * Packed geometry for one render lifetime.
@@ -138,6 +152,14 @@ export interface FrameBuffers {
   readonly segmentStyles?: Uint16Array;
   /** One style index per arc instance; see `segmentStyles`. */
   readonly arcStyles?: Uint16Array;
+  /**
+   * Per segment instance, the distance along its entity's path at its
+   * start, in drawing units: where its linetype pattern is (ADR-0015).
+   * Only the committed scene has them; the overlay is drawn continuous.
+   */
+  readonly segmentDistances?: Float32Array;
+  /** Per arc instance, that distance at its counter-clockwise start and `±1` for the path's direction. */
+  readonly arcDistances?: Float32Array;
 }
 
 /** `[scaleX, scaleY, translateX, translateY]`: `clip = position * scale + translate`. */
@@ -268,12 +290,12 @@ export class CadEngine {
     return this.#session.scene_style_revision();
   }
 
-  /**
-   * Lends the style table to `consume` for the duration of the call:
-   * `BYTES_PER_STYLE` bytes per row, `red, green, blue, kind, weight`.
-   */
-  readStyles<T>(consume: (rows: Uint8Array) => T): T {
-    return consume(this.#session.scene_styles());
+  /** Lends the style table and the pattern table to `consume` for the duration of the call. */
+  readStyles<T>(consume: (tables: StyleTables) => T): T {
+    return consume({
+      styles: this.#session.scene_styles(),
+      patterns: this.#session.scene_patterns(),
+    });
   }
 
   /** Lends the committed scene's buffers to `consume` for the duration of the call. */
@@ -286,6 +308,8 @@ export class CadEngine {
       arcBatches: this.#session.scene_arc_batches(),
       segmentStyles: this.#session.scene_segment_styles(),
       arcStyles: this.#session.scene_arc_styles(),
+      segmentDistances: this.#session.scene_segment_distances(),
+      arcDistances: this.#session.scene_arc_distances(),
     });
   }
 

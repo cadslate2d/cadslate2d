@@ -15,6 +15,7 @@
 use std::sync::Arc;
 
 use crate::layer::LayerId;
+use crate::linetype::LinetypeId;
 use crate::{Entity, SharedEntity};
 
 /// An entity's colour. The index palette and object colours arrive with
@@ -30,14 +31,14 @@ pub enum Color {
     Index(u8),
 }
 
-/// An entity's linetype. Named linetypes arrive with the linetype table.
+/// An entity's linetype (see `linetype.rs`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Linetype {
     #[default]
     ByLayer,
     ByBlock,
-    /// An unbroken line: the linetype every drawing has.
-    Continuous,
+    /// A row of the linetype table; [`Linetype::CONTINUOUS`] is the first.
+    Named(LinetypeId),
 }
 
 /// An entity's lineweight (see `lineweight.rs`).
