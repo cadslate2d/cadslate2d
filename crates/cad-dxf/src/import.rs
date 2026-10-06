@@ -17,7 +17,7 @@ use cad_document::{
     ArcEntity, Block, BlockId, BlockReferenceEntity, CircleEntity, Color, Drawing, DrawingSettings,
     Entity, EntityRecord, Justification, Layer, LayerId, LineEntity, Linetype, LinetypeDef,
     LinetypeId, Lineweight, MTextEntity, PolylineEntity, Properties, TextEntity, TextStyle,
-    TextStyleId, check_name, same_name,
+    TextStyleId, check_name, nearest_index, same_name,
 };
 
 use crate::export::insunits_code;
@@ -45,6 +45,9 @@ const BAD_LINETYPE_NAME: &str = "(linetype name)";
 const BAD_LINETYPE_PATTERN: &str = "(linetype pattern)";
 const BAD_TEXT_STYLE_NAME: &str = "(text style name)";
 const BAD_BLOCK_NAME: &str = "(block name)";
+/// Report key for a layer whose colour is a true colour: the drawing holds
+/// the index palette, so the layer takes the nearest index (ADR-0018).
+const LAYER_TRUE_COLOUR: &str = "(layer true colour)";
 /// Report keys for what an INSERT carries that a reference cannot hold:
 /// the reference is imported as far as the model holds, the rest said.
 const INSERT_NON_UNIFORM: &str = "(INSERT with a non-uniform scale)";
@@ -701,9 +704,13 @@ impl<'a> Reader<'a> {
         let mut layer = Layer::named(name);
         if let Some(code) = body.color {
             layer.on = code >= 0;
-            if let Some(Color::Index(index)) = color_from_dxf(code) {
-                layer.color = Color::Index(index);
-            }
+        }
+        let (color, true_colour_dropped) = body.colour();
+        if let Some(Color::Index(index)) = color {
+            layer.color = Color::Index(index);
+        }
+        if true_colour_dropped {
+            self.report.count_unsupported(LAYER_TRUE_COLOUR);
         }
         if body.flags & LAYER_FROZEN != 0 {
             layer.on = false;
@@ -1018,6 +1025,8 @@ struct RecordBody {
     layer: Option<String>,
     /// Group 62, as written: a layer's sign says whether it is off.
     color: Option<i64>,
+    /// Group 420: a true colour, as `0x00RRGGBB`.
+    true_color: Option<i64>,
     /// Group 6: the linetype, by name.
     linetype: Option<String>,
     /// Group 370, as written.
@@ -1103,6 +1112,7 @@ impl RecordBody {
                 Ok(code) if lineweight_from_dxf(code).is_some() => self.lineweight = Some(code),
                 _ => self.has_dropped_properties = true,
             },
+            420 => self.true_color = group.value.parse::<i64>().ok(),
             49 => self.elements.push(real(group)?),
             74 => self.has_shapes |= group.value.parse::<i64>().unwrap_or(0) != 0,
             // A linetype scale of the entity's own: dropped. Exactly one is
@@ -1117,14 +1127,26 @@ impl RecordBody {
         Ok(())
     }
 
+    /// The colour the record states, and whether a true colour was dropped
+    /// for it: the drawing holds the index palette, so a true colour
+    /// becomes the nearest index. The group 62 beside a true colour is not
+    /// trusted: some writers put the nearest index there, others a default.
+    fn colour(&self) -> (Option<Color>, bool) {
+        match self.true_color {
+            None => (self.color.and_then(color_from_dxf), false),
+            Some(rgb) => {
+                let [_, r, g, b] = (rgb as u32).to_be_bytes();
+                (Some(Color::Index(nearest_index([r, g, b]))), true)
+            }
+        }
+    }
+
     /// The entity's properties, as names where the tables are needed.
     fn pending(&self) -> Pending {
+        let (color, true_colour_dropped) = self.colour();
         Pending {
             layer: self.layer.clone().unwrap_or_else(|| Layer::ZERO.to_owned()),
-            color: self
-                .color
-                .and_then(color_from_dxf)
-                .unwrap_or(Color::ByLayer),
+            color: color.unwrap_or(Color::ByLayer),
             linetype: self
                 .linetype
                 .as_deref()
@@ -1135,7 +1157,7 @@ impl RecordBody {
                 .unwrap_or(Lineweight::ByLayer),
             style: self.style.clone(),
             block: None,
-            dropped: self.has_dropped_properties,
+            dropped: self.has_dropped_properties || true_colour_dropped,
         }
     }
 
@@ -2405,6 +2427,57 @@ mod tests {
             3,
             "the header does not make rows"
         );
+    }
+
+    /// #153: a true colour (group 420) becomes the index beside it, or the
+    /// nearest one, and is reported as a dropped property.
+    #[test]
+    fn a_true_colour_becomes_the_nearest_index_and_is_reported() {
+        let text = dxf(&[
+            (0, "SECTION"),
+            (2, "TABLES"),
+            (0, "TABLE"),
+            (2, "LAYER"),
+            (0, "LAYER"),
+            (2, "TEAL"),
+            (62, "3"),
+            (420, "32896"), // 0x008080
+            (0, "ENDTAB"),
+            (0, "ENDSEC"),
+            (0, "SECTION"),
+            (2, "ENTITIES"),
+            (0, "LINE"),
+            (420, "16744448"), // 0xFF8000: orange, nearest 30
+            (10, "0"),
+            (20, "0"),
+            (11, "1"),
+            (21, "0"),
+            (0, "LINE"),
+            (62, "7"),
+            (420, "660730"), // 0x0A14FA, nearly blue: the index beside it is a default
+            (10, "0"),
+            (20, "1"),
+            (11, "1"),
+            (21, "1"),
+            (0, "ENDSEC"),
+            (0, "EOF"),
+        ]);
+        let import = import(text.as_bytes()).unwrap();
+        let colours: Vec<Color> = {
+            let mut records: Vec<_> = import.drawing.records().collect();
+            records.sort_by_key(|(id, _)| *id);
+            records.iter().map(|(_, r)| r.properties.color).collect()
+        };
+        assert_eq!(colours, [Color::Index(30), Color::Index(5)]);
+        assert_eq!(import.report.with_dropped_properties, 2);
+        let teal = import.drawing.layers().find("TEAL").unwrap();
+        assert_eq!(
+            import.drawing.layers().get(teal).unwrap().color,
+            Color::Index(nearest_index([0, 128, 128])),
+            "the nearest index, not the 3 beside it"
+        );
+        assert_eq!(import.report.unsupported.get(LAYER_TRUE_COLOUR), Some(&1));
+        assert!(import.report.has_unsupported_content());
     }
 
     #[test]

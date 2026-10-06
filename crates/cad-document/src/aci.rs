@@ -35,6 +35,25 @@ pub const fn index_paint(index: u8) -> Paint {
     }
 }
 
+/// The index colour nearest to a red, green, and blue: the one at the
+/// least distance in RGB, the lower number on a tie. This is what a true
+/// colour from a file becomes (ADR-0018): the drawing holds the palette
+/// and nothing else.
+pub fn nearest_index(rgb: [u8; 3]) -> u8 {
+    let distance = |candidate: [u8; 3]| -> u32 {
+        rgb.iter()
+            .zip(candidate)
+            .map(|(a, b)| {
+                let d = i32::from(*a) - i32::from(b);
+                (d * d) as u32
+            })
+            .sum()
+    };
+    (1..=255u8)
+        .min_by_key(|index| distance(INDEX_RGB[usize::from(*index)]))
+        .expect("the palette is not empty")
+}
+
 impl Color {
     /// The paint of an object with this colour on `layer`, outside any
     /// block. This is the one place the indirections are resolved
@@ -183,6 +202,22 @@ const INDEX_RGB: [[u8; 3]; 256] = [
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_palette_colour_is_its_own_nearest_index() {
+        for index in 1..=255u8 {
+            let nearest = super::nearest_index(super::INDEX_RGB[usize::from(index)]);
+            assert_eq!(
+                super::INDEX_RGB[usize::from(nearest)],
+                super::INDEX_RGB[usize::from(index)],
+                "{index} → {nearest}"
+            );
+        }
+        // Off the palette: orange is 30, a dark teal is a dark cyan.
+        assert_eq!(super::nearest_index([255, 128, 0]), 30);
+        assert_eq!(super::nearest_index([250, 5, 5]), 1);
+        assert_ne!(super::nearest_index([0, 128, 128]), 7);
+    }
+
     use super::*;
 
     #[test]

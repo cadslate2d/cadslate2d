@@ -68,6 +68,20 @@ Lineweights on entities (370), on layers (370, `-3` for the default), and in the
 - ADR-0005's amendments on units, tables, text, and blocks stand; its release decision is superseded here.
 - DESIGN §24.1's PROVISIONAL release is resolved.
 
+## Amendments
+
+### 2026-10-06 — True colour is not adopted; a file's true colour is read as the nearest index
+
+The roadmap deferred true colour to this decision because group 420 needs R2000 (#153). With the release here, the question is the colour model's, not the file's, and the answer is no — for now.
+
+Why: the drawing's colour model is the index palette — 255 numbered colours, `ByLayer`, `ByBlock` — because that is what command-driven drafting uses: a colour is a number you type, a layer's colour is a number in a list, and the palette is the same in every drawing. A true colour would be a second kind of colour in every place the first appears: `COLOR`, `LAYER Color`, `CHPROP`, the two panels, the style table (which carries RGB already), the DXF reader and writer, and the ACI names. None of M5's work needs it; nothing a drafter has asked for needs it; and §45 asks that the product stay small. It stays out until a drawing that needs it shows up.
+
+What a file with true colours becomes: the reader takes group 420 on an entity or a layer and gives the object **the nearest index colour** — least distance in RGB, the lower number on a tie, computed by `cad_document::nearest_index` from the palette's own table — and reports it: an entity counts among those whose properties the drawing cannot hold, a layer as `(layer true colour)`. The group 62 that writers put beside a true colour is not trusted: AutoCAD writes the nearest index there, ezdxf a default (`7`), so a teal layer would come in white. The object is never lost, and the export warning applies, as §24.2 asks.
+
+Evidence: `ezdxf-r2010-true-colour.dxf` — a teal layer, an orange line (→ 30), a near-blue line with a `62` of 5 beside its colour (→ 5), a pure-red circle (→ 1) — imports as described and says so; every palette colour is its own nearest index (`every_palette_colour_is_its_own_nearest_index`).
+
+Revisit when a drawing needs a colour the palette lacks: the style table is already RGB, so the renderer is ready; the work is in the commands, the panels, the names, and the file.
+
 ## Revisit when
 
 - A user needs an R12 file from CadSlate2D itself and no tool between can convert it: add the option, as a second writer behind the same `export`.

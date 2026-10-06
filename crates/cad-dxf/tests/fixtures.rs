@@ -709,6 +709,52 @@ fn lineweights_scales_and_undefined_names_from_another_writer() {
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }
 
+/// True colours from a newer file (#153): the drawing holds the index
+/// palette, so each becomes the index beside it or the nearest one, and
+/// the import says so.
+#[test]
+fn true_colours_from_another_writer() {
+    let loaded = load("valid", "ezdxf-r2010-true-colour.dxf").unwrap();
+    let drawing = &loaded.drawing;
+    let colours: Vec<Color> = properties(drawing).iter().map(|p| p.color).collect();
+    // Orange → 30; a near-blue with index 5 beside it → 5 all the same;
+    // pure red → 1; the plain indexed line keeps its 3.
+    assert_eq!(
+        colours,
+        [
+            Color::Index(30),
+            Color::Index(5),
+            Color::Index(1),
+            Color::Index(3)
+        ]
+    );
+    // ezdxf wrote a default 7 beside the layer's true colour; the colour decides.
+    let (_, teal) = layer_named(drawing, "TEAL");
+    assert_eq!(
+        teal.color,
+        Color::Index(cad_document::nearest_index([0, 128, 128]))
+    );
+    assert_ne!(teal.color, Color::Index(7));
+    let report = &loaded.report;
+    assert_eq!(report.with_dropped_properties, 3);
+    assert!(report.has_unsupported_content());
+    assert_eq!(
+        report.summary(),
+        vec![
+            "Imported 3 lines, 1 circle.",
+            "Not imported (unsupported): 1 (layer true colour).",
+            "With 2 layers.",
+            "Properties the drawing cannot hold were dropped from 3 entities.",
+            "Drawing unit: metres.",
+        ]
+    );
+    // Written back, the indices are what there is; the file is clean.
+    let text = export(drawing);
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert!(!back.report.has_unsupported_content());
+    assert_eq!(export(&back.drawing), text);
+}
+
 // ── text (#145) ──
 
 fn texts(drawing: &Drawing) -> Vec<TextEntity> {

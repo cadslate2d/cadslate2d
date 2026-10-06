@@ -324,13 +324,22 @@ impl Writer {
 
     /// The one viewport, `*Active`, looking at the whole drawing.
     fn viewport(&mut self, drawing: &Drawing) {
+        let fallback = (Point2::ORIGIN, 1000.0);
         let (center, height) = match drawing.extents() {
             Some(extents) => {
-                let size = extents.max() - extents.min();
-                let height = size.y.max(size.x / VIEW_ASPECT).max(1.0) * 1.1;
-                (extents.center(), height)
+                // Halves first: a drawing at the edge of what a number
+                // holds must not overflow into a view no reader takes.
+                let (min, max) = (extents.min(), extents.max());
+                let center = Point2::new(min.x * 0.5 + max.x * 0.5, min.y * 0.5 + max.y * 0.5);
+                let width = max.x * 0.5 - min.x * 0.5;
+                let height = (max.y * 0.5 - min.y * 0.5).max(width / VIEW_ASPECT) * 2.2;
+                if center.x.is_finite() && center.y.is_finite() && height.is_finite() {
+                    (center, height.max(1.0))
+                } else {
+                    fallback
+                }
             }
-            None => (Point2::ORIGIN, 1000.0),
+            None => fallback,
         };
         self.group(2, "*Active");
         self.group(70, "0");
