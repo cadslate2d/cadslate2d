@@ -12,11 +12,12 @@ use cad_document::{Drawing, Entity, Properties};
 use crate::Selection;
 
 /// The kinds an entity can be, in the order they are listed.
-const KINDS: [(&str, &str); 4] = [
+const KINDS: [(&str, &str); 5] = [
     ("line", "lines"),
     ("circle", "circles"),
     ("arc", "arcs"),
     ("polyline", "polylines"),
+    ("text", "texts"),
 ];
 
 fn kind_index(entity: &Entity) -> usize {
@@ -25,6 +26,7 @@ fn kind_index(entity: &Entity) -> usize {
         Entity::Circle(_) => 1,
         Entity::Arc(_) => 2,
         Entity::Polyline(_) => 3,
+        Entity::Text(_) => 4,
     }
 }
 
@@ -197,6 +199,14 @@ fn geometry_of(entity: &Entity) -> Vec<(String, String)> {
                 row("Length", number(length)),
             ]
         }
+        Entity::Text(text) => vec![
+            row("Contents", text.content.clone()),
+            row("Insertion", point(text.insertion)),
+            row("Height", number(text.height)),
+            row("Rotation", degrees(text.rotation)),
+            row("Justification", text.justification.label().to_owned()),
+            row("Width", number(text.width())),
+        ],
     }
 }
 
@@ -214,20 +224,24 @@ mod tests {
         let mut drawing = Drawing::new();
         let mut tx = drawing.transaction();
         let ids = vec![
-            tx.insert(LineEntity::new(p(0.0, 0.0), p(30.0, 40.0))),
-            tx.insert(LineEntity::new(p(0.0, 0.0), p(-10.0, 0.0))),
-            tx.insert(CircleEntity::new(p(1.0, 2.0), 5.0)),
+            tx.insert(LineEntity::new(p(0.0, 0.0), p(30.0, 40.0)))
+                .unwrap(),
+            tx.insert(LineEntity::new(p(0.0, 0.0), p(-10.0, 0.0)))
+                .unwrap(),
+            tx.insert(CircleEntity::new(p(1.0, 2.0), 5.0)).unwrap(),
             tx.insert(ArcEntity::new(
                 p(0.0, 0.0),
                 10.0,
                 0.0,
                 std::f64::consts::FRAC_PI_2,
-            )),
+            ))
+            .unwrap(),
             tx.insert(PolylineEntity::with_bulges(
                 vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 4.0), p(0.0, 4.0)],
                 vec![0.0, 1.0, 0.0, 1.0],
                 true,
-            )),
+            ))
+            .unwrap(),
         ];
         tx.commit();
         (drawing, ids)

@@ -103,15 +103,21 @@ mod tests {
     fn drawing() -> (Drawing, Selection) {
         let mut drawing = Drawing::new();
         let mut transaction = drawing.transaction();
-        let line = transaction.insert(LineEntity::new(
-            Point2::new(0.0, 0.0),
-            Point2::new(10.0, 0.0),
-        ));
-        let circle = transaction.insert(CircleEntity::new(Point2::new(5.0, 5.0), 2.0));
-        transaction.insert(LineEntity::new(
-            Point2::new(100.0, 100.0),
-            Point2::new(101.0, 100.0),
-        ));
+        let line = transaction
+            .insert(LineEntity::new(
+                Point2::new(0.0, 0.0),
+                Point2::new(10.0, 0.0),
+            ))
+            .unwrap();
+        let circle = transaction
+            .insert(CircleEntity::new(Point2::new(5.0, 5.0), 2.0))
+            .unwrap();
+        transaction
+            .insert(LineEntity::new(
+                Point2::new(100.0, 100.0),
+                Point2::new(101.0, 100.0),
+            ))
+            .unwrap();
         transaction.commit();
 
         let mut selection = Selection::default();

@@ -13,6 +13,7 @@ use crate::linetype::{LinetypeDef, LinetypeError, LinetypeId, LinetypeTable, ini
 use crate::names::{NameError, check_name, same_name};
 use crate::spatial::RTreeIndex;
 use crate::table::TableChange;
+use crate::text_style::{TextStyle, TextStyleId, TextStyleTable, initial_text_styles};
 use crate::{
     Change, Color, DrawingSettings, Entity, EntityChange, EntityRecord, EntityStore, Linetype,
     Lineweight, Properties, Revision, SettingsChange, SpatialIndex, Transaction,
@@ -32,6 +33,7 @@ pub struct Drawing {
     entities: EntityStore,
     layers: LayerTable,
     linetypes: LinetypeTable,
+    text_styles: TextStyleTable,
     settings: DrawingSettings,
     ids: EntityIdAllocator,
     index: Box<dyn SpatialIndex>,
@@ -93,6 +95,17 @@ pub enum TransactionError {
     DuplicateLinetypeName(LinetypeId),
     /// `LTSCALE` must be a positive number.
     BadLtscale,
+    /// The text style does not exist, in the drawing or earlier in this
+    /// transaction.
+    UnknownTextStyle(TextStyleId),
+    /// `Standard` is always there: it cannot be removed.
+    PermanentTextStyle,
+    /// A text has the style, so it cannot be removed.
+    TextStyleInUse(TextStyleId),
+    /// The name cannot be a text style's name.
+    BadTextStyleName(NameError),
+    /// This text style already has the name, give or take its case.
+    DuplicateTextStyleName(TextStyleId),
 }
 
 impl fmt::Display for TransactionError {
@@ -123,6 +136,13 @@ impl fmt::Display for TransactionError {
                 write!(f, "linetype {id} already has that name")
             }
             Self::BadLtscale => write!(f, "LTSCALE must be a positive number"),
+            Self::UnknownTextStyle(id) => write!(f, "text style {id} does not exist"),
+            Self::PermanentTextStyle => write!(f, "text style Standard cannot be removed"),
+            Self::TextStyleInUse(id) => write!(f, "text style {id} has texts"),
+            Self::BadTextStyleName(error) => write!(f, "{}", error.explain("text style")),
+            Self::DuplicateTextStyleName(id) => {
+                write!(f, "text style {id} already has that name")
+            }
         }
     }
 }
@@ -147,6 +167,7 @@ impl Drawing {
             entities: EntityStore::new(),
             layers: initial_layers(),
             linetypes: initial_linetypes(),
+            text_styles: initial_text_styles(),
             settings: DrawingSettings::default(),
             ids: EntityIdAllocator::new(),
             index,
@@ -303,6 +324,11 @@ impl Drawing {
     /// The linetype table. It always holds `Continuous`.
     pub fn linetypes(&self) -> &LinetypeTable {
         &self.linetypes
+    }
+
+    /// The text style table. It always holds `Standard`.
+    pub fn text_styles(&self) -> &TextStyleTable {
+        &self.text_styles
     }
 
     /// The drawing's settings.
@@ -487,7 +513,10 @@ impl Drawing {
                 Change::Entity(_) => true,
                 Change::Layer(TableChange::Replace { before, after, .. }) => before.on != after.on,
                 // A layer that is made or removed has nothing on it.
-                Change::Layer(_) | Change::Linetype(_) | Change::Settings(_) => false,
+                Change::Layer(_)
+                | Change::Linetype(_)
+                | Change::TextStyle(_)
+                | Change::Settings(_) => false,
             };
             match change {
                 Change::Entity(EntityChange::Insert { id, record }) => {
@@ -520,6 +549,10 @@ impl Drawing {
                 }
                 Change::Linetype(change) => {
                     self.linetypes.apply(change);
+                    report.tables_changed = true;
+                }
+                Change::TextStyle(change) => {
+                    self.text_styles.apply(change);
                     report.tables_changed = true;
                 }
                 Change::Settings(change) => self.settings = change.after,
@@ -559,7 +592,7 @@ impl TransactionBuilder<'_> {
     /// another — a copy, an offset, the second piece of a break — takes
     /// that object's properties with [`insert_like`](Self::insert_like)
     /// instead.
-    pub fn insert(&mut self, entity: impl Into<Entity>) -> EntityId {
+    pub fn insert(&mut self, entity: impl Into<Entity>) -> Result<EntityId, TransactionError> {
         let settings = self.settings_now();
         let properties = Properties {
             layer: settings.current_layer,
@@ -567,7 +600,9 @@ impl TransactionBuilder<'_> {
             linetype: settings.current_linetype,
             lineweight: settings.current_lineweight,
         };
-        self.insert_record(EntityRecord::new(entity, properties))
+        let entity = entity.into();
+        self.known_text_style(&entity)?;
+        Ok(self.insert_record(EntityRecord::new(entity, properties)))
     }
 
     /// Adds a new entity with the given properties.
@@ -578,6 +613,8 @@ impl TransactionBuilder<'_> {
     ) -> Result<EntityId, TransactionError> {
         self.known_layer(properties.layer)?;
         self.known_linetype(properties.linetype)?;
+        let entity = entity.into();
+        self.known_text_style(&entity)?;
         Ok(self.insert_record(EntityRecord::new(entity, properties)))
     }
 
@@ -592,6 +629,8 @@ impl TransactionBuilder<'_> {
             .drawing
             .properties(source)
             .ok_or(TransactionError::UnknownEntity(source))?;
+        let entity = entity.into();
+        self.known_text_style(&entity)?;
         Ok(self.insert_record(EntityRecord::new(entity, properties)))
     }
 
@@ -609,6 +648,8 @@ impl TransactionBuilder<'_> {
         id: EntityId,
         entity: impl Into<Entity>,
     ) -> Result<(), TransactionError> {
+        let entity = entity.into();
+        self.known_text_style(&entity)?;
         let before = self.existing(id)?;
         let after = before.with_entity(entity);
         self.push(EntityChange::Replace { id, before, after });
@@ -686,6 +727,7 @@ impl TransactionBuilder<'_> {
             Change::Entity(EntityChange::Remove { .. })
             | Change::Layer(_)
             | Change::Linetype(_)
+            | Change::TextStyle(_)
             | Change::Settings(_) => false,
         });
         if pending || self.drawing.records().any(|(_, record)| on_layer(record)) {
@@ -838,6 +880,51 @@ impl TransactionBuilder<'_> {
         });
     }
 
+    /// Adds a text style and returns its ID. Its name must be allowed and
+    /// not taken.
+    pub fn add_text_style(&mut self, style: TextStyle) -> Result<TextStyleId, TransactionError> {
+        check_name(&style.name).map_err(TransactionError::BadTextStyleName)?;
+        let added = self.others().filter_map(|change| match change {
+            Change::TextStyle(TableChange::Insert { id, row }) => Some((*id, row)),
+            _ => None,
+        });
+        let taken = self
+            .drawing
+            .text_styles
+            .iter()
+            .filter(|(id, _)| self.text_style_now(*id).is_some())
+            .chain(added)
+            .find(|(_, row)| same_name(&row.name, &style.name));
+        if let Some((id, _)) = taken {
+            return Err(TransactionError::DuplicateTextStyleName(id));
+        }
+        let id = self.drawing.text_styles.allocate();
+        self.push_other(Change::TextStyle(TableChange::Insert { id, row: style }));
+        Ok(id)
+    }
+
+    /// Removes a text style no text has. `Standard` stays.
+    pub fn remove_text_style(&mut self, id: TextStyleId) -> Result<(), TransactionError> {
+        if id == TextStyleId::FIRST {
+            return Err(TransactionError::PermanentTextStyle);
+        }
+        let row = self
+            .text_style_now(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownTextStyle(id))?;
+        let uses = |entity: &Entity| matches!(entity, Entity::Text(text) if text.style == id);
+        let pending = self.changes.iter().any(|change| match change {
+            Change::Entity(EntityChange::Insert { record, .. }) => uses(&record.entity),
+            Change::Entity(EntityChange::Replace { after, .. }) => uses(&after.entity),
+            _ => false,
+        });
+        if pending || self.drawing.entities().any(|(_, entity)| uses(entity)) {
+            return Err(TransactionError::TextStyleInUse(id));
+        }
+        self.push_other(Change::TextStyle(TableChange::Remove { id, row }));
+        Ok(())
+    }
+
     /// Applies the changes as one undo step and discards any redo branch.
     /// An empty transaction is a no-op: no history entry, no new revision.
     pub fn commit(self) -> ApplyReport {
@@ -917,6 +1004,31 @@ impl TransactionBuilder<'_> {
             Some(TableChange::Insert { row, .. }) => Some(row),
             Some(TableChange::Replace { after, .. }) => Some(after),
             None => self.drawing.linetypes.get(id),
+        }
+    }
+
+    /// The text style `id` as it will be once this transaction commits.
+    fn text_style_now(&self, id: TextStyleId) -> Option<&TextStyle> {
+        let change = self.others().find_map(|change| match change {
+            Change::TextStyle(change) if change.id() == id => Some(change),
+            _ => None,
+        });
+        match change {
+            Some(TableChange::Remove { .. }) => None,
+            Some(TableChange::Insert { row, .. }) => Some(row),
+            Some(TableChange::Replace { after, .. }) => Some(after),
+            None => self.drawing.text_styles.get(id),
+        }
+    }
+
+    /// Whether the entity may be stored: a text's style must exist once
+    /// this transaction commits.
+    fn known_text_style(&self, entity: &Entity) -> Result<(), TransactionError> {
+        match entity {
+            Entity::Text(text) if self.text_style_now(text.style).is_none() => {
+                Err(TransactionError::UnknownTextStyle(text.style))
+            }
+            _ => Ok(()),
         }
     }
 
@@ -1020,8 +1132,8 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::LineEntity;
     use crate::spatial::LinearIndex;
+    use crate::{LineEntity, TextEntity};
 
     fn line(x0: f64, y0: f64, x1: f64, y1: f64) -> LineEntity {
         LineEntity::new(Point2::new(x0, y0), Point2::new(x1, y1))
@@ -1029,7 +1141,7 @@ mod tests {
 
     fn create(drawing: &mut Drawing, entity: LineEntity) -> EntityId {
         let mut tx = drawing.transaction();
-        let id = tx.insert(entity);
+        let id = tx.insert(entity).unwrap();
         tx.commit();
         id
     }
@@ -1060,7 +1172,7 @@ mod tests {
     fn committed_entities_are_stored_indexed_and_reported() {
         let mut drawing = Drawing::new();
         let mut tx = drawing.transaction();
-        let id = tx.insert(line(0.0, 0.0, 10.0, 0.0));
+        let id = tx.insert(line(0.0, 0.0, 10.0, 0.0)).unwrap();
         let report = tx.commit();
 
         assert_eq!(
@@ -1083,7 +1195,7 @@ mod tests {
         let mut drawing = Drawing::new();
         let before = drawing.revision();
         let mut tx = drawing.transaction();
-        tx.insert(line(0.0, 0.0, 1.0, 1.0));
+        tx.insert(line(0.0, 0.0, 1.0, 1.0)).unwrap();
         drop(tx);
 
         assert!(drawing.is_empty());
@@ -1420,7 +1532,9 @@ mod tests {
             .collect();
         let mut drawing = Drawing::new();
         let mut tx = drawing.transaction();
-        let id = tx.insert(PolylineEntity::new(vertices.clone(), false));
+        let id = tx
+            .insert(PolylineEntity::new(vertices.clone(), false))
+            .unwrap();
         tx.commit();
         let original: *const Entity = drawing.entity(id).unwrap();
 
@@ -1889,7 +2003,7 @@ mod tests {
         let mut tx = drawing.transaction();
         tx.set_current_layer(walls).unwrap();
         tx.set_current_layer(doors).unwrap();
-        let id = tx.insert(line(0.0, 9.0, 10.0, 9.0));
+        let id = tx.insert(line(0.0, 9.0, 10.0, 9.0)).unwrap();
         tx.commit();
         assert_eq!(drawing.properties(id), Some(Properties::on(doors)));
         drawing.undo().unwrap();
@@ -1947,7 +2061,7 @@ mod tests {
         // Set and draw in one transaction.
         let mut tx = drawing.transaction();
         tx.set_current_color(Color::ByBlock);
-        let id = tx.insert(line(0.0, 20.0, 10.0, 20.0));
+        let id = tx.insert(line(0.0, 20.0, 10.0, 20.0)).unwrap();
         tx.commit();
         assert_eq!(drawing.properties(id).unwrap().color, Color::ByBlock);
     }
@@ -2330,7 +2444,7 @@ mod tests {
             tx.insert_with(line(0.0, 0.0, 1.0, 0.0), dotted),
             Err(unknown)
         );
-        let id = tx.insert(line(0.0, 0.0, 1.0, 0.0));
+        let id = tx.insert(line(0.0, 0.0, 1.0, 0.0)).unwrap();
         tx.commit();
         let mut tx = drawing.transaction();
         assert_eq!(tx.set_properties(id, dotted), Err(unknown));
@@ -2339,7 +2453,7 @@ mod tests {
             .add_linetype(LinetypeDef::built_in_named("Dashed").unwrap())
             .unwrap();
         tx.set_current_linetype(Linetype::Named(dashed)).unwrap();
-        let second = tx.insert(line(0.0, 1.0, 1.0, 1.0));
+        let second = tx.insert(line(0.0, 1.0, 1.0, 1.0)).unwrap();
         tx.commit();
         assert_eq!(
             drawing.properties(second).unwrap().linetype,
@@ -2457,6 +2571,73 @@ mod tests {
                 .err(),
             Some(TransactionError::BadLtscale)
         );
+    }
+
+    #[test]
+    fn text_styles_are_a_table_with_standard_that_texts_refer_to() {
+        let mut drawing = Drawing::new();
+        assert_eq!(drawing.text_styles().len(), 1);
+        let mut tx = drawing.transaction();
+        let roman = tx.add_text_style(TextStyle::named("Roman")).unwrap();
+        assert_eq!(roman, TextStyleId::from_raw(1));
+        assert_eq!(
+            tx.add_text_style(TextStyle::named("ROMAN")),
+            Err(TransactionError::DuplicateTextStyleName(roman))
+        );
+        assert_eq!(
+            tx.add_text_style(TextStyle::named("standard")),
+            Err(TransactionError::DuplicateTextStyleName(TextStyleId::FIRST))
+        );
+        assert_eq!(
+            tx.add_text_style(TextStyle::named("a,b")),
+            Err(TransactionError::BadTextStyleName(NameError::Forbidden(
+                ','
+            )))
+        );
+        assert_eq!(
+            tx.remove_text_style(TextStyleId::FIRST),
+            Err(TransactionError::PermanentTextStyle)
+        );
+        // A text in the new style, in the same transaction.
+        let text = TextEntity {
+            style: roman,
+            ..TextEntity::new(Point2::ORIGIN, 2.5, 0.0, "Hello")
+        };
+        let id = tx.insert(text.clone()).unwrap();
+        assert_eq!(
+            tx.remove_text_style(roman),
+            Err(TransactionError::TextStyleInUse(roman))
+        );
+        let ghost = TextEntity {
+            style: TextStyleId::from_raw(9),
+            ..text.clone()
+        };
+        assert_eq!(
+            tx.insert(ghost.clone()),
+            Err(TransactionError::UnknownTextStyle(TextStyleId::from_raw(9)))
+        );
+        tx.commit();
+
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.replace(id, ghost),
+            Err(TransactionError::UnknownTextStyle(TextStyleId::from_raw(9)))
+        );
+        tx.replace(id, text.saying("Changed")).unwrap();
+        assert_eq!(
+            tx.remove_text_style(roman),
+            Err(TransactionError::TextStyleInUse(roman))
+        );
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.remove(id).unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.remove_text_style(roman).unwrap();
+        tx.commit();
+        assert_eq!(drawing.text_styles().len(), 1);
+        drawing.undo();
+        assert_eq!(drawing.text_styles().len(), 2, "one history for all tables");
     }
 
     #[test]
@@ -2580,6 +2761,11 @@ mod tests {
         DashLayer(usize, usize),
         SetCurrentLinetype(usize),
         SetLtscale(f64),
+        /// A text style by name; a text with a style by index (one past
+        /// the table is a style that does not exist); a style removed.
+        AddTextStyle(u8),
+        CreateText(f64, usize),
+        RemoveTextStyle(usize),
         /// A layer, an entity on it, and an edit of another, as one step.
         Together(usize, f64),
         Undo,
@@ -2610,6 +2796,9 @@ mod tests {
             1 => (any::<usize>(), any::<usize>()).prop_map(|(i, lt)| Op::DashLayer(i, lt)),
             1 => any::<usize>().prop_map(Op::SetCurrentLinetype),
             1 => (-1.0..5.0_f64).prop_map(Op::SetLtscale),
+            1 => (0..6u8).prop_map(Op::AddTextStyle),
+            2 => (coordinate(), any::<usize>()).prop_map(|(x, style)| Op::CreateText(x, style)),
+            1 => any::<usize>().prop_map(Op::RemoveTextStyle),
             1 => (any::<usize>(), coordinate()).prop_map(|(i, x)| Op::Together(i, x)),
             3 => Just(Op::Undo),
             2 => Just(Op::Redo),
@@ -2622,6 +2811,7 @@ mod tests {
         Vec<(EntityId, Entity, Properties)>,
         Vec<(LayerId, Layer)>,
         Vec<(LinetypeId, LinetypeDef)>,
+        Vec<(TextStyleId, TextStyle)>,
         DrawingSettings,
     );
 
@@ -2641,7 +2831,12 @@ mod tests {
             .iter()
             .map(|(id, linetype)| (id, linetype.clone()))
             .collect();
-        (entities, layers, linetypes, drawing.settings())
+        let text_styles = drawing
+            .text_styles()
+            .iter()
+            .map(|(id, style)| (id, style.clone()))
+            .collect();
+        (entities, layers, linetypes, text_styles, drawing.settings())
     }
 
     proptest! {
@@ -2833,12 +3028,48 @@ mod tests {
                         prop_assert_eq!(set.is_ok(), scale > 0.0);
                         prop_assert!(drawing.ltscale() > 0.0);
                     }
+                    Op::AddTextStyle(name) => {
+                        let name = format!("Style {name}");
+                        let taken = drawing.text_styles().find(&name);
+                        let mut tx = drawing.transaction();
+                        let added = tx.add_text_style(TextStyle::named(name.to_uppercase()));
+                        tx.commit();
+                        match (added, taken) {
+                            (Ok(_), None) => {}
+                            (Err(TransactionError::DuplicateTextStyleName(id)), Some(existing)) => {
+                                prop_assert_eq!(id, existing);
+                            }
+                            other => prop_assert!(false, "adding a text style: {:?}", other),
+                        }
+                    }
+                    Op::CreateText(x, pick) => {
+                        let styles: Vec<TextStyleId> = drawing.text_styles().iter().map(|(id, _)| id).collect();
+                        let index = pick % (styles.len() + 1);
+                        let style = styles.get(index).copied().unwrap_or(TextStyleId::from_raw(u32::MAX));
+                        let text = TextEntity { style, ..TextEntity::new(Point2::new(x, 0.0), 2.5, 0.0, "Ab") };
+                        let mut tx = drawing.transaction();
+                        let inserted = tx.insert(text);
+                        tx.commit();
+                        prop_assert_eq!(inserted.is_ok(), index < styles.len(), "{:?}", inserted);
+                        if let Ok(id) = inserted {
+                            allocated.push(id);
+                        }
+                    }
+                    Op::RemoveTextStyle(pick) => {
+                        let styles: Vec<TextStyleId> = drawing.text_styles().iter().map(|(id, _)| id).collect();
+                        let id = styles[pick % styles.len()];
+                        let used = drawing.entities().any(|(_, entity)| matches!(entity, Entity::Text(text) if text.style == id));
+                        let mut tx = drawing.transaction();
+                        let removed = tx.remove_text_style(id);
+                        tx.commit();
+                        prop_assert_eq!(removed.is_ok(), id != TextStyleId::FIRST && !used, "{:?}", removed);
+                    }
                     Op::Together(pick, x) => {
                         together += 1;
                         let mut tx = drawing.transaction();
                         let new_layer = tx.add_layer(Layer::named(format!("together {together}"))).unwrap();
                         tx.set_current_layer(new_layer).unwrap();
-                        allocated.push(tx.insert(line(x, 0.0, x, 5.0)));
+                        allocated.push(tx.insert(line(x, 0.0, x, 5.0)).unwrap());
                         if !live.is_empty() {
                             tx.set_properties(live[pick % live.len()], Properties::on(new_layer)).unwrap();
                         }
@@ -2870,6 +3101,11 @@ mod tests {
                     prop_assert!(known(layer.linetype), "layer {} has a linetype that does not exist", id);
                 }
                 prop_assert!(known(drawing.current_linetype()));
+                for (id, entity) in drawing.entities() {
+                    if let Entity::Text(text) = entity {
+                        prop_assert!(drawing.text_styles().contains(text.style), "text {} has a style that does not exist", id);
+                    }
+                }
                 let mut linetype_names: Vec<String> = drawing.linetypes().iter().map(|(_, lt)| lt.name.to_lowercase()).collect();
                 linetype_names.sort();
                 let count = linetype_names.len();

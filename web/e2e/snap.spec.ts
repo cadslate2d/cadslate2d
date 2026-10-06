@@ -169,6 +169,8 @@ test.describe("snap markers (visual baseline)", () => {
       at: [50, 50],
     },
     { mode: "Nearest", setup: [...ONE_LINE, "OSNAP", "N", ""], hover: [80, 3], at: [80, 0] },
+    // A text's insertion point (#143); its glyphs offer nothing else.
+    { mode: "Insertion", setup: ["TEXT", "40,0", "12", "0", "AB"], hover: [42, 2], at: [40, 0] },
     // The two constructions need a point to construct from: the line's first point.
     {
       mode: "Perpendicular",

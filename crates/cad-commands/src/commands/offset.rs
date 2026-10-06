@@ -62,6 +62,7 @@ fn explain(error: OffsetError) -> String {
     match error {
         OffsetError::NoSide => "That point is on the object: pick a point to one side.".to_owned(),
         OffsetError::Collapses => "The offset would leave nothing.".to_owned(),
+        OffsetError::Unsupported(kind) => format!("A {kind} cannot be offset."),
     }
 }
 

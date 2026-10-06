@@ -8,6 +8,7 @@
 //! | Circle | Center, then Quadrants at 0°, 90°, 180°, 270° | the centre moves it; a quadrant sets the radius |
 //! | Arc | Endpoint (start), Midpoint, Endpoint (end), Center | see below |
 //! | Polyline | one Vertex per vertex | moves that vertex |
+//! | Text | Insertion | moves the text |
 //!
 //! Arc grips follow the familiar *stretch* behaviour (ADR-0010): an arc is
 //! always the arc through its start, its midpoint, and its end. Dragging
@@ -20,7 +21,7 @@ use cad_core::Point2;
 use cad_core::tolerance::LinearTolerance;
 use cad_geometry::Arc;
 
-use crate::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity};
+use crate::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity, TextEntity};
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
 
@@ -33,6 +34,8 @@ pub enum GripKind {
     Center,
     Vertex,
     Quadrant,
+    /// The insertion point of a text.
+    Insertion,
 }
 
 /// One grip of one entity. Its index in [`Entity::grips`] identifies it.
@@ -83,6 +86,7 @@ impl Entity {
                 .iter()
                 .map(|vertex| grip(GripKind::Vertex, *vertex))
                 .collect(),
+            Entity::Text(text) => vec![grip(GripKind::Insertion, text.insertion)],
         }
     }
 
@@ -160,6 +164,13 @@ impl Entity {
                     .into(),
                 )
             }
+            Entity::Text(text) => (index == 0).then(|| {
+                TextEntity {
+                    insertion: to,
+                    ..text.clone()
+                }
+                .into()
+            }),
         }
     }
 

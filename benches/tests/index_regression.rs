@@ -49,7 +49,9 @@ fn an_opened_drawing_accepts_new_entities() {
     let mut drawing = Drawing::from_entities(lines(SIZE, SEED).into_iter().map(Entity::Line));
     for line in lines(1000, SEED + 1) {
         let mut transaction = drawing.transaction();
-        transaction.insert(LineEntity::new(line.start, line.end));
+        transaction
+            .insert(LineEntity::new(line.start, line.end))
+            .unwrap();
         transaction.commit();
     }
     assert_eq!(drawing.len(), SIZE + 1000);

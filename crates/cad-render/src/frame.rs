@@ -307,6 +307,16 @@ impl PackedFrame {
                     }
                 }
             }
+            // A text is the strokes of its glyphs (ADR-0016): segments like
+            // any other. The scene draws every text continuous, whatever
+            // its linetype says, as drafting programs do.
+            Entity::Text(text) => {
+                for stroke in text.strokes() {
+                    for pair in stroke.windows(2) {
+                        self.push_segment(style, pair[0], pair[1]);
+                    }
+                }
+            }
         }
     }
 }

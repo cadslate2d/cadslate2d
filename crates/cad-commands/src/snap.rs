@@ -32,15 +32,18 @@ pub enum SnapMode {
     Perpendicular,
     /// The point of tangency of a line from the point being drawn from.
     Tangent,
+    /// The insertion point of a text (or, later, a block).
+    Insertion,
 }
 
 impl SnapMode {
     /// Every mode, in ranking order: when two snap points are equally close,
     /// the earlier mode wins.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Endpoint,
         Self::Intersection,
         Self::Midpoint,
+        Self::Insertion,
         Self::Perpendicular,
         Self::Tangent,
         Self::Center,
@@ -62,6 +65,7 @@ impl SnapMode {
             Self::Nearest => "Nearest",
             Self::Perpendicular => "Perpendicular",
             Self::Tangent => "Tangent",
+            Self::Insertion => "Insertion",
         }
     }
 }
@@ -82,6 +86,7 @@ impl Default for SnapModes {
             SnapMode::Center,
             SnapMode::Quadrant,
             SnapMode::Intersection,
+            SnapMode::Insertion,
         ];
         Self {
             bits: on.iter().fold(0, |bits, mode| bits | mode.bit()),
@@ -138,6 +143,15 @@ pub struct SnapPoint {
 /// to every kind (the foot must land on the object); Tangent to circles and
 /// arcs, from a point outside them.
 pub fn entity_snap_points(entity: &Entity, mode: SnapMode) -> Vec<Point2> {
+    // A text offers its insertion point and nothing else: not the ends of
+    // its glyphs' strokes (ADR-0016). It has no primitives, so the rest
+    // of this finds nothing on it either.
+    if let Entity::Text(text) = entity {
+        return match mode {
+            SnapMode::Insertion => vec![text.insertion],
+            _ => Vec::new(),
+        };
+    }
     entity
         .primitives()
         .iter()
@@ -895,6 +909,7 @@ mod tests {
             vec![
                 SnapMode::Intersection,
                 SnapMode::Midpoint,
+                SnapMode::Insertion,
                 SnapMode::Center,
                 SnapMode::Quadrant,
                 SnapMode::Nearest

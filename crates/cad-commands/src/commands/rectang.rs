@@ -49,7 +49,9 @@ impl Command for RectangCommand {
             (Some(first), CommandInput::Point(other)) => match rectangle(first, other) {
                 Some(polyline) => {
                     let mut transaction = ctx.drawing.transaction();
-                    transaction.insert(polyline);
+                    transaction
+                        .insert(polyline)
+                        .expect("a polyline has no text style to miss");
                     transaction.commit();
                     return Step::Finished;
                 }

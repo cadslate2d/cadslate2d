@@ -24,8 +24,6 @@ const SIMPLEX: &str = include_str!("../fonts/futural.jhf");
 /// the baseline at row 9. A text height of 1 is one cap height.
 const CAP_HEIGHT: f64 = 21.0;
 const BASELINE: f64 = 9.0;
-/// Descenders reach row 16 in Simplex: 7 units below the baseline.
-const DESCENT: f64 = 7.0;
 /// The first glyph of the file is the space.
 const FIRST_CHAR: u32 = ' ' as u32;
 
@@ -44,6 +42,11 @@ pub struct Glyph {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Font {
     glyphs: Vec<Glyph>,
+    /// How far above the baseline any glyph reaches, in cap heights:
+    /// brackets and parentheses go above the capitals.
+    ascent: f64,
+    /// How far below the baseline any glyph reaches, in cap heights.
+    descent: f64,
 }
 
 /// Why a glyph line could not be read.
@@ -71,7 +74,18 @@ impl Font {
             .filter(|(_, line)| !line.trim().is_empty())
             .map(|(index, line)| parse_glyph(line, index + 1))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Font { glyphs })
+        let ys = || {
+            glyphs
+                .iter()
+                .flat_map(|glyph| glyph.strokes.iter().flatten().map(|p| p.y))
+        };
+        let ascent = ys().fold(1.0_f64, f64::max);
+        let descent = -ys().fold(0.0_f64, f64::min);
+        Ok(Font {
+            glyphs,
+            ascent,
+            descent,
+        })
     }
 
     /// How many characters the font has glyphs for.
@@ -121,9 +135,15 @@ impl Font {
             .sum()
     }
 
+    /// How far above the baseline the font reaches, in cap heights: at
+    /// least 1, more where brackets and parentheses rise above the capitals.
+    pub fn ascent(&self) -> f64 {
+        self.ascent
+    }
+
     /// How far below the baseline the font reaches, in cap heights.
     pub fn descent(&self) -> f64 {
-        DESCENT / CAP_HEIGHT
+        self.descent
     }
 
     /// The strokes of `text` at `height` (the cap height, in drawing
@@ -241,6 +261,22 @@ mod tests {
         let g = font.glyph('g').unwrap();
         let lowest = g.strokes.iter().flatten().map(|p| p.y).fold(0.0, f64::min);
         assert!(lowest < 0.0 && lowest >= -font.descent() - 1e-9);
+        assert!(close(font.descent(), 7.0 / 21.0), "{}", font.descent());
+        // Brackets rise above the capitals; nothing rises above the ascent.
+        assert!(
+            font.ascent() > 1.0 && close(font.ascent(), 25.0 / 21.0),
+            "{}",
+            font.ascent()
+        );
+        let highest = font
+            .glyph('[')
+            .unwrap()
+            .strokes
+            .iter()
+            .flatten()
+            .map(|p| p.y)
+            .fold(0.0, f64::max);
+        assert!(close(highest, font.ascent()));
         // The space has no strokes and some width.
         let space = font.glyph(' ').unwrap();
         assert!(space.strokes.is_empty() && space.advance > 0.0);
@@ -320,7 +356,7 @@ mod tests {
             let sum = font.advance(&a) + font.advance(&b);
             prop_assert!(close(font.advance(&both), sum));
             let strokes = font.strokes(&a, Point2::new(3.0, -4.0), height, angle);
-            let reach = (font.advance(&a) + 1.0 + font.descent()) * height + 1e-6;
+            let reach = (font.advance(&a) + font.ascent() + font.descent()) * height + 1e-6;
             for point in strokes.iter().flatten() {
                 prop_assert!(point.x.is_finite() && point.y.is_finite());
                 prop_assert!(point.distance_to(Point2::new(3.0, -4.0)) <= reach);

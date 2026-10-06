@@ -48,6 +48,7 @@ mod pline;
 mod polarang;
 mod rectang;
 mod stretch;
+mod text;
 mod transform;
 mod units;
 
@@ -84,5 +85,6 @@ pub(crate) use pline::PlineCommand;
 pub(crate) use polarang::PolarAngleCommand;
 pub(crate) use rectang::RectangCommand;
 pub(crate) use stretch::StretchCommand;
+pub(crate) use text::{TextCommand, TextEditCommand};
 pub(crate) use transform::TransformCommand;
 pub(crate) use units::UnitsCommand;

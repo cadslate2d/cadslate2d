@@ -41,19 +41,22 @@ Tests: `cad-commands/src/tests/layers.rs`, `cad-document/src/drawing.rs`, `cad-r
 
 ## At a glance
 
-| Command | Line | Arc | Circle | Open polyline | Closed polyline |
-| --- | --- | --- | --- | --- | --- |
-| [MOVE, COPY, ROTATE, SCALE, MIRROR](#move-copy-rotate-scale-mirror) | yes | yes | yes | yes | yes |
-| [Grip editing](#grip-editing) | ends, midpoint | ends, midpoint, centre | centre, quadrants | vertices | vertices |
-| [OFFSET](#offset) | yes | yes | yes | yes | yes |
-| [TRIM](#trim) | yes | yes | if crossed twice | yes | if crossed twice |
-| [EXTEND](#extend) | yes | yes | no: it has no end | yes | no: it has no end |
-| [FILLET](#fillet) | with a line, arc, or circle | with a line, arc, or circle | with a line, arc, or circle; left whole | between two of its own segments | between two of its own segments |
-| [CHAMFER](#chamfer) | with a line | no | no | between two of its own segments | between two of its own segments |
-| [BREAK](#break) | yes | yes | two points; becomes an arc | yes | two points; opens |
-| [JOIN](#join) | yes | yes | no: it has no end | yes | no: it has no end |
-| [STRETCH](#stretch) | by its ends | by its ends | whole, by its centre | by its vertices | by its vertices |
-| ERASE | yes | yes | yes | yes | yes |
+| Command | Line | Arc | Circle | Open polyline | Closed polyline | Text |
+| --- | --- | --- | --- | --- | --- | --- |
+| [MOVE, COPY, ROTATE, SCALE, MIRROR](#move-copy-rotate-scale-mirror) | yes | yes | yes | yes | yes | yes; a mirrored text stays readable |
+| [Grip editing](#grip-editing) | ends, midpoint | ends, midpoint, centre | centre, quadrants | vertices | vertices | insertion point |
+| [OFFSET](#offset) | yes | yes | yes | yes | yes | no: not a curve |
+| [TRIM](#trim) | yes | yes | if crossed twice | yes | if crossed twice | no; never a cutting edge |
+| [EXTEND](#extend) | yes | yes | no: it has no end | yes | no: it has no end | no; never a boundary |
+| [FILLET](#fillet) | with a line, arc, or circle | with a line, arc, or circle | with a line, arc, or circle; left whole | between two of its own segments | between two of its own segments | no |
+| [CHAMFER](#chamfer) | with a line | no | no | between two of its own segments | between two of its own segments | no |
+| [BREAK](#break) | yes | yes | two points; becomes an arc | yes | two points; opens | no |
+| [JOIN](#join) | yes | yes | no: it has no end | yes | no: it has no end | no: it has no ends |
+| [STRETCH](#stretch) | by its ends | by its ends | whole, by its centre | by its vertices | by its vertices | whole, by its insertion point |
+| ERASE | yes | yes | yes | yes | yes | yes |
+| TEXTEDIT | — | — | — | — | — | changes what it says |
+
+A text is not a curve: it has no primitives, so nothing intersects it, trims against it, or snaps to the strokes of its glyphs — only to its insertion point (the Insertion snap). It is picked and selected by its box, so a click inside a letter's counter picks it. Commands that work on curves refuse it by name: "A text cannot be offset."
 
 Polylines may have arc segments throughout: every command reads a polyline through the same primitives — segments and arcs — as it reads separate lines and arcs.
 
@@ -69,7 +72,7 @@ These act on a selection, made before the command or at its prompt, and apply on
 | COPY | The same, leaving the originals; repeats until Enter | Copies are new objects |
 | ROTATE | Rotation about a base point by a typed angle, or towards the pointer | Arcs keep their sweep; polyline bulges are unchanged |
 | SCALE | Uniform scaling about a base point by a typed factor, or by the pointer's distance | Radii scale with it; a factor of zero or less is refused |
-| MIRROR | Reflection across a line through two points; asks whether to erase the originals | Arcs are re-oriented so they stay counter-clockwise; polyline bulges change sign |
+| MIRROR | Reflection across a line through two points; asks whether to erase the originals | Arcs are re-oriented so they stay counter-clockwise; polyline bulges change sign; a text takes the mirrored box and reads the right way up in it, as a draughtsman would redraw it |
 
 Rules:
 
@@ -92,6 +95,7 @@ Selecting objects shows their grips; clicking one starts a stretch of that point
 | Arc | An end or the midpoint | Re-fits the arc through the dragged point and the other two |
 | Arc | The centre | Moves the arc |
 | Polyline | A vertex | Moves that vertex; arc segments on either side keep their bulge |
+| Text | The insertion point | Moves the text |
 
 Refused, leaving the object as it was: a line dragged to no length, a circle to no radius, an arc's three points into a line, a vertex onto its neighbour. Grips are shown for up to 100 selected objects.
 

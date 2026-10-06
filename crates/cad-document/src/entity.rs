@@ -5,6 +5,8 @@ use cad_geometry::{
     Arc, Circle, Path, Primitive, Segment, Transform, is_straight, polyline_primitives,
 };
 
+pub use crate::text::TextEntity;
+
 /// A straight line between two points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LineEntity {
@@ -170,6 +172,9 @@ pub enum Entity {
     Circle(CircleEntity),
     Arc(ArcEntity),
     Polyline(PolylineEntity),
+    /// A single line of text (ADR-0016). Not a curve: it has no
+    /// primitives, and is picked and selected by its box.
+    Text(TextEntity),
 }
 
 impl Entity {
@@ -186,6 +191,7 @@ impl Entity {
                 .map(|primitive| primitive.bounds())
                 .reduce(|a, b| a.union(&b))
                 .unwrap_or_else(|| Aabb::from_points(Point2::ORIGIN, Point2::ORIGIN)),
+            Entity::Text(text) => text.bounds(),
         }
     }
 
@@ -199,6 +205,7 @@ impl Entity {
                 .primitives()
                 .map(|primitive| primitive.distance_to_point(point))
                 .fold(f64::INFINITY, f64::min),
+            Entity::Text(text) => text.distance_to(point),
         }
     }
 
@@ -210,6 +217,9 @@ impl Entity {
             Entity::Circle(circle) => vec![Primitive::Circle(circle.circle())],
             Entity::Arc(arc) => vec![Primitive::Arc(arc.arc())],
             Entity::Polyline(polyline) => polyline.primitives().collect(),
+            // Nothing intersects, trims against, or snaps to the strokes
+            // of a text.
+            Entity::Text(_) => Vec::new(),
         }
     }
 
@@ -238,6 +248,7 @@ impl Entity {
             Entity::Polyline(polyline) => polyline
                 .primitives()
                 .any(|primitive| primitive.intersects_aabb(bounds)),
+            Entity::Text(text) => text.crosses(bounds),
         }
     }
 
@@ -294,6 +305,7 @@ impl Entity {
                 )
                 .into()
             }
+            Entity::Text(text) => text.transformed(transform).into(),
         }
     }
 
@@ -326,6 +338,12 @@ impl From<PolylineEntity> for Entity {
 impl From<ArcEntity> for Entity {
     fn from(arc: ArcEntity) -> Self {
         Entity::Arc(arc)
+    }
+}
+
+impl From<TextEntity> for Entity {
+    fn from(text: TextEntity) -> Self {
+        Entity::Text(text)
     }
 }
 
@@ -440,6 +458,7 @@ mod tests {
                 vec![arc.start_point(), arc.mid_point(), arc.end_point()]
             }
             Entity::Polyline(polyline) => polyline.vertices.clone(),
+            Entity::Text(text) => text.frame().corners().to_vec(),
         }
     }
 

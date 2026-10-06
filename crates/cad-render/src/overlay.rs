@@ -42,6 +42,7 @@ const SNAP_MARKER_PIXELS: f64 = 7.0;
 /// | Nearest | hourglass |
 /// | Perpendicular | right-angle sign |
 /// | Tangent | circle under a bar |
+/// | Insertion | two squares, offset |
 fn marker_strokes(mode: SnapMode) -> &'static [&'static [(f64, f64)]] {
     const SQUARE: &[(f64, f64)] = &[(-1., -1.), (1., -1.), (1., 1.), (-1., 1.), (-1., -1.)];
     const TRIANGLE: &[(f64, f64)] = &[(-1., -1.), (1., -1.), (0., 1.), (-1., -1.)];
@@ -52,6 +53,9 @@ fn marker_strokes(mode: SnapMode) -> &'static [&'static [(f64, f64)]] {
     const CORNER: &[(f64, f64)] = &[(-1., 1.), (-1., -1.), (1., -1.)];
     const SQUARE_MARK: &[(f64, f64)] = &[(-1., 0.), (0., 0.), (0., -1.)];
     const BAR: &[(f64, f64)] = &[(-1., 1.), (1., 1.)];
+    const LOWER_LEFT: &[(f64, f64)] = &[(-1., -1.), (0.4, -1.), (0.4, 0.4), (-1., 0.4), (-1., -1.)];
+    const UPPER_RIGHT: &[(f64, f64)] =
+        &[(-0.4, 1.), (-0.4, -0.4), (1., -0.4), (1., 1.), (-0.4, 1.)];
     match mode {
         SnapMode::Endpoint => &[SQUARE],
         SnapMode::Midpoint => &[TRIANGLE],
@@ -61,6 +65,7 @@ fn marker_strokes(mode: SnapMode) -> &'static [&'static [(f64, f64)]] {
         SnapMode::Nearest => &[HOURGLASS],
         SnapMode::Perpendicular => &[CORNER, SQUARE_MARK],
         SnapMode::Tangent => &[BAR],
+        SnapMode::Insertion => &[LOWER_LEFT, UPPER_RIGHT],
     }
 }
 

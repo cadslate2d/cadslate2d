@@ -8,6 +8,7 @@ use cad_core::EntityId;
 
 use crate::layer::LayerChange;
 use crate::linetype::LinetypeChange;
+use crate::text_style::TextStyleChange;
 use crate::{EntityRecord, SettingsChange};
 
 /// A reversible change to one entity: to its geometry, its properties, or
@@ -63,6 +64,7 @@ pub enum Change {
     Entity(EntityChange),
     Layer(LayerChange),
     Linetype(LinetypeChange),
+    TextStyle(TextStyleChange),
     Settings(SettingsChange),
 }
 
@@ -72,6 +74,7 @@ impl Change {
             Change::Entity(change) => Change::Entity(change.inverse()),
             Change::Layer(change) => Change::Layer(change.inverse()),
             Change::Linetype(change) => Change::Linetype(change.inverse()),
+            Change::TextStyle(change) => Change::TextStyle(change.inverse()),
             Change::Settings(change) => Change::Settings(change.inverse()),
         }
     }
@@ -222,6 +225,7 @@ mod tests {
                 Change::Linetype(TableChange::Insert { .. }) => "insert linetype",
                 Change::Linetype(TableChange::Remove { .. }) => "remove linetype",
                 Change::Linetype(TableChange::Replace { .. }) => "replace linetype",
+                Change::TextStyle(_) => "text style",
                 Change::Settings(_) => "settings",
             })
             .collect();

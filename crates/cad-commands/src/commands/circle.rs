@@ -76,7 +76,9 @@ fn create(circle: Circle, ctx: &mut CommandContext<'_>) -> Step {
         return Step::Continue;
     }
     let mut transaction = ctx.drawing.transaction();
-    transaction.insert(CircleEntity::new(circle.center, circle.radius));
+    transaction
+        .insert(CircleEntity::new(circle.center, circle.radius))
+        .expect("a circle has no text style to miss");
     transaction.commit();
     Step::Finished
 }

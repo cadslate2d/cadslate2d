@@ -97,7 +97,7 @@ fn open_path(entity: &Entity) -> Option<Path> {
             })
         }
         Entity::Polyline(polyline) if !polyline.closed => Some(polyline.path()),
-        Entity::Polyline(_) | Entity::Circle(_) => None,
+        Entity::Polyline(_) | Entity::Circle(_) | Entity::Text(_) => None,
     }
 }
 

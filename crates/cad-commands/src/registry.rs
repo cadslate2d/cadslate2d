@@ -14,7 +14,7 @@ use crate::commands::{
     EdgeCommand, EraseCommand, ExportCommand, GridCommand, JoinCommand, LayerCommand, LineCommand,
     LinetypeCommand, LtscaleCommand, LweightCommand, MirrorCommand, OffsetCommand, OpenCommand,
     OsnapCommand, PlineCommand, PolarAngleCommand, RectangCommand, RedoCommand, StretchCommand,
-    TransformCommand, UndoCommand, UnitsCommand,
+    TextCommand, TextEditCommand, TransformCommand, UndoCommand, UnitsCommand,
 };
 
 type CommandFactory = fn() -> Box<dyn Command>;
@@ -50,7 +50,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 33] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 35] = [
             ("ERASE", &["E"], || Box::new(EraseCommand)),
             ("MOVE", &["M"], || Box::new(TransformCommand::moving())),
             ("COPY", &["CO", "CP"], || {
@@ -91,6 +91,10 @@ impl CommandRegistry {
             ("CIRCLE", &["C"], || Box::new(CircleCommand::new())),
             ("ARC", &["A"], || Box::new(ArcCommand::new())),
             ("LINE", &["L"], || Box::new(LineCommand::new())),
+            ("TEXT", &["DT", "DTEXT"], || Box::new(TextCommand::new())),
+            ("TEXTEDIT", &["ED", "DDEDIT"], || {
+                Box::new(TextEditCommand::new())
+            }),
             ("UNDO", &["U"], || Box::new(UndoCommand)),
             ("REDO", &[], || Box::new(RedoCommand)),
             ("OSNAP", &["OS"], || Box::new(OsnapCommand)),

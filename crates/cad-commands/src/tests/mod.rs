@@ -22,5 +22,6 @@ mod selection;
 mod selection_sets;
 mod snapping;
 mod stretch;
+mod text;
 mod transform;
 mod units;

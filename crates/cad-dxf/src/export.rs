@@ -9,8 +9,9 @@ use std::fmt::Write;
 
 use cad_core::{EntityId, LengthUnit};
 use cad_document::{
-    ArcEntity, CircleEntity, Color, Drawing, DrawingSettings, Entity, Layer, LineEntity, Linetype,
-    LinetypeDef, LinetypeTable, Lineweight, PolylineEntity, Properties,
+    ArcEntity, CircleEntity, Color, Drawing, DrawingSettings, Entity, Justification, Layer,
+    LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight, PolylineEntity, Properties,
+    TextEntity, TextStyle, TextStyleTable,
 };
 
 use crate::properties::{
@@ -152,6 +153,7 @@ pub fn export_with_report(drawing: &Drawing) -> Export {
                 Entity::Circle(circle) => write_circle(out, circle, common),
                 Entity::Arc(arc) => write_arc(out, arc, common),
                 Entity::Polyline(polyline) => write_polyline(out, polyline, layer, common),
+                Entity::Text(text) => write_text(out, text, drawing.text_styles(), common),
             }
         }
     });
@@ -265,6 +267,46 @@ fn write_arc(out: &mut String, arc: &ArcEntity, properties: impl FnOnce(&mut Str
     real(out, 40, arc.radius);
     real(out, 50, arc.start_angle.to_degrees());
     real(out, 51, arc.end_angle.to_degrees());
+}
+
+/// A TEXT: its insertion point, height, content, rotation, style, and —
+/// for centred and right-justified text — the horizontal justification
+/// (group 72) with the alignment point in groups 11 and 21, which is where
+/// the text is justified to. A left-justified text writes neither.
+fn write_text(
+    out: &mut String,
+    text: &TextEntity,
+    styles: &TextStyleTable,
+    properties: impl FnOnce(&mut String),
+) {
+    group(out, 0, "TEXT");
+    properties(out);
+    // For a justified text the first point is the baseline start, as DXF
+    // readers expect, and the alignment point is the insertion.
+    let start = text.start();
+    real(out, 10, start.x);
+    real(out, 20, start.y);
+    real(out, 40, text.height);
+    group(out, 1, &text.content);
+    if text.rotation != 0.0 {
+        real(out, 50, text.rotation.to_degrees());
+    }
+    let style = styles
+        .get(text.style)
+        .map_or(TextStyle::STANDARD, |style| style.name.as_str());
+    if style != TextStyle::STANDARD {
+        group(out, 7, style);
+    }
+    let justification = match text.justification {
+        Justification::Left => None,
+        Justification::Center => Some(1),
+        Justification::Right => Some(2),
+    };
+    if let Some(code) = justification {
+        group(out, 72, &code.to_string());
+        real(out, 11, text.insertion.x);
+        real(out, 21, text.insertion.y);
+    }
 }
 
 /// R12 has no LWPOLYLINE: a polyline is a POLYLINE header, one VERTEX per
@@ -435,7 +477,10 @@ mod tests {
         let mut ids = Vec::new();
         for x in [1.0, 2.0, 3.0, 4.0] {
             let mut tx = drawing.transaction();
-            ids.push(tx.insert(LineEntity::new(Point2::new(x, 0.0), Point2::new(x, 1.0))));
+            ids.push(
+                tx.insert(LineEntity::new(Point2::new(x, 0.0), Point2::new(x, 1.0)))
+                    .unwrap(),
+            );
             tx.commit();
         }
         // Removing from the middle reorders dense storage; export must not care.
@@ -648,6 +693,56 @@ mod tests {
         assert_eq!(drawing.current_layer(), walls);
         assert_eq!(drawing.ltscale(), 20.0);
         assert_eq!(export(drawing), first);
+    }
+
+    // ── text (#143) ──
+
+    #[test]
+    fn a_text_is_written_with_its_insertion_height_words_angle_and_justification() {
+        use cad_core::Point2;
+        use cad_document::{Justification, TextEntity};
+
+        let plain = TextEntity::new(Point2::new(1.0, 2.0), 2.5, 0.0, "Hello world");
+        let turned = TextEntity::new(
+            Point2::new(10.0, 0.0),
+            5.0,
+            std::f64::consts::FRAC_PI_2,
+            "Up",
+        )
+        .justified(Justification::Center);
+        let right = TextEntity::new(Point2::new(50.0, 0.0), 5.0, 0.0, "End")
+            .justified(Justification::Right);
+        let start = right.start();
+        let dxf = export(&Drawing::from_entities([
+            Entity::Text(plain),
+            Entity::Text(turned.clone()),
+            Entity::Text(right),
+        ]));
+        assert!(
+            dxf.contains(
+                "  0\nTEXT\n  8\n0\n 10\n1.0\n 20\n2.0\n 40\n2.5\n  1\nHello world\n  0\n"
+            ),
+            "{dxf}"
+        );
+        // A centred text: the alignment point is the insertion, group 72 is 1,
+        // and the first point is where the baseline starts.
+        let centred_start = turned.start();
+        assert!(
+            dxf.contains(&format!(
+                " 10\n{}\n 20\n{}\n 40\n5.0\n  1\nUp\n 50\n90.0\n 72\n1\n 11\n10.0\n 21\n0.0\n",
+                format_real(centred_start.x),
+                format_real(centred_start.y)
+            )),
+            "{dxf}"
+        );
+        assert!(
+            dxf.contains(&format!(
+                " 10\n{}\n 20\n0.0\n 40\n5.0\n  1\nEnd\n 72\n2\n 11\n50.0\n 21\n0.0\n",
+                format_real(start.x)
+            )),
+            "{dxf}"
+        );
+        assert!(!dxf.contains("  7\n"), "the Standard style is the default");
     }
 
     proptest! {

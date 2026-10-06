@@ -45,8 +45,11 @@ impl LineCommand {
             return;
         }
         let mut transaction = ctx.drawing.transaction();
-        self.created
-            .push(transaction.insert(LineEntity::new(start, end)));
+        self.created.push(
+            transaction
+                .insert(LineEntity::new(start, end))
+                .expect("the entity has no text style to miss"),
+        );
         transaction.commit();
         self.points.push(end);
     }

@@ -30,7 +30,9 @@ fn scene(c: &mut Criterion) {
             cache.scene(&drawing);
             b.iter(|| {
                 let mut transaction = drawing.transaction();
-                transaction.insert(LineEntity::new(Point2::ORIGIN, Point2::new(1.0, 1.0)));
+                transaction
+                    .insert(LineEntity::new(Point2::ORIGIN, Point2::new(1.0, 1.0)))
+                    .unwrap();
                 transaction.commit();
                 let segments = cache.scene(&drawing).frame().segment_count();
                 // Undo so the drawing stays the same size on every iteration.

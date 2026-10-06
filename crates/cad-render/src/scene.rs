@@ -19,7 +19,9 @@
 use std::collections::HashMap;
 
 use cad_core::Point2;
-use cad_document::{Drawing, LinetypeDef, LinetypeId, Paint, Properties, Revision, Weight};
+use cad_document::{
+    Drawing, Entity, Linetype, LinetypeDef, LinetypeId, Paint, Properties, Revision, Weight,
+};
 
 use crate::{PackedFrame, StyleRole};
 
@@ -133,7 +135,12 @@ impl RenderScene {
         let mut indices: HashMap<Properties, u16> = HashMap::new();
         // Objects on a layer that is off are not drawn: no instances.
         for (id, entity) in drawing.shown() {
-            let properties = drawing.properties(id).unwrap_or_default();
+            let mut properties = drawing.properties(id).unwrap_or_default();
+            // A linetype is for curves: a text is drawn continuous, or its
+            // glyphs would fall apart into dashes.
+            if matches!(entity, Entity::Text(_)) {
+                properties.linetype = Linetype::CONTINUOUS;
+            }
             let style = *indices.entry(properties).or_insert_with(|| {
                 // More distinct styles than indices: the surplus share the
                 // last one rather than wrapping round onto the first.
@@ -287,7 +294,7 @@ mod tests {
 
     fn add(drawing: &mut Drawing, entity: LineEntity) {
         let mut tx = drawing.transaction();
-        tx.insert(entity);
+        tx.insert(entity).unwrap();
         tx.commit();
     }
 
@@ -799,5 +806,44 @@ mod tests {
         assert_eq!(patterns_of(scene), vec![solid, solid, 1, 2, solid, solid]);
         assert_eq!(pattern_rows(scene).len(), 3);
         assert_eq!(cache.build_count(), 1);
+    }
+
+    // ── text (#143, ADR-0016) ──
+
+    #[test]
+    fn a_text_is_its_glyph_strokes_drawn_continuous_whatever_its_layer_says() {
+        use cad_document::{Linetype, LinetypeDef, TextEntity};
+
+        let dashed = Layer {
+            linetype: Linetype::Named(cad_document::LinetypeId::from_raw(1)),
+            ..Layer::named("dashed")
+        };
+        let text = TextEntity::new(Point2::new(0.0, 0.0), 10.0, 0.0, "HI");
+        let segments_in_text: usize = text.strokes().iter().map(|stroke| stroke.len() - 1).sum();
+        let drawing = Drawing::from_parts(
+            [dashed],
+            [LinetypeDef::built_in_named("Dashed").unwrap()],
+            [
+                (Entity::Text(text), on(1)),
+                (Entity::Line(line(0.0, 20.0, 50.0, 20.0)), on(1)),
+            ],
+        )
+        .unwrap();
+        let mut cache = SceneCache::new();
+        let scene = cache.scene(&drawing);
+        assert_eq!(scene.frame().segment_count() as usize, segments_in_text + 1);
+        assert_eq!(scene.frame().arc_count(), 0);
+        // Two styles: the text's, continuous, and the line's, dashed — on
+        // the same layer with the same properties otherwise.
+        assert_eq!(scene.style_count(), 2);
+        let patterns = patterns_of(scene);
+        let text_style = scene.segment_styles()[0] as usize;
+        let line_style = *scene.segment_styles().last().unwrap() as usize;
+        assert_eq!(patterns[text_style], RenderScene::PATTERN_CONTINUOUS);
+        assert_ne!(patterns[line_style], RenderScene::PATTERN_CONTINUOUS);
+        assert!(
+            scene.frame().segment_distances().iter().all(|d| *d == 0.0),
+            "no path runs through a text"
+        );
     }
 }

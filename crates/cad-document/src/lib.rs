@@ -26,6 +26,8 @@ mod settings;
 pub mod spatial;
 mod store;
 mod table;
+mod text;
+mod text_style;
 mod transaction;
 
 pub use aci::{FOREGROUND_INDEX, Paint, index_paint};
@@ -33,7 +35,9 @@ pub use drawing::{ApplyReport, Drawing, TransactionBuilder, TransactionError};
 pub use editing::{
     BreakError, CornerError, Cornered, ExtendError, OffsetError, StretchHold, TrimError, TrimParts,
 };
-pub use entity::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity, SharedEntity};
+pub use entity::{
+    ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity, SharedEntity, TextEntity,
+};
 pub use grips::{EntityGrip, GripKind};
 pub use joining::{JoinError, Joined, close_into_circle, join};
 pub use layer::{Layer, LayerChange, LayerId, LayerTable};
@@ -46,4 +50,6 @@ pub use settings::{DrawingSettings, SettingsChange};
 pub use spatial::SpatialIndex;
 pub use store::{DuplicateEntityId, EntityStore};
 pub use table::{Table, TableChange, TableId};
+pub use text::{Justification, TextFrame};
+pub use text_style::{TextStyle, TextStyleChange, TextStyleId, TextStyleTable};
 pub use transaction::{Change, EntityChange, Transaction};

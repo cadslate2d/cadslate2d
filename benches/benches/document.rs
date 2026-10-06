@@ -252,7 +252,7 @@ fn drawing(c: &mut Criterion) {
                 |drawing| {
                     for line in &extra {
                         let mut transaction = drawing.transaction();
-                        transaction.insert(*line);
+                        transaction.insert(*line).unwrap();
                         transaction.commit();
                     }
                 },
@@ -268,7 +268,7 @@ fn drawing(c: &mut Criterion) {
                     let mut drawing = drawing_of(size);
                     for line in &extra {
                         let mut transaction = drawing.transaction();
-                        transaction.insert(*line);
+                        transaction.insert(*line).unwrap();
                         transaction.commit();
                     }
                     drawing

@@ -50,6 +50,7 @@ fn explain(error: BreakError) -> String {
         BreakError::NeedsTwoPoints(kind) => {
             format!("A {kind} has no ends: it needs two different break points.")
         }
+        BreakError::Unsupported(kind) => format!("A {kind} cannot be broken."),
     }
 }
 
