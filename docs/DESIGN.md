@@ -1403,6 +1403,8 @@ transient edit / overlays ─→ OverlayFrame ──────────┤
 
 CadSlate2D must not depend on platform-native wide `GL_LINES`.
 
+> **Resolved in M6 (hatch):** a filled region is triangle instances — six floats, a style index each, no path distance — in a third committed buffer beside segments and arcs, cut by ear clipping from the boundary rings with the holes bridged in; the adapter draws fills before strokes. A fill of lines would depend on the zoom, which committed geometry may not — [ADR-0021](adr/0021-filled-regions.md).
+
 CAD strokes should be expanded into triangle geometry to support:
 
 - screen-space lineweight;

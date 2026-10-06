@@ -162,6 +162,8 @@ export type StyleRole = (typeof StyleRole)[keyof typeof StyleRole];
 
 export const FLOATS_PER_SEGMENT = 4;
 export const FLOATS_PER_ARC = 5;
+/** Floats per filled triangle instance: its three corners (ADR-0021). */
+export const FLOATS_PER_TRIANGLE = 6;
 export const WORDS_PER_BATCH = 3;
 /** Bytes per row of the style table: red, green, blue, kind, weight, pattern, and two spare (ADR-0014). */
 export const BYTES_PER_STYLE = 8;
@@ -202,6 +204,10 @@ export interface FrameBuffers {
   readonly arcs: Float32Array;
   /** `style, first, count` per arc batch. */
   readonly arcBatches: Uint32Array;
+  /** `x0, y0, x1, y1, x2, y2` per filled triangle instance (ADR-0021). */
+  readonly triangles: Float32Array;
+  /** `style, first, count` per triangle batch. */
+  readonly triangleBatches: Uint32Array;
   /**
    * One style index per segment instance: a row of the style table. Only the
    * committed scene has them; overlay geometry is styled by its batches.
@@ -209,6 +215,8 @@ export interface FrameBuffers {
   readonly segmentStyles?: Uint16Array;
   /** One style index per arc instance; see `segmentStyles`. */
   readonly arcStyles?: Uint16Array;
+  /** One style index per triangle instance; a fill takes the row's colour. */
+  readonly triangleStyles?: Uint16Array;
   /**
    * Per segment instance, the distance along its entity's path at its
    * start, in drawing units: where its linetype pattern is (ADR-0015).
@@ -373,8 +381,11 @@ export class CadEngine {
       batches: this.#session.scene_batches(),
       arcs: this.#session.scene_arcs(),
       arcBatches: this.#session.scene_arc_batches(),
+      triangles: this.#session.scene_triangles(),
+      triangleBatches: this.#session.scene_triangle_batches(),
       segmentStyles: this.#session.scene_segment_styles(),
       arcStyles: this.#session.scene_arc_styles(),
+      triangleStyles: this.#session.scene_triangle_styles(),
       segmentDistances: this.#session.scene_segment_distances(),
       arcDistances: this.#session.scene_arc_distances(),
     });
@@ -392,6 +403,8 @@ export class CadEngine {
       batches: this.#session.overlay_batches(),
       arcs: this.#session.overlay_arcs(),
       arcBatches: this.#session.overlay_arc_batches(),
+      triangles: this.#session.overlay_triangles(),
+      triangleBatches: this.#session.overlay_triangle_batches(),
     });
   }
 

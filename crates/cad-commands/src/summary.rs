@@ -12,7 +12,7 @@ use cad_document::{Drawing, Entity, Properties};
 use crate::Selection;
 
 /// The kinds an entity can be, in the order they are listed.
-const KINDS: [(&str, &str); 8] = [
+const KINDS: [(&str, &str); 9] = [
     ("line", "lines"),
     ("circle", "circles"),
     ("arc", "arcs"),
@@ -21,6 +21,7 @@ const KINDS: [(&str, &str); 8] = [
     ("multiline text", "multiline texts"),
     ("block reference", "block references"),
     ("dimension", "dimensions"),
+    ("hatch", "hatches"),
 ];
 
 fn kind_index(entity: &Entity) -> usize {
@@ -33,6 +34,7 @@ fn kind_index(entity: &Entity) -> usize {
         Entity::MText(_) => 5,
         Entity::BlockRef(_) => 6,
         Entity::Dimension(_) => 7,
+        Entity::Hatch(_) => 8,
     }
 }
 
@@ -222,6 +224,11 @@ fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, String)> {
             row("Width", number(text.width)),
             row("Rotation", degrees(text.rotation)),
             row("Lines", text.lines().len().to_string()),
+        ],
+        Entity::Hatch(hatch) => vec![
+            row("Fill", "Solid".to_owned()),
+            row("Loops", hatch.loops.len().to_string()),
+            row("Area", number(hatch.area())),
         ],
         Entity::Dimension(dimension) => {
             let style = drawing.tables().dim_style(dimension.style);

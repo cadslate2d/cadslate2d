@@ -7,6 +7,7 @@ use cad_geometry::{
 
 pub use crate::block::BlockReferenceEntity;
 use crate::dimension::DimensionEntity;
+use crate::hatch::HatchEntity;
 pub use crate::mtext::MTextEntity;
 use crate::tables::Tables;
 pub use crate::text::TextEntity;
@@ -188,6 +189,9 @@ pub enum Entity {
     /// out from its points by its style, read from the dimension style
     /// table whenever it is asked for.
     Dimension(DimensionEntity),
+    /// A filled region (ADR-0021): boundary loops and a fill, cut into
+    /// triangles whenever it is asked for.
+    Hatch(HatchEntity),
 }
 
 impl Entity {
@@ -212,6 +216,7 @@ impl Entity {
             Entity::Dimension(dimension) => {
                 dimension.layout(tables.dim_style(dimension.style)).bounds()
             }
+            Entity::Hatch(hatch) => hatch.bounds(),
         }
     }
 
@@ -237,6 +242,8 @@ impl Entity {
             Entity::Dimension(dimension) => dimension
                 .layout(tables.dim_style(dimension.style))
                 .distance_to(point),
+            // A hatch by its fill and its boundary.
+            Entity::Hatch(hatch) => hatch.distance_to(point),
         }
     }
 
@@ -252,7 +259,9 @@ impl Entity {
             // Nothing intersects, trims against, or snaps to the strokes
             // of a text, nor to the lines of a dimension: an annotation is
             // not geometry of the drawing.
-            Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_) => Vec::new(),
+            Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_) | Entity::Hatch(_) => {
+                Vec::new()
+            }
             Entity::BlockRef(reference) => tables
                 .blocks
                 .flatten(reference, crate::Properties::default())
@@ -312,6 +321,7 @@ impl Entity {
             Entity::Dimension(dimension) => dimension
                 .layout(tables.dim_style(dimension.style))
                 .crosses(bounds),
+            Entity::Hatch(hatch) => hatch.crosses(bounds),
         }
     }
 
@@ -372,6 +382,7 @@ impl Entity {
             Entity::MText(text) => text.transformed(transform).into(),
             Entity::BlockRef(reference) => reference.transformed(transform).into(),
             Entity::Dimension(dimension) => dimension.transformed(transform).into(),
+            Entity::Hatch(hatch) => hatch.transformed(transform).into(),
         }
     }
 
@@ -428,6 +439,12 @@ impl From<BlockReferenceEntity> for Entity {
 impl From<DimensionEntity> for Entity {
     fn from(dimension: DimensionEntity) -> Self {
         Entity::Dimension(dimension)
+    }
+}
+
+impl From<HatchEntity> for Entity {
+    fn from(hatch: HatchEntity) -> Self {
+        Entity::Hatch(hatch)
     }
 }
 
@@ -552,6 +569,7 @@ mod tests {
             Entity::MText(text) => text.frame().corners().to_vec(),
             Entity::BlockRef(reference) => vec![reference.insertion],
             Entity::Dimension(dimension) => dimension.points(),
+            Entity::Hatch(hatch) => hatch.vertices(),
         }
     }
 

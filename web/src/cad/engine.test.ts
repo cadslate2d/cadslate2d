@@ -38,10 +38,19 @@ const copy = (frame: FrameBuffers) => ({
   batches: Array.from(frame.batches),
   arcs: Array.from(frame.arcs),
   arcBatches: Array.from(frame.arcBatches),
+  triangles: Array.from(frame.triangles),
+  triangleBatches: Array.from(frame.triangleBatches),
 });
 const copyScene = (cad: CadEngine) => cad.readScene(copy);
 const copyOverlay = (cad: CadEngine) => cad.readOverlay(copy);
-const EMPTY = { segments: [], batches: [], arcs: [], arcBatches: [] };
+const EMPTY = {
+  segments: [],
+  batches: [],
+  arcs: [],
+  arcBatches: [],
+  triangles: [],
+  triangleBatches: [],
+};
 
 describe("view", () => {
   test("reports the core version", () => {

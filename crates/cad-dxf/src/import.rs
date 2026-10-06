@@ -1157,6 +1157,8 @@ impl<'a> Reader<'a> {
                     // Counted once its block is found.
                     Entity::BlockRef(_) => {}
                     Entity::Dimension(_) => self.report.dimensions += 1,
+                    // Not read yet (#169): a HATCH is reported by name.
+                    Entity::Hatch(_) => {}
                 }
                 self.entities.push((entity, properties));
             }

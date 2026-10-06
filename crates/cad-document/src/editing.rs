@@ -164,6 +164,8 @@ impl Entity {
             Entity::BlockRef(reference) => held(&[reference.insertion]),
             // A dimension by the points it measures and where it is placed.
             Entity::Dimension(dimension) => held(&dimension.points()),
+            // A hatch by its loops' vertices.
+            Entity::Hatch(hatch) => held(&hatch.vertices()),
         }
     }
 
@@ -228,6 +230,16 @@ impl Entity {
                     })?
                     .into(),
             ),
+            Entity::Hatch(hatch) => {
+                let stretched = hatch
+                    .vertices()
+                    .iter()
+                    .enumerate()
+                    .try_fold(hatch.clone(), |hatch, (index, vertex)| {
+                        hatch.with_vertex(index, moved(*vertex))
+                    })?;
+                stretched.check().ok().map(|()| stretched.into())
+            }
             Entity::Arc(entity) => {
                 let arc = entity.arc();
                 let (start, end) = (arc.start_point(), arc.end_point());
@@ -310,9 +322,11 @@ impl Entity {
             Entity::Circle(circle) => break_circle(&circle.circle(), first, second, TOLERANCE)
                 .map(|arc| vec![ArcEntity::from(arc).into()])
                 .ok_or(BreakError::NeedsTwoPoints("circle")),
-            Entity::Text(_) | Entity::MText(_) | Entity::BlockRef(_) | Entity::Dimension(_) => {
-                Err(BreakError::Unsupported(self.kind_name()))
-            }
+            Entity::Text(_)
+            | Entity::MText(_)
+            | Entity::BlockRef(_)
+            | Entity::Dimension(_)
+            | Entity::Hatch(_) => Err(BreakError::Unsupported(self.kind_name())),
             Entity::Polyline(polyline) => {
                 let path = polyline.path();
                 path.broken(first, second, TOLERANCE)
@@ -368,9 +382,11 @@ impl Entity {
             |piece: cad_geometry::Segment| Entity::from(LineEntity::new(piece.start, piece.end));
         let arc = |piece: cad_geometry::Arc| Entity::from(ArcEntity::from(piece));
         match self {
-            Entity::Text(_) | Entity::MText(_) | Entity::BlockRef(_) | Entity::Dimension(_) => {
-                Err(TrimError::Unsupported(self.kind_name()))
-            }
+            Entity::Text(_)
+            | Entity::MText(_)
+            | Entity::BlockRef(_)
+            | Entity::Dimension(_)
+            | Entity::Hatch(_) => Err(TrimError::Unsupported(self.kind_name())),
             Entity::Line(entity) => trim_segment_parts(&entity.segment(), cuts, pick, TOLERANCE)
                 .map(|parts| TrimParts {
                     kept: parts.kept.into_iter().map(line).collect(),
@@ -437,9 +453,11 @@ impl Entity {
             Entity::Polyline(polyline) if polyline.closed => {
                 Err(ExtendError::Unsupported("closed polyline"))
             }
-            Entity::Text(_) | Entity::MText(_) | Entity::BlockRef(_) | Entity::Dimension(_) => {
-                Err(ExtendError::Unsupported(self.kind_name()))
-            }
+            Entity::Text(_)
+            | Entity::MText(_)
+            | Entity::BlockRef(_)
+            | Entity::Dimension(_)
+            | Entity::Hatch(_) => Err(ExtendError::Unsupported(self.kind_name())),
             Entity::Polyline(polyline) => {
                 let from_end = polyline_end_is_nearer(polyline, pick);
                 polyline
@@ -502,7 +520,8 @@ impl Entity {
             | Entity::Text(_)
             | Entity::MText(_)
             | Entity::BlockRef(_)
-            | Entity::Dimension(_) => None,
+            | Entity::Dimension(_)
+            | Entity::Hatch(_) => None,
         }
     }
 
@@ -562,7 +581,8 @@ impl Entity {
             | Entity::Text(_)
             | Entity::MText(_)
             | Entity::BlockRef(_)
-            | Entity::Dimension(_) => Err(CornerError::Unsupported(entity.kind_name())),
+            | Entity::Dimension(_)
+            | Entity::Hatch(_) => Err(CornerError::Unsupported(entity.kind_name())),
         };
         let rebuilt = |original: &Entity, primitive: Primitive| -> Entity {
             match primitive {
@@ -666,6 +686,7 @@ impl Entity {
             Entity::MText(_) => "multiline text",
             Entity::BlockRef(_) => "block reference",
             Entity::Dimension(_) => "dimension",
+            Entity::Hatch(_) => "hatch",
         }
     }
 
@@ -713,9 +734,11 @@ impl Entity {
                     PathOffsetError::NoSide => OffsetError::NoSide,
                     PathOffsetError::Vanishes => OffsetError::Collapses,
                 }),
-            Entity::Text(_) | Entity::MText(_) | Entity::BlockRef(_) | Entity::Dimension(_) => {
-                Err(OffsetError::Unsupported(self.kind_name()))
-            }
+            Entity::Text(_)
+            | Entity::MText(_)
+            | Entity::BlockRef(_)
+            | Entity::Dimension(_)
+            | Entity::Hatch(_) => Err(OffsetError::Unsupported(self.kind_name())),
         }
     }
 
@@ -730,7 +753,11 @@ impl Entity {
             Entity::Circle(circle) => (circle.center.distance_to(point) - circle.radius).abs(),
             Entity::Arc(arc) => (arc.center.distance_to(point) - arc.radius).abs(),
             Entity::Polyline(_) => self.own_distance_to(point),
-            Entity::Text(_) | Entity::MText(_) | Entity::BlockRef(_) | Entity::Dimension(_) => {
+            Entity::Text(_)
+            | Entity::MText(_)
+            | Entity::BlockRef(_)
+            | Entity::Dimension(_)
+            | Entity::Hatch(_) => {
                 return Err(OffsetError::Unsupported(self.kind_name()));
             }
         };

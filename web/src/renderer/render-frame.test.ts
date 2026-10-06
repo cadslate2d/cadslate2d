@@ -7,6 +7,8 @@ const emptyFrame = (): FrameBuffers => ({
   batches: new Uint32Array(3),
   arcs: new Float32Array(5),
   arcBatches: new Uint32Array(3),
+  triangles: new Float32Array(6),
+  triangleBatches: new Uint32Array(3),
 });
 
 class FakeSource implements FrameSource {

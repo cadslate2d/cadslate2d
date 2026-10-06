@@ -45,21 +45,23 @@ Tests: `cad-commands/src/tests/layers.rs`, `cad-document/src/drawing.rs`, `cad-r
 
 ## At a glance
 
-| Command | Line | Arc | Circle | Open polyline | Closed polyline | Text | Block reference | Dimension |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| [MOVE, COPY, ROTATE, SCALE, MIRROR](#move-copy-rotate-scale-mirror) | yes | yes | yes | yes | yes | yes; a mirrored text stays readable | yes; a mirrored reference stays a reference | yes, by its points; its text always reads the right way up; a scaled dimension measures the scaled points |
-| [Grip editing](#grip-editing) | ends, midpoint | ends, midpoint, centre | centre, quadrants | vertices | vertices | insertion point | insertion point | the points it measures, and where it is placed |
-| [OFFSET](#offset) | yes | yes | yes | yes | yes | no: not a curve | no | no: not a curve |
-| [TRIM](#trim) | yes | yes | if crossed twice | yes | if crossed twice | no; never a cutting edge | no; its lines and arcs are cutting edges | no; never a cutting edge |
-| [EXTEND](#extend) | yes | yes | no: it has no end | yes | no: it has no end | no; never a boundary | no; its lines and arcs are boundaries | no; never a boundary |
-| [FILLET](#fillet) | with a line, arc, or circle | with a line, arc, or circle | with a line, arc, or circle; left whole | between two of its own segments | between two of its own segments | no | no | no |
-| [CHAMFER](#chamfer) | with a line | no | no | between two of its own segments | between two of its own segments | no | no | no |
-| [BREAK](#break) | yes | yes | two points; becomes an arc | yes | two points; opens | no | no | no |
-| [JOIN](#join) | yes | yes | no: it has no end | yes | no: it has no end | no: it has no ends | no | no |
-| [STRETCH](#stretch) | by its ends | by its ends | whole, by its centre | by its vertices | by its vertices | whole, by its insertion point | whole, by its insertion point | by its points: a measured point inside the window moves and the dimension measures anew |
-| ERASE | yes | yes | yes | yes | yes | yes | yes | yes |
-| TEXTEDIT | — | — | — | — | — | changes what it says | — | — |
-| EXPLODE | — | — | — | its lines and arcs | its lines and arcs | — | its definition's objects | its lines, its arrowheads (closed polylines), its arc, its text |
+| Command | Line | Arc | Circle | Open polyline | Closed polyline | Text | Block reference | Dimension | Hatch |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| [MOVE, COPY, ROTATE, SCALE, MIRROR](#move-copy-rotate-scale-mirror) | yes | yes | yes | yes | yes | yes; a mirrored text stays readable | yes; a mirrored reference stays a reference | yes, by its points; its text always reads the right way up; a scaled dimension measures the scaled points | yes, whole; a mirrored hatch keeps its fill |
+| [Grip editing](#grip-editing) | ends, midpoint | ends, midpoint, centre | centre, quadrants | vertices | vertices | insertion point | insertion point | the points it measures, and where it is placed | loop vertices |
+| [OFFSET](#offset) | yes | yes | yes | yes | yes | no: not a curve | no | no: not a curve | no: not a curve |
+| [TRIM](#trim) | yes | yes | if crossed twice | yes | if crossed twice | no; never a cutting edge | no; its lines and arcs are cutting edges | no; never a cutting edge | no; never a cutting edge |
+| [EXTEND](#extend) | yes | yes | no: it has no end | yes | no: it has no end | no; never a boundary | no; its lines and arcs are boundaries | no; never a boundary | no; never a boundary |
+| [FILLET](#fillet) | with a line, arc, or circle | with a line, arc, or circle | with a line, arc, or circle; left whole | between two of its own segments | between two of its own segments | no | no | no | no |
+| [CHAMFER](#chamfer) | with a line | no | no | between two of its own segments | between two of its own segments | no | no | no | no |
+| [BREAK](#break) | yes | yes | two points; becomes an arc | yes | two points; opens | no | no | no | no |
+| [JOIN](#join) | yes | yes | no: it has no end | yes | no: it has no end | no: it has no ends | no | no | no |
+| [STRETCH](#stretch) | by its ends | by its ends | whole, by its centre | by its vertices | by its vertices | whole, by its insertion point | whole, by its insertion point | by its points: a measured point inside the window moves and the dimension measures anew | by its loop vertices |
+| ERASE | yes | yes | yes | yes | yes | yes | yes | yes | yes |
+| TEXTEDIT | — | — | — | — | — | changes what it says | — | — | — |
+| EXPLODE | — | — | — | its lines and arcs | its lines and arcs | — | its definition's objects | its lines, its arrowheads (closed polylines), its arc, its text | no: a solid hatch has nothing to come apart into |
+
+A hatch is an area, not a curve ([ADR-0021](adr/0021-filled-regions.md)): it is picked by its fill and its boundary; nothing snaps to, intersects, or trims against it. Tests: `cad-commands/src/tests/hatch.rs`, `cad-document/src/hatch.rs`.
 
 A dimension is not geometry of the drawing ([ADR-0020](adr/0020-dimensions.md)): nothing snaps to, intersects, trims against, or extends to its lines. It is picked by its lines, arrowheads, and text box; it offers the points it measures, its vertex or centre, and its text's insertion point to snap to. Tests: `cad-commands/src/tests/dimension.rs`, `cad-document/src/dimension.rs`.
 | [EXPLODE](#explode) | no | no | no | its lines and arcs | its lines and arcs | no | its definition's objects, placed; one level |
@@ -110,6 +112,7 @@ Selecting objects shows their grips; clicking one starts a stretch of that point
 | Text | The insertion point | Moves the text |
 | Dimension | A point it measures | Moves that point; the dimension measures the new points |
 | Dimension | Its placement point | Moves the dimension line, arc, or text where the pointer is |
+| Hatch | A loop vertex | Moves that vertex; arc segments on either side keep their bulge; refused onto a neighbour or if the loop would lose its area |
 
 Refused, leaving the object as it was: a line dragged to no length, a circle to no radius, an arc's three points into a line, a vertex onto its neighbour. Grips are shown for up to 100 selected objects.
 

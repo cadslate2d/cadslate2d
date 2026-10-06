@@ -16,9 +16,9 @@ use std::fmt::Write;
 use cad_core::{EntityId, LengthUnit, Point2};
 use cad_document::{
     ArcEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, DimStyle,
-    DimStyleId, DimensionEntity, Drawing, DrawingSettings, Entity, EntityRecord, Justification,
-    Layer, LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight, MTextEntity, Measure,
-    PolylineEntity, Properties, TextEntity, TextStyle, TextStyleTable,
+    DimStyleId, DimensionEntity, Drawing, DrawingSettings, Entity, EntityRecord, HatchEntity,
+    Justification, Layer, LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight,
+    MTextEntity, Measure, PolylineEntity, Properties, TextEntity, TextStyle, TextStyleTable,
 };
 
 use crate::properties::{
@@ -646,6 +646,7 @@ impl Writer {
             Entity::MText(_) => "MTEXT",
             Entity::BlockRef(_) => "INSERT",
             Entity::Dimension(_) => "DIMENSION",
+            Entity::Hatch(_) => "HATCH",
         };
         self.entity(kind, owner, layer, &record.properties, drawing.linetypes());
         match &*record.entity {
@@ -657,7 +658,44 @@ impl Writer {
             Entity::MText(text) => self.mtext(text, drawing.text_styles()),
             Entity::BlockRef(reference) => self.insert(reference, drawing.blocks()),
             Entity::Dimension(dimension) => self.dimension(dimension, drawing),
+            Entity::Hatch(hatch) => self.hatch(hatch),
         }
+    }
+
+    /// A solid HATCH (ADR-0021): the solid flag (70), associativity off
+    /// (71), its loops as polyline boundary paths (92 flag 2, plus 1 for
+    /// the outermost) with their bulges (72), closed (73), and their
+    /// vertices (93, then 10/20 and 42); the normal-parity style (75), the
+    /// predefined pattern kind (76), no seed points (98).
+    fn hatch(&mut self, hatch: &HatchEntity) {
+        self.group(100, "AcDbHatch");
+        self.point(10, Point2::ORIGIN);
+        self.real(210, 0.0);
+        self.real(220, 0.0);
+        self.real(230, 1.0);
+        self.group(2, "SOLID");
+        self.int(70, 1);
+        self.int(71, 0);
+        self.int(91, hatch.loops.len() as i64);
+        for (index, path) in hatch.loops.iter().enumerate() {
+            let flags = 2 | if index == 0 { 1 } else { 16 };
+            self.int(92, flags);
+            let bulged = path.bulges.iter().any(|bulge| *bulge != 0.0);
+            self.int(72, i64::from(bulged));
+            self.int(73, 1);
+            self.int(93, path.vertices.len() as i64);
+            for (vertex, bulge) in path.vertices.iter().zip(&path.bulges) {
+                self.real(10, vertex.x);
+                self.real(20, vertex.y);
+                if bulged {
+                    self.real(42, *bulge);
+                }
+            }
+            self.int(97, 0);
+        }
+        self.int(75, 0);
+        self.int(76, 1);
+        self.int(98, 0);
     }
 
     /// A DIMENSION (ADR-0020): its anonymous block (2), its kind (70), its

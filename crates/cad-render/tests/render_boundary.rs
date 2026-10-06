@@ -719,6 +719,53 @@ fn a_dimension_is_drawn_by_its_style_and_redrawn_when_the_style_changes() {
     assert_eq!(scene.frame().arc_count(), 1);
 }
 
+/// ADR-0021: a hatch is committed triangles — a style index each, batches
+/// that tile the buffer — beside the strokes of its boundary; the pointer
+/// leaves them alone, and a fill being previewed travels in the overlay.
+#[test]
+fn a_hatch_is_committed_triangles_and_its_preview_overlay_triangles() {
+    use cad_document::{Entity, PolylineEntity};
+    let square = PolylineEntity::new(
+        vec![
+            cad_core::Point2::new(-50.0, -50.0),
+            cad_core::Point2::new(50.0, -50.0),
+            cad_core::Point2::new(50.0, 50.0),
+            cad_core::Point2::new(-50.0, 50.0),
+        ],
+        true,
+    );
+    let mut h = Harness::with_entities([Entity::from(square)]);
+    // The preview: triangles in the overlay, none committed.
+    h.enter("HATCH");
+    h.move_to(400.0, 300.0);
+    let overlay = overlay_of(&h);
+    assert_eq!(overlay.frame().triangle_count(), 2);
+    let mut cache = SceneCache::new();
+    assert_eq!(cache.scene(h.session.drawing()).frame().triangle_count(), 0);
+
+    h.click(400.0, 300.0);
+    let scene = cache.scene(h.session.drawing());
+    let frame = scene.frame();
+    assert_eq!(frame.triangle_count(), 2, "a square is two triangles");
+    assert_eq!(
+        frame.triangles().len(),
+        2 * PackedFrame::FLOATS_PER_TRIANGLE
+    );
+    assert_eq!(scene.triangle_styles().len(), 2);
+    let mut next = 0;
+    for batch in frame.triangle_batches() {
+        assert_eq!(batch.first, next);
+        next += batch.count;
+    }
+    assert_eq!(next, 2, "the batches cover every triangle");
+    assert!(frame.triangles().iter().all(|value| value.is_finite()));
+    assert_frame_is_consistent(frame, "a hatch");
+    let revision = scene.revision();
+    h.move_to(100.0, 100.0);
+    h.move_to(600.0, 200.0);
+    assert_eq!(cache.scene(h.session.drawing()).revision(), revision);
+}
+
 /// DESIGN §34 (#161): what the renderer draws for a text is inside the box
 /// the document computes for it — at every justification and angle, after
 /// the float conversion the scene makes.

@@ -17,6 +17,7 @@ mod editing;
 mod entity;
 mod exploding;
 mod grips;
+mod hatch;
 mod history;
 mod id_alloc;
 mod joining;
@@ -50,6 +51,7 @@ pub use entity::{
 };
 pub use exploding::ExplodeError;
 pub use grips::{EntityGrip, GripKind};
+pub use hatch::{HatchEntity, HatchError, HatchStyle};
 pub use joining::{JoinError, Joined, close_into_circle, join};
 pub use layer::{Layer, LayerChange, LayerId, LayerTable};
 pub use linetype::{LinetypeChange, LinetypeDef, LinetypeError, LinetypeId, LinetypeTable};

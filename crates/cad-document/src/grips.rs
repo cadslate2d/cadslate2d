@@ -98,6 +98,11 @@ impl Entity {
             Entity::Text(text) => vec![grip(GripKind::Insertion, text.insertion)],
             Entity::MText(text) => vec![grip(GripKind::Insertion, text.insertion)],
             Entity::BlockRef(reference) => vec![grip(GripKind::Insertion, reference.insertion)],
+            Entity::Hatch(hatch) => hatch
+                .vertices()
+                .into_iter()
+                .map(|vertex| grip(GripKind::Vertex, vertex))
+                .collect(),
             Entity::Dimension(dimension) => {
                 let measured = dimension.measure.points().len();
                 dimension
@@ -218,6 +223,23 @@ impl Entity {
                 .with_point(index, to)
                 .filter(|moved| moved.check().is_ok())
                 .map(Entity::from),
+            // A loop vertex moves, as a polyline's does: not onto a
+            // neighbour, and the loop must still bound a region.
+            Entity::Hatch(hatch) => {
+                let vertices = hatch.vertices();
+                let onto_neighbour = |other: Option<&Point2>| {
+                    other.is_some_and(|other| TOLERANCE.coincident(*other, to))
+                };
+                if onto_neighbour(vertices.get(index.wrapping_sub(1)))
+                    || onto_neighbour(vertices.get(index + 1))
+                {
+                    return None;
+                }
+                hatch
+                    .with_vertex(index, to)
+                    .filter(|moved| moved.check().is_ok())
+                    .map(Entity::from)
+            }
         }
     }
 

@@ -18,6 +18,7 @@ mod offset;
 mod path;
 mod path_corner;
 mod path_offset;
+mod polygon;
 mod polyline;
 mod segment;
 mod transform;
@@ -38,6 +39,7 @@ pub use path_corner::{CornerJoin, PathCornerError};
 pub use path_offset::{
     PathOffsetError, PathSpan, offset_path, path_spans, raw_offset, stitch_spans,
 };
+pub use polygon::{arc_chords, contains as ring_contains, flatten_path, signed_area, tessellate};
 pub use polyline::{
     arc_from_bulge, bulge_end_tangent, bulge_from_arc, bulge_from_tangent, bulge_primitive,
     is_straight, polyline_closes, polyline_primitives, polyline_spans,

@@ -37,6 +37,8 @@ pub struct RenderScene {
     segment_styles: Vec<u16>,
     /// The style index of each arc instance, in instance order.
     arc_styles: Vec<u16>,
+    /// The style index of each triangle instance, in instance order.
+    triangle_styles: Vec<u16>,
     /// The properties each style index stands for.
     properties: Vec<Properties>,
     style_revision: Revision,
@@ -88,6 +90,12 @@ impl RenderScene {
         &self.arc_styles
     }
 
+    /// One style index per triangle instance (ADR-0021): a fill takes the
+    /// row's colour and nothing else.
+    pub fn triangle_styles(&self) -> &[u16] {
+        &self.triangle_styles
+    }
+
     /// Identifies the style table: the drawing revision it was resolved at.
     /// TypeScript re-uploads the table only when this value changes.
     pub fn style_revision(&self) -> Revision {
@@ -130,6 +138,7 @@ impl RenderScene {
         self.frame.reset(origin);
         self.segment_styles.clear();
         self.arc_styles.clear();
+        self.triangle_styles.clear();
         self.properties.clear();
 
         let mut indices: HashMap<Properties, u16> = HashMap::new();
@@ -176,7 +185,11 @@ impl RenderScene {
                 }
                 index as u16
             });
-            let (segments, arcs) = (self.frame.segment_count(), self.frame.arc_count());
+            let (segments, arcs, triangles) = (
+                self.frame.segment_count(),
+                self.frame.arc_count(),
+                self.frame.triangle_count(),
+            );
             self.frame
                 .push_entity(StyleRole::Entity, entity, drawing.tables());
             let added = |before: u32, after: u32| (after - before) as usize;
@@ -187,6 +200,10 @@ impl RenderScene {
             self.arc_styles.extend(std::iter::repeat_n(
                 style,
                 added(arcs, self.frame.arc_count()),
+            ));
+            self.triangle_styles.extend(std::iter::repeat_n(
+                style,
+                added(triangles, self.frame.triangle_count()),
             ));
         }
     }
@@ -273,6 +290,7 @@ impl SceneCache {
                 frame: PackedFrame::default(),
                 segment_styles: Vec::new(),
                 arc_styles: Vec::new(),
+                triangle_styles: Vec::new(),
                 properties: Vec::new(),
                 style_revision: drawing.revision(),
                 styles: Vec::new(),

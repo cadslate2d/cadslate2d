@@ -4,18 +4,23 @@ import { nextCapacity } from "./buffer-capacity";
 import { DISTANCE_ATTRIBUTE_LOCATION } from "./linetypes";
 import { STYLE_ATTRIBUTE_LOCATION } from "./style-table";
 
+/**
+ * Where a program's uniforms live. Those a fill does not use — the
+ * viewport, the width, the pattern table — may be compiled away by the
+ * driver, so they may be absent: setting an absent uniform does nothing.
+ */
 export interface StrokeUniforms {
   readonly scale: WebGLUniformLocation;
   readonly translate: WebGLUniformLocation;
-  readonly viewport: WebGLUniformLocation;
-  readonly halfWidth: WebGLUniformLocation;
+  readonly viewport: WebGLUniformLocation | null;
+  readonly halfWidth: WebGLUniformLocation | null;
   readonly color: WebGLUniformLocation;
   /** 1 when the colour comes from the style table, 0 when from `color`. */
   readonly styled: WebGLUniformLocation;
   /** The sampler the style table is bound to. */
   readonly styles: WebGLUniformLocation;
   /** The sampler the pattern table is bound to. */
-  readonly patterns: WebGLUniformLocation;
+  readonly patterns: WebGLUniformLocation | null;
 }
 
 /** One per-instance vertex attribute: where it is bound and where it sits in an instance. */
@@ -39,7 +44,10 @@ export interface InstanceLayout {
   readonly verticesPerInstance: number;
   /** A per-vertex buffer bound at location 0, for shaders that need one. */
   readonly perVertex?: { readonly buffer: WebGLBuffer; readonly size: number };
-  /** Floats per instance in the path distance buffer of a styled layer (ADR-0015). */
+  /**
+   * Floats per instance in the path distance buffer of a styled layer
+   * (ADR-0015); 0 for a primitive with no linetype, such as a fill.
+   */
   readonly floatsPerDistance: number;
 }
 
@@ -72,7 +80,7 @@ export class InstanceLayer {
     this.#vao = gl.createVertexArray();
     this.#buffer = gl.createBuffer();
     this.#styles = styled ? gl.createBuffer() : undefined;
-    this.#distances = styled ? gl.createBuffer() : undefined;
+    this.#distances = styled && layout.floatsPerDistance > 0 ? gl.createBuffer() : undefined;
 
     gl.bindVertexArray(this.#vao);
     if (layout.perVertex) {
@@ -91,6 +99,8 @@ export class InstanceLayer {
     if (this.#styles) {
       gl.enableVertexAttribArray(STYLE_ATTRIBUTE_LOCATION);
       gl.vertexAttribDivisor(STYLE_ATTRIBUTE_LOCATION, 1);
+    }
+    if (this.#distances) {
       gl.enableVertexAttribArray(DISTANCE_ATTRIBUTE_LOCATION);
       gl.vertexAttribDivisor(DISTANCE_ATTRIBUTE_LOCATION, 1);
     }

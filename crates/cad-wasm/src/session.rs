@@ -521,6 +521,43 @@ impl CadSession {
         u32_view(self.overlay.frame().arc_batch_words())
     }
 
+    /// Committed triangle instances (ADR-0021): `x0, y0, x1, y1, x2, y2`
+    /// per filled triangle, relative to the scene origin. A view into WASM
+    /// memory — consume before the next call.
+    pub fn scene_triangles(&mut self) -> Float32Array {
+        f32_view(self.scene.scene(self.session.drawing()).frame().triangles())
+    }
+
+    /// Committed triangle batches: `style, first, count` per batch. A view
+    /// into WASM memory — consume before the next call.
+    pub fn scene_triangle_batches(&mut self) -> Uint32Array {
+        u32_view(
+            self.scene
+                .scene(self.session.drawing())
+                .frame()
+                .triangle_batch_words(),
+        )
+    }
+
+    /// One style index per committed triangle instance. A view into WASM
+    /// memory — consume before the next call.
+    pub fn scene_triangle_styles(&mut self) -> Uint16Array {
+        u16_view(self.scene.scene(self.session.drawing()).triangle_styles())
+    }
+
+    /// Transient triangle instances: the fill of a hatch being previewed or
+    /// highlighted. A view into WASM memory — consume before the next call.
+    pub fn overlay_triangles(&mut self) -> Float32Array {
+        self.sync_overlay();
+        f32_view(self.overlay.frame().triangles())
+    }
+
+    /// Transient triangle batches. A view into WASM memory — consume before the next call.
+    pub fn overlay_triangle_batches(&mut self) -> Uint32Array {
+        self.sync_overlay();
+        u32_view(self.overlay.frame().triangle_batch_words())
+    }
+
     /// Clip transform for the overlay frame, a copy.
     pub fn overlay_transform(&mut self) -> Vec<f32> {
         self.sync_overlay();

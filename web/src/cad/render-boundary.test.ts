@@ -38,6 +38,9 @@ describe("WASM API surface", () => {
       "overlay_batches",
       "overlay_segments",
       "overlay_transform",
+      // ADR-0021: the fill of a hatch being previewed or highlighted, as triangles, one buffer each.
+      "overlay_triangle_batches",
+      "overlay_triangles",
       "pointer_down",
       "pointer_leave",
       "pointer_move",
@@ -62,6 +65,10 @@ describe("WASM API surface", () => {
       "scene_style_revision",
       "scene_styles",
       "scene_transform",
+      // ADR-0021: the committed fills as triangles, their batches, and one style index per triangle.
+      "scene_triangle_batches",
+      "scene_triangle_styles",
+      "scene_triangles",
       "snapshot_dxf",
       "submit_text",
       "take_host_request",

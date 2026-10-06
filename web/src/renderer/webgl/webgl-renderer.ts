@@ -4,6 +4,7 @@ import {
   FLOATS_PER_ARC,
   FLOATS_PER_ARC_DISTANCE,
   FLOATS_PER_SEGMENT,
+  FLOATS_PER_TRIANGLE,
   StyleRole,
   type ClipTransform,
   type FrameBuffers,
@@ -12,6 +13,7 @@ import {
 import type { CanvasPalette } from "../palette";
 import type { FrameSink } from "../render-frame";
 import { ARC_FRAGMENT_SHADER, ARC_STRIP_VERTICES, ARC_VERTEX_SHADER } from "./arc-shaders";
+import { FILL_FRAGMENT_SHADER, FILL_VERTEX_SHADER } from "./fill-shaders";
 import { InstanceLayer, type InstanceLayout, type StrokeUniforms } from "./instance-layer";
 import { patternTexels } from "./linetypes";
 import { linkProgram } from "./program";
@@ -50,17 +52,21 @@ interface Pipeline {
 
 /** The GPU buffers of one render lifetime: one layer per kind of primitive. */
 class FrameLayers {
+  /** Filled triangles (ADR-0021), drawn first so strokes lie over them. */
+  readonly fills: InstanceLayer;
   readonly segments: InstanceLayer;
   readonly arcs: InstanceLayer;
 
   /** `styled`: every instance has a style index, and colours come from the style table. */
   constructor(gl: WebGL2RenderingContext, pipelines: Pipelines, usage: number, styled: boolean) {
+    this.fills = new InstanceLayer(gl, pipelines.fills.layout, usage, styled);
     this.segments = new InstanceLayer(gl, pipelines.segments.layout, usage, styled);
     this.arcs = new InstanceLayer(gl, pipelines.arcs.layout, usage, styled);
   }
 
   /** Returns how many of the buffers had to be reallocated. */
   upload(frame: FrameBuffers): number {
+    const fills = this.fills.upload(frame.triangles, frame.triangleBatches, frame.triangleStyles);
     const segments = this.segments.upload(
       frame.segments,
       frame.batches,
@@ -73,16 +79,18 @@ class FrameLayers {
       frame.arcStyles,
       frame.arcDistances,
     );
-    return Number(segments) + Number(arcs);
+    return Number(fills) + Number(segments) + Number(arcs);
   }
 
   dispose(): void {
+    this.fills.dispose();
     this.segments.dispose();
     this.arcs.dispose();
   }
 }
 
 interface Pipelines {
+  readonly fills: Pipeline;
   readonly segments: Pipeline;
   readonly arcs: Pipeline;
 }
@@ -261,6 +269,7 @@ export class WebGlRenderer implements FrameSink {
     ];
     for (const [layers, transform, include] of passes) {
       for (const [pipeline, layer] of [
+        [pipelines.fills, layers.fills],
         [pipelines.segments, layers.segments],
         [pipelines.arcs, layers.arcs],
       ] as const) {
@@ -279,6 +288,7 @@ export class WebGlRenderer implements FrameSink {
     this.#gl.deleteTexture(styles);
     this.#gl.deleteTexture(patterns);
     this.#gl.deleteBuffer(quad);
+    this.#gl.deleteProgram(pipelines.fills.program);
     this.#gl.deleteProgram(pipelines.segments.program);
     this.#gl.deleteProgram(pipelines.arcs.program);
   }
@@ -330,12 +340,13 @@ function createPipeline(
     uniforms: {
       scale: uniform("u_scale"),
       translate: uniform("u_translate"),
-      viewport: uniform("u_viewport"),
-      halfWidth: uniform("u_half_width"),
+      // Used by the strokes; a fill's driver may compile them away.
+      viewport: gl.getUniformLocation(program, "u_viewport"),
+      halfWidth: gl.getUniformLocation(program, "u_half_width"),
       color: uniform("u_color"),
       styled: uniform("u_styled"),
       styles: uniform("u_styles"),
-      patterns: uniform("u_patterns"),
+      patterns: gl.getUniformLocation(program, "u_patterns"),
     },
   };
 }
@@ -347,6 +358,16 @@ function createResources(gl: WebGL2RenderingContext): GpuResources {
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, -1, 0, 1, 1, -1, 1, 1]), gl.STATIC_DRAW);
 
   const pipelines: Pipelines = {
+    // A filled triangle is its three corners, one per vertex (ADR-0021).
+    fills: createPipeline(gl, FILL_VERTEX_SHADER, FILL_FRAGMENT_SHADER, {
+      floatsPerInstance: FLOATS_PER_TRIANGLE,
+      attributes: [
+        { location: 1, size: 4, offset: 0 },
+        { location: 4, size: 2, offset: 4 },
+      ],
+      verticesPerInstance: 3,
+      floatsPerDistance: 0,
+    }),
     // A segment is extruded from a four-corner quad (ADR-0003).
     segments: createPipeline(gl, STROKE_VERTEX_SHADER, STROKE_FRAGMENT_SHADER, {
       floatsPerInstance: FLOATS_PER_SEGMENT,

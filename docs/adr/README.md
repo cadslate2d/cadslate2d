@@ -31,6 +31,7 @@ There are two kinds:
 | [0018](0018-dxf-release-r2000.md) | The DXF release is R2000: lineweights, MTEXT, LWPOLYLINE, and the structure they need | Accepted | Evidence |
 | [0019](0019-local-persistence.md) | Local persistence: the autosave is one IndexedDB record, written when the revision changes | Accepted | Evidence |
 | [0020](0020-dimensions.md) | Dimensions: definition points and a style, laid out by pure functions whenever asked | Accepted | Bootstrap |
+| [0021](0021-filled-regions.md) | Filled regions: triangles as a third committed instance kind, cut from the boundary when asked | Accepted | Evidence |
 
 ## Expected evidence ADRs
 

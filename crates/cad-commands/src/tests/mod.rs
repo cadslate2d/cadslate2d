@@ -15,6 +15,7 @@ mod dimlinear;
 mod dimstyle;
 mod edge;
 mod grips;
+mod hatch;
 mod join;
 mod layer_command;
 mod layers;

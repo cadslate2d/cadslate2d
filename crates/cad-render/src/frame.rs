@@ -16,11 +16,16 @@
 //! direction the path runs round it. Only the committed scene draws them;
 //! the overlay is always continuous.
 //!
+//! A filled region is *triangle instances* (ADR-0021): six `f32`s, the
+//! three corners, each an offset from the origin like a segment's ends.
+//! They travel in their own buffer with their own batches, and carry no
+//! path distance: a fill has no linetype.
+//!
 //! All buffers are stored exactly as they cross the WASM boundary, so
 //! handing a frame to JavaScript needs no conversion and no allocation.
 
 use cad_core::Point2;
-use cad_document::{Entity, Properties, Tables};
+use cad_document::{Entity, PolylineEntity, Properties, Tables};
 use cad_geometry::{Arc, Primitive, bulge_primitive, polyline_spans};
 
 /// What a batch of geometry *is*. TypeScript resolves each role to a colour
@@ -109,6 +114,10 @@ pub struct PackedFrame {
     /// start, then `1` when the path runs counter-clockwise round it and
     /// `-1` when clockwise.
     arc_distances: Vec<f32>,
+    /// `x0, y0, x1, y1, x2, y2` per triangle instance.
+    triangles: Vec<f32>,
+    /// `style, first, count` per triangle batch.
+    triangle_batch_words: Vec<u32>,
 }
 
 /// Appends one instance to a batch list, extending the last batch when the
@@ -138,6 +147,7 @@ impl PackedFrame {
     pub const FLOATS_PER_ARC: usize = 5;
     /// Per arc in [`Self::arc_distances`]: the distance and the direction.
     pub const FLOATS_PER_ARC_DISTANCE: usize = 2;
+    pub const FLOATS_PER_TRIANGLE: usize = 6;
 
     /// Empties the frame and sets a new origin. Buffer capacity is kept, so
     /// rebuilding a frame of similar size does not allocate.
@@ -149,6 +159,8 @@ impl PackedFrame {
         self.arc_batch_words.clear();
         self.segment_distances.clear();
         self.arc_distances.clear();
+        self.triangles.clear();
+        self.triangle_batch_words.clear();
     }
 
     /// The `f64` world position that segment coordinates are relative to.
@@ -194,6 +206,25 @@ impl PackedFrame {
         decode_batches(&self.arc_batch_words)
     }
 
+    /// Flat `x0, y0, x1, y1, x2, y2` per triangle instance.
+    pub fn triangles(&self) -> &[f32] {
+        &self.triangles
+    }
+
+    pub fn triangle_count(&self) -> u32 {
+        (self.triangles.len() / Self::FLOATS_PER_TRIANGLE) as u32
+    }
+
+    /// Flat `style, first, count` per triangle batch.
+    pub fn triangle_batch_words(&self) -> &[u32] {
+        &self.triangle_batch_words
+    }
+
+    /// The triangle batches, decoded.
+    pub fn triangle_batches(&self) -> Vec<DrawBatch> {
+        decode_batches(&self.triangle_batch_words)
+    }
+
     /// Per segment instance, the distance along its entity's path at its
     /// start, in drawing units (ADR-0015).
     pub fn segment_distances(&self) -> &[f32] {
@@ -228,6 +259,17 @@ impl PackedFrame {
             .extend([a.x as f32, a.y as f32, b.x as f32, b.y as f32]);
         self.segment_distances.push(distance as f32);
         extend_batches(&mut self.batch_words, style, first);
+    }
+
+    /// Appends one filled triangle. Consecutive triangles of the same style
+    /// share a batch.
+    pub fn push_triangle(&mut self, style: StyleRole, corners: [Point2; 3]) {
+        let first = self.triangle_count();
+        for corner in corners {
+            let at = corner - self.origin;
+            self.triangles.extend([at.x as f32, at.y as f32]);
+        }
+        extend_batches(&mut self.triangle_batch_words, style, first);
     }
 
     /// Appends one arc instance at the start of its path, run
@@ -317,6 +359,17 @@ impl PackedFrame {
             Entity::BlockRef(reference) => {
                 for (part, _) in tables.blocks.flatten(reference, Properties::default()) {
                     self.push_entity(style, &part, tables);
+                }
+            }
+            // A hatch is its fill, as triangles (ADR-0021), and its
+            // boundary loops, drawn as polylines.
+            Entity::Hatch(hatch) => {
+                for triangle in hatch.fill() {
+                    self.push_triangle(style, triangle);
+                }
+                for path in &hatch.loops {
+                    let boundary = Entity::from(PolylineEntity::from(path.clone()));
+                    self.push_entity(style, &boundary, tables);
                 }
             }
             // A dimension is what its style lays out (ADR-0020): lines,
