@@ -59,7 +59,7 @@ Tests: `cad-commands/src/tests/layers.rs`, `cad-document/src/drawing.rs`, `cad-r
 | [STRETCH](#stretch) | by its ends | by its ends | whole, by its centre | by its vertices | by its vertices | whole, by its insertion point | whole, by its insertion point | by its points: a measured point inside the window moves and the dimension measures anew | by its loop vertices |
 | ERASE | yes | yes | yes | yes | yes | yes | yes | yes | yes |
 | TEXTEDIT | — | — | — | — | — | changes what it says | — | — | — |
-| EXPLODE | — | — | — | its lines and arcs | its lines and arcs | — | its definition's objects | its lines, its arrowheads (closed polylines), its arc, its text | no: a solid hatch has nothing to come apart into |
+| EXPLODE | — | — | — | its lines and arcs | its lines and arcs | — | its definition's objects | its lines, its arrowheads (closed polylines), its arc, its text | a pattern hatch its pattern's lines; a solid hatch has nothing to come apart into |
 
 A hatch is an area, not a curve ([ADR-0021](adr/0021-filled-regions.md)): it is picked by its fill and its boundary; nothing snaps to, intersects, or trims against it. Tests: `cad-commands/src/tests/hatch.rs`, `cad-document/src/hatch.rs`.
 

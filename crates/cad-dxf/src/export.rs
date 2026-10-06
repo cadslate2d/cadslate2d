@@ -17,7 +17,7 @@ use cad_core::{EntityId, LengthUnit, Point2};
 use cad_document::{
     ArcEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, DimStyle,
     DimStyleId, DimensionEntity, Drawing, DrawingSettings, Entity, EntityRecord, HatchEntity,
-    Justification, Layer, LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight,
+    HatchStyle, Justification, Layer, LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight,
     MTextEntity, Measure, PolylineEntity, Properties, TextEntity, TextStyle, TextStyleTable,
 };
 
@@ -662,19 +662,24 @@ impl Writer {
         }
     }
 
-    /// A solid HATCH (ADR-0021): the solid flag (70), associativity off
-    /// (71), its loops as polyline boundary paths (92 flag 2, plus 1 for
-    /// the outermost) with their bulges (72), closed (73), and their
-    /// vertices (93, then 10/20 and 42); the normal-parity style (75), the
-    /// predefined pattern kind (76), no seed points (98).
+    /// A HATCH (ADR-0021): its pattern's name (2), the solid flag (70),
+    /// associativity off (71), its loops as polyline boundary paths (92
+    /// flag 2, plus 1 for the outermost) with their bulges (72), closed
+    /// (73), and their vertices (93, then 10/20 and 42); the normal-parity
+    /// style (75), the predefined pattern kind (76); for a pattern, its
+    /// angle (52) and scale (41) and each family as placed — angle (53),
+    /// a point a line passes through (43, 44), the offset to the next line
+    /// in the drawing (45, 46), and the dashes (79, then 49); no seed
+    /// points (98).
     fn hatch(&mut self, hatch: &HatchEntity) {
         self.group(100, "AcDbHatch");
         self.point(10, Point2::ORIGIN);
         self.real(210, 0.0);
         self.real(220, 0.0);
         self.real(230, 1.0);
-        self.group(2, "SOLID");
-        self.int(70, 1);
+        self.group(2, hatch.style.name());
+        let solid = matches!(hatch.style, HatchStyle::Solid);
+        self.int(70, i64::from(solid));
         self.int(71, 0);
         self.int(91, hatch.loops.len() as i64);
         for (index, path) in hatch.loops.iter().enumerate() {
@@ -695,6 +700,25 @@ impl Writer {
         }
         self.int(75, 0);
         self.int(76, 1);
+        if let HatchStyle::Pattern { angle, scale, .. } = &hatch.style {
+            self.real(52, angle.to_degrees());
+            self.real(41, *scale);
+            self.int(77, 0);
+            let families = hatch.families();
+            self.int(78, families.len() as i64);
+            for family in families {
+                self.real(53, family.angle.to_degrees());
+                self.real(43, family.origin.x);
+                self.real(44, family.origin.y);
+                let step = family.step();
+                self.real(45, step.x);
+                self.real(46, step.y);
+                self.int(79, family.dashes.len() as i64);
+                for dash in &family.dashes {
+                    self.real(49, *dash);
+                }
+            }
+        }
         self.int(98, 0);
     }
 

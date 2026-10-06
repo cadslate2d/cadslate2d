@@ -28,6 +28,11 @@ pub struct DraftingSettings {
     pub fillet_radius: f64,
     /// The distances CHAMFER cuts back along the first and the second line.
     pub chamfer_distances: [f64; 2],
+    /// How HATCH last filled: a row of `cad_document::hatch_patterns()` —
+    /// 0 is `SOLID` — and the pattern's angle (radians) and scale.
+    pub hatch_pattern: usize,
+    pub hatch_angle: f64,
+    pub hatch_scale: f64,
 }
 
 impl Default for DraftingSettings {
@@ -39,6 +44,9 @@ impl Default for DraftingSettings {
             offset_distance: None,
             fillet_radius: 0.0,
             chamfer_distances: [0.0, 0.0],
+            hatch_pattern: 0,
+            hatch_angle: 0.0,
+            hatch_scale: 1.0,
         }
     }
 }

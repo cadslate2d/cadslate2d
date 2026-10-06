@@ -10,6 +10,7 @@ use cad_geometry::Primitive;
 
 #[cfg(test)]
 use crate::BlockTable;
+use crate::HatchStyle;
 use crate::tables::Tables;
 
 use crate::{
@@ -35,7 +36,8 @@ impl Entity {
     /// polyline's parts are its segments, as lines and arcs, each with the
     /// polyline's properties. A dimension's parts are what its style lays
     /// out: its lines, its arrowheads as closed polylines, its arc, and
-    /// its text. Anything else is refused by name.
+    /// its text. A pattern hatch's are its pattern's lines. Anything else
+    /// is refused by name.
     pub fn exploded(
         &self,
         properties: Properties,
@@ -63,6 +65,21 @@ impl Entity {
                     .map(|part| (part, properties))
                     .collect())
             }
+            // A pattern hatch comes apart into its pattern's pieces, as
+            // lines; its dots, which no line can be, go. A solid hatch has
+            // no parts.
+            Entity::Hatch(hatch) if !matches!(hatch.style, HatchStyle::Solid) => Ok(hatch
+                .lines()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|line| line.start != line.end)
+                .map(|line| {
+                    (
+                        Entity::from(LineEntity::new(line.start, line.end)),
+                        properties,
+                    )
+                })
+                .collect()),
             Entity::BlockRef(reference) => Ok(tables
                 .blocks
                 .get(reference.block)

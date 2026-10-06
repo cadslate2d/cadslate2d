@@ -1,7 +1,8 @@
 // Hatch (ADR-0021, #167): a rectangle with a circle in it, filled solid
 // from a point inside; the fill is drawn, picked, and written to the file.
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
+  centerOf,
   clickWorld,
   downloadFrom,
   enter,
@@ -12,7 +13,35 @@ import {
   prompt,
 } from "./support";
 
+/** Compares a clip around the canvas centre with its baseline. */
+async function matches(page: Page, name: string, clip: { width: number; height: number }) {
+  const canvas = page.getByRole("region", { name: "Model space" }).locator("canvas");
+  const center = await centerOf(canvas);
+  await expect(page).toHaveScreenshot(name, {
+    clip: {
+      x: Math.round(center.x) - clip.width / 2,
+      y: Math.round(center.y) - clip.height / 2,
+      width: clip.width,
+      height: clip.height,
+    },
+    // A misplaced family moves hundreds of pixels; driver antialiasing a handful.
+    maxDiffPixels: 60,
+  });
+}
+
 test.describe("hatch", () => {
+  test("ANSI31 in a rectangle with a hole (visual baseline)", async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "baselines are recorded in Chromium");
+    await openApp(page);
+    await page.keyboard.press("F7");
+    await enter(page, "PLINE", "-70,-40", "70,-40", "70,40", "-70,40", "C");
+    await enter(page, "CIRCLE", "10,0", "18");
+    await enter(page, "HATCH", "P", "ANSI31", "SC", "2", "-50,0");
+    await expect(prompt(page)).toHaveText("Command:");
+    await page.mouse.move(5, 5);
+    await matches(page, "hatch-ansi31.png", { width: 160, height: 100 });
+  });
+
   test("a rectangle with a circle in it is hatched solid from a point inside", async ({ page }) => {
     const canvas = await openApp(page);
     await page.keyboard.press("F7");
@@ -28,7 +57,7 @@ test.describe("hatch", () => {
     expect(betweenBefore).toBeLessThan(20);
 
     await enter(page, "HATCH");
-    await expect(prompt(page)).toHaveText("Pick internal point or [Select]:");
+    await expect(prompt(page)).toHaveText("Pick internal point or [Select/Pattern/Angle/SCale]:");
     await clickWorld(page, canvas, -70, 0);
     await expect(prompt(page)).toHaveText("Command:");
     await page.mouse.move(5, 5);

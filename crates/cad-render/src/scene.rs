@@ -170,9 +170,10 @@ impl RenderScene {
         {
             // A linetype is for curves: a text is drawn continuous, or its
             // glyphs would fall apart into dashes.
+            // Nor a hatch: its pattern carries its own dashes.
             if matches!(
                 entity,
-                Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_)
+                Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_) | Entity::Hatch(_)
             ) {
                 properties.linetype = Linetype::CONTINUOUS;
             }

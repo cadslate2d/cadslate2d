@@ -25,7 +25,7 @@
 //! handing a frame to JavaScript needs no conversion and no allocation.
 
 use cad_core::Point2;
-use cad_document::{Entity, PolylineEntity, Properties, Tables};
+use cad_document::{Entity, HatchStyle, PolylineEntity, Properties, Tables};
 use cad_geometry::{Arc, Primitive, bulge_primitive, polyline_spans};
 
 /// What a batch of geometry *is*. TypeScript resolves each role to a colour
@@ -361,11 +361,21 @@ impl PackedFrame {
                     self.push_entity(style, &part, tables);
                 }
             }
-            // A hatch is its fill, as triangles (ADR-0021), and its
+            // A hatch is its fill — triangles for a solid one (ADR-0021),
+            // the pattern's pieces as segments for a pattern — and its
             // boundary loops, drawn as polylines.
             Entity::Hatch(hatch) => {
-                for triangle in hatch.fill() {
-                    self.push_triangle(style, triangle);
+                match hatch.style {
+                    HatchStyle::Solid => {
+                        for triangle in hatch.fill() {
+                            self.push_triangle(style, triangle);
+                        }
+                    }
+                    HatchStyle::Pattern { .. } => {
+                        for line in hatch.lines().unwrap_or_default() {
+                            self.push_segment(style, line.start, line.end);
+                        }
+                    }
                 }
                 for path in &hatch.loops {
                     let boundary = Entity::from(PolylineEntity::from(path.clone()));

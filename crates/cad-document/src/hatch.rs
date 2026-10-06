@@ -7,23 +7,67 @@
 //! asked for, as a block reference's or a dimension's geometry is. A
 //! hatch is an area, not a curve: it is picked by its fill and its
 //! boundary, and nothing snaps to, intersects, or trims against it.
+//!
+//! A pattern hatch (#168) is filled with the lines of a pattern from the
+//! table instead ([`crate::hatch_patterns`]): each family's lines clipped
+//! to the rings by the same even-odd rule, dashed in drawing units, placed
+//! at the hatch's angle, scale, and origin — and likewise computed
+//! whenever asked for.
 
 use std::f64::consts::TAU;
 
 use cad_core::{Aabb, Point2};
 use cad_geometry::{
-    Path, Primitive, Transform, flatten_path, ring_contains, signed_area, tessellate,
+    LineFamily, Path, Primitive, Segment, Transform, flatten_path, pattern_lines, ring_contains,
+    signed_area, tessellate,
 };
+
+use crate::hatch_pattern::{HatchPattern, hatch_pattern};
 
 /// How chords follow an arc segment when a loop is flattened: at most
 /// this many radians apart, so a full circle is 64 chords.
 const CHORD_STEP: f64 = TAU / 64.0;
+/// The most pattern pieces one hatch may be drawn with: past it, the
+/// pattern is too fine for the region at its scale.
+pub const MAX_PATTERN_PIECES: usize = 200_000;
 
 /// How a hatch is filled.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum HatchStyle {
     /// Filled solid, in the hatch's colour.
     Solid,
+    /// Filled with the lines of a pattern from the table, by name, turned
+    /// by `angle` (radians), scaled by `scale`, from `origin`.
+    Pattern {
+        name: String,
+        angle: f64,
+        scale: f64,
+        origin: Point2,
+    },
+}
+
+impl HatchStyle {
+    /// A style by pattern name: `SOLID` is the solid fill.
+    pub fn named(name: &str, angle: f64, scale: f64) -> Self {
+        if name.eq_ignore_ascii_case(HatchPattern::SOLID) {
+            Self::Solid
+        } else {
+            Self::Pattern {
+                name: name.to_owned(),
+                angle,
+                scale,
+                origin: Point2::ORIGIN,
+            }
+        }
+    }
+
+    /// The pattern's name; `SOLID` for the solid fill.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Solid => HatchPattern::SOLID,
+            Self::Pattern { name, .. } => name,
+        }
+    }
 }
 
 /// A filled region.
@@ -46,6 +90,13 @@ pub enum HatchError {
     Degenerate,
     /// A coordinate or bulge that is not a number.
     NotFinite,
+    /// A pattern the table does not have.
+    UnknownPattern,
+    /// A pattern scale that is not positive, or an angle that is not a number.
+    BadScale,
+    /// More pattern lines than a hatch is drawn with: too fine a scale for
+    /// the region.
+    TooDense,
 }
 
 impl HatchError {
@@ -55,6 +106,9 @@ impl HatchError {
             Self::NoBoundary => "A hatch needs a closed boundary.",
             Self::Degenerate => "The boundary encloses no area.",
             Self::NotFinite => "A hatch's points must be numbers.",
+            Self::UnknownPattern => "There is no such hatch pattern.",
+            Self::BadScale => "The pattern scale must be greater than zero.",
+            Self::TooDense => "The pattern is too dense for this region at this scale.",
         }
     }
 }
@@ -69,8 +123,72 @@ impl HatchEntity {
         }
     }
 
-    /// Whether the hatch bounds a region.
+    /// The same region filled another way.
+    #[must_use]
+    pub fn styled(&self, style: HatchStyle) -> Self {
+        Self {
+            loops: self.loops.clone(),
+            style,
+        }
+    }
+
+    /// Whether the hatch bounds a region and its pattern can be drawn.
     pub fn check(&self) -> Result<(), HatchError> {
+        self.check_region()?;
+        if let HatchStyle::Pattern {
+            name,
+            angle,
+            scale,
+            origin,
+        } = &self.style
+        {
+            if hatch_pattern(name).is_none() {
+                return Err(HatchError::UnknownPattern);
+            }
+            if !(scale.is_finite() && *scale > 0.0 && angle.is_finite() && origin.is_finite()) {
+                return Err(HatchError::BadScale);
+            }
+            if self.lines().is_none() {
+                return Err(HatchError::TooDense);
+            }
+        }
+        Ok(())
+    }
+
+    /// The pattern's families, placed; empty for a solid fill or a name
+    /// the table lacks.
+    pub fn families(&self) -> Vec<LineFamily> {
+        let HatchStyle::Pattern {
+            name,
+            angle,
+            scale,
+            origin,
+        } = &self.style
+        else {
+            return Vec::new();
+        };
+        hatch_pattern(name).map_or_else(Vec::new, |pattern| {
+            pattern
+                .families
+                .iter()
+                .map(|family| family.placed(*angle, *scale, *origin))
+                .collect()
+        })
+    }
+
+    /// The pattern's pieces inside the region — none for a solid fill —
+    /// or `None` when there would be more than [`MAX_PATTERN_PIECES`].
+    pub fn lines(&self) -> Option<Vec<Segment>> {
+        let rings = self.rings();
+        let mut out = Vec::new();
+        for family in self.families() {
+            let budget = MAX_PATTERN_PIECES.saturating_sub(out.len());
+            out.extend(pattern_lines(&rings, &family, budget)?);
+        }
+        Some(out)
+    }
+
+    fn check_region(&self) -> Result<(), HatchError> {
         if self.loops.is_empty() {
             return Err(HatchError::NoBoundary);
         }
@@ -123,7 +241,8 @@ impl HatchEntity {
             .collect()
     }
 
-    /// The triangles that fill the region: each outer ring with the holes
+    /// The triangles that fill the region — what a solid hatch is drawn
+    /// with: each outer ring with the holes
     /// one level inside it cut out (ADR-0021).
     pub fn fill(&self) -> Vec<[Point2; 3]> {
         let rings = self.rings();
@@ -259,7 +378,23 @@ impl HatchEntity {
                     closed: true,
                 })
                 .collect(),
-            style: self.style.clone(),
+            // A pattern goes with its hatch: its origin moves, its angle
+            // turns, its scale grows. (A mirror reflects the pattern's
+            // angle; the families within it keep their own.)
+            style: match &self.style {
+                HatchStyle::Solid => HatchStyle::Solid,
+                HatchStyle::Pattern {
+                    name,
+                    angle,
+                    scale,
+                    origin,
+                } => HatchStyle::Pattern {
+                    name: name.clone(),
+                    angle: transform.apply_angle(*angle),
+                    scale: scale * transform.scale_factor(),
+                    origin: transform.apply(*origin),
+                },
+            },
         }
     }
 }
@@ -433,6 +568,82 @@ mod tests {
         assert_eq!(entity.distance_to(p(2.0, 2.0), Tables::none()), 0.0);
         assert!(entity.primitives(Tables::none()).is_empty());
         assert_eq!(entity.kind_name(), "hatch");
+    }
+
+    #[test]
+    fn a_pattern_hatch_is_its_lines_clipped_to_the_region() {
+        let region = vec![square(0.0, 0.0, 100.0), circle(p(50.0, 50.0), 20.0)];
+        let ansi31 =
+            HatchEntity::solid(region.clone()).styled(HatchStyle::named("ANSI31", 0.0, 1.0));
+        assert!(ansi31.check().is_ok());
+        assert_eq!(ansi31.style.name(), "ANSI31");
+        let lines = ansi31.lines().unwrap();
+        // 45° lines 3.175 apart across the region: their length is its area
+        // over the spacing.
+        let length: f64 = lines.iter().map(Segment::length).sum();
+        let expected = ansi31.area() / 3.175;
+        assert!(
+            (length - expected).abs() < expected * 0.02,
+            "{length} vs {expected}"
+        );
+        for line in &lines {
+            let middle = line.start + (line.end - line.start) * 0.5;
+            assert!(ansi31.contains(middle), "{line:?}");
+            let direction = line.end - line.start;
+            assert!((direction.x - direction.y).abs() < 1e-9 * (1.0 + direction.length()));
+        }
+        // Twice the scale: half the length; turned 45° more: vertical.
+        let scaled = ansi31.styled(HatchStyle::named("ANSI31", 0.0, 2.0));
+        let half: f64 = scaled.lines().unwrap().iter().map(Segment::length).sum();
+        assert!((half - expected / 2.0).abs() < expected * 0.02);
+        let turned = ansi31.styled(HatchStyle::named(
+            "ANSI31",
+            std::f64::consts::FRAC_PI_4,
+            1.0,
+        ));
+        assert!(
+            turned
+                .lines()
+                .unwrap()
+                .iter()
+                .all(|line| (line.start.x - line.end.x).abs() < 1e-9)
+        );
+        // A solid hatch has no lines; SOLID by name is the solid fill.
+        assert_eq!(HatchStyle::named("solid", 1.0, 2.0), HatchStyle::Solid);
+        assert_eq!(HatchEntity::solid(region.clone()).lines(), Some(Vec::new()));
+        // Refusals: a name the table lacks, a scale that is not one, too fine.
+        let named = |name: &str, scale: f64| {
+            HatchEntity::solid(region.clone())
+                .styled(HatchStyle::named(name, 0.0, scale))
+                .check()
+        };
+        assert_eq!(named("NOPE", 1.0), Err(HatchError::UnknownPattern));
+        assert_eq!(named("ANSI31", 0.0), Err(HatchError::BadScale));
+        assert_eq!(named("ANSI31", f64::NAN), Err(HatchError::BadScale));
+        assert_eq!(named("ANSI31", 1e-4), Err(HatchError::TooDense));
+    }
+
+    #[test]
+    fn a_pattern_goes_with_its_hatch() {
+        let hatch = HatchEntity::solid(vec![square(0.0, 0.0, 50.0)])
+            .styled(HatchStyle::named("ANSI37", 0.0, 1.0));
+        let offset = cad_core::Vec2::new(7.0, 3.0);
+        let moved = hatch.transformed(&Transform::translation(offset));
+        let (before, after) = (hatch.lines().unwrap(), moved.lines().unwrap());
+        assert_eq!(before.len(), after.len());
+        for (a, b) in before.iter().zip(&after) {
+            assert!((a.start + offset).distance_to(b.start) < 1e-9);
+        }
+        let scaled = hatch.transformed(&Transform::scaling(p(0.0, 0.0), 2.0).unwrap());
+        let HatchStyle::Pattern { scale, .. } = scaled.style else {
+            panic!("a pattern");
+        };
+        assert_eq!(scale, 2.0);
+        let turned = hatch.transformed(&Transform::rotation(p(0.0, 0.0), 90.0));
+        let HatchStyle::Pattern { angle, .. } = turned.style else {
+            panic!("a pattern");
+        };
+        assert!((angle - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
     }
 
     fn star(center: Point2, count: usize, radii: &[f64]) -> Path {

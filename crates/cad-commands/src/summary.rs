@@ -225,11 +225,16 @@ fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, String)> {
             row("Rotation", degrees(text.rotation)),
             row("Lines", text.lines().len().to_string()),
         ],
-        Entity::Hatch(hatch) => vec![
-            row("Fill", "Solid".to_owned()),
-            row("Loops", hatch.loops.len().to_string()),
-            row("Area", number(hatch.area())),
-        ],
+        Entity::Hatch(hatch) => {
+            let mut rows = vec![row("Pattern", hatch.style.name().to_owned())];
+            if let cad_document::HatchStyle::Pattern { angle, scale, .. } = &hatch.style {
+                rows.push(row("Angle", degrees(*angle)));
+                rows.push(row("Scale", number(*scale)));
+            }
+            rows.push(row("Loops", hatch.loops.len().to_string()));
+            rows.push(row("Area", number(hatch.area())));
+            rows
+        }
         Entity::Dimension(dimension) => {
             let style = drawing.tables().dim_style(dimension.style);
             let value = dimension.value();

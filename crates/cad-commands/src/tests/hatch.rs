@@ -7,7 +7,7 @@ use std::f64::consts::PI;
 
 use cad_core::Point2;
 use cad_document::{
-    ArcEntity, CircleEntity, Entity, GripKind, HatchEntity, LineEntity, PolylineEntity,
+    ArcEntity, CircleEntity, Entity, GripKind, HatchEntity, HatchStyle, LineEntity, PolylineEntity,
 };
 
 use crate::OverlayItem;
@@ -78,7 +78,10 @@ fn debug_loops() {
 fn a_point_inside_finds_the_smallest_loop_around_it_and_the_loops_within() {
     let mut h = Harness::with_entities(plate());
     h.enter("H");
-    assert_eq!(h.prompt(), "Pick internal point or [Select]:");
+    assert_eq!(
+        h.prompt(),
+        "Pick internal point or [Select/Pattern/Angle/SCale]:"
+    );
     h.enter("-80,0");
     assert_eq!(h.prompt(), "Command:");
     let all = hatches(&h);
@@ -103,7 +106,10 @@ fn a_point_inside_finds_the_smallest_loop_around_it_and_the_loops_within() {
     // Outside everything: nothing bounds the point.
     h.enter_all(&["H", "300,0"]);
     assert_eq!(last(&h), "No closed boundary surrounds that point.");
-    assert_eq!(h.prompt(), "Pick internal point or [Select]:");
+    assert_eq!(
+        h.prompt(),
+        "Pick internal point or [Select/Pattern/Angle/SCale]:"
+    );
     h.escape();
 
     h.undo();
@@ -219,4 +225,170 @@ fn a_hatch_is_picked_by_its_fill_moved_whole_and_refused_by_the_curve_commands()
     h.enter("X");
     assert_eq!(last(&h), "A hatch cannot be exploded.");
     assert_eq!(hatches(&h).len(), 2);
+}
+
+fn style(hatch: &HatchEntity) -> (String, f64, f64) {
+    match &hatch.style {
+        HatchStyle::Solid => ("SOLID".to_owned(), 0.0, 1.0),
+        HatchStyle::Pattern {
+            name, angle, scale, ..
+        } => (
+            name.clone(),
+            (angle.to_degrees() * 1e6).round() / 1e6,
+            *scale,
+        ),
+    }
+}
+
+#[test]
+fn pattern_angle_and_scale_choose_the_fill_and_are_remembered() {
+    let mut h = Harness::with_entities(plate());
+    h.enter("H");
+    assert_eq!(
+        h.prompt(),
+        "Pick internal point or [Select/Pattern/Angle/SCale]:"
+    );
+    h.enter("P");
+    assert_eq!(h.prompt(), "Enter a pattern name (? to list) <SOLID>:");
+    h.enter("?");
+    assert!(
+        h.log()
+            .iter()
+            .any(|line| line == "  ANSI31: ANSI iron, brick, stone masonry")
+    );
+    assert_eq!(
+        h.prompt(),
+        "Enter a pattern name (? to list) <SOLID>:",
+        "the list keeps the prompt"
+    );
+    h.enter("NOPE");
+    assert_eq!(last(&h), "There is no hatch pattern \"NOPE\".");
+    h.enter("ansi31");
+    assert_eq!(
+        h.prompt(),
+        "Pick internal point or [Select/Pattern/Angle/SCale]:"
+    );
+    h.enter("A");
+    assert_eq!(h.prompt(), "Specify angle for pattern <0>:");
+    h.enter("30");
+    h.enter("SC");
+    assert_eq!(h.prompt(), "Specify scale for pattern <1>:");
+    h.enter("0");
+    assert_eq!(last(&h), "The pattern scale must be greater than zero.");
+    h.enter("2mm");
+    assert_eq!(
+        h.prompt(),
+        "Specify scale for pattern <1>:",
+        "a scale takes no unit"
+    );
+    h.enter("2");
+    h.enter("-80,0");
+    let hatch = &hatches(&h)[0];
+    assert_eq!(style(hatch), ("ANSI31".to_owned(), 30.0, 2.0));
+    assert!(!hatch.lines().unwrap().is_empty());
+
+    // The next HATCH starts where this one left off.
+    h.enter("H");
+    h.enter("P");
+    assert_eq!(h.prompt(), "Enter a pattern name (? to list) <ANSI31>:");
+    h.enter("");
+    h.enter("A");
+    assert_eq!(h.prompt(), "Specify angle for pattern <30>:");
+    h.enter("");
+    h.enter("5,5");
+    assert_eq!(style(&hatches(&h)[1]).0, "ANSI31");
+
+    // Too fine a scale for the region is refused and the prompt stays.
+    h.enter_all(&["H", "SC", "0.0001", "-80,0"]);
+    assert_eq!(
+        last(&h),
+        "The pattern is too dense for this region at this scale."
+    );
+    assert_eq!(
+        h.prompt(),
+        "Pick internal point or [Select/Pattern/Angle/SCale]:"
+    );
+    h.escape();
+    assert_eq!(hatches(&h).len(), 2);
+}
+
+#[test]
+fn the_pattern_preview_is_what_the_click_makes() {
+    let mut h = Harness::with_entities(plate());
+    h.enter_all(&["H", "P", "ANSI37"]);
+    h.move_to_world(p(-80.0, 0.0));
+    let preview = previewed(&h).expect("the pattern at the pointer");
+    assert_eq!(style(&preview).0, "ANSI37");
+    h.click_world(p(-80.0, 0.0));
+    assert_eq!(hatches(&h), vec![preview]);
+}
+
+#[test]
+fn hatchedit_changes_a_hatchs_pattern_angle_and_scale_in_one_undo() {
+    let mut h = Harness::with_entities(plate());
+    h.enter_all(&["H", "-80,0"]);
+    h.enter("HE");
+    assert_eq!(h.prompt(), "Select hatch object:");
+    h.click_world(p(100.0, 0.0));
+    assert_eq!(last(&h), "That is not a hatch.");
+    h.click_world(p(-80.0, 0.0));
+    assert_eq!(
+        h.prompt(),
+        "Press Enter to finish or [Pattern/Angle/SCale]:"
+    );
+    h.enter_all(&["A", "45"]);
+    assert_eq!(
+        last(&h),
+        "A solid fill has no angle or scale: choose a pattern first."
+    );
+    assert_eq!(style(&hatches(&h)[0]).0, "SOLID");
+    h.enter_all(&["P", "NET"]);
+    assert_eq!(last(&h), "Hatch filled with NET.");
+    h.enter_all(&["A", "45", "SC", "3"]);
+    assert_eq!(style(&hatches(&h)[0]), ("NET".to_owned(), 45.0, 3.0));
+    h.enter_all(&["SC", "0.00001"]);
+    assert_eq!(
+        last(&h),
+        "The pattern is too dense for this region at this scale."
+    );
+    assert_eq!(style(&hatches(&h)[0]).2, 3.0, "unchanged");
+    h.enter("");
+    assert_eq!(h.prompt(), "Command:");
+    // Properties stay; the whole edit is one undo.
+    assert_eq!(h.properties().len(), 3);
+    h.undo();
+    assert_eq!(style(&hatches(&h)[0]).0, "SOLID");
+    h.redo();
+    assert_eq!(style(&hatches(&h)[0]), ("NET".to_owned(), 45.0, 3.0));
+    // The panel says how it is filled.
+    h.click_world(p(-80.0, 0.0));
+    let summary = h.session.selection_summary();
+    assert!(
+        summary
+            .geometry
+            .contains(&("Pattern".to_owned(), "NET".to_owned()))
+    );
+    assert!(
+        summary
+            .geometry
+            .contains(&("Scale".to_owned(), "3.0000".to_owned()))
+    );
+}
+
+#[test]
+fn a_pattern_hatch_comes_apart_into_its_lines() {
+    let mut h = Harness::with_entities(plate());
+    h.enter_all(&["H", "P", "ANSI31", "SC", "4", "-80,0"]);
+    let expected = hatches(&h)[0].lines().unwrap().len();
+    h.click_world(p(-80.0, 0.0));
+    h.enter("X");
+    let lines = h
+        .entities()
+        .iter()
+        .filter(|entity| matches!(entity, Entity::Line(_)))
+        .count();
+    assert_eq!(lines, expected);
+    assert!(hatches(&h).is_empty());
+    h.undo();
+    assert_eq!(hatches(&h).len(), 1);
 }

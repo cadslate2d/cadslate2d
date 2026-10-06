@@ -65,7 +65,7 @@ A hatch is picked by its fill and its boundary (`contains` by the even-odd rule 
 - `Entity::Hatch`; `PackedFrame::push_triangle`, `triangles`, `triangle_batches`; `RenderScene::triangle_styles`; `FLOATS_PER_TRIANGLE`; an `InstanceLayout` may have no path distance.
 - The modify matrix gains a Hatch column; `kind_name` "hatch"; the Properties panel shows a hatch's fill, loops, and area.
 - DXF writes a solid `HATCH` with polyline boundary paths; reading `HATCH` is #169, until which a file's hatches are reported by name.
-- A pattern hatch (#168) is this entity with a pattern style: its fill is the pattern's line families clipped to the rings, drawn as segments with the pattern's dashes — the line path, at a spacing in drawing units.
+- A pattern hatch (#168) is this entity with a pattern style: its fill is the pattern's line families clipped to the rings by the same even-odd rule and drawn as committed segments — the line path, at a spacing in drawing units. The dashes are cut into pieces in Rust (`cad_geometry::pattern_lines`) rather than drawn by the linetype shader: a hatch's dashes belong to its pattern, not to a linetype row of the style table, and a pattern too fine for its region at its scale (over 200,000 pieces) is refused.
 
 ## Revisit when
 

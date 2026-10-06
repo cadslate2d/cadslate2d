@@ -8,6 +8,7 @@ Small clipped screenshots that end-to-end tests compare against (`toHaveScreensh
 | `snap-marker-<mode>.png` | `web/e2e/snap.spec.ts` | The object-snap marker of each mode, 28×28 CSS pixels around the snap point, with the crosshair beside it |
 | `linetype-<name>.png` | `web/e2e/linetype.spec.ts` | Each built-in linetype at `LTSCALE` 20 on a line and on a half-circle arc, 180×100 CSS pixels (ADR-0015) |
 | `text-zoom-1.png`, `text-zoom-in.png`, `text-turned.png` | `web/e2e/text.spec.ts` | A line of text in the stroke font at the default zoom, four times closer, and a second text turned 30° (ADR-0016) |
+| `hatch-ansi31.png` | `web/e2e/hatch.spec.ts` | ANSI31 at scale 2 in a 140×80 rectangle with a circular hole, 160×100 CSS pixels (#168) |
 
 Rules:
 

@@ -13,10 +13,10 @@ use crate::commands::{
     ArcCommand, BlockCommand, BreakCommand, ChpropCommand, CircleCommand, ColorCommand,
     CornerCommand, DimAngularCommand, DimLinearCommand, DimRadialCommand, DimStyleCommand,
     EdgeCommand, EraseCommand, ExplodeCommand, ExportCommand, GridCommand, HatchCommand,
-    InsertCommand, JoinCommand, LayerCommand, LineCommand, LinetypeCommand, LtscaleCommand,
-    LweightCommand, MTextCommand, MirrorCommand, OffsetCommand, OpenCommand, OsnapCommand,
-    PlineCommand, PolarAngleCommand, RectangCommand, RedoCommand, SaveCommand, StretchCommand,
-    TextCommand, TextEditCommand, TransformCommand, UndoCommand, UnitsCommand,
+    HatchEditCommand, InsertCommand, JoinCommand, LayerCommand, LineCommand, LinetypeCommand,
+    LtscaleCommand, LweightCommand, MTextCommand, MirrorCommand, OffsetCommand, OpenCommand,
+    OsnapCommand, PlineCommand, PolarAngleCommand, RectangCommand, RedoCommand, SaveCommand,
+    StretchCommand, TextCommand, TextEditCommand, TransformCommand, UndoCommand, UnitsCommand,
 };
 
 type CommandFactory = fn() -> Box<dyn Command>;
@@ -52,7 +52,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 47] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 48] = [
             ("ERASE", &["E"], || Box::new(EraseCommand)),
             ("MOVE", &["M"], || Box::new(TransformCommand::moving())),
             ("COPY", &["CO", "CP"], || {
@@ -128,6 +128,7 @@ impl CommandRegistry {
                 Box::new(DimRadialCommand::diameter())
             }),
             ("HATCH", &["H", "BHATCH"], || Box::new(HatchCommand::new())),
+            ("HATCHEDIT", &["HE"], || Box::new(HatchEditCommand::new())),
         ];
         for (name, aliases, factory) in standard {
             registry
