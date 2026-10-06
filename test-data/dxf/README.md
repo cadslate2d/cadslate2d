@@ -1,6 +1,6 @@
 # DXF fixtures
 
-Used by `crates/cad-dxf/tests/fixtures.rs` (DESIGN §41).
+Used by `crates/cad-dxf/tests/fixtures.rs` (DESIGN §41). What the reader and writer do with each record is in [`docs/dxf-matrix.md`](../../docs/dxf-matrix.md), each row naming the fixture or test that backs it.
 
 Fixtures are exercised by directory, so **adding a regression case is a one-file change**:
 

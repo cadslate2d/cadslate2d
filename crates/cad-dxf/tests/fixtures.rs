@@ -118,6 +118,47 @@ fn every_malformed_fixture_is_rejected_without_panicking() {
     }
 }
 
+/// `docs/dxf-matrix.md` names, in backticks, the tests (`a_name()`) and
+/// fixtures (`a-file.dxf`) that back each row. A row cannot outlive what
+/// backs it: every name must exist.
+#[test]
+fn the_matrix_names_only_tests_and_fixtures_that_exist() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let matrix = fs::read_to_string(root.join("docs/dxf-matrix.md")).unwrap();
+    let sources: String = [
+        "src/import.rs",
+        "src/export.rs",
+        "src/report.rs",
+        "tests/fixtures.rs",
+    ]
+    .iter()
+    .map(|file| fs::read_to_string(root.join("crates/cad-dxf").join(file)).unwrap())
+    .collect();
+    let mut checked = 0;
+    for name in matrix.split('`').skip(1).step_by(2) {
+        if let Some(test) = name.strip_suffix("()").filter(|test| !test.is_empty()) {
+            assert!(
+                sources.contains(&format!("fn {test}(")),
+                "the matrix names a test that does not exist: {test}"
+            );
+            checked += 1;
+        } else if name.ends_with(".dxf") {
+            let exists = ["valid", "malformed"]
+                .iter()
+                .any(|kind| fixtures(kind).join(name).is_file());
+            assert!(
+                exists,
+                "the matrix names a fixture that does not exist: {name}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 60,
+        "the matrix names {checked} tests and fixtures"
+    );
+}
+
 // ── specific fixtures ──
 
 #[test]

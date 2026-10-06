@@ -125,7 +125,7 @@ A layer also has a lineweight (`LAYER`, `LWeight`), and an object can have one o
 
 And a layer has a linetype (`LAYER`, `LType`), as an object can (`LINETYPE`). A linetype is a pattern of dashes and gaps in drawing units, multiplied by `LTSCALE`; it runs along an object from its start — through the vertices of a polyline, round its arcs — and stays put as the view zooms. A pattern too fine to see at the current zoom is drawn solid. Dashes are drawn by the shader from where along the object each piece begins, so loading a linetype or changing `LTSCALE` touches no geometry ([ADR-0015](docs/adr/0015-linetype-rendering.md)). Picking and snapping see the whole object, gaps included.
 
-Layers, colours, linetypes, lineweights, text styles, blocks, and the settings for new objects are written to DXF (release 2000) and read back from any release.
+Layers, colours, linetypes, lineweights, text styles, blocks, and the settings for new objects are written to DXF (release 2000) and read back from any release. What every record, table, and header variable becomes, read and written, is one page: [`docs/dxf-matrix.md`](docs/dxf-matrix.md).
 
 ### ORTHO and POLAR
 
