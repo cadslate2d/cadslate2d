@@ -12,13 +12,82 @@ export interface RendererStats {
   bufferReallocations: number;
 }
 
+/**
+ * How the test's browser offers files (DESIGN §25.3). Chromium has the File
+ * System Access pickers, which headless tests cannot drive: by default they
+ * are removed before the app starts, so every browser takes the download
+ * path; `"fake"` installs pickers that keep files in `window.__files`.
+ */
+export type FileSystemAccess = "none" | "fake";
+
+export interface OpenOptions {
+  readonly fileSystemAccess?: FileSystemAccess;
+}
+
+/** Removes the File System Access pickers before the app starts, so saves are downloads. */
+export async function withoutFilePickers(page: Page): Promise<void> {
+  await page.addInitScript(installFileSystemAccess, "none");
+}
+
 /** Opens the app with debug counters enabled and waits for the first frame. */
-export async function openApp(page: Page): Promise<Locator> {
+export async function openApp(page: Page, options: OpenOptions = {}): Promise<Locator> {
+  await page.addInitScript(installFileSystemAccess, options.fileSystemAccess ?? "none");
   await page.goto("./?debug");
   const canvas = page.getByRole("region", { name: "Model space" }).locator("canvas");
   await expect(canvas).toBeVisible();
   await expect.poll(async () => (await rendererStats(page)).frames).toBeGreaterThan(0);
   return canvas;
+}
+
+/** Runs in the page before the app: removes the pickers, or fakes them. */
+function installFileSystemAccess(mode: string): void {
+  const scope = window as unknown as Record<string, unknown>;
+  if (mode !== "fake") {
+    delete scope["showOpenFilePicker"];
+    delete scope["showSaveFilePicker"];
+    return;
+  }
+  const files = new Map<string, string>();
+  const pickers = { save: 0, open: 0 };
+  scope["__files"] = { files, pickers };
+  const handle = (name: string) => ({
+    kind: "file",
+    name,
+    queryPermission: () => Promise.resolve("granted"),
+    requestPermission: () => Promise.resolve("granted"),
+    getFile: () => Promise.resolve(new File([files.get(name) ?? ""], name)),
+    createWritable: () =>
+      Promise.resolve({
+        write: (text: string) => {
+          files.set(name, text);
+          return Promise.resolve();
+        },
+        close: () => Promise.resolve(),
+      }),
+  });
+  scope["showSaveFilePicker"] = (options?: { suggestedName?: string }) => {
+    pickers.save += 1;
+    return Promise.resolve(handle(options?.suggestedName ?? "drawing.dxf"));
+  };
+  scope["showOpenFilePicker"] = () => {
+    pickers.open += 1;
+    const [name] = [...files.keys()];
+    return Promise.resolve(name ? [handle(name)] : []);
+  };
+}
+
+/** What the fake pickers hold: the files by name, and how often each picker was shown. */
+export async function fakeFiles(
+  page: Page,
+): Promise<{ files: Record<string, string>; pickers: { save: number; open: number } }> {
+  return page.evaluate(() => {
+    const scope = window as unknown as {
+      __files?: { files: Map<string, string>; pickers: { save: number; open: number } };
+    };
+    const store = scope.__files;
+    if (!store) throw new Error("the fake file pickers are not installed");
+    return { files: Object.fromEntries(store.files), pickers: { ...store.pickers } };
+  });
 }
 
 export async function rendererStats(page: Page): Promise<RendererStats> {

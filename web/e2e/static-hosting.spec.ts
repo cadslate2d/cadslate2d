@@ -1,7 +1,14 @@
 // Deployment is a folder of static files (DESIGN §6, ADR-0004).
 import { expect, test } from "@playwright/test";
 import { NESTED_URL } from "../playwright.config";
-import { downloadFrom, enter, logLines, prompt, recordRequests } from "./support";
+import {
+  downloadFrom,
+  enter,
+  logLines,
+  prompt,
+  recordRequests,
+  withoutFilePickers,
+} from "./support";
 
 test("the bundle works from any base path", async ({ page }) => {
   const requests = recordRequests(page);
@@ -17,6 +24,8 @@ test("the bundle works from any base path", async ({ page }) => {
 });
 
 test("once loaded, the app works with no network at all", async ({ page, context }) => {
+  // Chromium has the save picker, which a headless test cannot answer: downloads here.
+  await withoutFilePickers(page);
   await page.goto("./");
   await expect(page.locator("header")).toHaveAttribute("data-core-version", /.+/);
 

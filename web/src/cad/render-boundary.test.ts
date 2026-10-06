@@ -26,13 +26,13 @@ describe("WASM API surface", () => {
   test("is exactly the reviewed set of coarse calls", async () => {
     expect(await exportedSessionApi()).toEqual([
       "dismiss_import_report",
-      "export_dxf",
       "history_next",
       "history_previous",
       "invoke",
       "key",
       "load_dxf",
       "log_since",
+      "mark_exported",
       "overlay_arc_batches",
       "overlay_arcs",
       "overlay_batches",

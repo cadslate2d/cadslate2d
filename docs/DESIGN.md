@@ -1575,6 +1575,8 @@ Persistent writable file handles are a capability enhancement, not a universal a
 
 Browsers without persistent writable handles must still receive a polished import/autosave/export workflow.
 
+> **Resolved in M5 (#159):** files are behind one interface, `FileAccess`, with two implementations chosen by capability — `showOpenFilePicker`/`showSaveFilePicker` present, or not — never by user agent. With the API, `OPEN` keeps the handle, `SAVE` writes back to it (asking where only the first time, and again if the browser refuses), `SAVEAS` asks, and the handle rides in the autosave record so a recovered drawing knows its file. Without it, every save is a download under the drawing's name. The title and the status bar carry the file name and the unsaved marker in both.
+
 ---
 
 # Part II — M0 Implementation Specification

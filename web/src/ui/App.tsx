@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { CadApp } from "../app/cad-app";
 import { CadEngine, coreVersion, loadEngine } from "../cad/engine";
 import { CanvasView } from "./CanvasView";
@@ -62,6 +62,15 @@ export function App() {
 
   // Local-first means the only copy of unexported work is in this tab.
   const app = core.status === "ready" ? core.app : undefined;
+  const ui = useSyncExternalStore(
+    app?.ui.subscribe ?? (() => () => {}),
+    app?.ui.getSnapshot ?? (() => undefined),
+  );
+  useEffect(() => {
+    const name = ui?.documentName;
+    const marker = ui?.unsavedChanges ? "• " : "";
+    document.title = name ? `${marker}${name} — CadSlate2D` : `${marker}CadSlate2D`;
+  }, [ui?.documentName, ui?.unsavedChanges]);
   useEffect(() => {
     if (!app) return;
     const guard = (event: BeforeUnloadEvent) => {

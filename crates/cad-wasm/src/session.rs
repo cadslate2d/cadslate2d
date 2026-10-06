@@ -323,12 +323,14 @@ impl CadSession {
     // ── files: the host does the I/O, Rust does the format ──
 
     /// The request behind a `HOST` dirty flag: `0` none, `1` open a file,
-    /// `2` export the drawing. Taking it clears it.
+    /// `2` save the drawing to a file the user chooses, `3` save it back to
+    /// its file. Taking it clears it.
     pub fn take_host_request(&mut self) -> u32 {
         match self.session.take_host_request() {
             None => 0,
             Some(HostRequest::OpenFile) => 1,
             Some(HostRequest::ExportFile) => 2,
+            Some(HostRequest::SaveFile) => 3,
         }
     }
 
@@ -359,12 +361,11 @@ impl CadSession {
         cad_dxf::export(self.session.drawing())
     }
 
-    /// The drawing as ASCII DXF. Marks the drawing as saved.
-    pub fn export_dxf(&mut self) -> String {
-        let text = cad_dxf::export(self.session.drawing());
-        let dirty = self.session.mark_exported();
-        self.report(dirty);
-        text
+    /// Records that the host has saved the drawing (the text of
+    /// `snapshot_dxf`) — to `name`, when it has a file now (#159).
+    pub fn mark_exported(&mut self, name: Option<String>) -> u32 {
+        let dirty = self.session.mark_exported(name.as_deref());
+        self.report(dirty)
     }
 
     // ── output: pulled in bulk, only when flagged ──

@@ -14,6 +14,14 @@ export function StatusBar({ app }: { app: CadApp }) {
   return (
     <footer className="status" aria-label="Status bar">
       <span className="status__chip status__chip--active">Model</span>
+      <span
+        className="status__chip status__document"
+        data-testid="document"
+        title={ui.unsavedChanges ? "Changed since it was last saved" : "Saved"}
+      >
+        {ui.documentName ?? "Untitled"}
+        {ui.unsavedChanges ? " •" : ""}
+      </span>
       {ui.exportLosses.length > 0 && (
         <span
           className="status__chip status__lossy"

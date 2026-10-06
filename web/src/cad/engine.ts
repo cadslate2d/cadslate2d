@@ -49,7 +49,7 @@ export const ToggleBit = {
 } as const;
 
 /** Something only the host can do, requested by a command. */
-export const HostRequest = { None: 0, OpenFile: 1, ExportFile: 2 } as const;
+export const HostRequest = { None: 0, OpenFile: 1, ExportFile: 2, SaveFile: 3 } as const;
 export type HostRequest = (typeof HostRequest)[keyof typeof HostRequest];
 
 /**
@@ -327,14 +327,14 @@ export class CadEngine {
     return this.#session.load_dxf(bytes, name);
   }
 
-  /** The drawing as ASCII DXF. Marks the drawing as saved. */
-  exportDxf(): string {
-    return this.#session.export_dxf();
-  }
-
-  /** The drawing as ASCII DXF for an autosave: marks nothing. */
+  /** The drawing as ASCII DXF, for a save or an autosave: marks nothing. */
   snapshotDxf(): string {
     return this.#session.snapshot_dxf();
+  }
+
+  /** Records that the drawing was saved — to `name`, when it has a file now. */
+  markExported(name?: string): number {
+    return this.#session.mark_exported(name);
   }
 
   /** Takes the import report off the screen; the log keeps its lines. */

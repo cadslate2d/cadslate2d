@@ -56,7 +56,8 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `GRID` | | Sets the grid spacing (10 at start). |
 | `POLARANG` | | Sets the angle between polar tracking directions (90° at start). |
 | `OPEN` | `DXFIN`, Ctrl+O | Opens an ASCII DXF file. Lines, circles, arcs, polylines — including their arc segments — text (TEXT and MTEXT, with their styles), and blocks (the BLOCKS section and INSERT, nested) are imported with their layers, colours, linetypes, and lineweights, and the tables with them; a paragraph's formatting codes are dropped and reported, its words and line breaks kept; a reference with a non-uniform scale, an array, or attributes comes in as far as the model holds and the rest is reported. Everything else is counted and reported — in the command log and in a report that stays on screen until dismissed; while the drawing holds less than its file did, the status bar says LOSSY and an export asks first, naming what the file will not include. |
-| `DXFOUT` | `SAVE`, `SAVEAS`, `EXPORT`, Ctrl+S | Downloads the drawing as ASCII DXF R2000 ([ADR-0018](docs/adr/0018-dxf-release-r2000.md)), with its layers, linetypes, lineweights, text styles, and blocks. Polylines are LWPOLYLINEs with their arc segments as bulges; a paragraph is an MTEXT; a mirrored block reference has a negative Y scale. Nothing the drawing holds is left out. |
+| `SAVE` | `QSAVE`, Ctrl+S | Saves the drawing to its file. In a browser with the File System Access API (Chromium-based: Chrome, Edge, Brave) the file opened or last saved to is written again without a dialog; the first save asks where. Elsewhere it is a download under the drawing's name, like `DXFOUT`. |
+| `DXFOUT` | `SAVEAS`, `EXPORT` | Saves the drawing as ASCII DXF R2000 ([ADR-0018](docs/adr/0018-dxf-release-r2000.md)) to a file the user chooses — a save dialog where the browser has one, a download elsewhere — with its layers, linetypes, lineweights, text styles, and blocks. Polylines are LWPOLYLINEs with their arc segments as bulges; a paragraph is an MTEXT; a mirrored block reference has a negative Y scale. Nothing the drawing holds is left out. |
 
 Whenever a command asks you to pick one object — OFFSET, TRIM, EXTEND, FILLET, CHAMFER, BREAK — the object under the pointer is highlighted before you click.
 
@@ -127,7 +128,9 @@ And a layer has a linetype (`LAYER`, `LType`), as an object can (`LINETYPE`). A 
 
 Layers, colours, linetypes, lineweights, text styles, blocks, and the settings for new objects are written to DXF (release 2000) and read back from any release. What every record, table, and header variable becomes, read and written, is one page: [`docs/dxf-matrix.md`](docs/dxf-matrix.md).
 
-The drawing is also kept in the browser: a second after the last change it is autosaved to IndexedDB as DXF, and a drawing that was not exported before the tab was closed is offered back on the next start — *Recover* or *Discard* ([ADR-0019](docs/adr/0019-local-persistence.md)). Exporting marks it as held by a file. Nothing leaves the browser.
+The drawing is also kept in the browser: a second after the last change it is autosaved to IndexedDB as DXF, and a drawing that was not saved before the tab was closed is offered back on the next start — *Recover* or *Discard* ([ADR-0019](docs/adr/0019-local-persistence.md)). Saving marks it as held by a file. Nothing leaves the browser.
+
+What each browser gets (DESIGN §25.3): in Chromium-based browsers, `OPEN` keeps a handle to the file and `SAVE` writes back to it, asking only the first time, and a recovered drawing remembers its file; in Firefox and Safari, which have no writable file handles on the page, `OPEN` is a file chooser and every save is a download — the same import, autosave, and export, with the file landing in the downloads folder. The page title and the status bar show the file's name and a `•` while the drawing has changes no file holds.
 
 ### ORTHO and POLAR
 

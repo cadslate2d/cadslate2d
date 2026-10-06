@@ -1,4 +1,4 @@
-//! OPEN and DXFOUT: file commands that need the host.
+//! OPEN, SAVE, and DXFOUT: file commands that need the host.
 //!
 //! A browser file picker or download cannot be driven from Rust, and Rust
 //! never calls into JavaScript (ADR-0002). These commands therefore only
@@ -13,6 +13,20 @@ pub(crate) struct OpenCommand;
 impl Command for OpenCommand {
     fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
         ctx.request_host(HostRequest::OpenFile);
+        Step::Finished
+    }
+
+    immediate_command!();
+}
+
+/// SAVE: back to the file where the browser can, asking where otherwise
+/// (DESIGN §25.3). What "can" means is the host's to know.
+#[derive(Debug)]
+pub(crate) struct SaveCommand;
+
+impl Command for SaveCommand {
+    fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
+        ctx.request_host(HostRequest::SaveFile);
         Step::Finished
     }
 
@@ -59,7 +73,8 @@ mod tests {
             ("OPEN", HostRequest::OpenFile),
             ("dxfin", HostRequest::OpenFile),
             ("DXFOUT", HostRequest::ExportFile),
-            ("save", HostRequest::ExportFile),
+            ("save", HostRequest::SaveFile),
+            ("qsave", HostRequest::SaveFile),
             ("SAVEAS", HostRequest::ExportFile),
             ("export", HostRequest::ExportFile),
         ];
@@ -83,7 +98,7 @@ mod tests {
         assert!(h.session.key(KeyAction::Open).contains(Dirty::HOST));
         assert_eq!(h.session.take_host_request(), Some(HostRequest::OpenFile));
         assert!(h.session.key(KeyAction::Save).contains(Dirty::HOST));
-        assert_eq!(h.session.take_host_request(), Some(HostRequest::ExportFile));
+        assert_eq!(h.session.take_host_request(), Some(HostRequest::SaveFile));
     }
 
     #[test]
@@ -145,7 +160,7 @@ mod tests {
         h.enter_all(&["L", "0,0", "10,0", ""]);
         assert!(h.session.ui_state().unsaved_changes);
 
-        let dirty = h.session.mark_exported();
+        let dirty = h.session.mark_exported(None);
         assert!(dirty.contains(Dirty::UI));
         assert!(!h.session.ui_state().unsaved_changes);
         assert_eq!(h.log().last().unwrap(), "Drawing exported as DXF.");
@@ -182,7 +197,7 @@ mod tests {
         // Editing and exporting do not make the original content come back;
         // dismissing the report keeps the losses.
         h.enter_all(&["L", "0,0", "1,1", ""]);
-        h.session.mark_exported();
+        h.session.mark_exported(None);
         h.session.dismiss_import_report();
         let state = h.session.ui_state();
         assert_eq!(state.export_losses, losses);

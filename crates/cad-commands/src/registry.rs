@@ -14,8 +14,8 @@ use crate::commands::{
     CornerCommand, EdgeCommand, EraseCommand, ExplodeCommand, ExportCommand, GridCommand,
     InsertCommand, JoinCommand, LayerCommand, LineCommand, LinetypeCommand, LtscaleCommand,
     LweightCommand, MTextCommand, MirrorCommand, OffsetCommand, OpenCommand, OsnapCommand,
-    PlineCommand, PolarAngleCommand, RectangCommand, RedoCommand, StretchCommand, TextCommand,
-    TextEditCommand, TransformCommand, UndoCommand, UnitsCommand,
+    PlineCommand, PolarAngleCommand, RectangCommand, RedoCommand, SaveCommand, StretchCommand,
+    TextCommand, TextEditCommand, TransformCommand, UndoCommand, UnitsCommand,
 };
 
 type CommandFactory = fn() -> Box<dyn Command>;
@@ -51,7 +51,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 39] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 40] = [
             ("ERASE", &["E"], || Box::new(EraseCommand)),
             ("MOVE", &["M"], || Box::new(TransformCommand::moving())),
             ("COPY", &["CO", "CP"], || {
@@ -106,9 +106,8 @@ impl CommandRegistry {
             ("GRID", &[], || Box::new(GridCommand::default())),
             ("POLARANG", &[], || Box::new(PolarAngleCommand::default())),
             ("OPEN", &["DXFIN"], || Box::new(OpenCommand)),
-            ("DXFOUT", &["SAVE", "SAVEAS", "EXPORT"], || {
-                Box::new(ExportCommand)
-            }),
+            ("DXFOUT", &["SAVEAS", "EXPORT"], || Box::new(ExportCommand)),
+            ("SAVE", &["QSAVE"], || Box::new(SaveCommand)),
         ];
         for (name, aliases, factory) in standard {
             registry

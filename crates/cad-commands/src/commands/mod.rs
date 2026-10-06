@@ -70,7 +70,7 @@ pub(crate) use circle::CircleCommand;
 pub(crate) use color::ColorCommand;
 pub(crate) use corner::CornerCommand;
 pub(crate) use edge::EdgeCommand;
-pub(crate) use files::{ExportCommand, OpenCommand};
+pub(crate) use files::{ExportCommand, OpenCommand, SaveCommand};
 pub(crate) use grid::GridCommand;
 pub(crate) use grip::GripEditCommand;
 pub(crate) use history::{RedoCommand, UndoCommand};

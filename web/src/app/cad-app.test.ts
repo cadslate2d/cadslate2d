@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 import { CadEngine, KeyAction } from "../cad/engine";
 import { loadEngineForTests } from "../cad/test-support";
 import { AUTOSAVE_DELAY_MS, CadApp, DISCARD_CHANGES_MESSAGE } from "./cad-app";
-import type { AutosaveRecord, AutosaveStore } from "./host-services";
+import type { AutosaveRecord, AutosaveStore, FileAccess, FileTarget } from "./host-services";
 import type { HostServices, PickedFile } from "./host-services";
 
 beforeAll(loadEngineForTests);
@@ -50,22 +50,39 @@ class FakeAutosave implements AutosaveStore {
   }
 }
 
-class FakeHost implements HostServices {
-  readonly autosave = new FakeAutosave();
+/** Files in memory: a download path or a write-back path, as the test says. */
+class FakeFiles implements FileAccess {
+  writesBack = false;
   fileToPick: PickedFile | undefined;
-  confirmAnswer = true;
-  confirmations: string[] = [];
   picks = 0;
+  /** What `saveAs` was asked for: a download, or a picker. */
   saved: { name: string; text: string; mimeType: string }[] = [];
+  /** What was written back to a target. */
+  written: { name: string; text: string }[] = [];
+  writeAnswer = true;
 
-  pickFile(): Promise<PickedFile | undefined> {
+  open(): Promise<PickedFile | undefined> {
     this.picks += 1;
     return Promise.resolve(this.fileToPick);
   }
 
-  saveFile(name: string, text: string, mimeType: string): void {
+  saveAs(name: string, text: string, mimeType: string): Promise<FileTarget | undefined> {
     this.saved.push({ name, text, mimeType });
+    return Promise.resolve({ name });
   }
+
+  write(target: FileTarget, text: string): Promise<boolean> {
+    if (!this.writeAnswer) return Promise.resolve(false);
+    this.written.push({ name: target.name, text });
+    return Promise.resolve(true);
+  }
+}
+
+class FakeHost implements HostServices {
+  readonly autosave = new FakeAutosave();
+  readonly files = new FakeFiles();
+  confirmAnswer = true;
+  confirmations: string[] = [];
 
   confirm(message: string): boolean {
     this.confirmations.push(message);
@@ -138,9 +155,9 @@ describe("autosave and recovery", () => {
     const { host, tick, elapse, enter } = harness();
     enter("L", "0,0", "100,50", "", "DXFOUT");
     await tick();
-    expect(host.saved).toHaveLength(1);
+    expect(host.files.saved).toHaveLength(1);
     expect(host.autosave.record?.exported).toBe(true);
-    expect(host.autosave.record?.text).toBe(host.saved[0]?.text);
+    expect(host.autosave.record?.text).toBe(host.files.saved[0]?.text);
     // The pending autosave was cancelled by the export.
     await elapse();
     expect(host.autosave.saves).toBe(1);
@@ -191,7 +208,7 @@ describe("autosave and recovery", () => {
     await app.start();
     expect(app.ui.getSnapshot().recovery).toBeUndefined();
 
-    host.fileToPick = { name: "plan.dxf", bytes: encode(cleanFile) };
+    host.files.fileToPick = { name: "plan.dxf", bytes: encode(cleanFile) };
     enter("OPEN");
     await tick();
     await tick();
@@ -259,8 +276,8 @@ describe("export", () => {
     enter("DXFOUT");
     await tick();
 
-    expect(host.saved).toHaveLength(1);
-    const [file] = host.saved;
+    expect(host.files.saved).toHaveLength(1);
+    const [file] = host.files.saved;
     expect(file).toMatchObject({ name: "drawing.dxf", mimeType: "application/dxf" });
     expect(file?.text).toContain("$ACADVER\n  1\nAC1015\n");
     expect(file?.text).toContain("AcDbLine\n 10\n0.0\n 20\n0.0\n 30\n0.0\n 11\n100.0\n 21\n50.0\n");
@@ -274,14 +291,89 @@ describe("export", () => {
     const { app, host, tick } = harness();
     app.key(KeyAction.Save);
     await tick();
-    expect(host.saved).toHaveLength(1);
+    expect(host.files.saved).toHaveLength(1);
+  });
+});
+
+// DESIGN §25.3: where the browser can write back to a file, SAVE does; elsewhere, a download.
+describe("saving to a file", () => {
+  test("with write-back: OPEN keeps the file, SAVE writes to it, SAVEAS asks and switches", async () => {
+    const { app, host, tick, enter } = harness();
+    host.files.writesBack = true;
+    host.files.fileToPick = {
+      name: "plan.dxf",
+      bytes: encode(cleanFile),
+      target: { name: "plan.dxf" },
+    };
+    enter("OPEN");
+    await tick();
+    enter("L", "0,0", "10,0", "");
+    await tick();
+    expect(app.ui.getSnapshot()).toMatchObject({ documentName: "plan.dxf", unsavedChanges: true });
+
+    enter("SAVE");
+    await tick();
+    expect(host.files.written.map((write) => write.name)).toEqual(["plan.dxf"]);
+    expect(host.files.saved).toHaveLength(0);
+    expect(host.files.written[0]?.text).toContain("AcDbLine");
+    expect(app.ui.getSnapshot().unsavedChanges).toBe(false);
+    expect(host.autosave.record).toMatchObject({ name: "plan.dxf", exported: true });
+
+    // SAVEAS asks where even with a file, and the new file is the one from then on.
+    enter("C", "5,5", "1", "SAVEAS");
+    await tick();
+    expect(host.files.saved.map((save) => save.name)).toEqual(["plan.dxf"]);
+    host.files.saved = [];
+    enter("L", "0,1", "10,1", "", "SAVE");
+    await tick();
+    expect(host.files.written).toHaveLength(2);
+    expect(host.files.saved).toHaveLength(0);
+  });
+
+  test("with write-back but no file yet, SAVE asks once and then writes back", async () => {
+    const { app, host, tick, enter } = harness();
+    host.files.writesBack = true;
+    enter("L", "0,0", "10,0", "", "SAVE");
+    await tick();
+    expect(host.files.saved.map((save) => save.name)).toEqual(["drawing.dxf"]);
+    expect(app.ui.getSnapshot().documentName).toBe("drawing.dxf");
+    enter("L", "0,1", "10,1", "", "SAVE");
+    await tick();
+    expect(host.files.saved).toHaveLength(1);
+    expect(host.files.written.map((write) => write.name)).toEqual(["drawing.dxf"]);
+  });
+
+  test("a write the browser refuses falls back to asking where", async () => {
+    const { host, tick, enter } = harness();
+    host.files.writesBack = true;
+    enter("L", "0,0", "10,0", "", "SAVE");
+    await tick();
+    host.files.writeAnswer = false;
+    enter("C", "5,5", "1", "SAVE");
+    await tick();
+    expect(host.files.written).toHaveLength(0);
+    expect(host.files.saved).toHaveLength(2);
+  });
+
+  test("without write-back, SAVE and SAVEAS both download under the drawing's name", async () => {
+    const { app, host, tick, enter } = harness();
+    host.files.fileToPick = { name: "plan.dxf", bytes: encode(cleanFile) };
+    enter("OPEN");
+    await tick();
+    enter("L", "0,0", "10,0", "", "SAVE");
+    await tick();
+    enter("SAVEAS");
+    await tick();
+    expect(host.files.saved.map((save) => save.name)).toEqual(["plan.dxf", "plan.dxf"]);
+    expect(host.files.written).toHaveLength(0);
+    expect(app.ui.getSnapshot().unsavedChanges).toBe(false);
   });
 });
 
 describe("open", () => {
   test("OPEN replaces the drawing with the picked file", async () => {
     const { app, host, tick, enter, segmentCount } = harness();
-    host.fileToPick = { name: "plan.dxf", bytes: encode(cleanFile) };
+    host.files.fileToPick = { name: "plan.dxf", bytes: encode(cleanFile) };
 
     enter("OPEN");
     await tick();
@@ -297,18 +389,18 @@ describe("open", () => {
 
   test("an export after opening keeps the file's name", async () => {
     const { host, tick, enter } = harness();
-    host.fileToPick = { name: "plan.dxf", bytes: encode(cleanFile) };
+    host.files.fileToPick = { name: "plan.dxf", bytes: encode(cleanFile) };
     enter("OPEN");
     await tick();
     enter("SAVE");
     await tick();
-    expect(host.saved[0]?.name).toBe("plan.dxf");
+    expect(host.files.saved[0]?.name).toBe("plan.dxf");
   });
 
   test("cancelling the picker changes nothing", async () => {
     const { app, host, tick, enter, segmentCount } = harness();
     enter("L", "0,0", "10,0", "");
-    host.fileToPick = undefined;
+    host.files.fileToPick = undefined;
     enter("OPEN");
     await tick();
     expect(segmentCount()).toBe(1);
@@ -318,13 +410,13 @@ describe("open", () => {
   test("asks before discarding unexported changes", async () => {
     const { host, tick, enter, segmentCount } = harness();
     enter("L", "0,0", "10,0", "", "L", "0,5", "10,5", "");
-    host.fileToPick = { name: "plan.dxf", bytes: encode(cleanFile) };
+    host.files.fileToPick = { name: "plan.dxf", bytes: encode(cleanFile) };
 
     host.confirmAnswer = false;
     enter("OPEN");
     await tick();
     expect(host.confirmations).toEqual([DISCARD_CHANGES_MESSAGE]);
-    expect(host.picks).toBe(0);
+    expect(host.files.picks).toBe(0);
     expect(segmentCount()).toBe(2);
 
     host.confirmAnswer = true;
@@ -337,7 +429,7 @@ describe("open", () => {
     const { app, host, tick, enter, segmentCount } = harness();
     enter("L", "0,0", "10,0", "");
     enter("DXFOUT"); // so opening does not ask about unsaved changes
-    host.fileToPick = { name: "broken.dxf", bytes: encode("not a dxf file\n") };
+    host.files.fileToPick = { name: "broken.dxf", bytes: encode("not a dxf file\n") };
 
     enter("OPEN");
     await tick();
@@ -346,7 +438,8 @@ describe("open", () => {
     expect(app.ui.getSnapshot().log.at(-1)).toBe(
       "Cannot open broken.dxf: line 1: expected a DXF group code.",
     );
-    expect(app.ui.getSnapshot().documentName).toBeUndefined();
+    // The drawing is still the one saved as drawing.dxf, not the broken file.
+    expect(app.ui.getSnapshot().documentName).toBe("drawing.dxf");
   });
 });
 
@@ -354,7 +447,7 @@ describe("open", () => {
 describe("unsupported content", () => {
   test("is reported on import and confirmed before export", async () => {
     const { app, host, tick, enter } = harness();
-    host.fileToPick = { name: "mixed.dxf", bytes: encode(mixedFile) };
+    host.files.fileToPick = { name: "mixed.dxf", bytes: encode(mixedFile) };
     enter("OPEN");
     await tick();
 
@@ -370,10 +463,10 @@ describe("unsupported content", () => {
     enter("DXFOUT");
     await tick();
     expect(app.ui.getSnapshot().exportWarning).toEqual(losses);
-    expect(host.saved).toHaveLength(0);
+    expect(host.files.saved).toHaveLength(0);
     app.cancelExport();
     expect(app.ui.getSnapshot().exportWarning).toBeUndefined();
-    expect(host.saved).toHaveLength(0);
+    expect(host.files.saved).toHaveLength(0);
     expect(host.confirmations).toEqual([]);
 
     // Asked again and told to go ahead: the file, without what was lost.
@@ -382,8 +475,8 @@ describe("unsupported content", () => {
     app.exportAnyway();
     await tick();
     expect(app.ui.getSnapshot().exportWarning).toBeUndefined();
-    expect(host.saved).toHaveLength(1);
-    expect(host.saved[0]?.text).not.toContain("HATCH");
+    expect(host.files.saved).toHaveLength(1);
+    expect(host.files.saved[0]?.text).not.toContain("HATCH");
     // Exporting does not bring the lost content back.
     expect(app.ui.getSnapshot().exportLosses).toEqual(losses);
 

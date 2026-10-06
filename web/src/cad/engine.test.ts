@@ -363,7 +363,7 @@ describe("object snap", () => {
     cad.pointerDown(...NEAR_THE_END, 0, 0);
     cad.pointerUp(...NEAR_THE_END, 0, 0);
     enter(cad, "@0,50", "");
-    expect(cad.exportDxf()).toContain(" 10\n100.0\n 20\n0.0\n");
+    expect(cad.snapshotDxf()).toContain(" 10\n100.0\n 20\n0.0\n");
   });
 });
 
@@ -468,11 +468,11 @@ describe("grips", () => {
 
     expect(enter(cad, "150,50") & Dirty.Scene).toBeTruthy();
     // R2000: the end point's Z sits between the start and end groups (ADR-0018).
-    expect(cad.exportDxf()).toContain(" 10\n0.0\n 20\n0.0\n 30\n0.0\n 11\n150.0\n 21\n50.0\n");
+    expect(cad.snapshotDxf()).toContain(" 10\n0.0\n 20\n0.0\n 30\n0.0\n 11\n150.0\n 21\n50.0\n");
     expect(cad.uiState().selectionCount).toBe(1);
 
     cad.key(KeyAction.Undo);
-    expect(cad.exportDxf()).toContain(" 11\n100.0\n 21\n0.0\n");
+    expect(cad.snapshotDxf()).toContain(" 11\n100.0\n 21\n0.0\n");
     expect(cad.uiState().selectionCount).toBe(1);
   });
 });

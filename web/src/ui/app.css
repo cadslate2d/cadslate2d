@@ -247,6 +247,10 @@ body {
   border-color: var(--color-accent);
 }
 
+.status__document {
+  color: var(--color-text);
+}
+
 .status__lossy {
   border-color: var(--color-danger);
   color: var(--color-danger);

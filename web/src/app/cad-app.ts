@@ -2,7 +2,12 @@
 // React components and the canvas binding talk to the engine only through it.
 import { Dirty, HostRequest, type CadEngine, type KeyAction } from "../cad/engine";
 import { FrameLoop, type ScheduleFrame } from "./frame-loop";
-import { browserHost, type AutosaveRecord, type HostServices } from "./host-services";
+import {
+  browserHost,
+  type AutosaveRecord,
+  type FileTarget,
+  type HostServices,
+} from "./host-services";
 import { UiStore } from "./ui-store";
 
 const RENDER_FLAGS = Dirty.Scene | Dirty.Overlay | Dirty.View;
@@ -45,6 +50,10 @@ export class CadApp {
   #cancelAutosave: (() => void) | undefined;
   /** The autosave found on start, while the user has not decided about it. */
   #recoverable: AutosaveRecord | undefined;
+  /** The file the drawing came from or last went to, where the browser can write back. */
+  #target: FileTarget | undefined;
+  /** Whether the save the export warning asked about must ask where. */
+  #pendingSaveAsks = false;
 
   constructor(engine: CadEngine, options: CadAppOptions = {}) {
     this.engine = engine;
@@ -133,6 +142,8 @@ export class CadApp {
       record.name ?? RECOVERED_FILE_NAME,
     );
     this.loop.invalidate(dirty);
+    this.#target =
+      record.handle && record.name ? { name: record.name, handle: record.handle } : undefined;
     // What was recovered is still unexported: it stays recoverable.
     this.#keptRevision = this.engine.uiState().revision;
   }
@@ -169,8 +180,13 @@ export class CadApp {
     if (!exported && !state.unsavedChanges) return;
     this.#keptRevision = state.revision;
     try {
+      // Only a real handle survives the structured clone into storage.
+      const handle = this.#target?.handle;
+      const storable =
+        typeof FileSystemFileHandle !== "undefined" && handle instanceof FileSystemFileHandle;
       await this.#host.autosave.save({
         name: state.documentName,
+        handle: storable ? handle : undefined,
         text: this.engine.snapshotDxf(),
         savedAt: Date.now(),
         exported,
@@ -193,7 +209,9 @@ export class CadApp {
       case HostRequest.OpenFile:
         return this.#openFile();
       case HostRequest.ExportFile:
-        return this.#exportFile();
+        return this.#save(true);
+      case HostRequest.SaveFile:
+        return this.#save(false);
       case HostRequest.None:
         return;
     }
@@ -202,29 +220,36 @@ export class CadApp {
   async #openFile(): Promise<void> {
     if (this.engine.uiState().unsavedChanges && !this.#host.confirm(DISCARD_CHANGES_MESSAGE))
       return;
-    const file = await this.#host.pickFile(DXF_ACCEPT);
+    const file = await this.#host.files.open(DXF_ACCEPT);
     if (!file) return;
     this.loop.invalidate(this.engine.loadDxf(file.bytes, file.name));
+    this.#target = file.target;
     // The opened file holds the drawing: whatever was kept before is replaced.
     this.#cancelAutosave?.();
     await this.#keep(true);
   }
 
-  #exportFile(): void {
+  /**
+   * Saves the drawing: back to its file when the browser can and `ask` is
+   * not set (SAVE), otherwise to a file the user chooses (SAVEAS, DXFOUT),
+   * which is a download where the browser has no picker (DESIGN §25.3).
+   */
+  async #save(ask: boolean): Promise<void> {
     const state = this.engine.uiState();
     // DESIGN §24.2: never imply a lossless round trip when content was
     // skipped. The warning names what the file will lose; the user decides.
     if (state.exportLosses.length > 0) {
+      this.#pendingSaveAsks = ask;
       this.ui.setExportWarning(state.exportLosses);
       return;
     }
-    this.#saveExport();
+    await this.#performSave(ask);
   }
 
-  /** The export the warning asked about: the user chose to go ahead. */
+  /** The save the warning asked about: the user chose to go ahead. */
   exportAnyway(): void {
     this.ui.setExportWarning(undefined);
-    this.#saveExport();
+    void this.#performSave(this.#pendingSaveAsks);
   }
 
   /** The export the warning asked about: the user chose not to. */
@@ -237,14 +262,19 @@ export class CadApp {
     this.loop.invalidate(this.engine.dismissImportReport());
   }
 
-  #saveExport(): void {
+  async #performSave(ask: boolean): Promise<void> {
+    const files = this.#host.files;
     const state = this.engine.uiState();
-    this.#host.saveFile(
-      state.documentName ?? DEFAULT_FILE_NAME,
-      this.engine.exportDxf(),
-      DXF_MIME_TYPE,
-    );
-    this.loop.invalidate(Dirty.Ui);
+    const text = this.engine.snapshotDxf();
+    const known = this.#target;
+    const writtenBack =
+      !ask && known !== undefined && files.writesBack && (await files.write(known, text));
+    const target = writtenBack
+      ? known
+      : await files.saveAs(state.documentName ?? DEFAULT_FILE_NAME, text, DXF_MIME_TYPE);
+    if (!target) return;
+    this.#target = files.writesBack ? target : undefined;
+    this.loop.invalidate(this.engine.markExported(target.name));
     // The file holds the drawing now: a reload has nothing to recover.
     this.#cancelAutosave?.();
     void this.#keep(true);

@@ -636,7 +636,7 @@ impl Session {
             KeyAction::Undo => self.invoke("UNDO"),
             KeyAction::Redo => self.invoke("REDO"),
             KeyAction::Open => self.invoke("OPEN"),
-            KeyAction::Save => self.invoke("DXFOUT"),
+            KeyAction::Save => self.invoke("SAVE"),
             KeyAction::Delete if self.active.is_none() && !self.selection.is_empty() => {
                 self.invoke("ERASE")
             }
@@ -710,9 +710,13 @@ impl Session {
         Dirty::UI
     }
 
-    /// Records that the host has exported the drawing in its current state.
-    pub fn mark_exported(&mut self) -> Dirty {
+    /// Records that the host has saved the drawing in its current state —
+    /// to `name`, when the drawing has a file now that it did not before.
+    pub fn mark_exported(&mut self, name: Option<&str>) -> Dirty {
         self.saved_revision = self.drawing.revision();
+        if let Some(name) = name {
+            self.document_name = Some(name.to_owned());
+        }
         self.notify("Drawing exported as DXF.")
     }
 

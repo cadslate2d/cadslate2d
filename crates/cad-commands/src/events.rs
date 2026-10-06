@@ -51,6 +51,10 @@ pub enum KeyAction {
 pub enum HostRequest {
     /// Let the user pick a drawing file, then hand it to `Session::open_drawing`.
     OpenFile,
-    /// Export the drawing and offer it to the user as a file.
+    /// Save the drawing to the file it came from or last went to, where the
+    /// browser can write there again; ask where, otherwise.
+    SaveFile,
+    /// Save the drawing to a file the user chooses — a dialog, or a
+    /// download where there is none.
     ExportFile,
 }
