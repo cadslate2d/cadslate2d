@@ -43,3 +43,7 @@ harness = false
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "annotation"
+harness = false

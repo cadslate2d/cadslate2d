@@ -1989,7 +1989,9 @@ Potential work:
 
 Dimensions must not begin before text metrics are reliable enough to place text, gaps, arrowheads, and extension lines consistently.
 
-> **Rewritten at the M5 exit:** the order of work and what is left out are in the [roadmap](roadmap.md) and the issues of the M6 milestone; the [M5 review](reviews/m5-exit-review.md) says what M5 left for it. The "improved text renderer" is not taken up: ADR-0016's stroke font stands until rendering is measured on hardware (#110). The dimension entity and its layout engine are [ADR-0020](adr/0020-dimensions.md).
+> **Rewritten at the M5 exit:** the order of work and what is left out are in the [roadmap](roadmap.md) and the issues of the M6 milestone; the [M5 review](reviews/m5-exit-review.md) says what M5 left for it. The "improved text renderer" is not taken up: ADR-0016's stroke font stands until rendering is measured on hardware (#110). The dimension entity and its layout engine are [ADR-0020](adr/0020-dimensions.md); filled regions and hatches are [ADR-0021](adr/0021-filled-regions.md).
+
+> **Completed in M6:** text metrics, dimension styles, linear, aligned, angular, radius, and diameter dimensions, solid fill, and the classic hatch patterns, all saved and reopened through DXF — the [M6 review](reviews/m6-exit-review.md).
 
 ---
 
@@ -2014,6 +2016,8 @@ Possible work:
 - worker experiments.
 
 Worker architecture must be justified by profiling, not assumed.
+
+> **Broken down at the M6 exit:** the order of work and the issues are in the [roadmap](roadmap.md) and the [M6 review](reviews/m6-exit-review.md). Every item above is decided by measurement, starting from a mixed drawing at 10k, 50k, and 100k entities against the §42 targets (#171).
 
 ---
 

@@ -12,11 +12,44 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M3 — Robust Modify Geometry | Complete and closed ([review](reviews/m3-exit-review.md)). |
 | M4 — Drawing Organization | Complete and closed ([review](reviews/m4-exit-review.md)). |
 | M5 — DXF Compatibility | Complete and closed ([review](reviews/m5-exit-review.md)). |
-| M6 — Annotation and Hatch | Next. Rewritten after M5 and broken into issues. |
-| M7 | PROVISIONAL placeholder, to be broken down at the M6 exit review. |
+| M6 — Annotation and Hatch | Complete and closed ([review](reviews/m6-exit-review.md)). |
+| M7 — Rendering and Performance Hardening | Next. Broken into issues at the M6 exit. |
 | M8 | FUTURE. Not planned against. |
 
-## M6, as rewritten after M5
+## M7, as broken down after M6
+
+DESIGN §35 lists candidate hardening work — strokes, caps and joins, linetypes, curves, packing, buffer reuse, a text atlas, culling, batching, 100k benchmarks, fuzzing, crash recovery, workers — and §42 the targets: 10k entities effortless, 50k smooth for normal editing, 100k usable. §35 insists a worker be justified by profiling; the same rule is applied to everything here.
+
+M6 left M7 these pieces: a scene of three committed instance kinds — segments, arcs, triangles — rebuilt whole on every edit; dimensions and hatches whose geometry is computed whenever asked for, measured at 24 ms for 10,000 dimensions and 23 ms for 1,000 hatches; text drawn as strokes and now the bulk of every dimension; and measurements that are each of one kind of entity, mostly lines.
+
+### Order of work
+
+1. **The bulk loader** (#108), carried since M0: index construction is most of a large import.
+2. **A mixed 100k drawing measured against §42** (#171). Every later choice reads its numbers; they go in a new `docs/performance.md`.
+3. **An edit re-packs what changed** (#172), with an ADR on chunking the scene, then **viewport culling if the numbers ask for it** (#173).
+4. **Strokes hardened** (#174): joins, caps, dots, heavy lineweights, with baselines.
+5. **Text at volume** (#175): measured, and an atlas decided with #110's hardware numbers.
+6. **A panic leaves the drawing recoverable** (#176); **coverage-guided fuzzing** of the reader and the grammar (#177); **the worker experiment** for open, export, and autosave (#178).
+7. **Curves at extreme zoom** (#112) and **drafting far from the origin** (#151), carried; the scene-origin rebase policy (ADR-0003) is decided there.
+8. **Exit** (#179).
+
+### Not in M7
+
+- New entities, commands, or file formats (M8, §36); a native project format (§39).
+- Filled arrowheads and the rest of annotation's refinements.
+
+### Needs a person
+
+- WebKit, for the end-to-end suite and the persistence measurement (#109).
+- Rendering and transport on real GPUs (#110), which #175 also waits on.
+- Deciding whether to report the R-tree bulk-load crash upstream (#111).
+- An interactive CAD program (AutoCAD, BricsCAD, LibreCAD, QCAD) reading our R2000 files — blocks, lineweights, paragraphs, `$INSUNITS`, and now dimensions and hatches; ezdxf does, with no audit errors. One file saved by such a program belongs in the corpus.
+- The File System Access path in a real browser ([M5 review](reviews/m5-exit-review.md)).
+- How M3 and M4 feel against classic CAD ([M3 review](reviews/m3-exit-review.md), [M4 review](reviews/m4-exit-review.md)); the M2 exit assessment; the arc grip behaviour against AutoCAD (ADR-0010).
+
+## M6, as it was planned
+
+Kept for the record; the [review](reviews/m6-exit-review.md) says how it went.
 
 DESIGN §34 lists candidate work for annotation and hatch, in a dependency order it insists on: stable text metrics, then the dimension layout engine, then dimension rendering, then hatch. It forbids dimensions before text metrics are reliable enough to place text, gaps, arrowheads, and extension lines consistently.
 
@@ -37,18 +70,6 @@ M5 left M6 these pieces: text drawn with a stroke font whose metrics are plain f
 - Gradient fills; hatch boundaries from splines or ellipses, which the model lacks.
 - A second font or an atlas text renderer (ADR-0016; #110).
 - `MLEADER`, tables, fields, and the rest of annotation beyond dimensions and hatches.
-
-### Needs a person
-
-- An interactive CAD program (AutoCAD, BricsCAD, LibreCAD, QCAD) reading our R2000 files — blocks, lineweights, paragraphs, `$INSUNITS`; ezdxf does, with no audit errors ([ADR-0018](adr/0018-dxf-release-r2000.md)). One file saved by such a program belongs in the corpus.
-- The File System Access path in a real browser: open, edit, Ctrl+S, the file changed; the permission prompt; the handle after a reload ([M5 review](reviews/m5-exit-review.md)).
-- WebKit, for the persistence measurement and the end-to-end suite.
-- How M4 feels against classic CAD: `BLOCK`'s order of questions, `INSERT`'s prompts, `EXPLODE` one level at a time, the lineweight display rule, the stroke font ([M4 review](reviews/m4-exit-review.md)).
-- How the M3 commands feel against classic CAD: round corners on polyline offsets, JOIN and gaps between arcs, the STRETCH window, BREAK on circles ([M3 review](reviews/m3-exit-review.md)).
-- The hands-on assessment of the M2 exit condition.
-- Confirming the arc grip behaviour against AutoCAD (ADR-0010).
-- Measuring rendering on real GPU hardware.
-- Deciding whether to report the R-tree bulk-load crash upstream.
 
 ## M5, as it was planned
 
