@@ -72,3 +72,17 @@ Evidence:
 Not verified: that AutoCAD and other tools accept the variable in an R12 header. If one is found that rejects it, the unit moves with the baseline release decision in M5, as the third "revisit when" above already provides.
 
 Codes read and written: 0 unitless, 1 inches, 2 feet, 4 millimetres, 5 centimetres, 6 metres. A file declaring any other unit imports as a unitless drawing, and the import report says so; nothing is rescaled.
+
+### 2026-10-05 — Layers, colours, and linetypes are written; lineweights are reported
+
+M4 gave objects a layer, a colour, a linetype, and a lineweight, and the drawing a layer table and a linetype table (ADR-0013, #138). The writer now writes a `TABLES` section — `LTYPE` with every linetype's pattern, `LAYER` with every layer's colour, linetype, and switches (off as a negative colour, locked as flag 4) — and on every entity its layer (group 8) and, when they are its own, its colour (62) and linetype (6). The header carries the settings for new objects when they are not a new drawing's: `$CLAYER`, `$CECOLOR`, `$CELTYPE`, `$LTSCALE`. All of this is R12.
+
+**Lineweights are not written.** R12 has no group 370; the issue (#139) asked that what the baseline cannot hold be named rather than dropped silently, and that raising the release be M5's decision. So `export_with_report` counts the objects and layers whose lineweight the file loses, and the command log says: *Lineweights are not written in DXF R12: dropped from 2 objects and 1 layer.* The reader takes group 370 from newer files all the same, as it takes `$INSUNITS`, so a lineweight survives a file from another writer — just not our own.
+
+The reader also takes the `LAYER` and `LTYPE` tables of any release; a layer or linetype an entity names but no table defines is made — a new layer's settings, a continuous linetype — and the import report says so. The `ByLayer`/`ByBlock` pseudo-rows newer files carry are not linetypes; the text and shapes of a complex linetype are reported and its dashes kept.
+
+Evidence:
+
+- Two fixtures written by ezdxf 1.4.4 — `ezdxf-r12-layers-linetypes.dxf` and `ezdxf-r2010-properties.dxf` — import as written: switches, patterns, colours, lineweights (R2010), header settings.
+- Our export of the R12 fixture is read back by ezdxf with every layer, linetype, pattern, header setting, and entity property intact, and ezdxf's recovery audit reports no errors and no fixes.
+- Export → import → export is byte-identical for everything R12 holds (`everything_r12_holds_survives_export_import_export_byte_for_byte`, and a property test over arbitrary tables and property groups).

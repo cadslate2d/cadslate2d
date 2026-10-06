@@ -17,9 +17,20 @@ pub struct ImportReport {
     pub polylines: usize,
     /// Entities that were skipped, by DXF type name, in name order.
     pub unsupported: BTreeMap<String, usize>,
-    /// Imported entities that carried properties the drawing cannot hold yet
-    /// (a layer other than `0`, a colour, a linetype, an elevation…).
+    /// Imported entities that carried properties the drawing cannot hold
+    /// (an elevation, a thickness, a width, a linetype scale of their own,
+    /// a colour or lineweight that is not one).
     pub with_dropped_properties: usize,
+    /// Layers besides `0` in the drawing after the import.
+    pub layers: usize,
+    /// Linetypes besides `Continuous` in the drawing after the import.
+    pub linetypes: usize,
+    /// Layers that an entity or the header named but the file did not
+    /// define, made with a new layer's settings.
+    pub created_layers: usize,
+    /// Linetypes that an entity or a layer named but the file did not
+    /// define, made continuous.
+    pub created_linetypes: usize,
     /// The drawing unit the file declares, when it is one the drawing can
     /// be in.
     pub unit: Option<LengthUnit>,
@@ -89,10 +100,35 @@ impl ImportReport {
                 skipped.join(", ")
             ));
         }
+        if self.layers + self.linetypes > 0 {
+            let tables: Vec<String> = [
+                (self.layers, "layer", "layers"),
+                (self.linetypes, "linetype", "linetypes"),
+            ]
+            .into_iter()
+            .filter(|(count, ..)| *count > 0)
+            .map(|(count, one, many)| counted(count, one, many))
+            .collect();
+            lines.push(format!("With {}.", tables.join(" and ")));
+        }
+        if self.created_layers + self.created_linetypes > 0 {
+            let created: Vec<String> = [
+                (self.created_layers, "layer", "layers"),
+                (self.created_linetypes, "linetype", "linetypes"),
+            ]
+            .into_iter()
+            .filter(|(count, ..)| *count > 0)
+            .map(|(count, one, many)| counted(count, one, many))
+            .collect();
+            lines.push(format!(
+                "Named but not defined in the file, so created: {}.",
+                created.join(" and ")
+            ));
+        }
         if self.with_dropped_properties > 0 {
             let entities = counted(self.with_dropped_properties, "entity", "entities");
             lines.push(format!(
-                "Layer, colour, and linetype were dropped from {entities}."
+                "Properties the drawing cannot hold were dropped from {entities}."
             ));
         }
         if let Some(unit) = self.unit {
@@ -182,7 +218,7 @@ mod tests {
         let summary = report.summary();
         assert_eq!(
             summary[1],
-            "Layer, colour, and linetype were dropped from 2 entities."
+            "Properties the drawing cannot hold were dropped from 2 entities."
         );
 
         let one = ImportReport {
@@ -192,7 +228,39 @@ mod tests {
         };
         assert_eq!(
             one.summary()[1],
-            "Layer, colour, and linetype were dropped from 1 entity."
+            "Properties the drawing cannot hold were dropped from 1 entity."
+        );
+    }
+
+    #[test]
+    fn tables_are_counted_and_rows_the_file_did_not_define_are_named() {
+        let report = ImportReport {
+            lines: 1,
+            layers: 2,
+            linetypes: 1,
+            created_layers: 1,
+            ..Default::default()
+        };
+        assert!(!report.has_unsupported_content(), "nothing was lost");
+        assert_eq!(
+            report.summary(),
+            vec![
+                "Imported 1 line.",
+                "With 2 layers and 1 linetype.",
+                "Named but not defined in the file, so created: 1 layer."
+            ]
+        );
+        let only_linetypes = ImportReport {
+            linetypes: 3,
+            created_linetypes: 2,
+            ..Default::default()
+        };
+        assert_eq!(
+            only_linetypes.summary()[1..],
+            [
+                "With 3 linetypes.",
+                "Named but not defined in the file, so created: 2 linetypes."
+            ]
         );
     }
 

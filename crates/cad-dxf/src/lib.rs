@@ -16,9 +16,10 @@
 mod error;
 mod export;
 mod import;
+mod properties;
 mod report;
 
 pub use error::DxfError;
-pub use export::export;
+pub use export::{Export, ExportReport, export, export_with_report};
 pub use import::{Import, ImportLimits, import, import_with_limits};
 pub use report::ImportReport;

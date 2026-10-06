@@ -86,7 +86,9 @@ test.describe("open", () => {
       () => page.keyboard.press("Control+o"),
       fixturePath("valid/ezdxf-r12-three-lines.dxf"),
     );
-    await expect(logLines(page).last()).toHaveText("Imported 3 lines.");
+    await expect(logLines(page).filter({ hasText: "Imported 3 lines." })).toHaveCount(1);
+    // ezdxf's Defpoints layer came with the file.
+    await expect(logLines(page).last()).toHaveText("With 1 layer.");
   });
 
   test("a file that is not DXF is refused with a reason", async ({ page }) => {
@@ -151,6 +153,84 @@ test.describe("unsupported content", () => {
     expect(file.text.match(/^POLYLINE$/gm)).toHaveLength(1);
     expect(file.text).not.toContain("LWPOLYLINE");
     expect(file.text).not.toContain("TEXT");
+  });
+});
+
+// #139: layers, colours, and linetypes travel through the file; lineweights
+// cannot in R12, and the export says so.
+test.describe("properties in DXF", () => {
+  test("layers, colours, and linetypes survive export and open", async ({ page }) => {
+    await openApp(page);
+    await enter(page, "LINETYPE", "L", "Dashed", "", "LTSCALE", "5");
+    await enter(
+      page,
+      "LAYER",
+      "N",
+      "walls",
+      "C",
+      "1",
+      "walls",
+      "LT",
+      "Dashed",
+      "walls",
+      "S",
+      "walls",
+      "",
+    );
+    await enter(page, "COLOR", "5", "L", "0,0", "100,0", "");
+    await enter(page, "LWEIGHT", "0.5");
+    await expect(logLines(page).last()).toHaveText(
+      "Lineweights are not being shown: switch LWT on to see them.",
+    );
+    await enter(page, "C", "50,50", "10");
+
+    const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    expect(file.text).toContain("  2\nLTYPE\n 70\n2\n");
+    expect(file.text).toContain("  0\nLTYPE\n  2\nDashed\n");
+    expect(file.text).toContain("  0\nLAYER\n  2\nwalls\n 70\n0\n 62\n1\n  6\nDashed\n");
+    expect(file.text).toContain("  9\n$CLAYER\n  8\nwalls\n");
+    expect(file.text).toContain("  9\n$LTSCALE\n 40\n5.0\n");
+    expect(file.text).toContain("LINE\n  8\nwalls\n 62\n5\n");
+    expect(file.text).not.toContain("\n370\n");
+    await expect(logLines(page).last()).toHaveText(
+      "Lineweights are not written in DXF R12: dropped from 1 object.",
+    );
+
+    await page.reload();
+    await openApp(page);
+    await chooseFile(page, () => enter(page, "OPEN"), {
+      name: file.name,
+      mimeType: "application/dxf",
+      buffer: Buffer.from(file.text),
+    });
+    await expect(logLines(page).filter({ hasText: "Imported 1 line, 1 circle." })).toHaveCount(1);
+    await expect(logLines(page).last()).toHaveText("With 1 layer and 1 linetype.");
+    await enter(page, "LAYER", "?");
+    await expect(logLines(page).last()).toHaveText('"walls": colour 1, on, Dashed, current');
+    await enter(page, "", "LINETYPE", "?");
+    await expect(logLines(page).last()).toHaveText('"Dashed": __ __ __ __ __ __ __');
+    await enter(page, "");
+    const again = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    expect(again.text).toBe(file.text);
+    await expect(logLines(page).last()).toHaveText("Drawing exported as DXF.");
+  });
+
+  test("a file from another writer brings its layers and linetypes", async ({ page }) => {
+    await openApp(page);
+    await chooseFile(
+      page,
+      () => enter(page, "OPEN"),
+      fixturePath("valid/ezdxf-r12-layers-linetypes.dxf"),
+    );
+    await expect(logLines(page).last()).toHaveText("With 5 layers and 3 linetypes.");
+    await enter(page, "LAYER", "?");
+    await expect(logLines(page).filter({ hasText: '"HIDDEN": colour 3, off' })).toHaveCount(1);
+    await expect(logLines(page).filter({ hasText: '"FIXED": colour 2, on, locked' })).toHaveCount(
+      1,
+    );
+    await expect(
+      logLines(page).filter({ hasText: '"WALLS": colour 1, on, DASHED, current' }),
+    ).toHaveCount(1);
   });
 });
 

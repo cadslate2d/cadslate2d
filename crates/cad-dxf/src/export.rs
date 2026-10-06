@@ -1,15 +1,73 @@
 //! DXF export (ADR-0005: ASCII DXF, release 12).
+//!
+//! The file has a HEADER with the drawing's settings, TABLES with its
+//! linetypes and layers, and ENTITIES, each with its layer and — when they
+//! are not its layer's — its colour and linetype. R12 has no lineweights:
+//! those are named in the [`ExportReport`], never silently dropped (§24.2).
 
 use std::fmt::Write;
 
 use cad_core::{EntityId, LengthUnit};
-use cad_document::{ArcEntity, CircleEntity, Drawing, Entity, LineEntity, PolylineEntity};
+use cad_document::{
+    ArcEntity, CircleEntity, Color, Drawing, DrawingSettings, Entity, Layer, LineEntity, Linetype,
+    LinetypeDef, LinetypeTable, Lineweight, PolylineEntity, Properties,
+};
+
+use crate::properties::{
+    LAYER_LOCKED, LINETYPE_ALIGNMENT_A, LINETYPE_BY_BLOCK, LINETYPE_BY_LAYER, color_to_dxf,
+    pattern_to_dxf,
+};
 
 /// The DXF release written, as stored in `$ACADVER`. R12 is the simplest
 /// release every CAD tool reads and needs no handles or subclass markers.
 const ACADVER_R12: &str = "AC1009";
-/// Everything lives on the default layer until layers exist (M4).
-const DEFAULT_LAYER: &str = "0";
+
+/// What an export could not write (§24.2): the baseline release has no
+/// lineweights, so every one that is not `ByLayer` on an object, or not
+/// `Default` on a layer, is lost.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExportReport {
+    /// Entities with a lineweight of their own.
+    pub lineweights_on_entities: usize,
+    /// Layers with a lineweight other than the default.
+    pub lineweights_on_layers: usize,
+}
+
+impl ExportReport {
+    /// Whether the file holds less than the drawing did.
+    pub fn is_lossy(&self) -> bool {
+        self.lineweights_on_entities + self.lineweights_on_layers > 0
+    }
+
+    /// A short, user-facing account of what was lost; empty when nothing was.
+    pub fn summary(&self) -> Vec<String> {
+        if !self.is_lossy() {
+            return Vec::new();
+        }
+        let counted = |count: usize, one: &str, many: &str| {
+            format!("{count} {}", if count == 1 { one } else { many })
+        };
+        let carriers: Vec<String> = [
+            (self.lineweights_on_entities, "object", "objects"),
+            (self.lineweights_on_layers, "layer", "layers"),
+        ]
+        .into_iter()
+        .filter(|(count, ..)| *count > 0)
+        .map(|(count, one, many)| counted(count, one, many))
+        .collect();
+        vec![format!(
+            "Lineweights are not written in DXF R12: dropped from {}.",
+            carriers.join(" and ")
+        )]
+    }
+}
+
+/// The file and the account of what it could not hold.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Export {
+    pub text: String,
+    pub report: ExportReport,
+}
 
 /// Serialises the drawing as ASCII DXF.
 ///
@@ -17,7 +75,14 @@ const DEFAULT_LAYER: &str = "0";
 /// coordinates use the shortest decimal form that reads back to exactly the
 /// same `f64`.
 pub fn export(drawing: &Drawing) -> String {
+    export_with_report(drawing).text
+}
+
+/// Serialises the drawing as ASCII DXF, and says what the file could not hold.
+pub fn export_with_report(drawing: &Drawing) -> Export {
     let mut out = String::new();
+    let mut report = ExportReport::default();
+    let linetypes = drawing.linetypes();
 
     section(&mut out, "HEADER", |out| {
         group(out, 9, "$ACADVER");
@@ -30,21 +95,136 @@ pub fn export(drawing: &Drawing) -> String {
             group(out, 9, "$INSUNITS");
             group(out, 70, &insunits_code(unit).to_string());
         }
+        // The settings for new objects, when they are not a new drawing's.
+        let settings = drawing.settings();
+        let defaults = DrawingSettings::default();
+        if settings.current_layer != defaults.current_layer
+            && let Some(layer) = drawing.layers().get(settings.current_layer)
+        {
+            group(out, 9, "$CLAYER");
+            group(out, 8, &layer.name);
+        }
+        if settings.current_color != defaults.current_color {
+            group(out, 9, "$CECOLOR");
+            group(out, 62, &color_to_dxf(settings.current_color).to_string());
+        }
+        if settings.current_linetype != defaults.current_linetype {
+            group(out, 9, "$CELTYPE");
+            group(out, 6, &linetype_name(settings.current_linetype, linetypes));
+        }
+        // Exactly the default is left out; any other value is written as it is.
+        #[allow(clippy::float_cmp)]
+        if settings.ltscale != defaults.ltscale {
+            group(out, 9, "$LTSCALE");
+            real(out, 40, settings.ltscale);
+        }
+    });
+    section(&mut out, "TABLES", |out| {
+        table(out, "LTYPE", linetypes.len(), |out| {
+            for (_, def) in linetypes.iter() {
+                write_linetype(out, def);
+            }
+        });
+        table(out, "LAYER", drawing.layers().len(), |out| {
+            for (_, layer) in drawing.layers().iter() {
+                write_layer(out, layer, linetypes);
+                if layer.lineweight != Lineweight::Default {
+                    report.lineweights_on_layers += 1;
+                }
+            }
+        });
     });
     section(&mut out, "ENTITIES", |out| {
-        let mut entities: Vec<(EntityId, &Entity)> = drawing.entities().collect();
-        entities.sort_unstable_by_key(|(id, _)| *id);
-        for (_, entity) in entities {
-            match entity {
-                Entity::Line(line) => write_line(out, line),
-                Entity::Circle(circle) => write_circle(out, circle),
-                Entity::Arc(arc) => write_arc(out, arc),
-                Entity::Polyline(polyline) => write_polyline(out, polyline),
+        let mut records: Vec<(EntityId, &cad_document::EntityRecord)> = drawing.records().collect();
+        records.sort_unstable_by_key(|(id, _)| *id);
+        for (_, record) in records {
+            let properties = &record.properties;
+            let layer = drawing
+                .layers()
+                .get(properties.layer)
+                .map_or(Layer::ZERO, |layer| layer.name.as_str());
+            if properties.lineweight != Lineweight::ByLayer {
+                report.lineweights_on_entities += 1;
+            }
+            let common = |out: &mut String| write_properties(out, layer, properties, linetypes);
+            match &*record.entity {
+                Entity::Line(line) => write_line(out, line, common),
+                Entity::Circle(circle) => write_circle(out, circle, common),
+                Entity::Arc(arc) => write_arc(out, arc, common),
+                Entity::Polyline(polyline) => write_polyline(out, polyline, layer, common),
             }
         }
     });
     group(&mut out, 0, "EOF");
-    out
+    Export { text: out, report }
+}
+
+/// Group 6 for a linetype: `BYLAYER`, `BYBLOCK`, or the row's name.
+fn linetype_name(linetype: Linetype, table: &LinetypeTable) -> String {
+    match linetype {
+        Linetype::ByLayer => LINETYPE_BY_LAYER.to_owned(),
+        Linetype::ByBlock => LINETYPE_BY_BLOCK.to_owned(),
+        Linetype::Named(id) => table.get(id).map_or_else(
+            || LinetypeDef::CONTINUOUS.to_owned(),
+            |def| def.name.clone(),
+        ),
+    }
+}
+
+/// The groups every entity carries after its type: its layer, and its
+/// colour and linetype when they are its own. Lineweights have no group
+/// in R12.
+fn write_properties(out: &mut String, layer: &str, properties: &Properties, table: &LinetypeTable) {
+    group(out, 8, layer);
+    if properties.linetype != Linetype::ByLayer {
+        group(out, 6, &linetype_name(properties.linetype, table));
+    }
+    if properties.color != Color::ByLayer {
+        group(out, 62, &color_to_dxf(properties.color).to_string());
+    }
+}
+
+/// An LTYPE row: name, flags, description, alignment, then the pattern as
+/// its count, its length, and each element with gaps negative.
+fn write_linetype(out: &mut String, def: &LinetypeDef) {
+    group(out, 0, "LTYPE");
+    group(out, 2, &def.name);
+    group(out, 70, "0");
+    group(out, 3, &def.description);
+    group(out, 72, &LINETYPE_ALIGNMENT_A.to_string());
+    group(out, 73, &def.pattern.len().to_string());
+    real(out, 40, def.period());
+    for element in pattern_to_dxf(&def.pattern) {
+        real(out, 49, element);
+    }
+}
+
+/// A LAYER row: name, flags, colour — negative when the layer is off, the
+/// R12 way — and linetype.
+fn write_layer(out: &mut String, layer: &Layer, table: &LinetypeTable) {
+    group(out, 0, "LAYER");
+    group(out, 2, &layer.name);
+    group(
+        out,
+        70,
+        &(if layer.locked { LAYER_LOCKED } else { 0 }).to_string(),
+    );
+    let color = match layer.color {
+        Color::Index(index) => i64::from(index),
+        // A layer's colour is what ByLayer means: an indirection here is
+        // written as the colour a new layer has.
+        Color::ByLayer | Color::ByBlock => color_to_dxf(Layer::DEFAULT_COLOR),
+    };
+    group(
+        out,
+        62,
+        &(if layer.on { color } else { -color }).to_string(),
+    );
+    let linetype = match layer.linetype {
+        Linetype::Named(_) => layer.linetype,
+        Linetype::ByLayer | Linetype::ByBlock => Linetype::CONTINUOUS,
+    };
+    group(out, 6, &linetype_name(linetype, table));
 }
 
 /// The `$INSUNITS` code of a unit.
@@ -58,18 +238,18 @@ pub(crate) const fn insunits_code(unit: LengthUnit) -> i64 {
     }
 }
 
-fn write_line(out: &mut String, line: &LineEntity) {
+fn write_line(out: &mut String, line: &LineEntity, properties: impl FnOnce(&mut String)) {
     group(out, 0, "LINE");
-    group(out, 8, DEFAULT_LAYER);
+    properties(out);
     real(out, 10, line.start.x);
     real(out, 20, line.start.y);
     real(out, 11, line.end.x);
     real(out, 21, line.end.y);
 }
 
-fn write_circle(out: &mut String, circle: &CircleEntity) {
+fn write_circle(out: &mut String, circle: &CircleEntity, properties: impl FnOnce(&mut String)) {
     group(out, 0, "CIRCLE");
-    group(out, 8, DEFAULT_LAYER);
+    properties(out);
     real(out, 10, circle.center.x);
     real(out, 20, circle.center.y);
     real(out, 40, circle.radius);
@@ -77,9 +257,9 @@ fn write_circle(out: &mut String, circle: &CircleEntity) {
 
 /// DXF arcs run counter-clockwise from the start angle to the end angle, in
 /// degrees — the same convention as the document, in different units.
-fn write_arc(out: &mut String, arc: &ArcEntity) {
+fn write_arc(out: &mut String, arc: &ArcEntity, properties: impl FnOnce(&mut String)) {
     group(out, 0, "ARC");
-    group(out, 8, DEFAULT_LAYER);
+    properties(out);
     real(out, 10, arc.center.x);
     real(out, 20, arc.center.y);
     real(out, 40, arc.radius);
@@ -90,7 +270,12 @@ fn write_arc(out: &mut String, arc: &ArcEntity) {
 /// R12 has no LWPOLYLINE: a polyline is a POLYLINE header, one VERTEX per
 /// point, and a closing SEQEND (ADR-0005). A vertex that starts an arc
 /// segment carries its bulge in group 42; straight ones carry none.
-fn write_polyline(out: &mut String, polyline: &PolylineEntity) {
+fn write_polyline(
+    out: &mut String,
+    polyline: &PolylineEntity,
+    layer: &str,
+    properties: impl FnOnce(&mut String),
+) {
     /// "Vertices follow" — required on every R12 polyline.
     const VERTICES_FOLLOW: &str = "1";
     /// Bit 1 of the polyline flags: closed.
@@ -98,12 +283,13 @@ fn write_polyline(out: &mut String, polyline: &PolylineEntity) {
     const OPEN: &str = "0";
 
     group(out, 0, "POLYLINE");
-    group(out, 8, DEFAULT_LAYER);
+    properties(out);
     group(out, 66, VERTICES_FOLLOW);
     group(out, 70, if polyline.closed { CLOSED } else { OPEN });
     for (vertex, bulge) in polyline.vertices.iter().zip(polyline.bulges()) {
         group(out, 0, "VERTEX");
-        group(out, 8, DEFAULT_LAYER);
+        // A vertex is on its polyline's layer and has no properties of its own.
+        group(out, 8, layer);
         real(out, 10, vertex.x);
         real(out, 20, vertex.y);
         if bulge.abs() > 0.0 {
@@ -118,6 +304,15 @@ fn section(out: &mut String, name: &str, body: impl FnOnce(&mut String)) {
     group(out, 2, name);
     body(out);
     group(out, 0, "ENDSEC");
+}
+
+/// One table of the TABLES section; group 70 is the number of rows.
+fn table(out: &mut String, name: &str, rows: usize, body: impl FnOnce(&mut String)) {
+    group(out, 0, "TABLE");
+    group(out, 2, name);
+    group(out, 70, &rows.to_string());
+    body(out);
+    group(out, 0, "ENDTAB");
 }
 
 /// One group: the code right-aligned in three columns, then the value.
@@ -151,10 +346,20 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_drawing_is_a_valid_empty_file() {
+    fn an_empty_drawing_is_a_valid_file_with_its_two_permanent_rows() {
         let expected = "  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1009\n  0\nENDSEC\n\
+                        \x20 0\nSECTION\n  2\nTABLES\n\
+                        \x20 0\nTABLE\n  2\nLTYPE\n 70\n1\n\
+                        \x20 0\nLTYPE\n  2\nContinuous\n 70\n0\n  3\nSolid line\n 72\n65\n 73\n0\n 40\n0.0\n\
+                        \x20 0\nENDTAB\n\
+                        \x20 0\nTABLE\n  2\nLAYER\n 70\n1\n\
+                        \x20 0\nLAYER\n  2\n0\n 70\n0\n 62\n7\n  6\nContinuous\n\
+                        \x20 0\nENDTAB\n  0\nENDSEC\n\
                         \x20 0\nSECTION\n  2\nENTITIES\n  0\nENDSEC\n  0\nEOF\n";
-        assert_eq!(export(&Drawing::new()), expected);
+        let export = export_with_report(&Drawing::new());
+        assert_eq!(export.text, expected);
+        assert!(!export.report.is_lossy());
+        assert!(export.report.summary().is_empty());
     }
 
     #[test]
@@ -259,6 +464,190 @@ mod tests {
         assert_eq!(format_real(-0.5), "-0.5");
         assert_eq!(format_real(707.1067811865476), "707.1067811865476");
         assert_eq!(format_real(1e21), "1000000000000000000000.0");
+    }
+
+    // ── layers, colours, linetypes, lineweights (#139) ──
+
+    /// Layers `walls` (dashed, colour 1, locked) and `hidden` (off), the
+    /// linetypes Dashed and Dot, and lines with every kind of property.
+    fn styled() -> Drawing {
+        use cad_core::Point2;
+        use cad_document::{Layer, LayerId, LinetypeId};
+
+        let (walls, hidden) = (LayerId::from_raw(1), LayerId::from_raw(2));
+        let (dashed, dot) = (LinetypeId::from_raw(1), LinetypeId::from_raw(2));
+        let layers = [
+            Layer {
+                color: Color::Index(1),
+                linetype: Linetype::Named(dashed),
+                locked: true,
+                ..Layer::named("walls")
+            },
+            Layer {
+                on: false,
+                lineweight: Lineweight::Hundredths(50),
+                ..Layer::named("hidden")
+            },
+        ];
+        let linetypes = [
+            LinetypeDef::built_in_named("Dashed").unwrap(),
+            LinetypeDef::built_in_named("Dot").unwrap(),
+        ];
+        let at = |y: f64| Entity::Line(LineEntity::new(Point2::new(0.0, y), Point2::new(10.0, y)));
+        let entities = [
+            (at(0.0), Properties::default()),
+            (at(1.0), Properties::on(walls)),
+            (
+                at(2.0),
+                Properties {
+                    color: Color::Index(5),
+                    linetype: Linetype::Named(dot),
+                    lineweight: Lineweight::Hundredths(35),
+                    ..Properties::on(hidden)
+                },
+            ),
+            (
+                at(3.0),
+                Properties {
+                    color: Color::ByBlock,
+                    linetype: Linetype::ByBlock,
+                    ..Properties::default()
+                },
+            ),
+            (
+                at(4.0),
+                Properties {
+                    linetype: Linetype::CONTINUOUS,
+                    lineweight: Lineweight::Default,
+                    ..Properties::on(walls)
+                },
+            ),
+        ];
+        Drawing::from_parts(layers, linetypes, entities)
+            .unwrap()
+            .with_settings(DrawingSettings {
+                current_layer: walls,
+                current_color: Color::Index(3),
+                current_linetype: Linetype::Named(dot),
+                current_lineweight: Lineweight::Hundredths(25),
+                ltscale: 20.0,
+                unit: None,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn the_tables_are_written_with_patterns_switches_and_linetypes() {
+        let dxf = export(&styled());
+        let tables = dxf
+            .split("TABLES\n")
+            .nth(1)
+            .and_then(|rest| rest.split("  0\nENDSEC").next())
+            .unwrap();
+        assert_eq!(
+            tables,
+            "  0\nTABLE\n  2\nLTYPE\n 70\n3\n\
+             \x20 0\nLTYPE\n  2\nContinuous\n 70\n0\n  3\nSolid line\n 72\n65\n 73\n0\n 40\n0.0\n\
+             \x20 0\nLTYPE\n  2\nDashed\n 70\n0\n  3\n__ __ __ __ __ __ __\n 72\n65\n 73\n2\n 40\n0.75\n 49\n0.5\n 49\n-0.25\n\
+             \x20 0\nLTYPE\n  2\nDot\n 70\n0\n  3\n. . . . . . . . . . . .\n 72\n65\n 73\n2\n 40\n0.25\n 49\n0.0\n 49\n-0.25\n\
+             \x20 0\nENDTAB\n\
+             \x20 0\nTABLE\n  2\nLAYER\n 70\n3\n\
+             \x20 0\nLAYER\n  2\n0\n 70\n0\n 62\n7\n  6\nContinuous\n\
+             \x20 0\nLAYER\n  2\nwalls\n 70\n4\n 62\n1\n  6\nDashed\n\
+             \x20 0\nLAYER\n  2\nhidden\n 70\n0\n 62\n-7\n  6\nContinuous\n\
+             \x20 0\nENDTAB\n"
+        );
+    }
+
+    #[test]
+    fn an_entity_carries_its_layer_and_its_own_colour_and_linetype_only() {
+        let dxf = export(&styled());
+        let entities: Vec<&str> = dxf
+            .split("ENTITIES\n")
+            .nth(1)
+            .unwrap()
+            .split("  0\nLINE\n")
+            .skip(1)
+            .map(|line| line.split(" 10\n").next().unwrap())
+            .collect();
+        assert_eq!(
+            entities,
+            vec![
+                "  8\n0\n",
+                "  8\nwalls\n",
+                "  8\nhidden\n  6\nDot\n 62\n5\n",
+                "  8\n0\n  6\nBYBLOCK\n 62\n0\n",
+                "  8\nwalls\n  6\nContinuous\n",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_header_carries_the_settings_that_are_not_a_new_drawings() {
+        let dxf = export(&styled());
+        let header = dxf.split("  0\nENDSEC").next().unwrap();
+        assert!(header.contains("  9\n$CLAYER\n  8\nwalls\n"), "{header}");
+        assert!(header.contains("  9\n$CECOLOR\n 62\n3\n"));
+        assert!(header.contains("  9\n$CELTYPE\n  6\nDot\n"));
+        assert!(header.contains("  9\n$LTSCALE\n 40\n20.0\n"));
+        assert!(!header.contains("$CELWEIGHT"), "R12 has no lineweights");
+        let plain = export(&Drawing::new());
+        for variable in ["$CLAYER", "$CECOLOR", "$CELTYPE", "$LTSCALE"] {
+            assert!(!plain.contains(variable), "{variable} is the default");
+        }
+    }
+
+    #[test]
+    fn lineweights_are_named_in_the_report_not_silently_dropped() {
+        let export = export_with_report(&styled());
+        assert!(!export.text.contains("\n370\n"), "no group 370 in R12");
+        assert_eq!(
+            export.report,
+            ExportReport {
+                lineweights_on_entities: 2,
+                lineweights_on_layers: 1,
+            }
+        );
+        assert!(export.report.is_lossy());
+        assert_eq!(
+            export.report.summary(),
+            vec!["Lineweights are not written in DXF R12: dropped from 2 objects and 1 layer."]
+        );
+        let only_layers = ExportReport {
+            lineweights_on_entities: 0,
+            lineweights_on_layers: 2,
+        };
+        assert_eq!(
+            only_layers.summary(),
+            vec!["Lineweights are not written in DXF R12: dropped from 2 layers."]
+        );
+    }
+
+    #[test]
+    fn everything_r12_holds_survives_export_import_export_byte_for_byte() {
+        let first = export(&styled());
+        let back = crate::import(first.as_bytes()).unwrap();
+        assert_eq!(back.report.layers, 2);
+        assert_eq!(back.report.linetypes, 2);
+        assert_eq!(
+            back.report.created_layers + back.report.created_linetypes,
+            0
+        );
+        assert!(!back.report.has_unsupported_content());
+        let drawing = &back.drawing;
+        let walls = drawing.layers().find("walls").unwrap();
+        let walls_row = drawing.layers().get(walls).unwrap();
+        assert!(walls_row.locked && walls_row.on);
+        assert_eq!(walls_row.color, Color::Index(1));
+        let hidden = drawing
+            .layers()
+            .get(drawing.layers().find("hidden").unwrap())
+            .unwrap();
+        assert!(!hidden.on);
+        assert_eq!(hidden.lineweight, Lineweight::Default, "lost, as reported");
+        assert_eq!(drawing.current_layer(), walls);
+        assert_eq!(drawing.ltscale(), 20.0);
+        assert_eq!(export(drawing), first);
     }
 
     proptest! {

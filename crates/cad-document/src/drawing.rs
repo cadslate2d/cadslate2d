@@ -172,7 +172,9 @@ impl Drawing {
     ///
     /// `layers` come after layer `0`, which is always there, and take the
     /// IDs 1, 2, … in the order given; `linetypes` likewise after
-    /// `Continuous`. A row with a name that is not allowed or is already
+    /// `Continuous`. A row with the permanent row's name — `0`,
+    /// `Continuous` — replaces that row's settings instead of adding one,
+    /// and takes no ID. A row with a name that is not allowed or is already
     /// taken, a layer with a linetype that is not among them, and an entity
     /// on a layer or with a linetype that is not among them, are refused.
     pub fn from_parts(
@@ -183,8 +185,18 @@ impl Drawing {
         let mut drawing = Self::new();
         for linetype in linetypes {
             linetype.check().map_err(TransactionError::BadLinetype)?;
-            if let Some(taken) = drawing.linetypes.find(&linetype.name) {
-                return Err(TransactionError::DuplicateLinetypeName(taken));
+            match drawing.linetypes.find(&linetype.name) {
+                Some(id) if id == LinetypeId::FIRST => {
+                    let before = drawing.linetypes.get(LinetypeId::FIRST).cloned();
+                    drawing.linetypes.apply(&TableChange::Replace {
+                        id: LinetypeId::FIRST,
+                        before: before.expect("Continuous is always there"),
+                        after: linetype,
+                    });
+                    continue;
+                }
+                Some(taken) => return Err(TransactionError::DuplicateLinetypeName(taken)),
+                None => {}
             }
             let id = drawing.linetypes.allocate();
             drawing
@@ -199,10 +211,20 @@ impl Drawing {
         };
         for layer in layers {
             check_name(&layer.name).map_err(TransactionError::BadLayerName)?;
-            if let Some(taken) = drawing.layers.find(&layer.name) {
-                return Err(TransactionError::DuplicateLayerName(taken));
-            }
             known_linetype(&drawing, layer.linetype)?;
+            match drawing.layers.find(&layer.name) {
+                Some(id) if id == LayerId::FIRST => {
+                    let before = drawing.layers.get(LayerId::FIRST).cloned();
+                    drawing.layers.apply(&TableChange::Replace {
+                        id: LayerId::FIRST,
+                        before: before.expect("layer 0 is always there"),
+                        after: layer,
+                    });
+                    continue;
+                }
+                Some(taken) => return Err(TransactionError::DuplicateLayerName(taken)),
+                None => {}
+            }
             let id = drawing.layers.allocate();
             drawing
                 .layers
@@ -323,6 +345,24 @@ impl Drawing {
     pub fn with_unit(mut self, unit: Option<LengthUnit>) -> Self {
         self.settings.unit = unit;
         self
+    }
+
+    /// The same drawing with all its settings set, and still no history:
+    /// for a drawing being put together from a file. The settings are
+    /// checked as a transaction would check them: the current layer must
+    /// exist and be on, a named linetype must exist, `LTSCALE` must be
+    /// positive.
+    pub fn with_settings(mut self, settings: DrawingSettings) -> Result<Self, TransactionError> {
+        let mut tx = self.transaction();
+        tx.set_current_layer(settings.current_layer)?;
+        tx.set_current_linetype(settings.current_linetype)?;
+        tx.set_ltscale(settings.ltscale)?;
+        tx.set_current_color(settings.current_color);
+        tx.set_current_lineweight(settings.current_lineweight);
+        tx.set_unit(settings.unit);
+        tx.commit();
+        self.history = History::default();
+        Ok(self)
     }
 
     /// The layer an entity is on.
@@ -2321,6 +2361,82 @@ mod tests {
             Some(LinetypeId::from_raw(1))
         );
         assert!(!loaded.can_undo());
+    }
+
+    #[test]
+    fn a_drawing_from_a_file_can_restyle_its_permanent_rows() {
+        let drawing = Drawing::from_parts(
+            [
+                Layer {
+                    color: Color::Index(3),
+                    locked: true,
+                    ..Layer::named("0")
+                },
+                Layer::named("walls"),
+            ],
+            [
+                LinetypeDef {
+                    description: "Unbroken".to_owned(),
+                    ..LinetypeDef::continuous()
+                },
+                LinetypeDef::built_in_named("Dashed").unwrap(),
+            ],
+            [],
+        )
+        .unwrap();
+        assert_eq!(drawing.layers().len(), 2);
+        let zero = drawing.layers().get(LayerId::FIRST).unwrap();
+        assert_eq!((zero.color, zero.locked), (Color::Index(3), true));
+        assert_eq!(drawing.layers().find("walls"), Some(LayerId::from_raw(1)));
+        assert_eq!(drawing.linetypes().len(), 2);
+        assert_eq!(
+            drawing
+                .linetypes()
+                .get(LinetypeId::FIRST)
+                .unwrap()
+                .description,
+            "Unbroken"
+        );
+        assert_eq!(
+            drawing.linetypes().find("dashed"),
+            Some(LinetypeId::from_raw(1))
+        );
+    }
+
+    #[test]
+    fn a_drawing_from_a_file_takes_its_settings_without_history() {
+        let drawing = Drawing::from_parts(
+            [Layer::named("walls")],
+            [LinetypeDef::built_in_named("Dashed").unwrap()],
+            [],
+        )
+        .unwrap();
+        let settings = DrawingSettings {
+            current_layer: LayerId::from_raw(1),
+            current_color: Color::Index(3),
+            current_linetype: Linetype::Named(LinetypeId::from_raw(1)),
+            current_lineweight: Lineweight::Hundredths(50),
+            ltscale: 25.0,
+            unit: Some(LengthUnit::Millimetres),
+        };
+        let drawing = drawing.with_settings(settings).unwrap();
+        assert_eq!(drawing.settings(), settings);
+        assert!(!drawing.can_undo(), "a file is not an edit");
+
+        let fresh = || Drawing::from_parts([], [], []).unwrap();
+        assert_eq!(
+            fresh().with_settings(settings).err(),
+            Some(TransactionError::UnknownLayer(LayerId::from_raw(1)))
+        );
+        assert_eq!(
+            fresh()
+                .with_settings(DrawingSettings {
+                    ltscale: 0.0,
+                    ..DrawingSettings::default()
+                })
+                .err(),
+            Some(TransactionError::BadLtscale)
+        );
     }
 
     #[test]

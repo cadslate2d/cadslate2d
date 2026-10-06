@@ -1,13 +1,27 @@
 //! DXF import: a tolerant, defensive ASCII reader.
 //!
-//! The reader accepts any DXF release, because it only looks at the ENTITIES
-//! section and at LINE, CIRCLE, ARC, and polyline records. Everything else is
+//! The reader accepts any DXF release, because it only looks at the HEADER,
+//! TABLES, and ENTITIES sections, and there at the LAYER and LTYPE tables
+//! and at LINE, CIRCLE, ARC, and polyline records. Everything else is
 //! counted and reported.
+//!
+//! Tables may come after the entities that use them, in theory, and a file
+//! may name a layer or linetype it never defines; so entities are read with
+//! their properties as names, and the names are resolved — rows made for
+//! the undefined ones, and reported — once the whole file has been read.
 
 use cad_core::{LengthUnit, Point2};
-use cad_document::{ArcEntity, CircleEntity, Drawing, Entity, LineEntity, PolylineEntity};
+use cad_document::{
+    ArcEntity, CircleEntity, Color, Drawing, DrawingSettings, Entity, Layer, LayerId, LineEntity,
+    Linetype, LinetypeDef, LinetypeId, Lineweight, PolylineEntity, Properties, check_name,
+    same_name,
+};
 
 use crate::export::insunits_code;
+use crate::properties::{
+    LAYER_FROZEN, LAYER_LOCKED, LINETYPE_BY_BLOCK, LINETYPE_BY_LAYER, color_from_dxf,
+    lineweight_from_dxf, pattern_from_dxf,
+};
 use crate::{DxfError, ImportReport};
 
 /// Start of every binary DXF file.
@@ -21,6 +35,13 @@ const POLYLINE_NOT_2D: i64 = 8 | 16 | 32 | 64;
 const POLYLINE_CLOSED: i64 = 1;
 /// Report key for supported entity types with geometry the drawing cannot hold.
 const INVALID: &str = "(invalid geometry)";
+/// Report keys for table rows the drawing cannot hold as written.
+const BAD_LAYER_NAME: &str = "(layer name)";
+const BAD_LINETYPE_NAME: &str = "(linetype name)";
+const BAD_LINETYPE_PATTERN: &str = "(linetype pattern)";
+/// Report key for the text and shapes of a complex linetype: the dashes
+/// are kept, the rest is not.
+const LINETYPE_SHAPES: &str = "(linetype shapes)";
 /// Longest type name kept in the report.
 const MAX_KIND_LENGTH: usize = 32;
 
@@ -63,22 +84,22 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
     if bytes.starts_with(BINARY_SENTINEL) {
         return Err(DxfError::BinaryDxf);
     }
-    // Pre-2007 files use a legacy code page. Only text content could be
-    // affected, and none is imported, so lossy decoding is safe here.
+    // Pre-2007 files use a legacy code page. Only text — layer and linetype
+    // names — could be affected, and a name that does not decode is still
+    // a name, so lossy decoding is safe here.
     let text = String::from_utf8_lossy(bytes);
 
     let mut reader = Reader {
         groups: Groups::new(&text),
         limits,
         entities: Vec::new(),
+        tables: Tables::default(),
+        header: Header::default(),
         report: ImportReport::default(),
         open_polyline: None,
     };
     reader.read_file()?;
-    Ok(Import {
-        drawing: Drawing::from_entities(reader.entities).with_unit(reader.report.unit),
-        report: reader.report,
-    })
+    reader.finish()
 }
 
 /// One DXF group: a code and its value, with the line the code was on.
@@ -137,10 +158,146 @@ impl<'a> Groups<'a> {
     }
 }
 
+/// A linetype as an entity, a layer, or the header names it, before the
+/// table is known.
+#[derive(Clone, Debug, PartialEq)]
+enum LinetypeRef {
+    ByLayer,
+    ByBlock,
+    Named(String),
+}
+
+impl LinetypeRef {
+    fn from_dxf(name: &str) -> Self {
+        if name.eq_ignore_ascii_case(LINETYPE_BY_LAYER) {
+            Self::ByLayer
+        } else if name.eq_ignore_ascii_case(LINETYPE_BY_BLOCK) {
+            Self::ByBlock
+        } else {
+            Self::Named(name.to_owned())
+        }
+    }
+}
+
+/// An entity's properties as the file states them: resolved against the
+/// tables once the whole file is read.
+#[derive(Clone, Debug)]
+struct Pending {
+    layer: String,
+    color: Color,
+    linetype: LinetypeRef,
+    lineweight: Lineweight,
+    /// It carried something the drawing cannot hold.
+    dropped: bool,
+}
+
+impl Default for Pending {
+    fn default() -> Self {
+        Self {
+            layer: Layer::ZERO.to_owned(),
+            color: Color::ByLayer,
+            linetype: LinetypeRef::ByLayer,
+            lineweight: Lineweight::ByLayer,
+            dropped: false,
+        }
+    }
+}
+
+/// The header variables the drawing has settings for.
+#[derive(Debug, Default)]
+struct Header {
+    current_layer: Option<String>,
+    current_color: Option<Color>,
+    current_linetype: Option<LinetypeRef>,
+    current_lineweight: Option<Lineweight>,
+    ltscale: Option<f64>,
+}
+
+/// The layer and linetype tables as they are built up: the file's rows,
+/// then the rows made for names the file used but never defined.
+///
+/// A row named like the permanent one — `0`, `Continuous` — restyles it
+/// and takes no ID; every other row's ID is its place among the rest, from
+/// 1, which is what `Drawing::from_parts` will give it.
+#[derive(Debug, Default)]
+struct Tables {
+    /// Each layer with the name of its linetype, resolved at the end.
+    layers: Vec<(Layer, LinetypeRef)>,
+    linetypes: Vec<LinetypeDef>,
+    created_layers: usize,
+    created_linetypes: usize,
+}
+
+impl Tables {
+    fn has_layer(&self, name: &str) -> bool {
+        self.layers
+            .iter()
+            .any(|(layer, _)| same_name(&layer.name, name))
+    }
+
+    fn has_linetype(&self, name: &str) -> bool {
+        self.linetypes.iter().any(|def| same_name(&def.name, name))
+    }
+
+    /// The ID the layer of that name will have, making the layer with a
+    /// new layer's settings if the file did not define it. `None` for a
+    /// name no layer can have.
+    fn layer(&mut self, name: &str) -> Option<LayerId> {
+        if same_name(name, Layer::ZERO) {
+            return Some(LayerId::FIRST);
+        }
+        if !self.has_layer(name) {
+            check_name(name).ok()?;
+            self.layers.push((
+                Layer::named(name),
+                LinetypeRef::Named(LinetypeDef::CONTINUOUS.to_owned()),
+            ));
+            self.created_layers += 1;
+        }
+        let index = self
+            .layers
+            .iter()
+            .filter(|(layer, _)| !same_name(&layer.name, Layer::ZERO))
+            .position(|(layer, _)| same_name(&layer.name, name))?;
+        Some(LayerId::from_raw(index as u32 + 1))
+    }
+
+    /// The linetype a reference means, making a continuous linetype of the
+    /// name if the file did not define it. `None` for a name no linetype
+    /// can have.
+    fn linetype(&mut self, reference: &LinetypeRef) -> Option<Linetype> {
+        let name = match reference {
+            LinetypeRef::ByLayer => return Some(Linetype::ByLayer),
+            LinetypeRef::ByBlock => return Some(Linetype::ByBlock),
+            LinetypeRef::Named(name) => name,
+        };
+        if same_name(name, LinetypeDef::CONTINUOUS) {
+            return Some(Linetype::CONTINUOUS);
+        }
+        if !self.has_linetype(name) {
+            check_name(name).ok()?;
+            self.linetypes.push(LinetypeDef {
+                name: name.clone(),
+                description: String::new(),
+                pattern: Vec::new(),
+            });
+            self.created_linetypes += 1;
+        }
+        let index = self
+            .linetypes
+            .iter()
+            .filter(|def| !same_name(&def.name, LinetypeDef::CONTINUOUS))
+            .position(|def| same_name(&def.name, name))?;
+        Some(Linetype::Named(LinetypeId::from_raw(index as u32 + 1)))
+    }
+}
+
 struct Reader<'a> {
     groups: Groups<'a>,
     limits: &'a ImportLimits,
-    entities: Vec<Entity>,
+    entities: Vec<(Entity, Pending)>,
+    tables: Tables,
+    header: Header,
     report: ImportReport,
     /// An R12-style POLYLINE whose VERTEX records are still being read.
     open_polyline: Option<PolylineBuilder>,
@@ -156,7 +313,7 @@ struct PolylineBuilder {
     /// Not a 2D polyline at all (mesh, 3D polyline): already reported; its
     /// vertices are swallowed.
     unsupported: bool,
-    has_dropped_properties: bool,
+    properties: Pending,
 }
 
 impl<'a> Reader<'a> {
@@ -170,6 +327,7 @@ impl<'a> Reader<'a> {
                 let name = self.groups.expect()?;
                 match name.value {
                     "HEADER" if name.code == 2 => self.read_header()?,
+                    "TABLES" if name.code == 2 => self.read_records(RecordContext::Tables)?,
                     "ENTITIES" if name.code == 2 => self.read_records(RecordContext::Entities)?,
                     "BLOCKS" if name.code == 2 => self.read_records(RecordContext::Blocks)?,
                     _ => self.skip_section()?,
@@ -179,8 +337,9 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// Reads the one header variable the drawing can hold: its unit,
-    /// `$INSUNITS`. Every other variable is skipped.
+    /// Reads the header variables the drawing has settings for: its unit,
+    /// `$INSUNITS`; the current layer, colour, linetype, and lineweight;
+    /// and `$LTSCALE`. Every other variable is skipped.
     fn read_header(&mut self) -> Result<(), DxfError> {
         let mut variable = "";
         loop {
@@ -190,13 +349,28 @@ impl<'a> Reader<'a> {
             }
             if group.code == 9 {
                 variable = group.value;
-            } else if variable == "$INSUNITS" && group.code == 70 {
-                // Not a whole number: no unit is declared, as if absent.
-                if let Ok(code) = group.value.trim().parse::<i64>() {
-                    self.declare_unit(code);
-                }
-                variable = "";
+                continue;
             }
+            let number = group.value.trim().parse::<i64>().ok();
+            match (variable, group.code) {
+                // Not a whole number: no unit is declared, as if absent.
+                ("$INSUNITS", 70) => {
+                    if let Some(code) = number {
+                        self.declare_unit(code);
+                    }
+                }
+                ("$CLAYER", 8) => self.header.current_layer = Some(group.value.to_owned()),
+                ("$CECOLOR", 62) => self.header.current_color = number.and_then(color_from_dxf),
+                ("$CELTYPE", 6) => {
+                    self.header.current_linetype = Some(LinetypeRef::from_dxf(group.value));
+                }
+                ("$CELWEIGHT", 370) => {
+                    self.header.current_lineweight = number.and_then(lineweight_from_dxf);
+                }
+                ("$LTSCALE", 40) => self.header.ltscale = group.value.parse::<f64>().ok(),
+                _ => continue,
+            }
+            variable = "";
         }
     }
 
@@ -272,7 +446,7 @@ impl<'a> Reader<'a> {
                     closed: body.flags & POLYLINE_CLOSED != 0,
                     bulges: body.bulges.clone(),
                     unsupported: false,
-                    has_dropped_properties: body.has_dropped_properties,
+                    properties: body.pending(),
                 };
                 self.finish_polyline(builder)?;
             }
@@ -284,7 +458,7 @@ impl<'a> Reader<'a> {
                 self.open_polyline = Some(PolylineBuilder {
                     closed: body.flags & POLYLINE_CLOSED != 0,
                     unsupported,
-                    has_dropped_properties: body.has_dropped_properties,
+                    properties: body.pending(),
                     ..Default::default()
                 });
             }
@@ -317,25 +491,100 @@ impl<'a> Reader<'a> {
             (RecordContext::Blocks, "BLOCK") if !body.name_is_reserved => {
                 self.report.count_unsupported("BLOCK");
             }
+            (RecordContext::Tables, "LAYER") => self.table_layer(body),
+            (RecordContext::Tables, "LTYPE") => self.table_linetype(body),
             _ => {}
         }
         Ok(())
     }
 
-    fn import(&mut self, entity: Entity, body: &RecordBody) -> Result<(), DxfError> {
-        self.push(entity, body.has_dropped_properties)
+    /// A row of the LAYER table. Its name must be one a layer can have; the
+    /// first row of a name counts. A negative colour, or the frozen flag,
+    /// is a layer that is off.
+    fn table_layer(&mut self, body: &RecordBody) {
+        let Some(name) = body.name.as_deref().filter(|name| check_name(name).is_ok()) else {
+            return self.report.count_unsupported(BAD_LAYER_NAME);
+        };
+        if self.tables.has_layer(name) {
+            return;
+        }
+        let mut layer = Layer::named(name);
+        if let Some(code) = body.color {
+            layer.on = code >= 0;
+            if let Some(Color::Index(index)) = color_from_dxf(code) {
+                layer.color = Color::Index(index);
+            }
+        }
+        if body.flags & LAYER_FROZEN != 0 {
+            layer.on = false;
+        }
+        layer.locked = body.flags & LAYER_LOCKED != 0;
+        if let Some(Lineweight::Hundredths(hundredths)) =
+            body.lineweight.and_then(lineweight_from_dxf)
+        {
+            layer.lineweight = Lineweight::Hundredths(hundredths);
+        }
+        let linetype = body.linetype.as_deref().map_or(
+            LinetypeRef::Named(LinetypeDef::CONTINUOUS.to_owned()),
+            |name| {
+                match LinetypeRef::from_dxf(name) {
+                    // A layer's linetype is what ByLayer means.
+                    LinetypeRef::ByLayer | LinetypeRef::ByBlock => {
+                        LinetypeRef::Named(LinetypeDef::CONTINUOUS.to_owned())
+                    }
+                    named => named,
+                }
+            },
+        );
+        self.tables.layers.push((layer, linetype));
     }
 
-    fn push(&mut self, entity: Entity, has_dropped_properties: bool) -> Result<(), DxfError> {
+    /// A row of the LTYPE table. The dashes of a complex linetype are kept
+    /// and its shapes reported; a pattern the drawing cannot hold is
+    /// reported and the linetype is continuous. The `ByLayer` and
+    /// `ByBlock` rows newer files carry are not linetypes.
+    fn table_linetype(&mut self, body: &RecordBody) {
+        let Some(name) = body.name.as_deref().filter(|name| check_name(name).is_ok()) else {
+            return self.report.count_unsupported(BAD_LINETYPE_NAME);
+        };
+        if !matches!(LinetypeRef::from_dxf(name), LinetypeRef::Named(_))
+            || self.tables.has_linetype(name)
+        {
+            return;
+        }
+        let mut pattern = pattern_from_dxf(&body.elements).unwrap_or_else(|| {
+            self.report.count_unsupported(BAD_LINETYPE_PATTERN);
+            Vec::new()
+        });
+        if body.has_shapes {
+            self.report.count_unsupported(LINETYPE_SHAPES);
+        }
+        let description = body.description.clone().unwrap_or_default();
+        let name = if same_name(name, LinetypeDef::CONTINUOUS) {
+            // Continuous is continuous, whatever a file says of it.
+            pattern.clear();
+            LinetypeDef::CONTINUOUS.to_owned()
+        } else {
+            name.to_owned()
+        };
+        self.tables.linetypes.push(LinetypeDef {
+            name,
+            description,
+            pattern,
+        });
+    }
+
+    fn import(&mut self, entity: Entity, body: &RecordBody) -> Result<(), DxfError> {
+        self.push(entity, body.pending())
+    }
+
+    fn push(&mut self, entity: Entity, properties: Pending) -> Result<(), DxfError> {
         if self.entities.len() >= self.limits.max_entities {
             return Err(DxfError::TooManyEntities {
                 limit: self.limits.max_entities,
             });
         }
-        self.entities.push(entity);
-        if has_dropped_properties {
-            self.report.with_dropped_properties += 1;
-        }
+        self.entities.push((entity, properties));
         Ok(())
     }
 
@@ -349,9 +598,107 @@ impl<'a> Reader<'a> {
                 polyline.bulges,
                 polyline.closed,
             ));
-            self.push(entity, polyline.has_dropped_properties)?;
+            self.push(entity, polyline.properties)?;
         }
         Ok(())
+    }
+
+    /// Resolves every name against the tables and builds the drawing.
+    fn finish(mut self) -> Result<Import, DxfError> {
+        // The file's layers first: their linetypes may make rows that
+        // entities then use.
+        let mut layers: Vec<Layer> = Vec::with_capacity(self.tables.layers.len());
+        for index in 0..self.tables.layers.len() {
+            let (layer, reference) = self.tables.layers[index].clone();
+            let linetype = self
+                .tables
+                .linetype(&reference)
+                .unwrap_or(Linetype::CONTINUOUS);
+            layers.push(Layer { linetype, ..layer });
+        }
+
+        let mut entities: Vec<(Entity, Properties)> = Vec::with_capacity(self.entities.len());
+        for (entity, pending) in std::mem::take(&mut self.entities) {
+            let mut dropped = pending.dropped;
+            let layer = self.tables.layer(&pending.layer).unwrap_or_else(|| {
+                dropped = true;
+                LayerId::FIRST
+            });
+            let linetype = self.tables.linetype(&pending.linetype).unwrap_or_else(|| {
+                dropped = true;
+                Linetype::ByLayer
+            });
+            if dropped {
+                self.report.with_dropped_properties += 1;
+            }
+            entities.push((
+                entity,
+                Properties {
+                    layer,
+                    color: pending.color,
+                    linetype,
+                    lineweight: pending.lineweight,
+                },
+            ));
+        }
+        // Layers made for entities come after the file's own.
+        layers.extend(
+            self.tables
+                .layers
+                .drain(layers.len()..)
+                .map(|(layer, _)| Layer {
+                    linetype: Linetype::CONTINUOUS,
+                    ..layer
+                }),
+        );
+        let linetypes = std::mem::take(&mut self.tables.linetypes);
+
+        let drawing = Drawing::from_parts(layers, linetypes, entities)
+            .map_err(|error| DxfError::Tables(error.to_string()))?;
+        self.report.layers = drawing.layers().len() - 1;
+        self.report.linetypes = drawing.linetypes().len() - 1;
+        self.report.created_layers = self.tables.created_layers;
+        self.report.created_linetypes = self.tables.created_linetypes;
+
+        // Settings the header names something for; what it names must be
+        // usable, or the default stands.
+        let current_layer = self
+            .header
+            .current_layer
+            .as_deref()
+            .and_then(|name| drawing.layers().find(name))
+            .filter(|id| drawing.layers().get(*id).is_some_and(|layer| layer.on))
+            .unwrap_or(LayerId::FIRST);
+        let current_linetype = match &self.header.current_linetype {
+            Some(LinetypeRef::ByBlock) => Linetype::ByBlock,
+            Some(LinetypeRef::Named(name)) => drawing
+                .linetypes()
+                .find(name)
+                .map_or(Linetype::ByLayer, Linetype::Named),
+            Some(LinetypeRef::ByLayer) | None => Linetype::ByLayer,
+        };
+        let settings = DrawingSettings {
+            current_layer,
+            current_color: self.header.current_color.unwrap_or(Color::ByLayer),
+            current_linetype,
+            current_lineweight: self
+                .header
+                .current_lineweight
+                .unwrap_or(Lineweight::ByLayer),
+            ltscale: self
+                .header
+                .ltscale
+                .filter(|scale| scale.is_finite() && *scale > 0.0)
+                .unwrap_or(DrawingSettings::DEFAULT_LTSCALE),
+            unit: self.report.unit,
+        };
+        let drawing = drawing
+            .with_settings(settings)
+            .map_err(|error| DxfError::Tables(error.to_string()))?;
+        Ok(Import {
+            drawing,
+            report: self.report,
+        })
     }
 }
 
@@ -359,6 +706,7 @@ impl<'a> Reader<'a> {
 enum RecordContext {
     Entities,
     Blocks,
+    Tables,
 }
 
 /// The groups of one record that matter to this reader.
@@ -368,7 +716,7 @@ struct RecordBody {
     /// entities, one per vertex for an LWPOLYLINE.
     xs: Vec<f64>,
     ys: Vec<f64>,
-    /// Group 70: entity flags.
+    /// Group 70: entity or table-row flags.
     flags: i64,
     /// Group 42 of each vertex, in step with `xs`: the bulge of the polyline
     /// segment that starts there. Zero where the vertex has none.
@@ -380,8 +728,24 @@ struct RecordBody {
     radius: Option<f64>,
     start_degrees: Option<f64>,
     end_degrees: Option<f64>,
-    has_dropped_properties: bool,
+    /// Group 2: the name of a table row or a block.
+    name: Option<String>,
     name_is_reserved: bool,
+    /// Group 3: a linetype's description.
+    description: Option<String>,
+    /// Group 8: the layer.
+    layer: Option<String>,
+    /// Group 62, as written: a layer's sign says whether it is off.
+    color: Option<i64>,
+    /// Group 6: the linetype, by name.
+    linetype: Option<String>,
+    /// Group 370, as written.
+    lineweight: Option<i64>,
+    /// Groups 49 of a linetype: dash, gap, dot lengths.
+    elements: Vec<f64>,
+    /// Any group 74 that is not zero: the linetype has text or shapes in it.
+    has_shapes: bool,
+    has_dropped_properties: bool,
 }
 
 impl RecordBody {
@@ -413,16 +777,54 @@ impl RecordBody {
             40 => self.radius = Some(real(group)?),
             50 => self.start_degrees = Some(real(group)?),
             51 => self.end_degrees = Some(real(group)?),
-            2 => self.name_is_reserved = is_structural_block(group.value),
-            // Layer: only the default layer can be represented.
-            8 => self.has_dropped_properties |= group.value != "0",
-            // Linetype, colour, thickness, linetype scale: dropped.
-            6 | 39 | 48 | 62 => self.has_dropped_properties = true,
-            // Elevation: a 2D drawing keeps none. Zero is the default and loses nothing.
-            30 | 31 => self.has_dropped_properties |= real(group)? != 0.0,
+            2 => {
+                self.name = Some(group.value.to_owned());
+                self.name_is_reserved = is_structural_block(group.value);
+            }
+            3 => self.description = Some(group.value.to_owned()),
+            8 => self.layer = Some(group.value.to_owned()),
+            6 => self.linetype = Some(group.value.to_owned()),
+            // A colour or lineweight that is not one is dropped.
+            62 => match group.value.parse::<i64>() {
+                Ok(code) if color_from_dxf(code).is_some() => self.color = Some(code),
+                _ => self.has_dropped_properties = true,
+            },
+            370 => match group.value.parse::<i64>() {
+                Ok(code) if lineweight_from_dxf(code).is_some() => self.lineweight = Some(code),
+                _ => self.has_dropped_properties = true,
+            },
+            49 => self.elements.push(real(group)?),
+            74 => self.has_shapes |= group.value.parse::<i64>().unwrap_or(0) != 0,
+            // A linetype scale of the entity's own: dropped. Exactly one is
+            // no scale at all.
+            #[allow(clippy::float_cmp)]
+            48 => self.has_dropped_properties |= real(group)? != 1.0,
+            // Thickness, and elevation: a 2D drawing keeps neither. Zero is
+            // the default and loses nothing.
+            30 | 31 | 39 => self.has_dropped_properties |= real(group)? != 0.0,
             _ => {}
         }
         Ok(())
+    }
+
+    /// The entity's properties, as names where the tables are needed.
+    fn pending(&self) -> Pending {
+        Pending {
+            layer: self.layer.clone().unwrap_or_else(|| Layer::ZERO.to_owned()),
+            color: self
+                .color
+                .and_then(color_from_dxf)
+                .unwrap_or(Color::ByLayer),
+            linetype: self
+                .linetype
+                .as_deref()
+                .map_or(LinetypeRef::ByLayer, LinetypeRef::from_dxf),
+            lineweight: self
+                .lineweight
+                .and_then(lineweight_from_dxf)
+                .unwrap_or(Lineweight::ByLayer),
+            dropped: self.has_dropped_properties,
+        }
     }
 
     fn line(&self, at: usize) -> Result<LineEntity, DxfError> {
@@ -1118,18 +1520,14 @@ mod tests {
 
     #[test]
     fn properties_the_drawing_cannot_hold_are_reported() {
-        let on_layer = [
+        let plain = LINE_0_0_TO_10_5;
+        // A layer, a colour, a linetype, and a lineweight are held (#139).
+        let styled = [
             (0, "LINE"),
             (8, "WALLS"),
-            (10, "0"),
-            (20, "0"),
-            (11, "1"),
-            (21, "1"),
-        ];
-        let coloured = [
-            (0, "LINE"),
-            (8, "0"),
             (62, "1"),
+            (6, "DASHED"),
+            (370, "50"),
             (10, "0"),
             (20, "0"),
             (11, "1"),
@@ -1153,18 +1551,459 @@ mod tests {
             (21, "1"),
             (31, "0"),
         ];
+        // A linetype scale of its own, a thickness, a colour that is no
+        // colour, a lineweight that is not standard.
+        let scaled = [
+            (0, "LINE"),
+            (48, "2.0"),
+            (10, "0"),
+            (20, "0"),
+            (11, "1"),
+            (21, "1"),
+        ];
+        let thick = [
+            (0, "LINE"),
+            (39, "1"),
+            (10, "0"),
+            (20, "0"),
+            (11, "1"),
+            (21, "1"),
+        ];
+        let odd_colour = [
+            (0, "LINE"),
+            (62, "300"),
+            (10, "0"),
+            (20, "0"),
+            (11, "1"),
+            (21, "1"),
+        ];
+        let odd_weight = [
+            (0, "LINE"),
+            (370, "51"),
+            (10, "0"),
+            (20, "0"),
+            (11, "1"),
+            (21, "1"),
+        ];
         let body = [
-            on_layer.as_slice(),
-            &coloured,
+            plain.as_slice(),
+            &styled,
             &elevated,
             &flat,
-            &LINE_0_0_TO_10_5,
+            &scaled,
+            &thick,
+            &odd_colour,
+            &odd_weight,
         ]
         .concat();
 
         let import = import(entities(&body).as_bytes()).unwrap();
-        assert_eq!(import.report.lines, 5);
-        assert_eq!(import.report.with_dropped_properties, 3);
+        assert_eq!(import.report.lines, 8);
+        assert_eq!(
+            import.report.with_dropped_properties, 5,
+            "elevated, scaled, thick, two odd"
+        );
+        let properties: Vec<Properties> = {
+            let mut records: Vec<_> = import
+                .drawing
+                .records()
+                .map(|(id, r)| (id, r.properties))
+                .collect();
+            records.sort_by_key(|(id, _)| *id);
+            records.into_iter().map(|(_, p)| p).collect()
+        };
+        let walls = import.drawing.layers().find("walls").unwrap();
+        let dashed = import.drawing.linetypes().find("dashed").unwrap();
+        assert_eq!(
+            properties[1],
+            Properties {
+                layer: walls,
+                color: Color::Index(1),
+                linetype: Linetype::Named(dashed),
+                lineweight: Lineweight::Hundredths(50),
+            }
+        );
+        // What could not be read keeps the default, and is counted.
+        assert_eq!(properties[6], Properties::default());
+        assert_eq!(properties[7], Properties::default());
+        assert_eq!(
+            import.report.summary(),
+            vec![
+                "Imported 8 lines.",
+                "With 1 layer and 1 linetype.",
+                "Named but not defined in the file, so created: 1 layer and 1 linetype.",
+                "Properties the drawing cannot hold were dropped from 5 entities.",
+            ]
+        );
+        assert!(import.report.has_unsupported_content());
+    }
+
+    // ── layers and linetypes (#139) ──
+
+    /// A file with LAYER and LTYPE tables, as groups.
+    fn with_tables(tables: &[(i32, &str)], body: &[(i32, &str)]) -> String {
+        let mut groups = vec![(0, "SECTION"), (2, "TABLES")];
+        groups.extend_from_slice(tables);
+        groups.extend_from_slice(&[(0, "ENDSEC"), (0, "SECTION"), (2, "ENTITIES")]);
+        groups.extend_from_slice(body);
+        groups.extend_from_slice(&[(0, "ENDSEC"), (0, "EOF")]);
+        dxf(&groups)
+    }
+
+    const TABLES: [(i32, &str); 46] = [
+        (0, "TABLE"),
+        (2, "LTYPE"),
+        (70, "4"),
+        (0, "LTYPE"),
+        (2, "ByLayer"),
+        (70, "0"),
+        (0, "LTYPE"),
+        (2, "CONTINUOUS"),
+        (70, "0"),
+        (3, "Solid line"),
+        (72, "65"),
+        (73, "0"),
+        (40, "0.0"),
+        (0, "LTYPE"),
+        (2, "DASHED"),
+        (70, "0"),
+        (3, "Dashed __ __"),
+        (72, "65"),
+        (73, "2"),
+        (40, "0.75"),
+        (49, "0.5"),
+        (49, "-0.25"),
+        (0, "LTYPE"),
+        (2, "DOT"),
+        (70, "0"),
+        (3, "Dot . . ."),
+        (72, "65"),
+        (73, "2"),
+        (40, "0.25"),
+        (49, "0.0"),
+        (49, "-0.25"),
+        (0, "ENDTAB"),
+        (0, "TABLE"),
+        (2, "LAYER"),
+        (70, "3"),
+        (0, "LAYER"),
+        (2, "0"),
+        (70, "0"),
+        (62, "7"),
+        (6, "CONTINUOUS"),
+        (0, "LAYER"),
+        (2, "Walls"),
+        (70, "4"),
+        (62, "-1"),
+        (6, "DASHED"),
+        (0, "ENDTAB"),
+    ];
+
+    #[test]
+    fn the_layer_and_linetype_tables_are_read() {
+        let import = import(with_tables(&TABLES, &LINE_0_0_TO_10_5).as_bytes()).unwrap();
+        let drawing = &import.drawing;
+        assert_eq!(drawing.linetypes().len(), 3, "ByLayer is not a linetype");
+        let dashed = drawing.linetypes().find("Dashed").unwrap();
+        assert_eq!(dashed, LinetypeId::from_raw(1));
+        let def = drawing.linetypes().get(dashed).unwrap();
+        assert_eq!(def.name, "DASHED");
+        assert_eq!(def.description, "Dashed __ __");
+        assert_eq!(def.pattern, vec![0.5, 0.25]);
+        let dot = drawing.linetypes().get(LinetypeId::from_raw(2)).unwrap();
+        assert_eq!(
+            (dot.name.as_str(), dot.pattern.as_slice()),
+            ("DOT", &[0.0, 0.25][..])
+        );
+
+        assert_eq!(drawing.layers().len(), 2);
+        let walls = drawing.layers().get(LayerId::from_raw(1)).unwrap();
+        assert_eq!(walls.name, "Walls");
+        assert_eq!(
+            walls.color,
+            Color::Index(1),
+            "a negative colour is the colour, off"
+        );
+        assert!(!walls.on);
+        assert!(walls.locked, "flag 4");
+        assert_eq!(walls.linetype, Linetype::Named(dashed));
+        assert_eq!(walls.lineweight, Lineweight::Default);
+        let zero = drawing.layers().get(LayerId::FIRST).unwrap();
+        assert_eq!(zero.color, Color::Index(7));
+        assert!(zero.on);
+
+        assert_eq!((import.report.layers, import.report.linetypes), (1, 2));
+        assert_eq!(
+            (
+                import.report.created_layers,
+                import.report.created_linetypes
+            ),
+            (0, 0)
+        );
+        assert!(!import.report.has_unsupported_content());
+        assert_eq!(
+            import.report.summary(),
+            vec!["Imported 1 line.", "With 1 layer and 2 linetypes."]
+        );
+    }
+
+    #[test]
+    fn a_frozen_layer_is_off_and_a_lineweight_on_a_layer_is_kept() {
+        let tables = [
+            (0, "TABLE"),
+            (2, "LAYER"),
+            (70, "1"),
+            (0, "LAYER"),
+            (2, "Frozen"),
+            (70, "1"),
+            (62, "3"),
+            (370, "100"),
+            (0, "LAYER"),
+            (2, "frozen"),
+            (70, "0"),
+            (62, "4"),
+            (0, "LAYER"),
+            (2, "Odd"),
+            (62, "0"),
+            (370, "51"),
+            (6, "BYLAYER"),
+            (0, "LAYER"),
+            (70, "0"),
+            (0, "LAYER"),
+            (2, "bad,name"),
+            (0, "ENDTAB"),
+        ];
+        let import = import(with_tables(&tables, &[]).as_bytes()).unwrap();
+        let layers = import.drawing.layers();
+        assert_eq!(layers.len(), 3, "a repeated name counts once");
+        let frozen = layers.get(layers.find("FROZEN").unwrap()).unwrap();
+        assert!(!frozen.on && !frozen.locked);
+        assert_eq!(frozen.color, Color::Index(3), "the first row of a name");
+        assert_eq!(frozen.lineweight, Lineweight::Hundredths(100));
+        let odd = layers.get(layers.find("odd").unwrap()).unwrap();
+        assert_eq!(
+            odd.color,
+            Layer::DEFAULT_COLOR,
+            "ByBlock is no colour for a layer"
+        );
+        assert_eq!(odd.lineweight, Lineweight::Default, "51 is not a width");
+        assert_eq!(
+            odd.linetype,
+            Linetype::CONTINUOUS,
+            "ByLayer is no linetype for a layer"
+        );
+        assert_eq!(import.report.unsupported.get("(layer name)"), Some(&2));
+    }
+
+    #[test]
+    fn names_the_file_uses_but_never_defines_are_created_and_reported() {
+        let body = [
+            (0, "LINE"),
+            (8, "Ghost"),
+            (6, "PHANTOM"),
+            (10, "0"),
+            (20, "0"),
+            (11, "1"),
+            (21, "1"),
+            (0, "CIRCLE"),
+            (8, "ghost"),
+            (6, "Phantom"),
+            (10, "0"),
+            (20, "0"),
+            (40, "1"),
+            (0, "ARC"),
+            (8, "Ghost"),
+            (6, "Continuous"),
+            (10, "0"),
+            (20, "0"),
+            (40, "1"),
+            (50, "0"),
+            (51, "90"),
+        ];
+        let tables = [
+            (0, "TABLE"),
+            (2, "LAYER"),
+            (70, "1"),
+            (0, "LAYER"),
+            (2, "Dashed walls"),
+            (62, "7"),
+            (6, "DASHED"),
+            (0, "ENDTAB"),
+        ];
+        let import = import(with_tables(&tables, &body).as_bytes()).unwrap();
+        let drawing = &import.drawing;
+        // The file's layer, then the one made for the entities.
+        assert_eq!(
+            drawing.layers().find("Dashed walls"),
+            Some(LayerId::from_raw(1))
+        );
+        assert_eq!(drawing.layers().find("ghost"), Some(LayerId::from_raw(2)));
+        // The linetype the layer names, then the one the entities name.
+        let dashed = drawing.linetypes().find("dashed").unwrap();
+        let phantom = drawing.linetypes().find("phantom").unwrap();
+        assert_eq!(
+            (dashed, phantom),
+            (LinetypeId::from_raw(1), LinetypeId::from_raw(2))
+        );
+        assert!(
+            drawing.linetypes().get(phantom).unwrap().is_continuous(),
+            "nothing better is known"
+        );
+        let ghost = drawing.layers().get(LayerId::from_raw(2)).unwrap();
+        assert_eq!(
+            (ghost.name.as_str(), ghost.linetype),
+            ("Ghost", Linetype::CONTINUOUS)
+        );
+        let mut properties: Vec<_> = drawing
+            .records()
+            .map(|(id, r)| (id, r.properties))
+            .collect();
+        properties.sort_by_key(|(id, _)| *id);
+        assert!(
+            properties
+                .iter()
+                .all(|(_, p)| p.layer == LayerId::from_raw(2))
+        );
+        assert_eq!(properties[0].1.linetype, Linetype::Named(phantom));
+        assert_eq!(properties[1].1.linetype, Linetype::Named(phantom));
+        assert_eq!(properties[2].1.linetype, Linetype::CONTINUOUS);
+        assert_eq!(
+            import.report.summary(),
+            vec![
+                "Imported 1 line, 1 circle, 1 arc.",
+                "With 2 layers and 2 linetypes.",
+                "Named but not defined in the file, so created: 1 layer and 2 linetypes.",
+            ]
+        );
+        assert!(!import.report.has_unsupported_content(), "nothing was lost");
+        assert!(!drawing.can_undo());
+    }
+
+    #[test]
+    fn a_complex_or_overlong_pattern_is_reported_and_the_dashes_kept() {
+        let tables = [
+            (0, "TABLE"),
+            (2, "LTYPE"),
+            (70, "2"),
+            (0, "LTYPE"),
+            (2, "GAS"),
+            (3, "Gas line ----GAS----"),
+            (72, "65"),
+            (73, "3"),
+            (40, "0.95"),
+            (49, "0.5"),
+            (74, "0"),
+            (49, "-0.2"),
+            (74, "2"),
+            (49, "-0.25"),
+            (74, "0"),
+            (0, "LTYPE"),
+            (2, "LONG"),
+            (73, "10"),
+            (40, "10"),
+            (49, "1"),
+            (49, "-1"),
+            (49, "1"),
+            (49, "-1"),
+            (49, "1"),
+            (49, "-1"),
+            (49, "1"),
+            (49, "-1"),
+            (49, "1"),
+            (49, "-1"),
+            (0, "LTYPE"),
+            (2, "CONTINUOUS"),
+            (3, "Said to be dashed"),
+            (49, "1"),
+            (49, "-1"),
+            (0, "ENDTAB"),
+        ];
+        let import = import(with_tables(&tables, &[]).as_bytes()).unwrap();
+        let linetypes = import.drawing.linetypes();
+        assert_eq!(linetypes.len(), 3);
+        let gas = linetypes.get(linetypes.find("gas").unwrap()).unwrap();
+        assert_eq!(
+            gas.pattern,
+            vec![0.5, 0.45],
+            "the text's gap merges with the gap"
+        );
+        let long = linetypes.get(linetypes.find("long").unwrap()).unwrap();
+        assert!(long.is_continuous());
+        let continuous = linetypes.get(LinetypeId::FIRST).unwrap();
+        assert!(continuous.is_continuous());
+        assert_eq!(continuous.description, "Said to be dashed");
+        assert_eq!(import.report.unsupported.get("(linetype shapes)"), Some(&1));
+        assert_eq!(
+            import.report.unsupported.get("(linetype pattern)"),
+            Some(&1)
+        );
+        assert!(import.report.has_unsupported_content());
+    }
+
+    #[test]
+    fn the_header_sets_the_current_layer_colour_linetype_lineweight_and_scale() {
+        let header = [
+            (9, "$CLAYER"),
+            (8, "Walls"),
+            (9, "$CECOLOR"),
+            (62, "3"),
+            (9, "$CELTYPE"),
+            (6, "DASHED"),
+            (9, "$CELWEIGHT"),
+            (370, "35"),
+            (9, "$LTSCALE"),
+            (40, "25"),
+        ];
+        let mut groups = vec![(0, "SECTION"), (2, "HEADER")];
+        groups.extend_from_slice(&header);
+        groups.push((0, "ENDSEC"));
+        let mut tables = TABLES.to_vec();
+        // Walls is off in TABLES: switch it on so it can be current.
+        let off = tables
+            .iter()
+            .position(|group| *group == (62, "-1"))
+            .unwrap();
+        tables[off] = (62, "1");
+        let text = dxf(&groups) + &with_tables(&tables, &LINE_0_0_TO_10_5);
+        let import = import(text.as_bytes()).unwrap();
+        let drawing = &import.drawing;
+        assert_eq!(drawing.current_layer(), LayerId::from_raw(1));
+        assert_eq!(drawing.current_color(), Color::Index(3));
+        assert_eq!(
+            drawing.current_linetype(),
+            Linetype::Named(LinetypeId::from_raw(1))
+        );
+        assert_eq!(drawing.current_lineweight(), Lineweight::Hundredths(35));
+        assert_eq!(drawing.ltscale(), 25.0);
+        assert!(!drawing.can_undo());
+
+        // What the header names but the file does not have, or cannot be
+        // current, leaves the default.
+        let header = [
+            (9, "$CLAYER"),
+            (8, "Walls"),
+            (9, "$CELTYPE"),
+            (6, "ZIGZAG"),
+            (9, "$LTSCALE"),
+            (40, "-2"),
+            (9, "$CECOLOR"),
+            (62, "999"),
+        ];
+        let mut groups = vec![(0, "SECTION"), (2, "HEADER")];
+        groups.extend_from_slice(&header);
+        groups.push((0, "ENDSEC"));
+        let text = dxf(&groups) + &with_tables(&TABLES, &LINE_0_0_TO_10_5);
+        let import = super::import(text.as_bytes()).unwrap();
+        let drawing = &import.drawing;
+        assert_eq!(drawing.current_layer(), LayerId::FIRST, "Walls is off");
+        assert_eq!(drawing.current_linetype(), Linetype::ByLayer);
+        assert_eq!(drawing.ltscale(), 1.0);
+        assert_eq!(drawing.current_color(), Color::ByLayer);
+        assert_eq!(
+            drawing.linetypes().len(),
+            3,
+            "the header does not make rows"
+        );
     }
 
     #[test]
@@ -1339,6 +2178,57 @@ mod tests {
         ) {
             let text: String = groups.iter().map(|(code, value)| format!("{code}\n{value}\n")).collect();
             let _ = import(text.as_bytes());
+        }
+
+        /// #139: tables and property groups of any shape never panic, and
+        /// always yield a drawing whose tables are consistent.
+        #[test]
+        fn arbitrary_tables_and_properties_never_panic(
+            rows in proptest::collection::vec(
+                (prop_oneof![Just("LAYER"), Just("LTYPE")],
+                 proptest::collection::vec(
+                     (prop_oneof![Just(2), Just(3), Just(6), Just(62), Just(70), Just(370), Just(49), Just(74), Just(40), Just(73)],
+                      "[A-Za-z0-9 .*,<-]{0,8}"),
+                     0..8)),
+                0..12),
+            lines in proptest::collection::vec(
+                proptest::collection::vec(
+                    (prop_oneof![Just(8), Just(6), Just(62), Just(370), Just(48)], "[A-Za-z0-9 .<-]{0,8}"),
+                    0..5),
+                0..6),
+        ) {
+            let mut groups: Vec<(i32, String)> = vec![(0, "SECTION".into()), (2, "TABLES".into())];
+            for (kind, body) in &rows {
+                groups.push((0, (*kind).into()));
+                groups.extend(body.iter().map(|(code, value)| (*code, value.clone())));
+            }
+            groups.extend([(0, "ENDSEC".into()), (0, "SECTION".into()), (2, "ENTITIES".into())]);
+            for body in &lines {
+                groups.push((0, "LINE".into()));
+                groups.extend(body.iter().map(|(code, value)| (*code, value.clone())));
+                groups.extend([(10, "0".into()), (20, "0".into()), (11, "1".into()), (21, "1".into())]);
+            }
+            groups.extend([(0, "ENDSEC".into()), (0, "EOF".into())]);
+            let text: String = groups.iter().map(|(code, value)| format!("{code}\n{value}\n")).collect();
+            if let Ok(imported) = import(text.as_bytes()) {
+                let drawing = &imported.drawing;
+                prop_assert_eq!(drawing.len(), lines.len());
+                for (_, record) in drawing.records() {
+                    prop_assert!(drawing.layers().contains(record.properties.layer));
+                    if let Linetype::Named(id) = record.properties.linetype {
+                        prop_assert!(drawing.linetypes().contains(id));
+                    }
+                }
+                for (_, layer) in drawing.layers().iter() {
+                    if let Linetype::Named(id) = layer.linetype {
+                        prop_assert!(drawing.linetypes().contains(id));
+                    }
+                }
+                // And what came in goes out and comes back the same.
+                let text = crate::export(drawing);
+                let back = import(text.as_bytes()).unwrap();
+                prop_assert_eq!(crate::export(&back.drawing), text);
+            }
         }
 
         /// Export → import reproduces every coordinate bit for bit.

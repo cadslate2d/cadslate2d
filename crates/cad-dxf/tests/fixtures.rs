@@ -4,8 +4,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use cad_core::Point2;
-use cad_document::{Drawing, Entity, LineEntity};
-use cad_dxf::{DxfError, Import, export, import};
+use cad_document::{
+    Color, Drawing, Entity, Layer, LayerId, LineEntity, Linetype, LinetypeDef, LinetypeId,
+    Lineweight, Properties,
+};
+use cad_dxf::{DxfError, Import, export, export_with_report, import};
 
 fn fixtures(kind: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -182,17 +185,32 @@ fn unsupported_content_is_counted_and_reported() {
         .map(|(kind, count)| (kind.as_str(), *count))
         .collect();
     assert_eq!(counts, vec![("BLOCK", 1), ("INSERT", 1), ("TEXT", 1)]);
+    // Since #139 the layer WALLS and the colour are held, not dropped.
+    assert_eq!(report.with_dropped_properties, 0);
+    let walls = import.drawing.layers().find("WALLS").unwrap();
     assert_eq!(
-        report.with_dropped_properties, 2,
-        "one line on WALLS, one coloured"
+        import.drawing.layers().get(walls).unwrap().color,
+        Color::Index(1)
     );
+    let on_walls = import
+        .drawing
+        .records()
+        .filter(|(_, record)| record.properties.layer == walls)
+        .count();
+    let coloured = import
+        .drawing
+        .records()
+        .filter(|(_, record)| record.properties.color == Color::Index(3))
+        .count();
+    assert_eq!((on_walls, coloured), (1, 1));
     assert!(report.has_unsupported_content());
     assert_eq!(
         report.summary(),
         vec![
             "Imported 3 lines, 2 circles, 1 arc, 1 polyline.",
             "Not imported (unsupported): 1 BLOCK, 1 INSERT, 1 TEXT.",
-            "Layer, colour, and linetype were dropped from 2 entities.",
+            // ezdxf's Defpoints layer and WALLS.
+            "With 2 layers.",
             // ezdxf wrote `$INSUNITS 6` into this file's header.
             "Drawing unit: metres.",
         ]
@@ -369,6 +387,181 @@ fn malformed_fixtures_fail_for_the_documented_reason() {
         matches!(e, DxfError::UnexpectedEnd { .. })
     });
     expect("binary-sentinel.dxf", |e| matches!(e, DxfError::BinaryDxf));
+}
+
+// ── layers, colours, linetypes, lineweights (#139) ──
+
+/// The properties of every entity, in file order.
+fn properties(drawing: &Drawing) -> Vec<Properties> {
+    let mut records: Vec<_> = drawing
+        .records()
+        .map(|(id, record)| (id, record.properties))
+        .collect();
+    records.sort_by_key(|(id, _)| *id);
+    records.into_iter().map(|(_, p)| p).collect()
+}
+
+fn layer_named<'a>(drawing: &'a Drawing, name: &str) -> (LayerId, &'a Layer) {
+    let id = drawing
+        .layers()
+        .find(name)
+        .unwrap_or_else(|| panic!("no layer {name}"));
+    (id, drawing.layers().get(id).unwrap())
+}
+
+fn linetype_named<'a>(drawing: &'a Drawing, name: &str) -> (LinetypeId, &'a LinetypeDef) {
+    let id = drawing
+        .linetypes()
+        .find(name)
+        .unwrap_or_else(|| panic!("no linetype {name}"));
+    (id, drawing.linetypes().get(id).unwrap())
+}
+
+/// An R12 file from another writer, with layers, colours, and linetypes,
+/// imports as written — switches, patterns, and header settings included.
+#[test]
+fn layers_colours_and_linetypes_from_another_writer() {
+    let import = load("valid", "ezdxf-r12-layers-linetypes.dxf").unwrap();
+    let drawing = &import.drawing;
+    assert_eq!(import.report.imported_total(), 6);
+    assert!(
+        !import.report.has_unsupported_content(),
+        "{:?}",
+        import.report
+    );
+
+    let (_, dashed) = linetype_named(drawing, "dashed");
+    assert_eq!(dashed.pattern, vec![0.5, 0.25]);
+    assert_eq!(dashed.description, "Dashed __ __ __ __ __ __ __ __");
+    let (center, def) = linetype_named(drawing, "center");
+    assert_eq!(def.pattern, vec![1.25, 0.25, 0.25, 0.25]);
+    let (dot, def) = linetype_named(drawing, "dot");
+    assert_eq!(def.pattern, vec![0.0, 0.25]);
+    assert_eq!(drawing.linetypes().len(), 4, "Continuous and three loaded");
+
+    let (walls, def) = layer_named(drawing, "WALLS");
+    assert_eq!(def.color, Color::Index(1));
+    let (axes, def) = layer_named(drawing, "AXES");
+    assert_eq!(
+        (def.color, def.linetype),
+        (Color::Index(5), Linetype::Named(center))
+    );
+    let (hidden, def) = layer_named(drawing, "HIDDEN");
+    assert!(!def.on && !def.locked);
+    assert_eq!(def.color, Color::Index(3), "off, and still colour 3");
+    let (fixed, def) = layer_named(drawing, "FIXED");
+    assert!(def.locked && def.on);
+    assert_eq!(drawing.layers().len(), 6, "0, ezdxf's Defpoints, and four");
+
+    let on = |layer: LayerId| Properties::on(layer);
+    assert_eq!(
+        properties(drawing),
+        vec![
+            on(walls),
+            on(axes),
+            Properties {
+                color: Color::Index(4),
+                ..on(hidden)
+            },
+            Properties {
+                linetype: Linetype::Named(dot),
+                ..on(fixed)
+            },
+            Properties {
+                color: Color::ByBlock,
+                linetype: Linetype::ByBlock,
+                ..Properties::default()
+            },
+            Properties {
+                color: Color::Index(6),
+                linetype: Linetype::CONTINUOUS,
+                ..on(walls)
+            },
+        ]
+    );
+    assert_eq!(drawing.current_layer(), walls);
+    assert_eq!(drawing.current_color(), Color::Index(3));
+    assert_eq!(drawing.current_linetype(), Linetype::Named(dot));
+    assert_eq!(drawing.ltscale(), 10.0);
+    assert_eq!(
+        import.report.summary(),
+        vec![
+            "Imported 3 lines, 1 circle, 1 arc, 1 polyline.",
+            "With 5 layers and 3 linetypes."
+        ]
+    );
+}
+
+/// A newer file: lineweights are held; a linetype scale of an entity's
+/// own, and the text in a complex linetype, are reported; a layer and a
+/// linetype the file names but never defines are made.
+#[test]
+fn lineweights_scales_and_undefined_names_from_another_writer() {
+    let import = load("valid", "ezdxf-r2010-properties.dxf").unwrap();
+    let drawing = &import.drawing;
+    let (heavy, def) = layer_named(drawing, "heavy");
+    assert_eq!(def.lineweight, Lineweight::Hundredths(100));
+    let (_, hidden) = linetype_named(drawing, "hidden");
+    assert_eq!(hidden.pattern, vec![0.25, 0.125]);
+    let (pipes, _) = layer_named(drawing, "pipes");
+    let (_, gas) = linetype_named(drawing, "gas");
+    assert_eq!(
+        gas.pattern,
+        vec![0.5, 0.45],
+        "the dashes of a complex linetype"
+    );
+    let (ghost, def) = layer_named(drawing, "ghost");
+    assert_eq!(
+        (def.color, def.on),
+        (Layer::DEFAULT_COLOR, true),
+        "a new layer's settings"
+    );
+    let (phantom, def) = linetype_named(drawing, "phantom");
+    assert!(def.is_continuous(), "nothing better is known");
+
+    let all = properties(drawing);
+    assert_eq!(all[0], Properties::on(heavy));
+    assert_eq!(all[1].lineweight, Lineweight::Hundredths(35));
+    assert_eq!(all[2].layer, pipes);
+    assert_eq!(all[3].layer, ghost);
+    assert_eq!(all[3].linetype, Linetype::Named(phantom));
+    assert_eq!(all[4].lineweight, Lineweight::Hundredths(50));
+    assert_eq!(drawing.current_lineweight(), Lineweight::Hundredths(25));
+
+    let report = &import.report;
+    assert_eq!(
+        report.with_dropped_properties, 1,
+        "the entity with a scale of its own"
+    );
+    assert_eq!(report.unsupported.get("(linetype shapes)"), Some(&1));
+    assert_eq!((report.created_layers, report.created_linetypes), (1, 1));
+    assert!(report.has_unsupported_content());
+    assert_eq!(
+        report.summary(),
+        vec![
+            "Imported 4 lines, 1 polyline.",
+            "Not imported (unsupported): 1 (linetype shapes).",
+            // ezdxf's Defpoints layer, HEAVY, PIPES, and GHOST.
+            "With 4 layers and 3 linetypes.",
+            "Named but not defined in the file, so created: 1 layer and 1 linetype.",
+            "Properties the drawing cannot hold were dropped from 1 entity.",
+            "Drawing unit: metres.",
+        ]
+    );
+
+    // Written back as R12, the lineweights are what is lost — and said so.
+    let export = export_with_report(drawing);
+    assert_eq!(
+        export.report.summary(),
+        vec!["Lineweights are not written in DXF R12: dropped from 2 objects and 1 layer."]
+    );
+    let back = cad_dxf::import(export.text.as_bytes()).unwrap();
+    assert_eq!(properties(&back.drawing).len(), 5);
+    assert_eq!(
+        cad_dxf::export(&back.drawing),
+        export.text,
+        "export → import → export"
+    );
 }
 
 /// Golden file: the exact bytes written for the M0 user-story line.

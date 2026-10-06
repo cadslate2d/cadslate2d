@@ -257,12 +257,16 @@ impl CadSession {
         self.report(dirty)
     }
 
-    /// The drawing as ASCII DXF. Marks the drawing as saved.
+    /// The drawing as ASCII DXF. Marks the drawing as saved, and writes to
+    /// the command log what the file could not hold (§24.2).
     pub fn export_dxf(&mut self) -> String {
-        let text = cad_dxf::export(self.session.drawing());
-        let dirty = self.session.mark_exported();
+        let export = cad_dxf::export_with_report(self.session.drawing());
+        let mut dirty = self.session.mark_exported();
+        for line in export.report.summary() {
+            dirty |= self.session.notify(line);
+        }
         self.report(dirty);
-        text
+        export.text
     }
 
     // ── output: pulled in bulk, only when flagged ──

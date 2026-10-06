@@ -15,7 +15,7 @@ Files with specific expectations (entity counts, report contents, exact coordina
 | --- | --- | --- |
 | `minimal-line.dxf` | hand-written | The smallest useful file: an ENTITIES section with one LINE. |
 | `crlf-exponent-notation.dxf` | hand-written | CRLF line endings, exponent and leading-dot numbers, explicit zero elevation. |
-| `cadslate-m0-line.dxf` | written by `cad_dxf::export` (golden file) | The M0 user-story line, `0,0` to `@1000<45`. Regenerate with `UPDATE_GOLDEN=1 cargo test -p cad-dxf`. |
+| `cadslate-m0-line.dxf` | written by `cad_dxf::export` (golden file) | The M0 user-story line, `0,0` to `@1000<45`, with the `TABLES` section every export has. Regenerate with `UPDATE_GOLDEN=1 cargo test -p cad-dxf`. |
 | `ezdxf-r12-three-lines.dxf` | ezdxf 1.4.4, `ezdxf.new("R12")` | A complete R12 file: header, tables, blocks, three lines. |
 | `ezdxf-r2018-two-lines.dxf` | ezdxf 1.4.4, `ezdxf.new("R2018")` | A modern file (AC1032) with handles, subclass markers, objects, and structural `*Model_Space` blocks. Coordinates chosen to need all 17 significant digits. |
 | `ezdxf-r2010-mixed-content.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | Mixed content: lines, circles, an arc, and a polyline (imported), plus text, a user block and its insert (unsupported), and lines carrying a layer and a colour (properties dropped). |
@@ -24,6 +24,8 @@ Files with specific expectations (entity counts, report contents, exact coordina
 | `ezdxf-r12-polylines.dxf` | ezdxf 1.4.4, `ezdxf.new("R12")` | R12 `POLYLINE`/`VERTEX`/`SEQEND`, open and closed — the encoding our own writer uses. |
 | `ezdxf-r12-bulged-polylines.dxf` | ezdxf 1.4.4, `add_polyline2d(..., format="xyb")` | Arc segments as group 42 on `VERTEX` records: a closed slot with two semicircular ends (bulge 1), an open run with a quarter-arc corner (bulge tan 22.5°), and a clockwise arc (bulge −0.5). |
 | `ezdxf-r2010-bulged-lwpolylines.dxf` | ezdxf 1.4.4, `add_lwpolyline(..., format="xyb")` | The same three shapes as `LWPOLYLINE`, where group 42 follows the vertex it belongs to. |
+| `ezdxf-r12-layers-linetypes.dxf` | ezdxf 1.4.4, `ezdxf.new("R12")` | `LAYER` and `LTYPE` tables: layers with colours, linetypes, one off and one locked; the DASHED, CENTER, and DOT patterns; entities with a layer, a colour, a linetype of their own, `ByBlock`; `$CLAYER`, `$CECOLOR`, `$CELTYPE`, `$LTSCALE`. |
+| `ezdxf-r2010-properties.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | Lineweights (group 370) on a layer, on entities, and in `$CELWEIGHT`; a linetype scale of an entity's own (dropped); a complex linetype with text (dashes kept, shapes reported); a layer and a linetype entities name but the file never defines. |
 
 ## malformed/
 
@@ -37,6 +39,10 @@ Files with specific expectations (entity counts, report contents, exact coordina
 | `truncated-mid-entity.dxf` | unexpected end |
 | `missing-eof.dxf` | unexpected end |
 | `binary-sentinel.dxf` | binary DXF not supported |
+
+## Checking the writer with another reader
+
+`cargo run -p cad-dxf --example reexport -- <file.dxf>` prints a file as CadSlate2D writes it, for reading back with ezdxf or another tool (`ezdxf.recover.readfile` audits it). The export of `ezdxf-r12-layers-linetypes.dxf` audits clean in ezdxf 1.4.4.
 
 ## Not yet covered
 

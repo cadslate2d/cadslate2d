@@ -23,6 +23,8 @@ pub enum DxfError {
         entity: &'static str,
         group: i32,
     },
+    /// The file's layers and linetypes cannot be held as a drawing.
+    Tables(String),
 }
 
 impl fmt::Display for DxfError {
@@ -51,6 +53,7 @@ impl fmt::Display for DxfError {
             } => {
                 write!(f, "line {line}: {entity} is missing group {group}")
             }
+            Self::Tables(reason) => write!(f, "the file's tables cannot be held: {reason}"),
         }
     }
 }

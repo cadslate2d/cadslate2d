@@ -96,7 +96,10 @@ impl LinetypeDef {
 
     /// The length of one repeat of the pattern; zero for a continuous line.
     pub fn period(&self) -> f64 {
-        self.pattern.iter().sum()
+        // Not `sum`, whose empty result is negative zero.
+        self.pattern
+            .iter()
+            .fold(0.0, |total, length| total + length)
     }
 
     /// Whether the line is drawn unbroken.
