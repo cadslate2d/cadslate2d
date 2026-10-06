@@ -1,17 +1,19 @@
 //! DXF export (ADR-0005: ASCII DXF, release 12).
 //!
 //! The file has a HEADER with the drawing's settings, TABLES with its
-//! linetypes and layers, and ENTITIES, each with its layer and — when they
-//! are not its layer's — its colour and linetype. R12 has no lineweights:
+//! linetypes, text styles, and layers, BLOCKS with its block definitions
+//! when it has any, and ENTITIES, each with its layer and — when they are
+//! not its layer's — its colour and linetype. R12 has no lineweights:
 //! those are named in the [`ExportReport`], never silently dropped (§24.2).
 
 use std::fmt::Write;
 
 use cad_core::{EntityId, LengthUnit};
 use cad_document::{
-    ArcEntity, CircleEntity, Color, Drawing, DrawingSettings, Entity, Justification, LINE_SPACING,
-    Layer, LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight, PolylineEntity,
-    Properties, TextEntity, TextStyle, TextStyleTable,
+    ArcEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, Drawing,
+    DrawingSettings, Entity, EntityRecord, Justification, LINE_SPACING, Layer, LineEntity,
+    Linetype, LinetypeDef, LinetypeTable, Lineweight, PolylineEntity, Properties, TextEntity,
+    TextStyle, TextStyleTable,
 };
 
 use crate::properties::{
@@ -32,14 +34,12 @@ pub struct ExportReport {
     pub lineweights_on_entities: usize,
     /// Layers with a lineweight other than the default.
     pub lineweights_on_layers: usize,
-    /// Block references, which the writer does not write yet (#149).
-    pub block_references: usize,
 }
 
 impl ExportReport {
     /// Whether the file holds less than the drawing did.
     pub fn is_lossy(&self) -> bool {
-        self.lineweights_on_entities + self.lineweights_on_layers + self.block_references > 0
+        self.lineweights_on_entities + self.lineweights_on_layers > 0
     }
 
     /// A short, user-facing account of what was lost; empty when nothing was.
@@ -58,24 +58,10 @@ impl ExportReport {
         .filter(|(count, ..)| *count > 0)
         .map(|(count, one, many)| counted(count, one, many))
         .collect();
-        let mut lines = Vec::new();
-        if !carriers.is_empty() {
-            lines.push(format!(
-                "Lineweights are not written in DXF R12: dropped from {}.",
-                carriers.join(" and ")
-            ));
-        }
-        if self.block_references > 0 {
-            lines.push(format!(
-                "{} not written: blocks reach DXF with #149.",
-                counted(
-                    self.block_references,
-                    "block reference was",
-                    "block references were"
-                )
-            ));
-        }
-        lines
+        vec![format!(
+            "Lineweights are not written in DXF R12: dropped from {}.",
+            carriers.join(" and ")
+        )]
     }
 }
 
@@ -156,46 +142,76 @@ pub fn export_with_report(drawing: &Drawing) -> Export {
             }
         });
     });
+    // Block definitions, in ID order, each with its entities; a drawing
+    // without any writes no section, and so stays the file it was.
+    let blocks = drawing.blocks();
+    if blocks.len() > 1 {
+        section(&mut out, "BLOCKS", |out| {
+            for (_, block) in blocks.iter().filter(|(id, _)| *id != BlockId::FIRST) {
+                group(out, 0, "BLOCK");
+                group(out, 8, Layer::ZERO);
+                group(out, 2, &block.name);
+                group(out, 70, "0");
+                real(out, 10, block.base.x);
+                real(out, 20, block.base.y);
+                group(out, 3, &block.name);
+                for record in block.entities.iter() {
+                    write_record(out, record, drawing, &mut report);
+                }
+                group(out, 0, "ENDBLK");
+                group(out, 8, Layer::ZERO);
+            }
+        });
+    }
     section(&mut out, "ENTITIES", |out| {
-        let mut records: Vec<(EntityId, &cad_document::EntityRecord)> = drawing.records().collect();
+        let mut records: Vec<(EntityId, &EntityRecord)> = drawing.records().collect();
         records.sort_unstable_by_key(|(id, _)| *id);
         for (_, record) in records {
-            let properties = &record.properties;
-            let layer = drawing
-                .layers()
-                .get(properties.layer)
-                .map_or(Layer::ZERO, |layer| layer.name.as_str());
-            if properties.lineweight != Lineweight::ByLayer {
-                report.lineweights_on_entities += 1;
-            }
-            let common = |out: &mut String| write_properties(out, layer, properties, linetypes);
-            match &*record.entity {
-                Entity::Line(line) => write_line(out, line, common),
-                Entity::Circle(circle) => write_circle(out, circle, common),
-                Entity::Arc(arc) => write_arc(out, arc, common),
-                Entity::Polyline(polyline) => write_polyline(out, polyline, layer, common),
-                Entity::Text(text) => write_text(out, text, drawing.text_styles(), common),
-                // R12 has no MTEXT: a paragraph is written as one TEXT per
-                // line, as it is set.
-                Entity::BlockRef(_) => report.block_references += 1,
-                Entity::MText(text) => {
-                    let lines = text.lines();
-                    for (index, line) in lines.iter().enumerate() {
-                        let start = text.insertion
-                            - text_up(text.rotation)
-                                * (text.height * (1.0 + LINE_SPACING * index as f64));
-                        let single =
-                            TextEntity::new(start, text.height, text.rotation, line.clone());
-                        write_text(out, &single, drawing.text_styles(), |out| {
-                            write_properties(out, layer, properties, linetypes);
-                        });
-                    }
-                }
-            }
+            write_record(out, record, drawing, &mut report);
         }
     });
     group(&mut out, 0, "EOF");
     Export { text: out, report }
+}
+
+/// One entity with its properties, as a record of ENTITIES or of a block.
+fn write_record(
+    out: &mut String,
+    record: &EntityRecord,
+    drawing: &Drawing,
+    report: &mut ExportReport,
+) {
+    let linetypes = drawing.linetypes();
+    let properties = &record.properties;
+    let layer = drawing
+        .layers()
+        .get(properties.layer)
+        .map_or(Layer::ZERO, |layer| layer.name.as_str());
+    if properties.lineweight != Lineweight::ByLayer {
+        report.lineweights_on_entities += 1;
+    }
+    let common = |out: &mut String| write_properties(out, layer, properties, linetypes);
+    match &*record.entity {
+        Entity::Line(line) => write_line(out, line, common),
+        Entity::Circle(circle) => write_circle(out, circle, common),
+        Entity::Arc(arc) => write_arc(out, arc, common),
+        Entity::Polyline(polyline) => write_polyline(out, polyline, layer, common),
+        Entity::Text(text) => write_text(out, text, drawing.text_styles(), common),
+        Entity::BlockRef(reference) => write_insert(out, reference, drawing.blocks(), common),
+        // R12 has no MTEXT: a paragraph is written as one TEXT per
+        // line, as it is set.
+        Entity::MText(text) => {
+            let lines = text.lines();
+            for (index, line) in lines.iter().enumerate() {
+                let start = text.insertion
+                    - text_up(text.rotation) * (text.height * (1.0 + LINE_SPACING * index as f64));
+                let single = TextEntity::new(start, text.height, text.rotation, line.clone());
+                write_text(out, &single, drawing.text_styles(), |out| {
+                    write_properties(out, layer, properties, linetypes);
+                });
+            }
+        }
+    }
 }
 
 /// Group 6 for a linetype: `BYLAYER`, `BYBLOCK`, or the row's name.
@@ -362,6 +378,41 @@ fn write_text(
         group(out, 72, &code.to_string());
         real(out, 11, text.insertion.x);
         real(out, 21, text.insertion.y);
+    }
+}
+
+/// An INSERT: the block by name, the insertion point, the scale along X,
+/// Y, and Z when it is not one — a mirrored reference has its Y scale
+/// negated, which is how DXF says it — and the rotation in degrees when
+/// it is not zero.
+fn write_insert(
+    out: &mut String,
+    reference: &BlockReferenceEntity,
+    blocks: &BlockTable,
+    properties: impl FnOnce(&mut String),
+) {
+    group(out, 0, "INSERT");
+    properties(out);
+    let name = blocks
+        .get(reference.block)
+        .map_or("", |block| block.name.as_str());
+    group(out, 2, name);
+    real(out, 10, reference.insertion.x);
+    real(out, 20, reference.insertion.y);
+    // Exactly one is no scale at all.
+    #[allow(clippy::float_cmp)]
+    if reference.scale != 1.0 || reference.mirrored {
+        let y = if reference.mirrored {
+            -reference.scale
+        } else {
+            reference.scale
+        };
+        real(out, 41, reference.scale);
+        real(out, 42, y);
+        real(out, 43, reference.scale);
+    }
+    if reference.rotation != 0.0 {
+        real(out, 50, reference.rotation.to_degrees());
     }
 }
 
@@ -715,7 +766,6 @@ mod tests {
             ExportReport {
                 lineweights_on_entities: 2,
                 lineweights_on_layers: 1,
-                block_references: 0,
             }
         );
         assert!(export.report.is_lossy());
@@ -726,7 +776,6 @@ mod tests {
         let only_layers = ExportReport {
             lineweights_on_entities: 0,
             lineweights_on_layers: 2,
-            block_references: 0,
         };
         assert_eq!(
             only_layers.summary(),
@@ -762,6 +811,108 @@ mod tests {
     }
 
     // ── text (#143) ──
+
+    #[test]
+    fn blocks_are_written_as_a_blocks_section_and_inserts_and_survive_a_round_trip() {
+        use cad_document::{Block, BlockReferenceEntity, EntityRecord, Properties};
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let chair = tx
+            .define_block(Block::new(
+                "Chair",
+                Point2::new(1.0, 2.0),
+                vec![EntityRecord::new(
+                    LineEntity::new(Point2::ORIGIN, Point2::new(10.0, 0.0)),
+                    Properties {
+                        color: Color::ByBlock,
+                        ..Properties::default()
+                    },
+                )],
+            ))
+            .unwrap();
+        let pair = tx
+            .define_block(Block::new(
+                "Pair",
+                Point2::ORIGIN,
+                vec![
+                    EntityRecord::new(
+                        BlockReferenceEntity::new(chair, Point2::ORIGIN, 1.0, 0.0),
+                        Properties::default(),
+                    ),
+                    EntityRecord::new(
+                        BlockReferenceEntity::new(chair, Point2::new(20.0, 0.0), 1.0, 0.0),
+                        Properties::default(),
+                    ),
+                ],
+            ))
+            .unwrap();
+        tx.insert(BlockReferenceEntity::new(
+            pair,
+            Point2::new(100.0, 0.0),
+            1.0,
+            0.0,
+        ))
+        .unwrap();
+        // Mirrored, twice the size, a quarter turn, in red.
+        tx.insert_with(
+            BlockReferenceEntity {
+                mirrored: true,
+                ..BlockReferenceEntity::new(
+                    chair,
+                    Point2::new(0.0, 50.0),
+                    2.0,
+                    std::f64::consts::FRAC_PI_2,
+                )
+            },
+            Properties {
+                color: Color::Index(1),
+                ..Properties::default()
+            },
+        )
+        .unwrap();
+        tx.commit();
+
+        let first = export_with_report(&drawing);
+        assert!(!first.report.is_lossy());
+        let blocks = first
+            .text
+            .split("  2\nBLOCKS\n")
+            .nth(1)
+            .and_then(|rest| rest.split("  0\nENDSEC").next())
+            .expect("a BLOCKS section");
+        assert_eq!(
+            blocks,
+            "  0\nBLOCK\n  8\n0\n  2\nChair\n 70\n0\n 10\n1.0\n 20\n2.0\n  3\nChair\n\
+             \x20 0\nLINE\n  8\n0\n 62\n0\n 10\n0.0\n 20\n0.0\n 11\n10.0\n 21\n0.0\n\
+             \x20 0\nENDBLK\n  8\n0\n\
+             \x20 0\nBLOCK\n  8\n0\n  2\nPair\n 70\n0\n 10\n0.0\n 20\n0.0\n  3\nPair\n\
+             \x20 0\nINSERT\n  8\n0\n  2\nChair\n 10\n0.0\n 20\n0.0\n\
+             \x20 0\nINSERT\n  8\n0\n  2\nChair\n 10\n20.0\n 20\n0.0\n\
+             \x20 0\nENDBLK\n  8\n0\n"
+        );
+        assert!(first.text.contains(
+            "  0\nINSERT\n  8\n0\n 62\n1\n  2\nChair\n 10\n0.0\n 20\n50.0\n 41\n2.0\n 42\n-2.0\n 43\n2.0\n 50\n90.0\n"
+        ));
+
+        let back = crate::import(first.text.as_bytes()).unwrap();
+        assert!(!back.report.has_unsupported_content());
+        assert_eq!((back.report.blocks, back.report.block_references), (2, 2));
+        let mirrored = back
+            .drawing
+            .entities()
+            .filter_map(|(_, entity)| match entity {
+                Entity::BlockRef(reference) if reference.mirrored => Some(reference.clone()),
+                _ => None,
+            })
+            .next()
+            .expect("the mirrored chair");
+        assert_eq!(mirrored.scale, 2.0);
+        assert!((mirrored.rotation - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
+        assert_eq!(export(&back.drawing), first.text, "byte-identical");
+
+        // A drawing with no blocks writes no BLOCKS section.
+        assert!(!export(&Drawing::new()).contains("BLOCKS"));
+    }
 
     #[test]
     fn a_text_is_written_with_its_insertion_height_words_angle_and_justification() {

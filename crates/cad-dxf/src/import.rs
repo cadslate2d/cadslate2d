@@ -1,20 +1,23 @@
 //! DXF import: a tolerant, defensive ASCII reader.
 //!
 //! The reader accepts any DXF release, because it only looks at the HEADER,
-//! TABLES, and ENTITIES sections, and there at the LAYER and LTYPE tables
-//! and at LINE, CIRCLE, ARC, and polyline records. Everything else is
-//! counted and reported.
+//! TABLES, BLOCKS, and ENTITIES sections, and there at the LAYER, LTYPE,
+//! and STYLE tables, at block definitions, and at LINE, CIRCLE, ARC,
+//! polyline, TEXT, MTEXT, and INSERT records. Everything else is counted
+//! and reported.
 //!
-//! Tables may come after the entities that use them, in theory, and a file
-//! may name a layer or linetype it never defines; so entities are read with
-//! their properties as names, and the names are resolved — rows made for
-//! the undefined ones, and reported — once the whole file has been read.
+//! Tables may come after the entities that use them, in theory, a block
+//! may place one defined after it, and a file may name a layer or
+//! linetype it never defines; so entities are read with their properties
+//! as names, and the names are resolved — rows made for the undefined
+//! ones, and reported — once the whole file has been read.
 
 use cad_core::{LengthUnit, Point2};
 use cad_document::{
-    ArcEntity, CircleEntity, Color, Drawing, DrawingSettings, Entity, Justification, Layer,
-    LayerId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity,
-    PolylineEntity, Properties, TextEntity, TextStyle, TextStyleId, check_name, same_name,
+    ArcEntity, Block, BlockId, BlockReferenceEntity, CircleEntity, Color, Drawing, DrawingSettings,
+    Entity, EntityRecord, Justification, Layer, LayerId, LineEntity, Linetype, LinetypeDef,
+    LinetypeId, Lineweight, MTextEntity, PolylineEntity, Properties, TextEntity, TextStyle,
+    TextStyleId, check_name, same_name,
 };
 
 use crate::export::insunits_code;
@@ -41,6 +44,14 @@ const BAD_LAYER_NAME: &str = "(layer name)";
 const BAD_LINETYPE_NAME: &str = "(linetype name)";
 const BAD_LINETYPE_PATTERN: &str = "(linetype pattern)";
 const BAD_TEXT_STYLE_NAME: &str = "(text style name)";
+const BAD_BLOCK_NAME: &str = "(block name)";
+/// Report keys for what an INSERT carries that a reference cannot hold:
+/// the reference is imported as far as the model holds, the rest said.
+const INSERT_NON_UNIFORM: &str = "(INSERT with a non-uniform scale)";
+const INSERT_ARRAY: &str = "(INSERT array)";
+const INSERT_ATTRIBUTES: &str = "(INSERT attributes)";
+/// Report key for an INSERT of a block the file never defines: not imported.
+const INSERT_UNDEFINED: &str = "(INSERT of an undefined block)";
 /// Report key for the text and shapes of a complex linetype: the dashes
 /// are kept, the rest is not.
 const LINETYPE_SHAPES: &str = "(linetype shapes)";
@@ -99,6 +110,8 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
         header: Header::default(),
         report: ImportReport::default(),
         open_polyline: None,
+        open_block: None,
+        total: 0,
     };
     reader.read_file()?;
     reader.finish()
@@ -191,6 +204,8 @@ struct Pending {
     lineweight: Lineweight,
     /// A text's style, by name.
     style: Option<String>,
+    /// A reference's block, by name.
+    block: Option<String>,
     /// It carried something the drawing cannot hold.
     dropped: bool,
 }
@@ -203,6 +218,7 @@ impl Default for Pending {
             linetype: LinetypeRef::ByLayer,
             lineweight: Lineweight::ByLayer,
             style: None,
+            block: None,
             dropped: false,
         }
     }
@@ -230,12 +246,46 @@ struct Tables {
     layers: Vec<(Layer, LinetypeRef)>,
     linetypes: Vec<LinetypeDef>,
     text_styles: Vec<TextStyle>,
+    /// The file's block definitions, in order; their IDs follow from 1.
+    blocks: Vec<BlockBuilder>,
     created_layers: usize,
     created_linetypes: usize,
     created_text_styles: usize,
 }
 
+/// A block definition as it is read: its entities with their properties
+/// as names, like the drawing's own.
+#[derive(Debug)]
+struct BlockBuilder {
+    name: String,
+    base: Point2,
+    entities: Vec<(Entity, Pending)>,
+}
+
+/// The block definition the reader is inside, in the BLOCKS section.
+#[derive(Debug)]
+enum OpenBlock {
+    /// A definition the drawing will hold.
+    User(BlockBuilder),
+    /// Model space, paper space, an anonymous block, one with a name no
+    /// block can have, or a second definition of a name: its entities are
+    /// not user content and are skipped.
+    Skipped,
+}
+
 impl Tables {
+    fn has_block(&self, name: &str) -> bool {
+        self.blocks.iter().any(|block| same_name(&block.name, name))
+    }
+
+    /// The ID the block of that name will have, if the file defined it.
+    fn block(&self, name: &str) -> Option<BlockId> {
+        self.blocks
+            .iter()
+            .position(|block| same_name(&block.name, name))
+            .map(|index| BlockId::from_raw(index as u32 + 1))
+    }
+
     fn has_text_style(&self, name: &str) -> bool {
         self.text_styles
             .iter()
@@ -333,6 +383,11 @@ struct Reader<'a> {
     report: ImportReport,
     /// An R12-style POLYLINE whose VERTEX records are still being read.
     open_polyline: Option<PolylineBuilder>,
+    /// The block definition being read, in the BLOCKS section.
+    open_block: Option<OpenBlock>,
+    /// Entities read so far, in the drawing and in its blocks together,
+    /// against the limit.
+    total: usize,
 }
 
 /// Collects a polyline that may span several records.
@@ -452,53 +507,63 @@ impl<'a> Reader<'a> {
         record: Group<'_>,
         body: &RecordBody,
     ) -> Result<(), DxfError> {
+        // In the BLOCKS section, only a user definition's entities count.
+        if matches!(context, RecordContext::Blocks) {
+            match record.value {
+                "BLOCK" => {
+                    self.open_block(body);
+                    return Ok(());
+                }
+                "ENDBLK" => {
+                    self.close_block();
+                    return Ok(());
+                }
+                _ if !matches!(self.open_block, Some(OpenBlock::User(_))) => return Ok(()),
+                _ => {}
+            }
+        }
+        let entities = matches!(context, RecordContext::Entities | RecordContext::Blocks);
         match (context, record.value) {
-            (RecordContext::Entities, "LINE") => {
+            (_, "LINE") if entities => {
                 let line = body.line(record.line)?;
-                self.report.lines += 1;
                 self.import(Entity::Line(line), body)?;
             }
-            (RecordContext::Entities, "CIRCLE") => match body.circle(record.line)? {
-                Some(circle) => {
-                    self.report.circles += 1;
-                    self.import(Entity::Circle(circle), body)?;
-                }
+            (_, "CIRCLE") if entities => match body.circle(record.line)? {
+                Some(circle) => self.import(Entity::Circle(circle), body)?,
                 None => self.report.count_unsupported(INVALID),
             },
-            (RecordContext::Entities, "ARC") => match body.arc(record.line)? {
-                Some(arc) => {
-                    self.report.arcs += 1;
-                    self.import(Entity::Arc(arc), body)?;
-                }
+            (_, "ARC") if entities => match body.arc(record.line)? {
+                Some(arc) => self.import(Entity::Arc(arc), body)?,
                 None => self.report.count_unsupported(INVALID),
             },
-            (RecordContext::Entities, "TEXT") => {
+            (_, "TEXT") if entities => {
                 let (text, dropped) = body.text(record.line)?;
-                self.report.texts += 1;
                 let mut pending = body.pending();
                 pending.dropped |= dropped;
                 self.push(Entity::Text(text), pending)?;
             }
-            (RecordContext::Entities, "MTEXT") => {
+            (_, "MTEXT") if entities => {
                 let (text, formatting) = body.mtext(record.line)?;
-                self.report.texts += 1;
                 if formatting {
                     self.report.formatting_dropped += 1;
                 }
                 self.push(Entity::MText(text), body.pending())?;
             }
+            (_, "INSERT") if entities => self.insert(record, body)?,
             (RecordContext::Tables, "STYLE") => self.table_text_style(body),
-            (RecordContext::Entities, "LWPOLYLINE") => {
+            (_, "LWPOLYLINE") if entities => {
+                let mut properties = body.pending();
+                properties.dropped |= body.constant_width.is_some_and(|width| width != 0.0);
                 let builder = PolylineBuilder {
                     vertices: body.points(record.line, "LWPOLYLINE")?,
                     closed: body.flags & POLYLINE_CLOSED != 0,
                     bulges: body.bulges.clone(),
                     unsupported: false,
-                    properties: body.pending(),
+                    properties,
                 };
                 self.finish_polyline(builder)?;
             }
-            (RecordContext::Entities, "POLYLINE") => {
+            (_, "POLYLINE") if entities => {
                 let unsupported = body.flags & POLYLINE_NOT_2D != 0;
                 if unsupported {
                     self.report.count_unsupported("POLYLINE");
@@ -510,7 +575,7 @@ impl<'a> Reader<'a> {
                     ..Default::default()
                 });
             }
-            (RecordContext::Entities, "VERTEX") => {
+            (_, "VERTEX") if entities => {
                 let open = self
                     .open_polyline
                     .as_mut()
@@ -522,7 +587,7 @@ impl<'a> Reader<'a> {
                     polyline.bulges.extend(&body.bulges);
                 }
             }
-            (RecordContext::Entities, "SEQEND") => {
+            (_, "SEQEND") if entities => {
                 let finished = self
                     .open_polyline
                     .take()
@@ -531,19 +596,96 @@ impl<'a> Reader<'a> {
                     self.finish_polyline(polyline)?;
                 }
             }
-            (RecordContext::Entities, kind) if !SUBORDINATE_RECORDS.contains(&kind) => {
+            (_, kind) if entities && !SUBORDINATE_RECORDS.contains(&kind) => {
                 self.report.count_unsupported(&kind_name(kind));
-            }
-            // A user block definition, as opposed to the model- and paper-space
-            // containers every complete file has.
-            (RecordContext::Blocks, "BLOCK") if !body.name_is_reserved => {
-                self.report.count_unsupported("BLOCK");
             }
             (RecordContext::Tables, "LAYER") => self.table_layer(body),
             (RecordContext::Tables, "LTYPE") => self.table_linetype(body),
             _ => {}
         }
         Ok(())
+    }
+
+    /// A BLOCK record: the start of a definition. The model- and
+    /// paper-space containers every complete file has, anonymous blocks,
+    /// and names no block can have are skipped with their contents, as is
+    /// a second definition of a name; the first counts.
+    fn open_block(&mut self, body: &RecordBody) {
+        let name = body.name.as_deref().unwrap_or("");
+        if body.name_is_reserved {
+            self.open_block = Some(OpenBlock::Skipped);
+            return;
+        }
+        if check_name(name).is_err() {
+            self.report.count_unsupported(BAD_BLOCK_NAME);
+            self.open_block = Some(OpenBlock::Skipped);
+            return;
+        }
+        if self.tables.has_block(name) {
+            self.open_block = Some(OpenBlock::Skipped);
+            return;
+        }
+        let base = Point2::new(body.x0.unwrap_or(0.0), body.y0.unwrap_or(0.0));
+        self.open_block = Some(OpenBlock::User(BlockBuilder {
+            name: name.to_owned(),
+            base,
+            entities: Vec::new(),
+        }));
+    }
+
+    /// An ENDBLK record: the definition is complete. A polyline left open
+    /// inside it is finished with it.
+    fn close_block(&mut self) {
+        self.open_polyline = None;
+        if let Some(OpenBlock::User(block)) = self.open_block.take() {
+            self.tables.blocks.push(block);
+        }
+    }
+
+    /// An INSERT: a reference to a block by name, placed. DXF scales a
+    /// reference along X and Y separately; the drawing holds one scale and
+    /// a mirror. Equal magnitudes with one sign flipped are a mirror —
+    /// across X directly, across Y as a mirror and a half turn — and
+    /// unequal ones are imported at the X magnitude and reported. Arrays
+    /// (column or row counts above one) and attributes are reported and the
+    /// one reference imported.
+    fn insert(&mut self, record: Group<'_>, body: &RecordBody) -> Result<(), DxfError> {
+        let Some(name) = body.name.clone() else {
+            self.report.count_unsupported(INVALID);
+            return Ok(());
+        };
+        let need = |value, group| required(value, record.line, "INSERT", group);
+        let insertion = Point2::new(need(body.x0, 10)?, need(body.y0, 20)?);
+        let (sx, sy) = (body.width.unwrap_or(1.0), body.scale_y.unwrap_or(1.0));
+        if sx == 0.0 || sy == 0.0 {
+            self.report.count_unsupported(INVALID);
+            return Ok(());
+        }
+        // Exactly equal magnitudes are one scale; anything else is two.
+        #[allow(clippy::float_cmp)]
+        if sx.abs() != sy.abs() {
+            self.report.count_unsupported(INSERT_NON_UNIFORM);
+        }
+        if body.flags > 1 || body.attachment.unwrap_or(1) > 1 {
+            self.report.count_unsupported(INSERT_ARRAY);
+        }
+        if body.follow {
+            self.report.count_unsupported(INSERT_ATTRIBUTES);
+        }
+        let mut rotation = body.start_degrees.unwrap_or(0.0).to_radians();
+        if sx < 0.0 {
+            rotation += std::f64::consts::PI;
+        }
+        let reference = BlockReferenceEntity {
+            block: BlockId::FIRST,
+            insertion,
+            scale: sx.abs(),
+            rotation,
+            mirrored: (sx < 0.0) != (sy < 0.0),
+        };
+        let mut pending = body.pending();
+        pending.block = Some(name);
+        self.push(Entity::BlockRef(reference), pending)
     }
 
     /// A row of the LAYER table. Its name must be one a layer can have; the
@@ -642,13 +784,32 @@ impl<'a> Reader<'a> {
         self.push(entity, body.pending())
     }
 
+    /// Keeps an entity for the drawing, or for the block definition being
+    /// read. The limit counts both; the report counts what reaches the
+    /// drawing itself — a definition's entities are part of their block.
     fn push(&mut self, entity: Entity, properties: Pending) -> Result<(), DxfError> {
-        if self.entities.len() >= self.limits.max_entities {
+        if self.total >= self.limits.max_entities {
             return Err(DxfError::TooManyEntities {
                 limit: self.limits.max_entities,
             });
         }
-        self.entities.push((entity, properties));
+        self.total += 1;
+        match &mut self.open_block {
+            Some(OpenBlock::User(block)) => block.entities.push((entity, properties)),
+            Some(OpenBlock::Skipped) => {}
+            None => {
+                match &entity {
+                    Entity::Line(_) => self.report.lines += 1,
+                    Entity::Circle(_) => self.report.circles += 1,
+                    Entity::Arc(_) => self.report.arcs += 1,
+                    Entity::Polyline(_) => self.report.polylines += 1,
+                    Entity::Text(_) | Entity::MText(_) => self.report.texts += 1,
+                    // Counted once its block is found.
+                    Entity::BlockRef(_) => {}
+                }
+                self.entities.push((entity, properties));
+            }
+        }
         Ok(())
     }
 
@@ -656,7 +817,6 @@ impl<'a> Reader<'a> {
         if polyline.vertices.len() < 2 {
             self.report.count_unsupported(INVALID);
         } else {
-            self.report.polylines += 1;
             let entity = Entity::Polyline(PolylineEntity::with_bulges(
                 polyline.vertices,
                 polyline.bulges,
@@ -665,6 +825,59 @@ impl<'a> Reader<'a> {
             self.push(entity, polyline.properties)?;
         }
         Ok(())
+    }
+
+    /// An entity with its properties resolved against the tables: rows
+    /// made for the layer, linetype, and text style it names and the file
+    /// did not define. A reference to a block the file did not define is
+    /// reported and not kept.
+    fn resolve(&mut self, mut entity: Entity, pending: Pending) -> Option<(Entity, Properties)> {
+        let mut dropped = pending.dropped;
+        // A text's style: the file's, or Standard when it names none
+        // or one no style can be called.
+        let style = pending
+            .style
+            .as_deref()
+            .and_then(|name| self.tables.text_style(name))
+            .unwrap_or(TextStyleId::FIRST);
+        match &mut entity {
+            Entity::Text(text) => text.style = style,
+            Entity::MText(text) => text.style = style,
+            Entity::BlockRef(reference) => {
+                let block = pending
+                    .block
+                    .as_deref()
+                    .and_then(|name| self.tables.block(name));
+                match block {
+                    Some(block) => reference.block = block,
+                    None => {
+                        self.report.count_unsupported(INSERT_UNDEFINED);
+                        return None;
+                    }
+                }
+            }
+            _ => {}
+        }
+        let layer = self.tables.layer(&pending.layer).unwrap_or_else(|| {
+            dropped = true;
+            LayerId::FIRST
+        });
+        let linetype = self.tables.linetype(&pending.linetype).unwrap_or_else(|| {
+            dropped = true;
+            Linetype::ByLayer
+        });
+        if dropped {
+            self.report.with_dropped_properties += 1;
+        }
+        Some((
+            entity,
+            Properties {
+                layer,
+                color: pending.color,
+                linetype,
+                lineweight: pending.lineweight,
+            },
+        ))
     }
 
     /// Resolves every name against the tables and builds the drawing.
@@ -681,41 +894,29 @@ impl<'a> Reader<'a> {
             layers.push(Layer { linetype, ..layer });
         }
 
+        // Block definitions first: a reference inside one resolves like
+        // one in the drawing, against every block the file defined — so
+        // the names stay in the table while each is built.
+        let mut blocks: Vec<Block> = Vec::with_capacity(self.tables.blocks.len());
+        for index in 0..self.tables.blocks.len() {
+            let entities = std::mem::take(&mut self.tables.blocks[index].entities);
+            let records = entities
+                .into_iter()
+                .filter_map(|(entity, pending)| self.resolve(entity, pending))
+                .map(|(entity, properties)| EntityRecord::new(entity, properties))
+                .collect();
+            let builder = &self.tables.blocks[index];
+            blocks.push(Block::new(builder.name.clone(), builder.base, records));
+        }
+
         let mut entities: Vec<(Entity, Properties)> = Vec::with_capacity(self.entities.len());
-        for (mut entity, pending) in std::mem::take(&mut self.entities) {
-            let mut dropped = pending.dropped;
-            // A text's style: the file's, or Standard when it names none
-            // or one no style can be called.
-            let style = pending
-                .style
-                .as_deref()
-                .and_then(|name| self.tables.text_style(name))
-                .unwrap_or(TextStyleId::FIRST);
-            match &mut entity {
-                Entity::Text(text) => text.style = style,
-                Entity::MText(text) => text.style = style,
-                _ => {}
+        for (entity, pending) in std::mem::take(&mut self.entities) {
+            if let Some(resolved) = self.resolve(entity, pending) {
+                if matches!(resolved.0, Entity::BlockRef(_)) {
+                    self.report.block_references += 1;
+                }
+                entities.push(resolved);
             }
-            let layer = self.tables.layer(&pending.layer).unwrap_or_else(|| {
-                dropped = true;
-                LayerId::FIRST
-            });
-            let linetype = self.tables.linetype(&pending.linetype).unwrap_or_else(|| {
-                dropped = true;
-                Linetype::ByLayer
-            });
-            if dropped {
-                self.report.with_dropped_properties += 1;
-            }
-            entities.push((
-                entity,
-                Properties {
-                    layer,
-                    color: pending.color,
-                    linetype,
-                    lineweight: pending.lineweight,
-                },
-            ));
         }
         // Layers made for entities come after the file's own.
         layers.extend(
@@ -730,11 +931,12 @@ impl<'a> Reader<'a> {
         let linetypes = std::mem::take(&mut self.tables.linetypes);
         let text_styles = std::mem::take(&mut self.tables.text_styles);
 
-        let drawing = Drawing::from_tables(layers, linetypes, text_styles, entities)
+        let drawing = Drawing::from_tables(layers, linetypes, text_styles, blocks, entities)
             .map_err(|error| DxfError::Tables(error.to_string()))?;
         self.report.layers = drawing.layers().len() - 1;
         self.report.linetypes = drawing.linetypes().len() - 1;
         self.report.text_styles = drawing.text_styles().len() - 1;
+        self.report.blocks = drawing.blocks().len() - 1;
         self.report.created_layers = self.tables.created_layers;
         self.report.created_linetypes = self.tables.created_linetypes;
         self.report.created_text_styles = self.tables.created_text_styles;
@@ -830,8 +1032,15 @@ struct RecordBody {
     chunks: Vec<String>,
     /// Group 7: a text's style, by name.
     style: Option<String>,
-    /// Group 41: a paragraph's width.
+    /// Group 41: a paragraph's width, or a reference's X scale.
     width: Option<f64>,
+    /// Group 42 of a record with one point: a reference's Y scale.
+    scale_y: Option<f64>,
+    /// Group 43: an LWPOLYLINE's constant width, which is dropped; a
+    /// reference's Z scale, which a plane does without.
+    constant_width: Option<f64>,
+    /// Group 66: vertices follow a POLYLINE, attributes an INSERT.
+    follow: bool,
     /// Groups 71, 72, 73: attachment, and horizontal and vertical justification.
     attachment: Option<i64>,
     halign: Option<i64>,
@@ -856,12 +1065,13 @@ impl RecordBody {
             // A bulge belongs to the vertex whose coordinates precede it.
             42 => {
                 let bulge = real(group)?;
+                self.scale_y = Some(bulge);
                 if let Some(last) = self.bulges.last_mut() {
                     *last = bulge;
                 }
             }
-            // Constant width of an LWPOLYLINE: dropped.
-            43 => self.has_dropped_properties |= real(group)? != 0.0,
+            43 => self.constant_width = Some(real(group)?),
+            66 => self.follow = group.value.trim() != "0",
             70 => self.flags = group.value.parse().unwrap_or(0),
             11 => self.x1 = Some(real(group)?),
             21 => self.y1 = Some(real(group)?),
@@ -924,6 +1134,7 @@ impl RecordBody {
                 .and_then(lineweight_from_dxf)
                 .unwrap_or(Lineweight::ByLayer),
             style: self.style.clone(),
+            block: None,
             dropped: self.has_dropped_properties,
         }
     }
@@ -2195,7 +2406,7 @@ mod tests {
     }
 
     #[test]
-    fn user_blocks_are_reported_but_structural_ones_are_not() {
+    fn user_blocks_are_imported_and_structural_ones_are_not() {
         let text = dxf(&[
             (0, "SECTION"),
             (2, "BLOCKS"),
@@ -2218,7 +2429,15 @@ mod tests {
             import.drawing.is_empty(),
             "geometry inside block definitions is not model space"
         );
-        assert_eq!(import.report.unsupported.get("BLOCK"), Some(&1));
+        assert_eq!(
+            import.drawing.blocks().len(),
+            2,
+            "the door, not model space"
+        );
+        let door = import.drawing.blocks().find("DOOR").unwrap();
+        assert_eq!(import.drawing.blocks().get(door).unwrap().entities.len(), 1);
+        assert_eq!(import.report.blocks, 1);
+        assert!(import.report.unsupported.is_empty());
     }
 
     #[test]

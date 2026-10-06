@@ -17,6 +17,9 @@ pub struct ImportReport {
     pub polylines: usize,
     /// TEXT and MTEXT entities imported.
     pub texts: usize,
+    /// INSERT entities imported into the drawing itself (those inside
+    /// block definitions are part of their block).
+    pub block_references: usize,
     /// Entities that were skipped, by DXF type name, in name order.
     pub unsupported: BTreeMap<String, usize>,
     /// Imported entities that carried properties the drawing cannot hold
@@ -37,6 +40,8 @@ pub struct ImportReport {
     pub text_styles: usize,
     /// Text styles a text named but the file did not define.
     pub created_text_styles: usize,
+    /// Block definitions in the drawing after the import.
+    pub blocks: usize,
     /// MTEXT entities whose formatting — fonts, heights, colours,
     /// stacking — was dropped, their words and breaks kept.
     pub formatting_dropped: usize,
@@ -69,7 +74,7 @@ impl ImportReport {
 
     /// Entities brought into the drawing.
     pub fn imported_total(&self) -> usize {
-        self.lines + self.circles + self.arcs + self.polylines + self.texts
+        self.lines + self.circles + self.arcs + self.polylines + self.texts + self.block_references
     }
 
     pub(crate) fn count_unsupported(&mut self, kind: &str) {
@@ -88,6 +93,7 @@ impl ImportReport {
             (self.arcs, "arc", "arcs"),
             (self.polylines, "polyline", "polylines"),
             (self.texts, "text", "texts"),
+            (self.block_references, "block reference", "block references"),
         ];
         let imported: Vec<String> = kinds
             .into_iter()
@@ -111,11 +117,12 @@ impl ImportReport {
                 skipped.join(", ")
             ));
         }
-        if self.layers + self.linetypes + self.text_styles > 0 {
+        if self.layers + self.linetypes + self.text_styles + self.blocks > 0 {
             let tables: Vec<String> = [
                 (self.layers, "layer", "layers"),
                 (self.linetypes, "linetype", "linetypes"),
                 (self.text_styles, "text style", "text styles"),
+                (self.blocks, "block", "blocks"),
             ]
             .into_iter()
             .filter(|(count, ..)| *count > 0)

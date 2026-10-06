@@ -117,17 +117,15 @@ test.describe("open", () => {
 test.describe("unsupported content", () => {
   test("is reported on import and confirmed before export", async ({ page }) => {
     await openApp(page);
-    await chooseFile(
-      page,
-      () => enter(page, "OPEN"),
-      fixturePath("valid/ezdxf-r2010-mixed-content.dxf"),
-    );
+    // Nested blocks placed every way: an array, a non-uniform scale, and an
+    // INSERT of a block the file never defines are reported.
+    await chooseFile(page, () => enter(page, "OPEN"), fixturePath("valid/ezdxf-r12-blocks.dxf"));
 
     await expect(
-      logLines(page).filter({ hasText: "Imported 3 lines, 2 circles, 1 arc, 1 polyline, 1 text." }),
+      logLines(page).filter({ hasText: "Imported 1 line, 6 block references." }),
     ).toHaveCount(1);
     await expect(
-      logLines(page).filter({ hasText: "Not imported (unsupported): 1 BLOCK" }),
+      logLines(page).filter({ hasText: "Not imported (unsupported): 1 (INSERT array)" }),
     ).toHaveCount(1);
 
     // Declining the warning exports nothing.
@@ -143,18 +141,16 @@ test.describe("unsupported content", () => {
     expect(messages[0]).toContain("could not import");
     expect(downloads).toBe(0);
 
-    // Accepting it exports the supported geometry only.
+    // Accepting it exports what the drawing holds: the definitions and the
+    // six references, the ghost among them no more.
     page.once("dialog", (dialog) => void dialog.accept());
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.name).toBe("ezdxf-r2010-mixed-content.dxf");
-    expect(file.text.match(/^LINE$/gm)).toHaveLength(3);
-    expect(file.text.match(/^CIRCLE$/gm)).toHaveLength(2);
-    expect(file.text.match(/^ARC$/gm)).toHaveLength(1);
-    // R12 has no LWPOLYLINE: the imported polyline is written as POLYLINE/VERTEX.
-    expect(file.text.match(/^POLYLINE$/gm)).toHaveLength(1);
-    expect(file.text).not.toContain("LWPOLYLINE");
-    // The file's one TEXT is imported and written again since #145.
-    expect(file.text.match(/^TEXT$/gm)).toHaveLength(1);
+    expect(file.name).toBe("ezdxf-r12-blocks.dxf");
+    expect(file.text.match(/^BLOCK$/gm)).toHaveLength(2);
+    expect(file.text.match(/^INSERT$/gm)).toHaveLength(8);
+    expect(file.text).not.toContain("GHOST");
+    // The two chairs of the pair are in its definition; the model holds one line.
+    expect(file.text.match(/^LINE$/gm)).toHaveLength(2);
   });
 });
 

@@ -17,7 +17,8 @@ use crate::table::TableChange;
 use crate::text_style::{TextStyle, TextStyleId, TextStyleTable, initial_text_styles};
 use crate::{
     Change, Color, DrawingSettings, Entity, EntityChange, EntityRecord, EntityStore, Linetype,
-    Lineweight, Properties, Revision, SettingsChange, SpatialIndex, Transaction,
+    Lineweight, MTextEntity, Properties, Revision, SettingsChange, SpatialIndex, TextEntity,
+    Transaction,
 };
 
 /// A 2D drawing.
@@ -236,16 +237,19 @@ impl Drawing {
         linetypes: impl IntoIterator<Item = LinetypeDef>,
         entities: impl IntoIterator<Item = (Entity, Properties)>,
     ) -> Result<Self, TransactionError> {
-        Self::from_tables(layers, linetypes, [], entities)
+        Self::from_tables(layers, linetypes, [], [], entities)
     }
 
-    /// [`from_parts`](Self::from_parts) with text styles as well, after
-    /// `Standard`, which take the IDs 1, 2, … in the order given. A text
-    /// with a style that is not among them is refused.
+    /// [`from_parts`](Self::from_parts) with text styles and blocks as
+    /// well, after `Standard` and `*Model_Space`, which take the IDs 1, 2, …
+    /// in the order given. A text with a style that is not among them, a
+    /// reference to a block that is not, and a block that would hold
+    /// itself through any chain of references are refused.
     pub fn from_tables(
         layers: impl IntoIterator<Item = Layer>,
         linetypes: impl IntoIterator<Item = LinetypeDef>,
         text_styles: impl IntoIterator<Item = TextStyle>,
+        blocks: impl IntoIterator<Item = Block>,
         entities: impl IntoIterator<Item = (Entity, Properties)>,
     ) -> Result<Self, TransactionError> {
         let mut drawing = Self::new();
@@ -316,21 +320,52 @@ impl Drawing {
                 .layers
                 .apply(&TableChange::Insert { id, row: layer });
         }
-        for (entity, properties) in entities {
+        // Every block goes in before any is checked: a definition may
+        // place a block the file defines after it.
+        for block in blocks {
+            check_name(&block.name).map_err(TransactionError::BadBlockName)?;
+            if let Some(taken) = drawing.blocks.find(&block.name) {
+                return Err(TransactionError::DuplicateBlockName(taken));
+            }
+            let id = drawing.blocks.allocate();
+            drawing
+                .blocks
+                .apply(&TableChange::Insert { id, row: block });
+        }
+        // What every record of the drawing, or of a definition, must satisfy.
+        let check_record = |drawing: &Self, entity: &Entity, properties: &Properties| {
             if !drawing.layers.contains(properties.layer) {
                 return Err(TransactionError::UnknownLayer(properties.layer));
             }
-            known_linetype(&drawing, properties.linetype)?;
-            let style = match &entity {
-                Entity::Text(text) => Some(text.style),
-                Entity::MText(text) => Some(text.style),
-                _ => None,
-            };
-            if let Some(style) = style
-                && !drawing.text_styles.contains(style)
-            {
-                return Err(TransactionError::UnknownTextStyle(style));
+            known_linetype(drawing, properties.linetype)?;
+            match entity {
+                Entity::Text(TextEntity { style, .. })
+                | Entity::MText(MTextEntity { style, .. })
+                    if !drawing.text_styles.contains(*style) =>
+                {
+                    Err(TransactionError::UnknownTextStyle(*style))
+                }
+                Entity::BlockRef(reference) if !drawing.blocks.contains(reference.block) => {
+                    Err(TransactionError::UnknownBlock(reference.block))
+                }
+                Entity::BlockRef(reference)
+                    if !(reference.scale.is_finite() && reference.scale > 0.0) =>
+                {
+                    Err(TransactionError::BadBlockScale)
+                }
+                _ => Ok(()),
             }
+        };
+        for (id, block) in drawing.blocks.iter() {
+            if drawing.blocks.would_cycle(id, block) {
+                return Err(TransactionError::BlockCycle(id));
+            }
+            for record in block.entities.iter() {
+                check_record(&drawing, &record.entity, &record.properties)?;
+            }
+        }
+        for (entity, properties) in entities {
+            check_record(&drawing, &entity, &properties)?;
             let id = drawing.ids.allocate();
             drawing
                 .entities
@@ -2842,6 +2877,7 @@ mod tests {
             [],
             [],
             [TextStyle::named("standard"), TextStyle::named("Roman")],
+            [],
             [(text(roman), Properties::default())],
         )
         .unwrap();
@@ -2856,14 +2892,146 @@ mod tests {
         );
         assert_eq!(drawing.text_styles().find("roman"), Some(roman));
         assert_eq!(
-            Drawing::from_tables([], [], [], [(text(roman), Properties::default())]).err(),
+            Drawing::from_tables([], [], [], [], [(text(roman), Properties::default())]).err(),
             Some(TransactionError::UnknownTextStyle(roman))
         );
         assert_eq!(
-            Drawing::from_tables([], [], [TextStyle::named("a"), TextStyle::named("A")], []).err(),
+            Drawing::from_tables(
+                [],
+                [],
+                [TextStyle::named("a"), TextStyle::named("A")],
+                [],
+                []
+            )
+            .err(),
             Some(TransactionError::DuplicateTextStyleName(
                 TextStyleId::from_raw(1)
             ))
+        );
+    }
+
+    #[test]
+    fn a_drawing_from_a_file_can_have_blocks_that_place_each_other_in_any_order() {
+        // IDs follow the order given: the pair first, then the chair.
+        let pair = BlockId::from_raw(1);
+        let chair = BlockId::from_raw(2);
+        let place = |block, x| {
+            EntityRecord::new(
+                BlockReferenceEntity::new(block, Point2::new(x, 0.0), 1.0, 0.0),
+                Properties::default(),
+            )
+        };
+        let seat = || {
+            EntityRecord::new(
+                LineEntity::new(Point2::ORIGIN, Point2::new(10.0, 0.0)),
+                Properties::default(),
+            )
+        };
+        // The pair comes first in the file and places the chair defined after it.
+        let drawing = Drawing::from_tables(
+            [],
+            [],
+            [],
+            [
+                Block::new(
+                    "Pair",
+                    Point2::ORIGIN,
+                    vec![place(chair, 0.0), place(chair, 20.0)],
+                ),
+                Block::new("Chair", Point2::ORIGIN, vec![seat()]),
+            ],
+            [(
+                BlockReferenceEntity::new(pair, Point2::new(100.0, 0.0), 1.0, 0.0).into(),
+                Properties::default(),
+            )],
+        )
+        .unwrap();
+        assert_eq!(drawing.blocks().find("pair"), Some(pair));
+        assert_eq!(
+            drawing
+                .bounds_of(drawing.entities().next().unwrap().1)
+                .max(),
+            Point2::new(130.0, 0.0)
+        );
+
+        // A cycle through two blocks is refused, whichever is checked first.
+        let cyclic = Drawing::from_tables(
+            [],
+            [],
+            [],
+            [
+                Block::new("A", Point2::ORIGIN, vec![place(BlockId::from_raw(2), 0.0)]),
+                Block::new("B", Point2::ORIGIN, vec![place(BlockId::from_raw(1), 0.0)]),
+            ],
+            [],
+        );
+        assert!(
+            matches!(cyclic, Err(TransactionError::BlockCycle(_))),
+            "{cyclic:?}"
+        );
+        // So are a reference to a block the file lacks, a bad scale, a
+        // record on a layer the file lacks, and a name taken twice.
+        assert_eq!(
+            Drawing::from_tables(
+                [],
+                [],
+                [],
+                [],
+                [(
+                    BlockReferenceEntity::new(BlockId::from_raw(3), Point2::ORIGIN, 1.0, 0.0)
+                        .into(),
+                    Properties::default()
+                )],
+            )
+            .err(),
+            Some(TransactionError::UnknownBlock(BlockId::from_raw(3)))
+        );
+        assert_eq!(
+            Drawing::from_tables(
+                [],
+                [],
+                [],
+                [Block::new("Chair", Point2::ORIGIN, vec![seat()])],
+                [(
+                    BlockReferenceEntity::new(BlockId::from_raw(1), Point2::ORIGIN, 0.0, 0.0)
+                        .into(),
+                    Properties::default()
+                )],
+            )
+            .err(),
+            Some(TransactionError::BadBlockScale)
+        );
+        assert_eq!(
+            Drawing::from_tables(
+                [],
+                [],
+                [],
+                [Block::new(
+                    "Chair",
+                    Point2::ORIGIN,
+                    vec![EntityRecord::new(
+                        LineEntity::new(Point2::ORIGIN, Point2::new(1.0, 0.0)),
+                        Properties::on(LayerId::from_raw(4)),
+                    )]
+                )],
+                [],
+            )
+            .err(),
+            Some(TransactionError::UnknownLayer(LayerId::from_raw(4)))
+        );
+        assert_eq!(
+            Drawing::from_tables(
+                [],
+                [],
+                [],
+                [
+                    Block::new("Chair", Point2::ORIGIN, vec![]),
+                    Block::new("CHAIR", Point2::ORIGIN, vec![])
+                ],
+                [],
+            )
+            .err(),
+            Some(TransactionError::DuplicateBlockName(BlockId::from_raw(1)))
         );
     }
 

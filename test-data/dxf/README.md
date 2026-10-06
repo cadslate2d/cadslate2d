@@ -18,7 +18,7 @@ Files with specific expectations (entity counts, report contents, exact coordina
 | `cadslate-m0-line.dxf` | written by `cad_dxf::export` (golden file) | The M0 user-story line, `0,0` to `@1000<45`, with the `TABLES` section every export has. Regenerate with `UPDATE_GOLDEN=1 cargo test -p cad-dxf`. |
 | `ezdxf-r12-three-lines.dxf` | ezdxf 1.4.4, `ezdxf.new("R12")` | A complete R12 file: header, tables, blocks, three lines. |
 | `ezdxf-r2018-two-lines.dxf` | ezdxf 1.4.4, `ezdxf.new("R2018")` | A modern file (AC1032) with handles, subclass markers, objects, and structural `*Model_Space` blocks. Coordinates chosen to need all 17 significant digits. |
-| `ezdxf-r2010-mixed-content.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | Mixed content: lines, circles, an arc, and a polyline (imported), plus text, a user block and its insert (unsupported), and lines carrying a layer and a colour (properties dropped). |
+| `ezdxf-r2010-mixed-content.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | Mixed content: lines, circles, an arc, a polyline, text, a user block and its insert — all imported now — and lines carrying a layer and a colour. |
 
 | `ezdxf-r2010-polylines.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | `LWPOLYLINE` open and closed, one with an arc segment (bulge), an old-style `POLYLINE`, plus a 3D polyline that is reported. |
 | `ezdxf-r12-polylines.dxf` | ezdxf 1.4.4, `ezdxf.new("R12")` | R12 `POLYLINE`/`VERTEX`/`SEQEND`, open and closed — the encoding our own writer uses. |
@@ -28,6 +28,8 @@ Files with specific expectations (entity counts, report contents, exact coordina
 | `ezdxf-r12-text.dxf` | ezdxf 1.4.4, `ezdxf.new("R12")` | A `STYLE` table with `ROMAN`; `TEXT` left, centred, right (rotated, coloured), middle, top-left, and fit, and one in a style the file never defines. |
 | `ezdxf-r2010-mtext.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | `MTEXT`: a paragraph break (`\P`), font, height, colour, and stacking codes, a non-breaking space, attachment points 5 and 9, a rotation, and 300 characters written in pieces (groups 3 then 1). |
 | `ezdxf-r2010-properties.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | Lineweights (group 370) on a layer, on entities, and in `$CELWEIGHT`; a linetype scale of an entity's own (dropped); a complex linetype with text (dashes kept, shapes reported); a layer and a linetype entities name but the file never defines. |
+| `ezdxf-r12-blocks.dxf` | ezdxf 1.4.4, `ezdxf.new("R12")` | A `BLOCKS` section with a chair (a line on layer 0 with a `ByBlock` colour, an arc on its own layer, a coloured circle) and a pair that places the chair twice; `INSERT`s of the pair as it is and scaled, turned, and coloured; of the chair mirrored by a negative X scale and by a negative Y scale; one with a non-uniform scale, one arrayed, and one of a block the file never defines (each reported). |
+| `ezdxf-r2010-block-attributes.dxf` | ezdxf 1.4.4, `ezdxf.new("R2010")` | A block with an `ATTDEF`, placed twice, once with an `ATTRIB` (both reported), once turned. |
 
 ## malformed/
 
@@ -41,6 +43,7 @@ Files with specific expectations (entity counts, report contents, exact coordina
 | `truncated-mid-entity.dxf` | unexpected end |
 | `missing-eof.dxf` | unexpected end |
 | `binary-sentinel.dxf` | binary DXF not supported |
+| `cyclic-blocks.dxf` | tables: block A places B, which places A |
 
 ## Checking the writer with another reader
 

@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 
 use cad_core::Point2;
 use cad_document::{
-    Color, Drawing, Entity, Justification, Layer, LayerId, LineEntity, Linetype, LinetypeDef,
-    LinetypeId, Lineweight, MTextEntity, Properties, TextEntity, TextStyleId,
+    BlockReferenceEntity, Color, Drawing, Entity, Justification, Layer, LayerId, LineEntity,
+    Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity, Properties, TextEntity,
+    TextStyleId,
 };
 use cad_dxf::{DxfError, Import, export, export_with_report, import};
 
@@ -190,16 +191,12 @@ fn unsupported_content_is_counted_and_reported() {
     let report = &import.report;
     assert_eq!((report.circles, report.arcs, report.polylines), (2, 1, 1));
 
-    let counts: Vec<(&str, usize)> = report
-        .unsupported
-        .iter()
-        .map(|(kind, count)| (kind.as_str(), *count))
-        .collect();
-    assert_eq!(
-        counts,
-        vec![("BLOCK", 1), ("INSERT", 1)],
-        "TEXT is imported since #145"
+    assert!(
+        report.unsupported.is_empty(),
+        "TEXT is imported since #145, the block and its INSERT since #149: {:?}",
+        report.unsupported
     );
+    assert_eq!((report.blocks, report.block_references), (1, 1));
     // Since #139 the layer WALLS and the colour are held, not dropped.
     assert_eq!(report.with_dropped_properties, 0);
     let walls = import.drawing.layers().find("WALLS").unwrap();
@@ -218,14 +215,16 @@ fn unsupported_content_is_counted_and_reported() {
         .filter(|(_, record)| record.properties.color == Color::Index(3))
         .count();
     assert_eq!((on_walls, coloured), (1, 1));
-    assert!(report.has_unsupported_content());
+    assert!(
+        !report.has_unsupported_content(),
+        "everything in it is held now"
+    );
     assert_eq!(
         report.summary(),
         vec![
-            "Imported 3 lines, 2 circles, 1 arc, 1 polyline, 1 text.",
-            "Not imported (unsupported): 1 BLOCK, 1 INSERT.",
-            // ezdxf's Defpoints layer and WALLS.
-            "With 2 layers.",
+            "Imported 3 lines, 2 circles, 1 arc, 1 polyline, 1 text, 1 block reference.",
+            // ezdxf's Defpoints layer and WALLS; the DOOR block.
+            "With 2 layers and 1 block.",
             // ezdxf wrote `$INSUNITS 6` into this file's header.
             "Drawing unit: metres.",
         ]
@@ -405,6 +404,145 @@ fn malformed_fixtures_fail_for_the_documented_reason() {
         matches!(e, DxfError::UnexpectedEnd { .. })
     });
     expect("binary-sentinel.dxf", |e| matches!(e, DxfError::BinaryDxf));
+    expect(
+        "cyclic-blocks.dxf",
+        |e| matches!(e, DxfError::Tables(reason) if reason.contains("contain itself")),
+    );
+}
+
+// ── blocks (#149) ──
+
+/// The references of the drawing, in file order.
+fn references(drawing: &Drawing) -> Vec<BlockReferenceEntity> {
+    in_file_order(drawing)
+        .into_iter()
+        .filter_map(|entity| match entity {
+            Entity::BlockRef(reference) => Some(reference),
+            _ => None,
+        })
+        .collect()
+}
+
+fn close(a: Point2, b: Point2) -> bool {
+    a.distance_to(b) < 1e-9
+}
+
+/// Nested blocks written by an independent DXF library: definitions with
+/// properties inside them, a block placing another, and every way an
+/// INSERT can be placed — scaled, turned, mirrored either way, scaled
+/// unevenly, arrayed, and of a block the file never defines.
+#[test]
+fn nested_blocks_from_another_writer() {
+    let loaded = load("valid", "ezdxf-r12-blocks.dxf").unwrap();
+    let drawing = &loaded.drawing;
+    let report = &loaded.report;
+
+    // The two definitions, with their entities' properties as written.
+    let chair = drawing.blocks().find("CHAIR").expect("the chair");
+    let pair = drawing.blocks().find("PAIR").expect("the pair");
+    let furniture = layer_named(drawing, "FURNITURE").0;
+    let records = &drawing.blocks().get(chair).unwrap().entities;
+    let kinds: Vec<&str> = records
+        .iter()
+        .map(|record| record.entity.kind_name())
+        .collect();
+    assert_eq!(kinds, ["line", "arc", "circle"]);
+    assert_eq!(records[0].properties.color, Color::ByBlock);
+    assert_eq!(records[1].properties.layer, furniture);
+    assert_eq!(records[2].properties.color, Color::Index(5));
+    let inner = &drawing.blocks().get(pair).unwrap().entities;
+    assert_eq!(inner.len(), 2, "two chairs in the pair");
+    assert!(matches!(&*inner[1].entity, Entity::BlockRef(reference) if reference.block == chair));
+
+    // The drawing: a line and six references; the ghost is not among them.
+    assert_eq!(lines(drawing), vec![line(0.0, 0.0, 10.0, 0.0)]);
+    let placed = references(drawing);
+    assert_eq!(placed.len(), 6);
+    assert_eq!(
+        placed[0],
+        BlockReferenceEntity::new(pair, Point2::new(100.0, 0.0), 1.0, 0.0)
+    );
+    // Twice the size, a quarter turn, on FURNITURE in green.
+    assert_eq!(placed[1].block, pair);
+    assert_eq!(placed[1].scale, 2.0);
+    assert!((placed[1].rotation - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
+    assert!(!placed[1].mirrored);
+    let turned = properties(drawing)[2];
+    assert_eq!((turned.layer, turned.color), (furniture, Color::Index(3)));
+    // A negative X scale is a mirror across the X axis and a half turn; a
+    // negative Y scale is the mirror alone. Both land where ezdxf put them.
+    assert!(placed[2].mirrored && placed[3].mirrored);
+    assert!((placed[2].rotation - std::f64::consts::PI).abs() < 1e-12);
+    assert_eq!(placed[3].rotation, 0.0);
+    let bounds = |index: usize| drawing.bounds_of(&Entity::BlockRef(placed[index].clone()));
+    assert!(
+        close(bounds(2).min(), Point2::new(-10.0, 50.0))
+            && close(bounds(2).max(), Point2::new(0.0, 62.0))
+    );
+    assert!(
+        close(bounds(3).min(), Point2::new(0.0, 68.0))
+            && close(bounds(3).max(), Point2::new(10.0, 80.0))
+    );
+    // The pair twice the size and turned: 60 up, 24 across to the left.
+    assert!(
+        close(bounds(1).min(), Point2::new(76.0, 100.0))
+            && close(bounds(1).max(), Point2::new(100.0, 160.0))
+    );
+    // Uneven scales come in at the X magnitude; an array as its first copy.
+    assert_eq!((placed[4].scale, placed[4].mirrored), (2.0, false));
+    assert_eq!(
+        placed[5],
+        BlockReferenceEntity::new(chair, Point2::new(0.0, -50.0), 1.0, 0.0)
+    );
+
+    assert_eq!((report.blocks, report.block_references), (2, 6));
+    assert!(report.has_unsupported_content());
+    assert_eq!(
+        report.summary(),
+        vec![
+            "Imported 1 line, 6 block references.",
+            "Not imported (unsupported): 1 (INSERT array), 1 (INSERT of an undefined block), 1 (INSERT with a non-uniform scale).",
+            // FURNITURE and ezdxf's Defpoints.
+            "With 2 layers and 2 blocks.",
+        ]
+    );
+
+    // Our export holds what the model holds, and reads back the same.
+    let exported = export_with_report(drawing);
+    assert!(!exported.report.is_lossy());
+    let again = import(exported.text.as_bytes()).unwrap();
+    assert_eq!(references(&again.drawing), placed);
+    assert_eq!(again.drawing.blocks().len(), 3);
+    assert!(!again.report.has_unsupported_content());
+    assert_eq!(export(&again.drawing), exported.text, "byte-identical");
+}
+
+/// A block with attributes, from a modern file: the geometry and the
+/// references come in, the attribute definitions and values are reported.
+#[test]
+fn block_attributes_are_reported() {
+    let import = load("valid", "ezdxf-r2010-block-attributes.dxf").unwrap();
+    let drawing = &import.drawing;
+    let tag = drawing.blocks().find("TAG").expect("the tag");
+    let records = &drawing.blocks().get(tag).unwrap().entities;
+    assert_eq!(records.len(), 1, "the frame; the ATTDEF is not an entity");
+    assert!(matches!(&*records[0].entity, Entity::Polyline(polyline) if polyline.closed));
+    let placed = references(drawing);
+    assert_eq!(placed.len(), 2);
+    assert!((placed[1].rotation.to_degrees() - 45.0).abs() < 1e-9);
+
+    let report = &import.report;
+    assert_eq!(
+        report.polylines, 0,
+        "the frame is the block's, not the drawing's"
+    );
+    assert_eq!((report.blocks, report.block_references), (1, 2));
+    let counts: Vec<(&str, usize)> = report
+        .unsupported
+        .iter()
+        .map(|(kind, count)| (kind.as_str(), *count))
+        .collect();
+    assert_eq!(counts, vec![("(INSERT attributes)", 1), ("ATTDEF", 1)]);
 }
 
 // ── layers, colours, linetypes, lineweights (#139) ──
