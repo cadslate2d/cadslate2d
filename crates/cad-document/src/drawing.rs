@@ -7,6 +7,7 @@ use std::sync::Arc;
 use cad_core::{Aabb, EntityId, LengthUnit};
 
 use crate::block::{Block, BlockId, BlockTable, initial_blocks};
+use crate::dim_style::{DimStyle, DimStyleError, DimStyleId, DimStyleTable, initial_dim_styles};
 use crate::history::History;
 use crate::id_alloc::EntityIdAllocator;
 use crate::layer::{Layer, LayerId, LayerTable, initial_layers};
@@ -36,6 +37,7 @@ pub struct Drawing {
     layers: LayerTable,
     linetypes: LinetypeTable,
     text_styles: TextStyleTable,
+    dim_styles: DimStyleTable,
     blocks: BlockTable,
     settings: DrawingSettings,
     ids: EntityIdAllocator,
@@ -98,6 +100,20 @@ pub enum TransactionError {
     DuplicateLinetypeName(LinetypeId),
     /// `LTSCALE` must be a positive number.
     BadLtscale,
+    /// The dimension style does not exist, in the drawing or earlier in
+    /// this transaction.
+    UnknownDimStyle(DimStyleId),
+    /// `Standard` is always there: it cannot be removed.
+    PermanentDimStyle,
+    /// The style is the one new dimensions take, or a dimension has it: it
+    /// cannot be removed.
+    DimStyleInUse(DimStyleId),
+    /// The name cannot be a dimension style's name.
+    BadDimStyleName(NameError),
+    /// This dimension style already has the name, give or take its case.
+    DuplicateDimStyleName(DimStyleId),
+    /// A value of the style is not one a dimension can be drawn by.
+    BadDimStyle(DimStyleError),
     /// The text style does not exist, in the drawing or earlier in this
     /// transaction.
     UnknownTextStyle(TextStyleId),
@@ -158,6 +174,14 @@ impl fmt::Display for TransactionError {
                 write!(f, "linetype {id} already has that name")
             }
             Self::BadLtscale => write!(f, "LTSCALE must be a positive number"),
+            Self::UnknownDimStyle(id) => write!(f, "dimension style {id} does not exist"),
+            Self::PermanentDimStyle => write!(f, "dimension style Standard cannot be removed"),
+            Self::DimStyleInUse(id) => write!(f, "dimension style {id} is in use"),
+            Self::BadDimStyleName(error) => write!(f, "{}", error.explain("dimension style")),
+            Self::DuplicateDimStyleName(id) => {
+                write!(f, "dimension style {id} already has that name")
+            }
+            Self::BadDimStyle(error) => write!(f, "{}", error.explain()),
             Self::UnknownTextStyle(id) => write!(f, "text style {id} does not exist"),
             Self::PermanentTextStyle => write!(f, "text style Standard cannot be removed"),
             Self::TextStyleInUse(id) => write!(f, "text style {id} has texts"),
@@ -200,6 +224,7 @@ impl Drawing {
             layers: initial_layers(),
             linetypes: initial_linetypes(),
             text_styles: initial_text_styles(),
+            dim_styles: initial_dim_styles(),
             blocks: initial_blocks(),
             settings: DrawingSettings::default(),
             ids: EntityIdAllocator::new(),
@@ -237,7 +262,7 @@ impl Drawing {
         linetypes: impl IntoIterator<Item = LinetypeDef>,
         entities: impl IntoIterator<Item = (Entity, Properties)>,
     ) -> Result<Self, TransactionError> {
-        Self::from_tables(layers, linetypes, [], [], entities)
+        Self::from_tables(layers, linetypes, [], [], [], entities)
     }
 
     /// [`from_parts`](Self::from_parts) with text styles and blocks as
@@ -249,10 +274,32 @@ impl Drawing {
         layers: impl IntoIterator<Item = Layer>,
         linetypes: impl IntoIterator<Item = LinetypeDef>,
         text_styles: impl IntoIterator<Item = TextStyle>,
+        dim_styles: impl IntoIterator<Item = DimStyle>,
         blocks: impl IntoIterator<Item = Block>,
         entities: impl IntoIterator<Item = (Entity, Properties)>,
     ) -> Result<Self, TransactionError> {
         let mut drawing = Self::new();
+        for style in dim_styles {
+            check_name(&style.name).map_err(TransactionError::BadDimStyleName)?;
+            style.check().map_err(TransactionError::BadDimStyle)?;
+            match drawing.dim_styles.find(&style.name) {
+                Some(id) if id == DimStyleId::FIRST => {
+                    let before = drawing.dim_styles.get(DimStyleId::FIRST).cloned();
+                    drawing.dim_styles.apply(&TableChange::Replace {
+                        id: DimStyleId::FIRST,
+                        before: before.expect("Standard is always there"),
+                        after: style,
+                    });
+                    continue;
+                }
+                Some(taken) => return Err(TransactionError::DuplicateDimStyleName(taken)),
+                None => {}
+            }
+            let id = drawing.dim_styles.allocate();
+            drawing
+                .dim_styles
+                .apply(&TableChange::Insert { id, row: style });
+        }
         for style in text_styles {
             check_name(&style.name).map_err(TransactionError::BadTextStyleName)?;
             match drawing.text_styles.find(&style.name) {
@@ -440,6 +487,16 @@ impl Drawing {
         &self.text_styles
     }
 
+    /// The dimension style table. It always holds `Standard`.
+    pub fn dim_styles(&self) -> &DimStyleTable {
+        &self.dim_styles
+    }
+
+    /// The style new dimensions are drawn by.
+    pub fn current_dim_style(&self) -> DimStyleId {
+        self.settings.current_dim_style
+    }
+
     /// The block table. It always holds `*Model_Space`, the drawing itself.
     pub fn blocks(&self) -> &BlockTable {
         &self.blocks
@@ -504,6 +561,7 @@ impl Drawing {
         tx.set_current_layer(settings.current_layer)?;
         tx.set_current_linetype(settings.current_linetype)?;
         tx.set_ltscale(settings.ltscale)?;
+        tx.set_current_dim_style(settings.current_dim_style)?;
         tx.set_current_color(settings.current_color);
         tx.set_current_lineweight(settings.current_lineweight);
         tx.set_unit(settings.unit);
@@ -644,6 +702,7 @@ impl Drawing {
                 Change::Layer(_)
                 | Change::Linetype(_)
                 | Change::TextStyle(_)
+                | Change::DimStyle(_)
                 | Change::Block(_)
                 | Change::Settings(_) => false,
             };
@@ -682,6 +741,10 @@ impl Drawing {
                 }
                 Change::TextStyle(change) => {
                     self.text_styles.apply(change);
+                    report.tables_changed = true;
+                }
+                Change::DimStyle(change) => {
+                    self.dim_styles.apply(change);
                     report.tables_changed = true;
                 }
                 Change::Block(change) => {
@@ -889,6 +952,7 @@ impl TransactionBuilder<'_> {
             | Change::Layer(_)
             | Change::Linetype(_)
             | Change::TextStyle(_)
+            | Change::DimStyle(_)
             | Change::Block(_)
             | Change::Settings(_) => false,
         });
@@ -1089,6 +1153,116 @@ impl TransactionBuilder<'_> {
         }
         self.push_other(Change::TextStyle(TableChange::Remove { id, row }));
         Ok(())
+    }
+
+    /// Adds a dimension style and returns its ID. Its name must be allowed
+    /// and not taken, and its values ones a dimension can be drawn by.
+    pub fn add_dim_style(&mut self, style: DimStyle) -> Result<DimStyleId, TransactionError> {
+        check_name(&style.name).map_err(TransactionError::BadDimStyleName)?;
+        style.check().map_err(TransactionError::BadDimStyle)?;
+        self.free_dim_style_name(&style.name, None)?;
+        let id = self.drawing.dim_styles.allocate();
+        self.push_other(Change::DimStyle(TableChange::Insert { id, row: style }));
+        Ok(id)
+    }
+
+    /// Replaces a dimension style's row — its values, or its name —
+    /// keeping its ID, and so every dimension drawn by it: one change,
+    /// however many (§19.6). `Standard` may change its values and not its
+    /// name.
+    pub fn replace_dim_style(
+        &mut self,
+        id: DimStyleId,
+        style: DimStyle,
+    ) -> Result<(), TransactionError> {
+        let before = self
+            .dim_style_now(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownDimStyle(id))?;
+        style.check().map_err(TransactionError::BadDimStyle)?;
+        if !same_name(&style.name, &before.name) {
+            if id == DimStyleId::FIRST {
+                return Err(TransactionError::PermanentDimStyle);
+            }
+            check_name(&style.name).map_err(TransactionError::BadDimStyleName)?;
+            self.free_dim_style_name(&style.name, Some(id))?;
+        }
+        self.push_other(Change::DimStyle(TableChange::Replace {
+            id,
+            before,
+            after: style,
+        }));
+        Ok(())
+    }
+
+    /// Removes a dimension style that is not `Standard` and not the one
+    /// new dimensions take.
+    pub fn remove_dim_style(&mut self, id: DimStyleId) -> Result<(), TransactionError> {
+        if id == DimStyleId::FIRST {
+            return Err(TransactionError::PermanentDimStyle);
+        }
+        let row = self
+            .dim_style_now(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownDimStyle(id))?;
+        if self.settings_now().current_dim_style == id {
+            return Err(TransactionError::DimStyleInUse(id));
+        }
+        self.push_other(Change::DimStyle(TableChange::Remove { id, row }));
+        Ok(())
+    }
+
+    /// Sets the style new dimensions are drawn by. It must exist.
+    pub fn set_current_dim_style(&mut self, id: DimStyleId) -> Result<(), TransactionError> {
+        if self.dim_style_now(id).is_none() {
+            return Err(TransactionError::UnknownDimStyle(id));
+        }
+        self.set_settings(DrawingSettings {
+            current_dim_style: id,
+            ..self.settings_now()
+        });
+        Ok(())
+    }
+
+    /// Refuses a dimension style name another row has, `except` the row
+    /// being renamed.
+    fn free_dim_style_name(
+        &self,
+        name: &str,
+        except: Option<DimStyleId>,
+    ) -> Result<(), TransactionError> {
+        let taken = self
+            .drawing
+            .dim_styles
+            .iter()
+            .map(|(id, _)| id)
+            .chain(self.others().filter_map(|change| match change {
+                Change::DimStyle(TableChange::Insert { id, .. }) => Some(*id),
+                _ => None,
+            }))
+            .filter(|id| Some(*id) != except)
+            .find(|id| {
+                self.dim_style_now(*id)
+                    .is_some_and(|row| same_name(&row.name, name))
+            });
+        match taken {
+            Some(id) => Err(TransactionError::DuplicateDimStyleName(id)),
+            None => Ok(()),
+        }
+    }
+
+    /// The dimension style `id` as it will be once this transaction commits.
+    fn dim_style_now(&self, id: DimStyleId) -> Option<&DimStyle> {
+        let change = self.others().rev().find_map(|change| match change {
+            Change::DimStyle(change) if change.id() == id => Some(change),
+            _ => None,
+        });
+        match change {
+            Some(TableChange::Remove { .. }) => None,
+            Some(TableChange::Insert { row, .. }) => Some(row),
+            Some(TableChange::Replace { after, .. }) => Some(after),
+            None => self.drawing.dim_styles.get(id),
+        }
     }
 
     /// Defines a block and returns its ID. Its name must be allowed and
@@ -2878,6 +3052,7 @@ mod tests {
             [],
             [TextStyle::named("standard"), TextStyle::named("Roman")],
             [],
+            [],
             [(text(roman), Properties::default())],
         )
         .unwrap();
@@ -2892,7 +3067,7 @@ mod tests {
         );
         assert_eq!(drawing.text_styles().find("roman"), Some(roman));
         assert_eq!(
-            Drawing::from_tables([], [], [], [], [(text(roman), Properties::default())]).err(),
+            Drawing::from_tables([], [], [], [], [], [(text(roman), Properties::default())]).err(),
             Some(TransactionError::UnknownTextStyle(roman))
         );
         assert_eq!(
@@ -2900,6 +3075,7 @@ mod tests {
                 [],
                 [],
                 [TextStyle::named("a"), TextStyle::named("A")],
+                [],
                 [],
                 []
             )
@@ -2932,6 +3108,7 @@ mod tests {
             [],
             [],
             [],
+            [],
             [
                 Block::new(
                     "Pair",
@@ -2959,6 +3136,7 @@ mod tests {
             [],
             [],
             [],
+            [],
             [
                 Block::new("A", Point2::ORIGIN, vec![place(BlockId::from_raw(2), 0.0)]),
                 Block::new("B", Point2::ORIGIN, vec![place(BlockId::from_raw(1), 0.0)]),
@@ -2977,6 +3155,7 @@ mod tests {
                 [],
                 [],
                 [],
+                [],
                 [(
                     BlockReferenceEntity::new(BlockId::from_raw(3), Point2::ORIGIN, 1.0, 0.0)
                         .into(),
@@ -2988,6 +3167,7 @@ mod tests {
         );
         assert_eq!(
             Drawing::from_tables(
+                [],
                 [],
                 [],
                 [],
@@ -3006,6 +3186,7 @@ mod tests {
                 [],
                 [],
                 [],
+                [],
                 [Block::new(
                     "Chair",
                     Point2::ORIGIN,
@@ -3021,6 +3202,7 @@ mod tests {
         );
         assert_eq!(
             Drawing::from_tables(
+                [],
                 [],
                 [],
                 [],
@@ -3048,6 +3230,7 @@ mod tests {
             current_color: Color::Index(3),
             current_linetype: Linetype::Named(LinetypeId::from_raw(1)),
             current_lineweight: Lineweight::Hundredths(50),
+            current_dim_style: DimStyleId::FIRST,
             ltscale: 25.0,
             unit: Some(LengthUnit::Millimetres),
         };
@@ -3069,6 +3252,87 @@ mod tests {
                 .err(),
             Some(TransactionError::BadLtscale)
         );
+    }
+
+    #[test]
+    fn dimension_styles_are_a_table_with_standard_that_new_dimensions_take() {
+        let mut drawing = Drawing::new();
+        assert_eq!(drawing.dim_styles().len(), 1);
+        assert_eq!(drawing.current_dim_style(), DimStyleId::FIRST);
+
+        let mut tx = drawing.transaction();
+        let arch = tx.add_dim_style(DimStyle::named("Arch")).unwrap();
+        assert_eq!(arch, DimStyleId::from_raw(1));
+        assert_eq!(
+            tx.add_dim_style(DimStyle::named("ARCH")),
+            Err(TransactionError::DuplicateDimStyleName(arch))
+        );
+        assert_eq!(
+            tx.add_dim_style(DimStyle::named("standard")),
+            Err(TransactionError::DuplicateDimStyleName(DimStyleId::FIRST))
+        );
+        assert_eq!(
+            tx.add_dim_style(DimStyle::named("a/b")),
+            Err(TransactionError::BadDimStyleName(NameError::Forbidden('/')))
+        );
+        let mut flat = DimStyle::named("Flat");
+        flat.text_height = 0.0;
+        assert_eq!(
+            tx.add_dim_style(flat),
+            Err(TransactionError::BadDimStyle(DimStyleError::NotPositive(
+                "text height"
+            )))
+        );
+        tx.set_current_dim_style(arch).unwrap();
+        assert_eq!(
+            tx.set_current_dim_style(DimStyleId::from_raw(9)),
+            Err(TransactionError::UnknownDimStyle(DimStyleId::from_raw(9)))
+        );
+        tx.commit();
+        assert_eq!(drawing.current_dim_style(), arch);
+
+        // The current style cannot go; Standard never can; the values of
+        // either may change, and a style other than Standard may be renamed.
+        let arch_row = drawing.dim_styles().get(arch).unwrap().clone();
+        let standard_row = drawing.dim_styles().get(DimStyleId::FIRST).unwrap().clone();
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.remove_dim_style(arch),
+            Err(TransactionError::DimStyleInUse(arch))
+        );
+        assert_eq!(
+            tx.remove_dim_style(DimStyleId::FIRST),
+            Err(TransactionError::PermanentDimStyle)
+        );
+        let mut taller = arch_row;
+        taller.text_height = 5.0;
+        tx.replace_dim_style(arch, taller.clone()).unwrap();
+        assert_eq!(
+            tx.replace_dim_style(arch, taller.renamed("Standard")),
+            Err(TransactionError::DuplicateDimStyleName(DimStyleId::FIRST))
+        );
+        assert_eq!(
+            tx.replace_dim_style(DimStyleId::FIRST, standard_row.renamed("Std")),
+            Err(TransactionError::PermanentDimStyle)
+        );
+        tx.replace_dim_style(arch, taller.renamed("Architectural"))
+            .unwrap();
+        tx.commit();
+        assert_eq!(
+            drawing.dim_styles().get(arch).unwrap().name,
+            "Architectural"
+        );
+        assert_eq!(drawing.dim_styles().get(arch).unwrap().text_height, 5.0);
+
+        // Back to Standard, then the other style can go; undo brings it back.
+        let mut tx = drawing.transaction();
+        tx.set_current_dim_style(DimStyleId::FIRST).unwrap();
+        tx.remove_dim_style(arch).unwrap();
+        tx.commit();
+        assert_eq!(drawing.dim_styles().len(), 1);
+        drawing.undo().unwrap();
+        assert_eq!(drawing.dim_styles().len(), 2, "one history for all tables");
+        assert_eq!(drawing.current_dim_style(), arch);
     }
 
     #[test]
@@ -3553,6 +3817,12 @@ mod tests {
         AddTextStyle(u8),
         CreateText(f64, usize),
         RemoveTextStyle(usize),
+        /// A dimension style by name; one restyled (a text height, which
+        /// may be refused) or renamed; one removed; one made current.
+        AddDimStyle(u8),
+        RestyleDimStyle(usize, f64, u8),
+        RemoveDimStyle(usize),
+        SetDimStyle(usize),
         /// A block of one line by name; a reference to a block by index
         /// (one past the table is a block that does not exist); a block
         /// redefined with a line of another length, or to hold another
@@ -3600,6 +3870,10 @@ mod tests {
             1 => any::<usize>().prop_map(Op::RemoveBlock),
             2 => (coordinate(), any::<usize>()).prop_map(|(x, style)| Op::CreateText(x, style)),
             1 => any::<usize>().prop_map(Op::RemoveTextStyle),
+            1 => (0..5u8).prop_map(Op::AddDimStyle),
+            1 => (any::<usize>(), -1.0..5.0f64, 0..5u8).prop_map(|(i, h, n)| Op::RestyleDimStyle(i, h, n)),
+            1 => any::<usize>().prop_map(Op::RemoveDimStyle),
+            1 => any::<usize>().prop_map(Op::SetDimStyle),
             1 => (any::<usize>(), coordinate()).prop_map(|(i, x)| Op::Together(i, x)),
             3 => Just(Op::Undo),
             2 => Just(Op::Redo),
@@ -3613,6 +3887,7 @@ mod tests {
         Vec<(LayerId, Layer)>,
         Vec<(LinetypeId, LinetypeDef)>,
         Vec<(TextStyleId, TextStyle)>,
+        Vec<(DimStyleId, DimStyle)>,
         Vec<(BlockId, Block)>,
         DrawingSettings,
     );
@@ -3638,6 +3913,11 @@ mod tests {
             .iter()
             .map(|(id, style)| (id, style.clone()))
             .collect();
+        let dim_styles = drawing
+            .dim_styles()
+            .iter()
+            .map(|(id, style)| (id, style.clone()))
+            .collect();
         let blocks = drawing
             .blocks()
             .iter()
@@ -3648,6 +3928,7 @@ mod tests {
             layers,
             linetypes,
             text_styles,
+            dim_styles,
             blocks,
             drawing.settings(),
         )
@@ -3877,6 +4158,59 @@ mod tests {
                         let removed = tx.remove_text_style(id);
                         tx.commit();
                         prop_assert_eq!(removed.is_ok(), id != TextStyleId::FIRST && !used, "{:?}", removed);
+                    }
+                    Op::AddDimStyle(name) => {
+                        let name = format!("Dim {name}");
+                        let taken = drawing.dim_styles().find(&name);
+                        let mut tx = drawing.transaction();
+                        let added = tx.add_dim_style(DimStyle::named(name.to_uppercase()));
+                        tx.commit();
+                        match (added, taken) {
+                            (Ok(_), None) => {}
+                            (Err(TransactionError::DuplicateDimStyleName(id)), Some(existing)) => {
+                                prop_assert_eq!(id, existing);
+                            }
+                            other => prop_assert!(false, "adding a dimension style: {:?}", other),
+                        }
+                    }
+                    Op::RestyleDimStyle(pick, height, name) => {
+                        let styles: Vec<DimStyleId> = drawing.dim_styles().iter().map(|(id, _)| id).collect();
+                        let id = styles[pick % styles.len()];
+                        let mut style = drawing.dim_styles().get(id).unwrap().clone();
+                        style.text_height = height;
+                        let rename = name % 2 == 0;
+                        let new_name = format!("DIM {name}");
+                        if rename {
+                            style = style.renamed(new_name.clone());
+                        }
+                        let name_taken = drawing.dim_styles().find(&new_name).is_some_and(|other| other != id);
+                        let mut tx = drawing.transaction();
+                        let replaced = tx.replace_dim_style(id, style);
+                        tx.commit();
+                        let allowed = height > 0.0
+                            && !(rename && id == DimStyleId::FIRST)
+                            && !(rename && name_taken);
+                        prop_assert_eq!(replaced.is_ok(), allowed, "{:?}", replaced);
+                        prop_assert!(drawing.dim_styles().iter().all(|(_, s)| s.check().is_ok()));
+                    }
+                    Op::RemoveDimStyle(pick) => {
+                        let styles: Vec<DimStyleId> = drawing.dim_styles().iter().map(|(id, _)| id).collect();
+                        let id = styles[pick % styles.len()];
+                        let current = drawing.current_dim_style() == id;
+                        let mut tx = drawing.transaction();
+                        let removed = tx.remove_dim_style(id);
+                        tx.commit();
+                        prop_assert_eq!(removed.is_ok(), id != DimStyleId::FIRST && !current, "{:?}", removed);
+                    }
+                    Op::SetDimStyle(pick) => {
+                        let styles: Vec<DimStyleId> = drawing.dim_styles().iter().map(|(id, _)| id).collect();
+                        let index = pick % (styles.len() + 1);
+                        let id = styles.get(index).copied().unwrap_or(DimStyleId::from_raw(u32::MAX));
+                        let mut tx = drawing.transaction();
+                        let set = tx.set_current_dim_style(id);
+                        tx.commit();
+                        prop_assert_eq!(set.is_ok(), index < styles.len());
+                        prop_assert!(drawing.dim_styles().contains(drawing.current_dim_style()));
                     }
                     Op::DefineBlock(name, len) => {
                         let name = format!("Block {name}");

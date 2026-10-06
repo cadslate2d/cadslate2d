@@ -6,6 +6,7 @@
 
 use cad_core::LengthUnit;
 
+use crate::dim_style::DimStyleId;
 use crate::layer::LayerId;
 use crate::{Color, Linetype, Lineweight};
 
@@ -20,6 +21,8 @@ pub struct DrawingSettings {
     pub current_linetype: Linetype,
     /// The lineweight new objects are given: `ByLayer` unless set otherwise.
     pub current_lineweight: Lineweight,
+    /// The style new dimensions are drawn by (`DIMSTYLE`).
+    pub current_dim_style: DimStyleId,
     /// What every linetype pattern is multiplied by (`LTSCALE`): the one
     /// knob that fits dashes to the size of what is drawn. Positive.
     pub ltscale: f64,
@@ -44,6 +47,7 @@ impl Default for DrawingSettings {
             current_color: Color::ByLayer,
             current_linetype: Linetype::ByLayer,
             current_lineweight: Lineweight::ByLayer,
+            current_dim_style: DimStyleId::FIRST,
             ltscale: Self::DEFAULT_LTSCALE,
             unit: None,
         }
@@ -93,6 +97,7 @@ mod tests {
                 current_color: Color::Index(1),
                 current_linetype: Linetype::CONTINUOUS,
                 current_lineweight: Lineweight::Hundredths(25),
+                current_dim_style: DimStyleId::from_raw(2),
                 ltscale: 2.5,
                 unit: Some(LengthUnit::Metres),
             },

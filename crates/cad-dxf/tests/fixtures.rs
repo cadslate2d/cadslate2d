@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use cad_core::Point2;
 use cad_document::{
-    BlockReferenceEntity, Color, Drawing, Entity, Justification, Layer, LayerId, LineEntity,
-    Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity, Properties, TextEntity,
+    BlockReferenceEntity, Color, DimStyleId, Drawing, Entity, Justification, Layer, LayerId,
+    LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity, Properties, TextEntity,
     TextStyleId,
 };
 use cad_dxf::{DxfError, Import, export, import};
@@ -928,6 +928,86 @@ fn text_and_styles_from_another_writer() {
     assert!(text.contains("AcDbTextStyleTableRecord\n  2\nROMAN\n"));
     assert!(text.contains("  7\nROMAN\n"));
     let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(export(&back.drawing), text, "export → import → export");
+}
+
+/// A newer file's DIMSTYLE table: the variables the drawing holds are read,
+/// the suffix from DIMPOST, the current style from `$DIMSTYLE`; a row with
+/// a value a dimension cannot be drawn by keeps the default and is reported.
+#[test]
+fn dimension_styles_from_another_writer() {
+    let import = load("valid", "ezdxf-r2010-dimstyles.dxf").unwrap();
+    let drawing = &import.drawing;
+    let styles = drawing.dim_styles();
+    assert_eq!(styles.len(), 4, "Standard, ARCH, CIVIL, FLAT");
+    let standard = styles.get(DimStyleId::FIRST).unwrap();
+    assert_eq!(standard.name, "Standard", "ezdxf's Standard restyles ours");
+    assert_eq!(standard.text_height, 2.5);
+
+    let arch = styles.find("arch").unwrap();
+    assert_eq!(drawing.current_dim_style(), arch, "$DIMSTYLE");
+    let arch = styles.get(arch).unwrap();
+    assert_eq!(arch.name, "ARCH");
+    assert_eq!(
+        (
+            arch.text_height,
+            arch.arrow_size,
+            arch.text_gap,
+            arch.extension_offset,
+            arch.extension_overshoot
+        ),
+        (3.5, 2.0, 1.0, 0.5, 1.5)
+    );
+    assert_eq!((arch.decimals, arch.suffix.as_str()), (1, " mm"));
+    assert_eq!(arch.format(12.345), "12.3 mm");
+
+    let civil = styles.get(styles.find("CIVIL").unwrap()).unwrap();
+    assert_eq!((civil.text_height, civil.decimals), (5.0, 0));
+    // A DIMPOST without `<>` is all suffix; its leading space goes as every
+    // value's does, since the reader trims what it reads.
+    assert_eq!(civil.suffix, "m");
+    assert_eq!(
+        civil.arrow_size, 2.5,
+        "what the row left out is the default"
+    );
+
+    let flat = styles.get(styles.find("FLAT").unwrap()).unwrap();
+    assert_eq!(flat.text_height, 2.5, "a zero height is not taken");
+    assert!(flat.check().is_ok());
+
+    let report = &import.report;
+    assert_eq!(report.dim_styles, 3);
+    assert_eq!(report.unsupported.get("(dimension style values)"), Some(&1));
+    assert_eq!(
+        report.summary()[..3],
+        [
+            "Imported 1 line.",
+            "Not imported (unsupported): 1 (dimension style values).",
+            // ezdxf's Defpoints layer.
+            "With 1 layer and 3 dimension styles."
+        ]
+    );
+
+    // What came in goes out — the rows with their variables, the current
+    // style in the header — and comes back the same.
+    let text = export(drawing);
+    assert!(text.contains("  9\n$DIMSTYLE\n  2\nARCH\n"));
+    assert!(text.contains(
+        "AcDbDimStyleTableRecord\n  2\nARCH\n 70\n0\n  3\n<> mm\n 41\n2.0\n 42\n0.5\n 44\n1.5\n140\n3.5\n147\n1.0\n271\n1\n"
+    ));
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(back.drawing.dim_styles().len(), 4);
+    assert_eq!(
+        back.drawing
+            .dim_styles()
+            .get(back.drawing.current_dim_style())
+            .unwrap(),
+        arch
+    );
+    assert!(
+        !back.report.has_unsupported_content(),
+        "our own rows are whole"
+    );
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }
 

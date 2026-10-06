@@ -38,6 +38,7 @@ Everything else in the header is skipped.
 | `$CELWEIGHT` (370) | The lineweight for new objects | Not `ByLayer` | the same |
 | `$LTSCALE` (40) | The linetype scale, if finite and positive | Not 1 | the same |
 | `$EXTMIN`, `$EXTMAX` | Nothing | The drawing has anything in it | `a_line_is_written_with_its_handle_owner_layer_and_coordinates()` |
+| `$DIMSTYLE` | The current dimension style, by name; `Standard` when the file names none the table defines | When the current style is not `Standard` | `dimension_styles_from_another_writer()` |
 | `$HANDSEED` | Nothing | Always: the first free handle | `an_empty_drawing_is_a_complete_file_with_its_permanent_rows()` |
 
 ## Tables
@@ -49,7 +50,8 @@ Everything else in the header is skipped.
 | `STYLE` | Its name: that is all the drawing keeps of a text style. `Standard` restyles the permanent row | Every text style: name, no fixed height, width factor 1, the stroke font `txt` | `text_and_styles_from_another_writer()`, `a_text_style_other_than_standard_is_named_on_its_texts()`, `ezdxf-r12-text.dxf` |
 | `BLOCK_RECORD` | Nothing: blocks are read from `BLOCKS` | `*Model_Space` and `*Paper_Space`, pointing at their layouts; one row per block | `blocks_are_written_as_records_definitions_and_inserts_and_survive_a_round_trip()` |
 | `VPORT` | Nothing | One `*Active` viewport centred on the drawing's extents | `the_viewport_looks_at_the_whole_drawing()` |
-| `VIEW`, `UCS`, `DIMSTYLE` | Nothing | Empty | `an_empty_drawing_is_a_complete_file_with_its_permanent_rows()` |
+| `DIMSTYLE` | Name (2); the suffix from `DIMPOST` (3), the text after `<>`, or all of it when there is no `<>`; arrow size (41); extension offset (42) and overshoot (44); text height (140); text gap (147); decimals (271). A value a dimension cannot be drawn by — a zero height, a negative gap, more than 8 decimals — keeps the default and is reported. The first row of a name counts; `Standard` restyles the permanent row | Every dimension style: handle (105), name, flags, `DIMPOST` as `<>` and the suffix when there is one, and the same six variables | `dimension_styles_from_another_writer()`, `ezdxf-r2010-dimstyles.dxf` |
+| `VIEW`, `UCS` | Nothing | Empty | `an_empty_drawing_is_a_complete_file_with_its_permanent_rows()` |
 | `APPID` | Nothing | `ACAD` | the same |
 
 A layer, linetype, or text style that an entity or the header names but no table defines is made — a new layer's settings, a continuous linetype, a style with that name — and the import report says so (`names_the_file_uses_but_never_defines_are_created_and_reported()`).
@@ -100,7 +102,8 @@ What the reader could not hold is counted under these keys and named in the comm
 | A type name (`HATCH`, `DIMENSION`, `SPLINE`, …) | An entity of a kind the drawing has no entity for |
 | `POLYLINE` | A 3D polyline, mesh, or polyface mesh |
 | `(invalid geometry)` | A circle or arc with a radius that is not positive; a polyline of fewer than two vertices; an `INSERT` with no block name or a scale of zero |
-| `(layer name)`, `(linetype name)`, `(text style name)`, `(block name)` | A table row or block whose name no row can have |
+| `(layer name)`, `(linetype name)`, `(text style name)`, `(dimension style name)`, `(block name)` | A table row or block whose name no row can have |
+| `(dimension style values)` | A dimension style with a value a dimension cannot be drawn by: the default stands for it |
 | `(linetype pattern)` | A pattern the drawing cannot hold: the linetype is continuous |
 | `(linetype shapes)` | Text or shapes in a complex linetype: the dashes are kept |
 | `(layer true colour)` | A layer with a true colour: it has the nearest index |

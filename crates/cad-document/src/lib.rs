@@ -10,6 +10,7 @@
 
 mod aci;
 mod block;
+mod dim_style;
 mod drawing;
 mod editing;
 mod entity;
@@ -35,6 +36,7 @@ mod transaction;
 
 pub use aci::{FOREGROUND_INDEX, Paint, index_paint, nearest_index};
 pub use block::{Block, BlockChange, BlockId, BlockReferenceEntity, BlockTable, empty_blocks};
+pub use dim_style::{DimStyle, DimStyleChange, DimStyleError, DimStyleId, DimStyleTable};
 pub use drawing::{ApplyReport, Drawing, TransactionBuilder, TransactionError};
 pub use editing::{
     BreakError, CornerError, Cornered, ExtendError, OffsetError, StretchHold, TrimError, TrimParts,

@@ -40,6 +40,8 @@ pub struct ImportReport {
     pub text_styles: usize,
     /// Text styles a text named but the file did not define.
     pub created_text_styles: usize,
+    /// Dimension styles besides `Standard` in the drawing after the import.
+    pub dim_styles: usize,
     /// Block definitions in the drawing after the import.
     pub blocks: usize,
     /// MTEXT entities whose formatting — fonts, heights, colours,
@@ -107,11 +109,12 @@ impl ImportReport {
             format!("Imported {}.", imported.join(", "))
         }];
         lines.extend(self.unsupported_line());
-        if self.layers + self.linetypes + self.text_styles + self.blocks > 0 {
+        if self.layers + self.linetypes + self.text_styles + self.dim_styles + self.blocks > 0 {
             let tables: Vec<String> = [
                 (self.layers, "layer", "layers"),
                 (self.linetypes, "linetype", "linetypes"),
                 (self.text_styles, "text style", "text styles"),
+                (self.dim_styles, "dimension style", "dimension styles"),
                 (self.blocks, "block", "blocks"),
             ]
             .into_iter()

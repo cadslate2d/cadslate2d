@@ -108,7 +108,7 @@ fn layers(count: usize) -> String {
 }
 
 /// The names in a comma-separated list, trimmed, without repeats.
-fn names(text: &str) -> Vec<&str> {
+pub(super) fn names(text: &str) -> Vec<&str> {
     let mut names: Vec<&str> = Vec::new();
     for name in text.split(',').map(str::trim) {
         if !names.iter().any(|seen| same_name(seen, name)) {

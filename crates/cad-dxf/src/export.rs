@@ -15,10 +15,10 @@ use std::fmt::Write;
 
 use cad_core::{EntityId, LengthUnit, Point2};
 use cad_document::{
-    ArcEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, Drawing,
-    DrawingSettings, Entity, EntityRecord, Justification, Layer, LineEntity, Linetype, LinetypeDef,
-    LinetypeTable, Lineweight, MTextEntity, PolylineEntity, Properties, TextEntity, TextStyle,
-    TextStyleTable,
+    ArcEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, DimStyle,
+    DimStyleId, Drawing, DrawingSettings, Entity, EntityRecord, Justification, Layer, LineEntity,
+    Linetype, LinetypeDef, LinetypeTable, Lineweight, MTextEntity, PolylineEntity, Properties,
+    TextEntity, TextStyle, TextStyleTable,
 };
 
 use crate::properties::{
@@ -212,6 +212,12 @@ impl Writer {
             self.group(9, "$CELWEIGHT");
             self.int(370, lineweight_to_dxf(settings.current_lineweight));
         }
+        if settings.current_dim_style != DimStyleId::FIRST
+            && let Some(style) = drawing.dim_styles().get(settings.current_dim_style)
+        {
+            self.group(9, "$DIMSTYLE");
+            self.group(2, &style.name);
+        }
         // Exactly the default is left out; any other value is written as it is.
         #[allow(clippy::float_cmp)]
         if settings.ltscale != defaults.ltscale {
@@ -271,9 +277,13 @@ impl Writer {
             w.group(2, "ACAD");
             w.group(70, "0");
         });
-        self.table("DIMSTYLE", 0, |w, _| {
+        let dim_styles = drawing.dim_styles();
+        self.table("DIMSTYLE", dim_styles.len(), |w, table| {
             w.group(100, "AcDbDimStyleTable");
             w.group(71, "0");
+            for (_, style) in dim_styles.iter() {
+                w.dim_style(table, style);
+            }
         });
         let blocks = drawing.blocks();
         self.table("BLOCK_RECORD", blocks.len() + 1, |w, table| {
@@ -437,6 +447,30 @@ impl Writer {
         self.real(42, 2.5);
         self.group(3, "txt");
         self.group(4, "");
+    }
+
+    /// A DIMSTYLE row — whose handle is group 105, alone among the tables —
+    /// with the variables the drawing holds: the suffix as DIMPOST (3), with
+    /// `<>` standing for the value; arrow size (41); extension offset (42)
+    /// and overshoot (44); text height (140); text gap (147); decimals (271).
+    fn dim_style(&mut self, table: Handle, style: &DimStyle) {
+        let handle = self.handles.take();
+        self.group(0, "DIMSTYLE");
+        self.handle(105, handle);
+        self.handle(330, table);
+        self.group(100, "AcDbSymbolTableRecord");
+        self.group(100, "AcDbDimStyleTableRecord");
+        self.group(2, &style.name);
+        self.group(70, "0");
+        if !style.suffix.is_empty() {
+            self.group(3, &format!("<>{}", style.suffix));
+        }
+        self.real(41, style.arrow_size);
+        self.real(42, style.extension_offset);
+        self.real(44, style.extension_overshoot);
+        self.real(140, style.text_height);
+        self.real(147, style.text_gap);
+        self.int(271, i64::from(style.decimals));
     }
 
     /// A BLOCK_RECORD row: the block by name, and its layout when it is a
@@ -1273,6 +1307,7 @@ mod tests {
                 current_color: Color::Index(3),
                 current_linetype: Linetype::Named(dot),
                 current_lineweight: Lineweight::Hundredths(25),
+                current_dim_style: cad_document::DimStyleId::FIRST,
                 ltscale: 20.0,
                 unit: None,
             })
@@ -1664,6 +1699,7 @@ mod tests {
             [],
             [],
             [TextStyle::named("Roman")],
+            [],
             [],
             [
                 (

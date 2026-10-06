@@ -16,10 +16,10 @@ use std::collections::HashMap;
 
 use cad_core::{LengthUnit, Point2};
 use cad_document::{
-    ArcEntity, Block, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, Drawing,
-    DrawingSettings, Entity, EntityRecord, Justification, Layer, LayerId, LineEntity, Linetype,
-    LinetypeDef, LinetypeId, Lineweight, MTextEntity, PolylineEntity, Properties, TextEntity,
-    TextStyle, TextStyleId, check_name, nearest_index, same_name,
+    ArcEntity, Block, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, DimStyle,
+    DimStyleId, Drawing, DrawingSettings, Entity, EntityRecord, Justification, Layer, LayerId,
+    LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity, PolylineEntity,
+    Properties, TextEntity, TextStyle, TextStyleId, check_name, nearest_index, same_name,
 };
 
 use crate::export::insunits_code;
@@ -46,6 +46,10 @@ const BAD_LAYER_NAME: &str = "(layer name)";
 const BAD_LINETYPE_NAME: &str = "(linetype name)";
 const BAD_LINETYPE_PATTERN: &str = "(linetype pattern)";
 const BAD_TEXT_STYLE_NAME: &str = "(text style name)";
+const BAD_DIM_STYLE_NAME: &str = "(dimension style name)";
+/// Report key for a dimension style with a value a dimension cannot be
+/// drawn by: the row is kept with the default for that value.
+const BAD_DIM_STYLE: &str = "(dimension style values)";
 const BAD_BLOCK_NAME: &str = "(block name)";
 /// Report key for a layer whose colour is a true colour: the drawing holds
 /// the index palette, so the layer takes the nearest index (ADR-0018).
@@ -264,6 +268,7 @@ impl Default for Pending {
 #[derive(Debug, Default)]
 struct Header {
     current_layer: Option<String>,
+    current_dim_style: Option<String>,
     current_color: Option<Color>,
     current_linetype: Option<LinetypeRef>,
     current_lineweight: Option<Lineweight>,
@@ -284,6 +289,7 @@ struct Tables {
     layers: Vec<(Layer, LinetypeRef)>,
     linetypes: Vec<LinetypeDef>,
     text_styles: Vec<TextStyle>,
+    dim_styles: Vec<DimStyle>,
     /// The file's block definitions, in order; their IDs follow from 1.
     blocks: Vec<BlockBuilder>,
     /// Lower-case name → the ID the row will have, or none for a row that
@@ -291,6 +297,7 @@ struct Tables {
     layer_ids: HashMap<String, Option<LayerId>>,
     linetype_ids: HashMap<String, Option<LinetypeId>>,
     text_style_ids: HashMap<String, Option<TextStyleId>>,
+    dim_style_ids: HashMap<String, Option<DimStyleId>>,
     block_ids: HashMap<String, BlockId>,
     created_layers: usize,
     created_linetypes: usize,
@@ -389,6 +396,28 @@ impl Tables {
             self.created_text_styles += 1;
         }
         self.text_style_ids.get(&Self::key(name)).copied().flatten()
+    }
+
+    fn has_dim_style(&self, name: &str) -> bool {
+        self.dim_style_ids.contains_key(&Self::key(name))
+    }
+
+    /// Keeps a dimension style the file defined.
+    fn add_dim_style(&mut self, style: DimStyle) -> Result<(), TableFull> {
+        if self.dim_styles.len() >= self.max_rows {
+            return Err(TableFull);
+        }
+        let id = (!same_name(&style.name, DimStyle::STANDARD)).then(|| {
+            let with_ids = self
+                .dim_style_ids
+                .values()
+                .filter(|id| id.is_some())
+                .count();
+            DimStyleId::from_raw(with_ids as u32 + 1)
+        });
+        self.dim_style_ids.insert(Self::key(&style.name), id);
+        self.dim_styles.push(style);
+        Ok(())
     }
 
     fn has_layer(&self, name: &str) -> bool {
@@ -549,6 +578,7 @@ impl<'a> Reader<'a> {
                     }
                 }
                 ("$CLAYER", 8) => self.header.current_layer = Some(group.value.to_owned()),
+                ("$DIMSTYLE", 2) => self.header.current_dim_style = Some(group.value.to_owned()),
                 ("$CECOLOR", 62) => self.header.current_color = number.and_then(color_from_dxf),
                 ("$CELTYPE", 6) => {
                     self.header.current_linetype = Some(LinetypeRef::from_dxf(group.value));
@@ -658,6 +688,7 @@ impl<'a> Reader<'a> {
             }
             (_, "INSERT") if entities => self.insert(record, body)?,
             (RecordContext::Tables, "STYLE") => self.table_text_style(body)?,
+            (RecordContext::Tables, "DIMSTYLE") => self.table_dim_style(body)?,
             (_, "LWPOLYLINE") if entities => {
                 let mut properties = body.pending();
                 properties.dropped |= body.constant_width.is_some_and(|width| width != 0.0);
@@ -892,6 +923,77 @@ impl<'a> Reader<'a> {
     }
 
     /// A row of the STYLE table: a name is all the drawing keeps of it.
+    /// A row of the DIMSTYLE table: the name and the variables the drawing
+    /// holds — text height (140), arrow size (41), text gap (147), extension
+    /// offset (42) and overshoot (44), decimals (271), and the suffix
+    /// (DIMPOST, 3, where `<>` stands for the value). A value a dimension
+    /// cannot be drawn by is reported and the default stands.
+    fn table_dim_style(&mut self, body: &RecordBody) -> Result<(), DxfError> {
+        let Some(name) = body.name.as_deref().filter(|name| check_name(name).is_ok()) else {
+            self.report.count_unsupported(BAD_DIM_STYLE_NAME);
+            return Ok(());
+        };
+        if self.tables.has_dim_style(name) {
+            return Ok(());
+        }
+        let name = if same_name(name, DimStyle::STANDARD) {
+            DimStyle::STANDARD
+        } else {
+            name
+        };
+        let mut style = DimStyle::named(name);
+        let defaults = style.clone();
+        let mut dropped = false;
+        let mut take = |slot: &mut f64, value: Option<f64>, default: f64, positive: bool| {
+            if let Some(value) = value {
+                if value.is_finite() && (value > 0.0 || (!positive && value == 0.0)) {
+                    *slot = value;
+                } else {
+                    *slot = default;
+                    dropped = true;
+                }
+            }
+        };
+        take(
+            &mut style.text_height,
+            body.dim_text_height,
+            defaults.text_height,
+            true,
+        );
+        take(&mut style.arrow_size, body.width, defaults.arrow_size, true);
+        take(&mut style.text_gap, body.dim_gap, defaults.text_gap, false);
+        take(
+            &mut style.extension_offset,
+            body.scale_y,
+            defaults.extension_offset,
+            false,
+        );
+        take(
+            &mut style.extension_overshoot,
+            body.dim_overshoot,
+            defaults.extension_overshoot,
+            false,
+        );
+        if let Some(decimals) = body.dim_decimals {
+            match u8::try_from(decimals) {
+                Ok(decimals) if decimals <= DimStyle::MAX_DECIMALS => style.decimals = decimals,
+                _ => dropped = true,
+            }
+        }
+        if let Some(post) = body.description.as_deref() {
+            style.suffix = post
+                .split_once("<>")
+                .map_or(post, |(_, after)| after)
+                .to_owned();
+        }
+        if dropped {
+            self.report.count_unsupported(BAD_DIM_STYLE);
+        }
+        self.tables
+            .add_dim_style(style)
+            .map_err(|TableFull| self.too_many_rows("DIMSTYLE"))
+    }
+
     fn table_text_style(&mut self, body: &RecordBody) -> Result<(), DxfError> {
         let Some(name) = body.name.as_deref().filter(|name| check_name(name).is_ok()) else {
             self.report.count_unsupported(BAD_TEXT_STYLE_NAME);
@@ -1060,12 +1162,15 @@ impl<'a> Reader<'a> {
         );
         let linetypes = std::mem::take(&mut self.tables.linetypes);
         let text_styles = std::mem::take(&mut self.tables.text_styles);
+        let dim_styles = std::mem::take(&mut self.tables.dim_styles);
 
-        let drawing = Drawing::from_tables(layers, linetypes, text_styles, blocks, entities)
-            .map_err(|error| DxfError::Tables(error.to_string()))?;
+        let drawing =
+            Drawing::from_tables(layers, linetypes, text_styles, dim_styles, blocks, entities)
+                .map_err(|error| DxfError::Tables(error.to_string()))?;
         self.report.layers = drawing.layers().len() - 1;
         self.report.linetypes = drawing.linetypes().len() - 1;
         self.report.text_styles = drawing.text_styles().len() - 1;
+        self.report.dim_styles = drawing.dim_styles().len() - 1;
         self.report.blocks = drawing.blocks().len() - 1;
         let deepest = drawing
             .blocks()
@@ -1101,6 +1206,12 @@ impl<'a> Reader<'a> {
             current_layer,
             current_color: self.header.current_color.unwrap_or(Color::ByLayer),
             current_linetype,
+            current_dim_style: self
+                .header
+                .current_dim_style
+                .as_deref()
+                .and_then(|name| drawing.dim_styles().find(name))
+                .unwrap_or(DimStyleId::FIRST),
             current_lineweight: self
                 .header
                 .current_lineweight
@@ -1175,8 +1286,15 @@ struct RecordBody {
     style: Option<String>,
     /// Group 41: a paragraph's width, or a reference's X scale.
     width: Option<f64>,
-    /// Group 42 of a record with one point: a reference's Y scale.
+    /// Group 42 of a record with one point: a reference's Y scale, or a
+    /// dimension style's extension-line offset.
     scale_y: Option<f64>,
+    /// Groups 44, 140, 147, 271 of a dimension style: extension overshoot,
+    /// text height, text gap, decimals.
+    dim_overshoot: Option<f64>,
+    dim_text_height: Option<f64>,
+    dim_gap: Option<f64>,
+    dim_decimals: Option<i64>,
     /// Group 43: an LWPOLYLINE's constant width, which is dropped; a
     /// reference's Z scale, which a plane does without.
     constant_width: Option<f64>,
@@ -1212,6 +1330,10 @@ impl RecordBody {
                 }
             }
             43 => self.constant_width = Some(real(group)?),
+            44 => self.dim_overshoot = Some(real(group)?),
+            140 => self.dim_text_height = Some(real(group)?),
+            147 => self.dim_gap = Some(real(group)?),
+            271 => self.dim_decimals = group.value.parse().ok(),
             66 => self.follow = group.value.trim() != "0",
             70 => self.flags = group.value.parse().unwrap_or(0),
             11 => self.x1 = Some(real(group)?),

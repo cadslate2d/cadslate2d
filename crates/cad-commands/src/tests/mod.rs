@@ -9,6 +9,7 @@ mod bulged;
 mod chprop;
 mod color;
 mod corner;
+mod dimstyle;
 mod edge;
 mod grips;
 mod join;
