@@ -80,6 +80,8 @@ export interface UiState {
   readonly documentName?: string;
   /** The drawing changed since it was opened or last exported. */
   readonly unsavedChanges: boolean;
+  /** Changes on every commit, undo, and redo: when there is something new to autosave. */
+  readonly revision: number;
   /**
    * What an export will not include, line by line: content the file this
    * drawing came from held and the drawing could not. Empty when an export
@@ -328,6 +330,11 @@ export class CadEngine {
   /** The drawing as ASCII DXF. Marks the drawing as saved. */
   exportDxf(): string {
     return this.#session.export_dxf();
+  }
+
+  /** The drawing as ASCII DXF for an autosave: marks nothing. */
+  snapshotDxf(): string {
+    return this.#session.snapshot_dxf();
   }
 
   /** Takes the import report off the screen; the log keeps its lines. */

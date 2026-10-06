@@ -1,7 +1,8 @@
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { CadEngine, KeyAction } from "../cad/engine";
 import { loadEngineForTests } from "../cad/test-support";
-import { CadApp, DISCARD_CHANGES_MESSAGE } from "./cad-app";
+import { AUTOSAVE_DELAY_MS, CadApp, DISCARD_CHANGES_MESSAGE } from "./cad-app";
+import type { AutosaveRecord, AutosaveStore } from "./host-services";
 import type { HostServices, PickedFile } from "./host-services";
 
 beforeAll(loadEngineForTests);
@@ -31,7 +32,26 @@ const mixedFile = dxf(
   [0, "EOF"],
 );
 
+/** One slot in memory, counting what was written. */
+class FakeAutosave implements AutosaveStore {
+  record: AutosaveRecord | undefined;
+  saves = 0;
+  load(): Promise<AutosaveRecord | undefined> {
+    return Promise.resolve(this.record);
+  }
+  save(record: AutosaveRecord): Promise<void> {
+    this.saves += 1;
+    this.record = record;
+    return Promise.resolve();
+  }
+  clear(): Promise<void> {
+    this.record = undefined;
+    return Promise.resolve();
+  }
+}
+
 class FakeHost implements HostServices {
+  readonly autosave = new FakeAutosave();
   fileToPick: PickedFile | undefined;
   confirmAnswer = true;
   confirmations: string[] = [];
@@ -58,16 +78,126 @@ function harness() {
   const host = new FakeHost();
   const engine = new CadEngine();
   engine.resize(800, 600);
-  const app = new CadApp(engine, { schedule: (callback) => scheduled.push(callback), host });
+  /** Pending timers: the test fires them instead of the clock. */
+  const timers: { callback: () => void; ms: number }[] = [];
+  const app = new CadApp(engine, {
+    schedule: (callback) => scheduled.push(callback),
+    host,
+    timer: (callback, ms) => {
+      const timer = { callback, ms };
+      timers.push(timer);
+      return () => timers.splice(timers.indexOf(timer), 1);
+    },
+  });
   /** Runs queued frames after letting pending promises settle. */
   const tick = async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     scheduled.splice(0).forEach((callback) => callback());
   };
+  /** Fires every pending timer, as if the time had passed. */
+  const elapse = async () => {
+    timers.splice(0).forEach((timer) => timer.callback());
+    await tick();
+  };
   const enter = (...lines: string[]) => lines.forEach((line) => app.submitText(line));
   const segmentCount = () => engine.readScene((frame) => frame.segments.length / 4);
-  return { app, engine, host, tick, scheduled, enter, segmentCount };
+  return { app, engine, host, tick, elapse, timers, scheduled, enter, segmentCount };
 }
+
+// DESIGN §25, ADR-0019: the drawing is kept in the browser and offered back.
+describe("autosave and recovery", () => {
+  test("a pause after a change keeps the drawing once, as unexported", async () => {
+    const { app, host, tick, elapse, timers, enter } = harness();
+    await tick();
+    expect(timers).toHaveLength(0);
+    enter("L", "0,0", "100,50", "");
+    await tick();
+    expect(timers).toHaveLength(1);
+    expect(timers[0]?.ms).toBe(AUTOSAVE_DELAY_MS);
+    expect(host.autosave.saves).toBe(0);
+
+    // Another change before the pause ends restarts it: still one timer.
+    enter("C", "10,10", "5");
+    await tick();
+    expect(timers).toHaveLength(1);
+    await elapse();
+    expect(host.autosave.saves).toBe(1);
+    const record = host.autosave.record;
+    expect(record?.exported).toBe(false);
+    expect(record?.name).toBeUndefined();
+    expect(record?.text).toContain("CIRCLE");
+    expect(app.ui.getSnapshot().unsavedChanges).toBe(true);
+
+    // Nothing changed since: a redraw schedules nothing more.
+    app.loop.invalidate(1);
+    await tick();
+    expect(timers).toHaveLength(0);
+  });
+
+  test("exporting keeps the drawing as exported, so a reload has nothing to recover", async () => {
+    const { host, tick, elapse, enter } = harness();
+    enter("L", "0,0", "100,50", "", "DXFOUT");
+    await tick();
+    expect(host.saved).toHaveLength(1);
+    expect(host.autosave.record?.exported).toBe(true);
+    expect(host.autosave.record?.text).toBe(host.saved[0]?.text);
+    // The pending autosave was cancelled by the export.
+    await elapse();
+    expect(host.autosave.saves).toBe(1);
+  });
+
+  test("a kept drawing is offered on start and recovered as a normal open", async () => {
+    const { app, host, tick, enter, segmentCount } = harness();
+    host.autosave.record = {
+      name: "plan.dxf",
+      text: cleanFile,
+      savedAt: 1_700_000_000_000,
+      exported: false,
+    };
+    await app.start();
+    expect(app.ui.getSnapshot().recovery).toEqual({
+      name: "plan.dxf",
+      savedAt: 1_700_000_000_000,
+    });
+    expect(segmentCount()).toBe(0);
+
+    app.recover();
+    await tick();
+    expect(app.ui.getSnapshot().recovery).toBeUndefined();
+    expect(segmentCount()).toBe(1);
+    expect(app.ui.getSnapshot().documentName).toBe("plan.dxf");
+    // Still unexported: a reload would offer it again.
+    expect(host.autosave.record?.exported).toBe(false);
+
+    enter("L", "0,0", "1,1", "");
+    await tick();
+    expect(app.ui.getSnapshot().unsavedChanges).toBe(true);
+  });
+
+  test("a kept drawing can be declined, which frees the slot", async () => {
+    const { app, host } = harness();
+    host.autosave.record = { name: undefined, text: cleanFile, savedAt: 1, exported: false };
+    await app.start();
+    expect(app.ui.getSnapshot().recovery).toBeDefined();
+    app.discardRecovery();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(app.ui.getSnapshot().recovery).toBeUndefined();
+    expect(host.autosave.record).toBeUndefined();
+  });
+
+  test("an exported record is not offered, and opening a file replaces the kept drawing", async () => {
+    const { app, host, tick, enter } = harness();
+    host.autosave.record = { name: "old.dxf", text: cleanFile, savedAt: 1, exported: true };
+    await app.start();
+    expect(app.ui.getSnapshot().recovery).toBeUndefined();
+
+    host.fileToPick = { name: "plan.dxf", bytes: encode(cleanFile) };
+    enter("OPEN");
+    await tick();
+    await tick();
+    expect(host.autosave.record).toMatchObject({ name: "plan.dxf", exported: true });
+  });
+});
 
 describe("CadApp", () => {
   test("typed input reaches the engine and the UI store follows on the next frame", async () => {

@@ -5,6 +5,7 @@ import type { LinetypeReport } from "../renderer/webgl/linetype-probe";
 import type { StyleReport } from "../renderer/webgl/style-probe";
 import type { TextCandidate, TextReport } from "../renderer/webgl/text-probe";
 import type { TransportReport } from "../renderer/webgl/transport-probe";
+import type { PersistenceReport } from "./persistence-probe";
 import type { RendererStats } from "../renderer/webgl/webgl-renderer";
 
 export interface DebugHandle {
@@ -23,6 +24,8 @@ export interface DebugHandle {
   readonly probeText: (texts: number) => Promise<TextReport>;
   /** The text experiment's one text, drawn each way at three zooms, as PNG data URLs. */
   readonly textPictures: () => Promise<({ zoom: number } & Record<TextCandidate, string>)[]>;
+  /** Runs the local-persistence experiment (ADR-0019): `text` written to each browser store. */
+  readonly probePersistence: (text: string) => Promise<PersistenceReport>;
   /** Runs the colour-transport experiment (ADR-0014) on generated segments. */
   readonly probeStyles: (
     segments: number,

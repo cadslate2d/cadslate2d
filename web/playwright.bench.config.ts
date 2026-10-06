@@ -12,7 +12,9 @@ export default defineConfig({
   workers: 1,
   timeout: 300_000,
   reporter: "list",
+  // Rendering probes run in Chromium; `bench:persistence` runs in both.
   projects: [
+    { name: "firefox", use: { browserName: "firefox" } },
     {
       name: "chromium",
       use: {

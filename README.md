@@ -127,6 +127,8 @@ And a layer has a linetype (`LAYER`, `LType`), as an object can (`LINETYPE`). A 
 
 Layers, colours, linetypes, lineweights, text styles, blocks, and the settings for new objects are written to DXF (release 2000) and read back from any release. What every record, table, and header variable becomes, read and written, is one page: [`docs/dxf-matrix.md`](docs/dxf-matrix.md).
 
+The drawing is also kept in the browser: a second after the last change it is autosaved to IndexedDB as DXF, and a drawing that was not exported before the tab was closed is offered back on the next start — *Recover* or *Discard* ([ADR-0019](docs/adr/0019-local-persistence.md)). Exporting marks it as held by a file. Nothing leaves the browser.
+
 ### ORTHO and POLAR
 
 Both constrain the pointer's direction from the previous point, and both show a readout such as `Polar: 50.0000 < 45°` in the status bar. A typed distance then runs exactly along that direction.
@@ -193,6 +195,7 @@ pnpm --dir web dev
 | Colour-transport experiment in the browser | `pnpm --dir web bench:styles` (after `build`) |
 | Linetype experiment in the browser; rewrites the pictures in ADR-0015 | `pnpm --dir web bench:linetypes` (after `build`) |
 | Text-rendering experiment in the browser; rewrites the pictures in ADR-0016 | `pnpm --dir web bench:text` (after `build`) |
+| Local-persistence experiment: IndexedDB against OPFS, in Chromium and Firefox (ADR-0019) | `pnpm --dir web bench:persistence` (after `build`, with the generated drawings) |
 
 First-time Playwright setup: `pnpm --dir web exec playwright install chromium firefox`. The suite runs in Chromium and Firefox by default; choose browsers with `E2E_BROWSERS=chromium,firefox,webkit` (WebKit needs `playwright install --with-deps webkit`). CI runs Chromium only, because headless Firefox on the hosted runner provides no WebGL2.
 

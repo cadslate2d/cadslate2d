@@ -42,6 +42,9 @@ pub struct UiState {
     pub document_name: Option<String>,
     /// The drawing changed since it was opened or last exported.
     pub unsaved_changes: bool,
+    /// The drawing's revision: changes on every commit, undo, and redo, so
+    /// the host knows when there is something new to keep (autosave).
+    pub revision: u64,
     /// The drawing was opened from a file with content that could not be
     /// imported, so exporting it will not reproduce that file. The UI must
     /// warn before exporting (DESIGN §24.2).

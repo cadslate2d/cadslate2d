@@ -29,6 +29,7 @@ There are two kinds:
 | [0016](0016-text-rendering.md) | Text rendering: a stroke font drawn through the line instances | Accepted | Evidence |
 | [0017](0017-blocks.md) | Blocks: definitions as table rows, references resolved through the table | Accepted | Bootstrap |
 | [0018](0018-dxf-release-r2000.md) | The DXF release is R2000: lineweights, MTEXT, LWPOLYLINE, and the structure they need | Accepted | Evidence |
+| [0019](0019-local-persistence.md) | Local persistence: the autosave is one IndexedDB record, written when the revision changes | Accepted | Evidence |
 
 ## Expected evidence ADRs
 

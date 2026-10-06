@@ -3,6 +3,12 @@
 // cursor readout, counters. It never holds drawing geometry.
 import type { ImportReport, LayerRow, SelectionSummary, UiState } from "../cad/engine";
 
+/** What the recovery dialog says about the kept drawing: its name and when it was kept. */
+export interface Recovery {
+  readonly name: string | undefined;
+  readonly savedAt: number;
+}
+
 /** Log lines kept for display. Older lines scroll out. */
 export const LOG_LINES_KEPT = 200;
 
@@ -29,6 +35,8 @@ export interface UiSnapshot {
   readonly importReport: ImportReport | undefined;
   /** The losses an export the user asked for would have; the warning dialog shows them. */
   readonly exportWarning: readonly string[] | undefined;
+  /** A drawing kept in the browser that no file holds, offered on start. */
+  readonly recovery: Recovery | undefined;
   /** The layers as the Layers panel shows them: presentation data, not the table. */
   readonly layers: readonly LayerRow[];
   readonly linetypes: readonly string[];
@@ -68,6 +76,7 @@ const INITIAL: UiSnapshot = {
   exportLosses: [],
   importReport: undefined,
   exportWarning: undefined,
+  recovery: undefined,
   layers: [],
   linetypes: [],
   selection: NO_SELECTION,
@@ -78,6 +87,7 @@ export class UiStore {
   #snapshot: UiSnapshot = INITIAL;
   #logSeen = 0;
   #exportWarning: readonly string[] | undefined;
+  #recovery: Recovery | undefined;
   readonly #listeners = new Set<() => void>();
 
   // Arrow properties: React calls these detached from the instance.
@@ -97,6 +107,13 @@ export class UiStore {
   setExportWarning(losses: readonly string[] | undefined): void {
     this.#exportWarning = losses;
     this.#snapshot = { ...this.#snapshot, exportWarning: losses };
+    this.#listeners.forEach((listener) => listener());
+  }
+
+  /** Offers the kept drawing, or withdraws the offer. */
+  setRecovery(recovery: Recovery | undefined): void {
+    this.#recovery = recovery;
+    this.#snapshot = { ...this.#snapshot, recovery };
     this.#listeners.forEach((listener) => listener());
   }
 
@@ -125,6 +142,7 @@ export class UiStore {
       exportLosses: state.exportLosses,
       importReport: state.importReport,
       exportWarning: this.#exportWarning,
+      recovery: this.#recovery,
       layers: state.layers,
       linetypes: state.linetypes,
       selection: state.selection,

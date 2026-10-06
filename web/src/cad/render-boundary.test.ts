@@ -62,6 +62,7 @@ describe("WASM API surface", () => {
       "scene_style_revision",
       "scene_styles",
       "scene_transform",
+      "snapshot_dxf",
       "submit_text",
       "take_host_request",
       "ui_state",

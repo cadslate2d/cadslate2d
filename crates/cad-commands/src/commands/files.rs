@@ -200,6 +200,21 @@ mod tests {
         assert_eq!(state.import_report.map(|report| report.serial), Some(2));
     }
 
+    /// #158: the host autosaves when the revision changes, and only then.
+    #[test]
+    fn the_ui_state_carries_the_revision_which_commits_change_and_the_pointer_does_not() {
+        let mut h = Harness::new();
+        let before = h.session.ui_state().revision;
+        h.move_to(100.0, 100.0);
+        h.move_to(120.0, 100.0);
+        assert_eq!(h.session.ui_state().revision, before);
+        h.enter_all(&["L", "0,0", "1,1", ""]);
+        let after = h.session.ui_state().revision;
+        assert_ne!(after, before);
+        h.undo();
+        assert_ne!(h.session.ui_state().revision, after, "undo is a change too");
+    }
+
     #[test]
     fn notifications_reach_the_command_log() {
         let mut h = Harness::new();

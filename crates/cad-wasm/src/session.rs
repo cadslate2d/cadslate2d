@@ -78,6 +78,7 @@ struct UiStateDto {
     toggles: u32,
     document_name: Option<String>,
     unsaved_changes: bool,
+    revision: f64,
     export_losses: Vec<String>,
     import_report: Option<ImportReportDto>,
     layers: Vec<LayerRowDto>,
@@ -175,6 +176,7 @@ impl From<UiState> for UiStateDto {
             toggles: state.toggles,
             document_name: state.document_name,
             unsaved_changes: state.unsaved_changes,
+            revision: state.revision as f64,
             export_losses: state.export_losses,
             import_report: state.import_report.map(|report| ImportReportDto {
                 serial: report.serial,
@@ -349,6 +351,12 @@ impl CadSession {
     pub fn dismiss_import_report(&mut self) -> u32 {
         let dirty = self.session.dismiss_import_report();
         self.report(dirty)
+    }
+
+    /// The drawing as ASCII DXF, for the host to keep as an autosave (#158):
+    /// marks nothing, so what the user has and has not exported stays true.
+    pub fn snapshot_dxf(&self) -> String {
+        cad_dxf::export(self.session.drawing())
     }
 
     /// The drawing as ASCII DXF. Marks the drawing as saved.

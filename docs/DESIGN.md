@@ -1555,6 +1555,8 @@ Evaluate browser-local persistence using:
 
 Do not introduce a Worker solely to obtain synchronous OPFS access unless profiling or later workload requirements justify the worker architecture independently.
 
+> **Resolved in M5:** the autosave is one IndexedDB record — the drawing as DXF, its name, the time, and whether a file holds it — written by the host a second after the drawing's revision last changed, and offered back on start when no file holds it; measured against the OPFS async API at 10k, 50k, and 100k lines in Chromium and Firefox, both within a frame of main-thread time, IndexedDB chosen for being on every main thread ([ADR-0019](adr/0019-local-persistence.md)). No Worker.
+
 ## 25.2 OPFS/Worker coupling
 
 Synchronous OPFS access handles are tied to Worker execution.

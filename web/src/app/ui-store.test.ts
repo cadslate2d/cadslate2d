@@ -13,6 +13,7 @@ class FakeSource implements UiSource {
     canRedo: false,
     toggles: 0,
     unsavedChanges: false,
+    revision: 1,
     exportLosses: [],
     layers: [],
     linetypes: [],

@@ -6,6 +6,7 @@ import { CommandLine } from "./CommandLine";
 import { ExportWarning } from "./ExportWarning";
 import { Header } from "./Header";
 import { ImportReport } from "./ImportReport";
+import { Recovery } from "./Recovery";
 import { LayersPanel } from "./LayersPanel";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { StatusBar } from "./StatusBar";
@@ -48,6 +49,8 @@ export function App() {
         if (cancelled) return;
         app = new CadApp(new CadEngine());
         setCore({ status: "ready", app, version: coreVersion() });
+        // A drawing kept by a tab that closed before exporting is offered back.
+        void app.start();
       },
       (cause: unknown) => !cancelled && setCore({ status: "failed", reason: String(cause) }),
     );
@@ -101,6 +104,7 @@ export function App() {
       <CanvasView app={core.app} />
       <ImportReport app={core.app} />
       <ExportWarning app={core.app} />
+      <Recovery app={core.app} />
       <TextEditor app={core.app} />
       <CommandLine app={core.app} />
       {panels && (

@@ -296,6 +296,7 @@ impl Session {
             toggles: self.toggles.bits(),
             document_name: self.document_name.clone(),
             unsaved_changes: self.drawing.revision() != self.saved_revision,
+            revision: self.drawing.revision().as_u64(),
             export_losses: self.export_losses.clone(),
             import_report: self.import_report.clone(),
             layers: self.layer_rows(),
@@ -1300,7 +1301,15 @@ mod tests {
         clicked.session.invoke_from_ui("CIRCLE");
 
         assert_eq!(clicked.prompt(), typed.prompt());
-        assert_eq!(clicked.session.ui_state(), typed.session.ui_state());
+        // Two drawings have two revisions, whatever happened to them; the rest is the same.
+        let typed_state = typed.session.ui_state();
+        assert_eq!(
+            UiState {
+                revision: typed_state.revision,
+                ..clicked.session.ui_state()
+            },
+            typed_state
+        );
         assert_eq!(clicked.log(), typed.log(), "the button echoes as if typed");
 
         // Like the classic ^C^C, a button cancels a command in progress first.

@@ -14,11 +14,12 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "e2e": "playwright test",
-    "bench:transport": "playwright test --config playwright.bench.config.ts transport",
-    "bench:curves": "playwright test --config playwright.bench.config.ts curves",
-    "bench:styles": "playwright test --config playwright.bench.config.ts styles",
-    "bench:linetypes": "playwright test --config playwright.bench.config.ts linetypes",
-    "bench:text": "playwright test --config playwright.bench.config.ts text"
+    "bench:transport": "playwright test --config playwright.bench.config.ts --project=chromium transport",
+    "bench:curves": "playwright test --config playwright.bench.config.ts --project=chromium curves",
+    "bench:styles": "playwright test --config playwright.bench.config.ts --project=chromium styles",
+    "bench:linetypes": "playwright test --config playwright.bench.config.ts --project=chromium linetypes",
+    "bench:text": "playwright test --config playwright.bench.config.ts --project=chromium text",
+    "bench:persistence": "playwright test --config playwright.bench.config.ts persistence"
   },
   "dependencies": {
     "react": "^19.3.0",
