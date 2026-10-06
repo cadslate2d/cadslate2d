@@ -1475,6 +1475,8 @@ GPU quads
 
 Exact implementation is PROVISIONAL.
 
+> **Resolved in M4:** text is drawn with a stroke font — Hershey Simplex, shipped in the `cad-text` crate — whose glyphs are polylines laid along the baseline, so a text is line instances drawn by the renderer every line uses: sharp at every zoom and angle, in its layer's colour, with nothing added to the renderer. Metrics are arithmetic over the glyph table, computed on the host. A glyph atlas is the step to take if drawings of a hundred thousand texts are ever the target — [ADR-0016](adr/0016-text-rendering.md).
+
 ---
 
 # 24. File Strategy

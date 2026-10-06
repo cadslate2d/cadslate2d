@@ -185,6 +185,7 @@ pnpm --dir web dev
 | Curve-rendering experiment in the browser | `pnpm --dir web bench:curves` (after `build`) |
 | Colour-transport experiment in the browser | `pnpm --dir web bench:styles` (after `build`) |
 | Linetype experiment in the browser; rewrites the pictures in ADR-0015 | `pnpm --dir web bench:linetypes` (after `build`) |
+| Text-rendering experiment in the browser; rewrites the pictures in ADR-0016 | `pnpm --dir web bench:text` (after `build`) |
 
 First-time Playwright setup: `pnpm --dir web exec playwright install chromium firefox`. The suite runs in Chromium and Firefox by default; choose browsers with `E2E_BROWSERS=chromium,firefox,webkit` (WebKit needs `playwright install --with-deps webkit`). CI runs Chromium only, because headless Firefox on the hosted runner provides no WebGL2.
 
@@ -199,6 +200,7 @@ crates/
   cad-core/       points, bounds, entity IDs, tolerances, view math
   cad-geometry/   pure geometric functions
   cad-input/      command-line tokenizer and parser
+  cad-text/       the stroke font, its metrics, and the strokes of a string
   cad-document/   drawing, entities, storage, spatial index, transactions
   cad-commands/   Session, command state machines, selection
   cad-dxf/        DXF import/export

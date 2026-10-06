@@ -20,7 +20,7 @@ If code and these documents disagree, fix the code or write an ADR. Do not silen
 ## Architecture rules that are easy to break
 
 - **Crate layering (ADR-0001).** Dependencies point strictly downward:
-  `cad-wasm → cad-render → cad-commands → cad-document → cad-geometry → cad-core`, with `cad-input → cad-core`, `cad-commands → cad-input`, and `cad-dxf → cad-document`. `scripts/check-boundaries.sh` enforces this.
+  `cad-wasm → cad-render → cad-commands → cad-document → cad-geometry → cad-core`, with `cad-input → cad-core`, `cad-commands → cad-input`, `cad-text → cad-core`, `cad-document → cad-text`, and `cad-dxf → cad-document`. `scripts/check-boundaries.sh` enforces this.
 - **`wasm-bindgen`, `js-sys`, `web-sys` appear only in `cad-wasm`.** Every other crate builds and tests on the host with plain `cargo test`. `cad-wasm` contains marshalling only.
 - **The document is mutated only through transactions** (`cad-document`). No public raw mutators. Entities and table rows (layers, …) change in the same transactions and the same history; there is never a second undo stack.
 - **Properties live beside geometry, not in it** (ADR-0013). `Entity` is pure geometry; the layer, colour, linetype, and lineweight are in the stored record. `replace` keeps an object's properties. A command that makes a new object *from* an existing one — a copy, an offset, a piece — must insert it with `insert_like`, or the new object silently lands on layer 0.
@@ -84,6 +84,7 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 | A drawing setting (the current layer, the unit) | A field of `DrawingSettings` in `cad-document`, set through the transaction builder; read and written by `cad-dxf` | An undo test; the history property test gains its operation; a DXF round trip |
 | Geometry maths | `cad-geometry`, as pure functions | Unit and property tests; a regression case per fixed bug |
 | Input syntax | `cad-input` | Table-driven tests and a never-panics property test |
+| Text metrics or glyphs | `cad-text`: the stroke font's table and the functions over it (ADR-0016). Text reaches the renderer as line segments; the renderer does not know text exists | Host tests of width and strokes; a property test that width adds up |
 | A prompt for a number | `ExpectedInput::distance()` for a length, which takes a unit suffix; `ExpectedInput::factor()` for a plain number — a scale, a count — which does not | A test that `2mm` is refused where it makes no sense |
 | A prompt for a name or other free text | `ExpectedInput::text()`; the command receives `CommandInput::Text`. Space does not submit there, which the host learns from `ui_state.space_accepts` | Headless tests with a name that has a space in it |
 | A preview of what picking an object would do | `Command::preview_pick`, computed by the same function the pick then commits | A test that the previewed result equals the committed one |

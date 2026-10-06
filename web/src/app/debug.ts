@@ -3,6 +3,7 @@
 import type { CurveReport } from "../renderer/webgl/curve-probe";
 import type { LinetypeReport } from "../renderer/webgl/linetype-probe";
 import type { StyleReport } from "../renderer/webgl/style-probe";
+import type { TextCandidate, TextReport } from "../renderer/webgl/text-probe";
 import type { TransportReport } from "../renderer/webgl/transport-probe";
 import type { RendererStats } from "../renderer/webgl/webgl-renderer";
 
@@ -18,6 +19,10 @@ export interface DebugHandle {
   readonly probeLinetypes: (segments: number) => Promise<LinetypeReport>;
   /** The linetype experiment's small scene, drawn both ways at three zooms, as PNG data URLs. */
   readonly linetypePictures: () => Promise<{ zoom: number; shader: string; split: string }[]>;
+  /** Runs the text rendering experiment (ADR-0016) on generated texts. */
+  readonly probeText: (texts: number) => Promise<TextReport>;
+  /** The text experiment's one text, drawn each way at three zooms, as PNG data URLs. */
+  readonly textPictures: () => Promise<({ zoom: number } & Record<TextCandidate, string>)[]>;
   /** Runs the colour-transport experiment (ADR-0014) on generated segments. */
   readonly probeStyles: (
     segments: number,

@@ -12,6 +12,7 @@ publish = false
 cad-core = { path = "crates/cad-core" }
 cad-geometry = { path = "crates/cad-geometry" }
 cad-input = { path = "crates/cad-input" }
+cad-text = { path = "crates/cad-text" }
 cad-document = { path = "crates/cad-document" }
 cad-commands = { path = "crates/cad-commands" }
 cad-dxf = { path = "crates/cad-dxf" }

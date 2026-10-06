@@ -17,7 +17,8 @@
     "bench:transport": "playwright test --config playwright.bench.config.ts transport",
     "bench:curves": "playwright test --config playwright.bench.config.ts curves",
     "bench:styles": "playwright test --config playwright.bench.config.ts styles",
-    "bench:linetypes": "playwright test --config playwright.bench.config.ts linetypes"
+    "bench:linetypes": "playwright test --config playwright.bench.config.ts linetypes",
+    "bench:text": "playwright test --config playwright.bench.config.ts text"
   },
   "dependencies": {
     "react": "^19.3.0",

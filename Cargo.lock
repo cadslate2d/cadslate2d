@@ -148,6 +148,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cad-text"
+version = "0.0.1"
+dependencies = [
+ "cad-core",
+ "proptest",
+]
+
+[[package]]
 name = "cad-wasm"
 version = "0.0.1"
 dependencies = [

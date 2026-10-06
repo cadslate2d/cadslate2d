@@ -26,8 +26,9 @@ cad-wasm      → cad-commands, cad-render, cad-dxf
 cad-render    → cad-commands, cad-document, cad-geometry, cad-core
 cad-dxf       → cad-document, cad-core
 cad-commands  → cad-document, cad-input, cad-geometry, cad-core
-cad-document  → cad-geometry, cad-core
+cad-document  → cad-geometry, cad-text, cad-core
 cad-input     → cad-core
+cad-text      → cad-core
 cad-geometry  → cad-core
 cad-core      → (no workspace dependencies)
 ```
@@ -39,6 +40,7 @@ cad-core      → (no workspace dependencies)
 | `cad-core` | `Point2`, `Vec2`, `Aabb`, `EntityId`, tolerance types and values (§21.1), `View` screen↔world math | know about entities, commands, or rendering |
 | `cad-geometry` | pure functions: distances, intersections, predicates | hold state or know about `Drawing` |
 | `cad-input` | tokenizing and parsing text into typed input (§13) | know about `Drawing` or any specific command |
+| `cad-text` | the stroke font, its metrics, and the strokes of a string (ADR-0016) | know about entities, styles, or rendering |
 | `cad-document` | `Drawing`, entities, tables, `EntityStore`, `SpatialIndex`, transactions, `History` | know about commands, selection, view, or rendering |
 | `cad-commands` | `Session`, command state machines, selection, snaps, grips, transient edit sessions | know about packed GPU geometry or JS |
 | `cad-dxf` | DXF ↔ `Drawing` translation and import reports | leak DXF group codes into `cad-document` |
@@ -84,3 +86,9 @@ Every user action reaches the core as a method call on `Session`. `cad-wasm` wra
 
 - `cad-commands` becomes large enough that compile times or ownership boundaries suffer.
 - A worker architecture is adopted (§37) and requires a crate usable without `Session`.
+
+## Amendments
+
+### 2026-10-06 — `cad-text`
+
+ADR-0016 chose a stroke font for text and put the font, its metrics, and the layout of a string into a crate of their own, `cad-text`, which depends on `cad-core` only. `cad-document` depends on it for the bounds and primitives of a text entity; nothing above needs to, since text reaches the renderer as line segments like every other entity. `scripts/check-boundaries.sh` knows the crate.

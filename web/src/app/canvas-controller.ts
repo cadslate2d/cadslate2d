@@ -78,6 +78,14 @@ export class CanvasController {
         const { linetypePictures } = await import("../renderer/webgl/linetype-probe");
         return linetypePictures();
       },
+      probeText: async (texts) => {
+        const { probeText } = await import("../renderer/webgl/text-probe");
+        return probeText(texts);
+      },
+      textPictures: async () => {
+        const { textPictures } = await import("../renderer/webgl/text-probe");
+        return textPictures();
+      },
       probeStyles: async (segments, styles, order) => {
         const { probeStyles } = await import("../renderer/webgl/style-probe");
         return probeStyles(segments, styles, order);
