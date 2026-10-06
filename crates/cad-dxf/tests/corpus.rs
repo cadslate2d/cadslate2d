@@ -7,9 +7,9 @@
 //! byte-identical. A sidecar line is one of (a `#` starts a comment):
 //!
 //! ```text
-//! imported lines 3                 lines|circles|arcs|polylines|texts|block_references
-//! tables layers 2                  layers|linetypes|text_styles|blocks, besides the permanent rows
-//! created layers 1                 created_layers|created_linetypes|created_text_styles
+//! imported lines 3                 lines|circles|arcs|polylines|texts|block_references|dimensions
+//! tables layers 2                  layers|linetypes|text_styles|dim_styles|blocks, besides the permanent rows
+//! created layers 1                 created_layers|created_linetypes|created_text_styles|created_dim_styles
 //! unsupported HATCH 1              a report key, quoted when it has spaces
 //! dropped 2                        entities whose properties were dropped
 //! formatting-dropped 1             paragraphs whose formatting was dropped
@@ -23,6 +23,7 @@
 //! text 0 "Left" 2.5                the i-th TEXT: words, height
 //! mtext 0 "a\nb" 60                the i-th MTEXT: words (\n a break), width
 //! reference 2 CHAIR 0 50 1 180 mirrored   the i-th INSERT: block x y scale rotation° mirrored|plain
+//! dimension 0 linear 100           the i-th DIMENSION: linear|aligned|angular|radius|diameter, its value
 //! block CHAIR 2                    entities inside the definition
 //! layer WALLS colour 1 on locked linetype DASHED lineweight 50
 //! entity 1 layer HIDDEN colour 5 linetype DASHED lineweight 35
@@ -259,6 +260,7 @@ fn expectation(imported: &Import, line: &str) -> Result<(), String> {
                 "polylines" => report.polylines,
                 "texts" => report.texts,
                 "block_references" => report.block_references,
+                "dimensions" => report.dimensions,
                 other => return Err(format!("unknown kind {other}")),
             };
             same("count", got, index(w(2)?)?)
@@ -268,6 +270,7 @@ fn expectation(imported: &Import, line: &str) -> Result<(), String> {
                 "layers" => report.layers,
                 "linetypes" => report.linetypes,
                 "text_styles" => report.text_styles,
+                "dim_styles" => report.dim_styles,
                 "blocks" => report.blocks,
                 other => return Err(format!("unknown table {other}")),
             };
@@ -278,6 +281,7 @@ fn expectation(imported: &Import, line: &str) -> Result<(), String> {
                 "layers" => report.created_layers,
                 "linetypes" => report.created_linetypes,
                 "text_styles" => report.created_text_styles,
+                "dim_styles" => report.created_dim_styles,
                 other => return Err(format!("unknown table {other}")),
             };
             same("count", got, index(w(2)?)?)
@@ -291,6 +295,14 @@ fn expectation(imported: &Import, line: &str) -> Result<(), String> {
         "formatting-dropped" => same("count", report.formatting_dropped, index(w(1)?)?),
         "unit" => same("unit", unit_word(report.unit), w(1)?),
         "entities" => same("count", drawing.len(), index(w(1)?)?),
+        "dimension" => {
+            let dimensions = of_kind("dimension");
+            let Entity::Dimension(dimension) = nth(&dimensions, w(1)?, "dimension")? else {
+                unreachable!()
+            };
+            same("kind", dimension.measure.kind(), w(2)?)?;
+            numbers(3, &[dimension.value()])
+        }
         "line" => {
             let lines = of_kind("line");
             let Entity::Line(line) = nth(&lines, w(1)?, "line")? else {

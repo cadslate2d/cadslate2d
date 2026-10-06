@@ -112,15 +112,25 @@ pub fn export(drawing: &Drawing) -> String {
         .filter(|(id, _)| *id != BlockId::FIRST)
         .map(|_| handles.take())
         .collect();
+    // One anonymous block per dimension, holding its geometry as our
+    // layout draws it, for a reader that does not lay dimensions out.
+    let dimensions = dimensions_in_write_order(drawing);
+    let dimension_records: Vec<Handle> = dimensions.iter().map(|_| handles.take()).collect();
     let mut body = Writer {
         out: String::new(),
         handles,
+        dimensions_named: 0,
     };
     body.group(0, "SECTION");
     body.group(2, "CLASSES");
     body.group(0, "ENDSEC");
-    body.section("TABLES", |w| w.tables(drawing, &structure, &block_records));
-    body.section("BLOCKS", |w| w.blocks(drawing, &structure, &block_records));
+    body.section("TABLES", |w| {
+        w.tables(drawing, &structure, &block_records, &dimension_records);
+    });
+    body.section("BLOCKS", |w| {
+        w.blocks(drawing, &structure, &block_records);
+        w.dimension_blocks(drawing, &dimensions, &dimension_records);
+    });
     body.section("ENTITIES", |w| {
         let mut records: Vec<(EntityId, &EntityRecord)> = drawing.records().collect();
         records.sort_unstable_by_key(|(id, _)| *id);
@@ -135,6 +145,7 @@ pub fn export(drawing: &Drawing) -> String {
     let mut header = Writer {
         out: String::new(),
         handles: Handles(0),
+        dimensions_named: 0,
     };
     header.section("HEADER", |w| w.header(drawing, body.handles.seed()));
     header.out + &body.out
@@ -143,6 +154,37 @@ pub fn export(drawing: &Drawing) -> String {
 struct Writer {
     out: String,
     handles: Handles,
+    /// DIMENSION records written so far: the next one's block is `*D` and
+    /// this number plus one, which is the order `dimension_blocks` writes
+    /// them in.
+    dimensions_named: usize,
+}
+
+/// Every dimension, with its properties, in the order their DIMENSION
+/// records are written: those inside block definitions first, in table
+/// order, then the drawing's own in ID order — so that the n-th DIMENSION
+/// written owns the n-th anonymous block.
+fn dimensions_in_write_order(drawing: &Drawing) -> Vec<(DimensionEntity, Properties)> {
+    let mut out = Vec::new();
+    let mut take = |record: &EntityRecord| {
+        if let Entity::Dimension(dimension) = &*record.entity {
+            out.push((dimension.clone(), record.properties));
+        }
+    };
+    for (id, block) in drawing.blocks().iter() {
+        if id != BlockId::FIRST {
+            block.entities.iter().for_each(&mut take);
+        }
+    }
+    let mut records: Vec<(EntityId, &EntityRecord)> = drawing.records().collect();
+    records.sort_unstable_by_key(|(id, _)| *id);
+    records.into_iter().for_each(|(_, record)| take(record));
+    out
+}
+
+/// The name of the n-th dimension's anonymous block, counting from one.
+fn dimension_block_name(n: usize) -> String {
+    format!("*D{n}")
 }
 
 impl Writer {
@@ -236,7 +278,13 @@ impl Writer {
 
     // ── TABLES ──
 
-    fn tables(&mut self, drawing: &Drawing, structure: &Structure, block_records: &[Handle]) {
+    fn tables(
+        &mut self,
+        drawing: &Drawing,
+        structure: &Structure,
+        block_records: &[Handle],
+        dimension_records: &[Handle],
+    ) {
         let linetypes = drawing.linetypes();
         self.table("VPORT", 1, |w, table| {
             w.row("VPORT", table, "AcDbViewportTableRecord");
@@ -286,7 +334,8 @@ impl Writer {
             }
         });
         let blocks = drawing.blocks();
-        self.table("BLOCK_RECORD", blocks.len() + 1, |w, table| {
+        let rows = blocks.len() + 1 + dimension_records.len();
+        self.table("BLOCK_RECORD", rows, |w, table| {
             for (name, record, layout) in [
                 (
                     "*Model_Space",
@@ -304,6 +353,9 @@ impl Writer {
             let user = blocks.iter().filter(|(id, _)| *id != BlockId::FIRST);
             for ((_, block), record) in user.zip(block_records) {
                 w.block_record(table, *record, &block.name, Handle::NONE);
+            }
+            for (n, record) in dimension_records.iter().enumerate() {
+                w.block_record(table, *record, &dimension_block_name(n + 1), Handle::NONE);
             }
         });
     }
@@ -493,12 +545,14 @@ impl Writer {
         self.block(
             "*Model_Space",
             Point2::ORIGIN,
+            0,
             structure.model_space,
             |_| {},
         );
         self.block(
             "*Paper_Space",
             Point2::ORIGIN,
+            0,
             structure.paper_space,
             |_| {},
         );
@@ -507,7 +561,7 @@ impl Writer {
             .iter()
             .filter(|(id, _)| *id != BlockId::FIRST);
         for ((_, block), owner) in user.zip(block_records) {
-            self.block(&block.name, block.base, *owner, |w| {
+            self.block(&block.name, block.base, 0, *owner, |w| {
                 for entity in block.entities.iter() {
                     w.record(entity, *owner, drawing);
                 }
@@ -515,7 +569,44 @@ impl Writer {
         }
     }
 
-    fn block(&mut self, name: &str, base: Point2, record: Handle, body: impl FnOnce(&mut Self)) {
+    /// The anonymous blocks (flag 1) of the dimensions, in the order their
+    /// records are written: each holds what the dimension's style lays out
+    /// — lines, arrowhead outlines, the arc, the text — with the
+    /// dimension's properties, as EXPLODE would make them (ADR-0020).
+    fn dimension_blocks(
+        &mut self,
+        drawing: &Drawing,
+        dimensions: &[(DimensionEntity, Properties)],
+        dimension_records: &[Handle],
+    ) {
+        for (n, ((dimension, properties), owner)) in
+            dimensions.iter().zip(dimension_records).enumerate()
+        {
+            let parts = Entity::from(dimension.clone())
+                .exploded(*properties, drawing.tables())
+                .unwrap_or_default();
+            self.block(
+                &dimension_block_name(n + 1),
+                Point2::ORIGIN,
+                1,
+                *owner,
+                |w| {
+                    for (part, properties) in parts {
+                        w.record(&EntityRecord::new(part, properties), *owner, drawing);
+                    }
+                },
+            );
+        }
+    }
+
+    fn block(
+        &mut self,
+        name: &str,
+        base: Point2,
+        flags: i64,
+        record: Handle,
+        body: impl FnOnce(&mut Self),
+    ) {
         let begin = self.handles.take();
         self.group(0, "BLOCK");
         self.handle(5, begin);
@@ -524,7 +615,7 @@ impl Writer {
         self.group(8, Layer::ZERO);
         self.group(100, "AcDbBlockBegin");
         self.group(2, name);
-        self.group(70, "0");
+        self.int(70, flags);
         self.point(10, base);
         self.group(3, name);
         self.group(1, "");
@@ -569,35 +660,40 @@ impl Writer {
         }
     }
 
-    /// A DIMENSION (ADR-0020), as far as this release writes one: its
-    /// kind (70), its definition points, its style (3), its text (1) when
-    /// it has words of its own, its measured value (42), and where its text
-    /// is (11). A linear dimension is a rotated one — the aligned subclass,
-    /// then the rotation (50). The anonymous block a reader that does not
-    /// lay dimensions out expects is not written yet (#166).
+    /// A DIMENSION (ADR-0020): its anonymous block (2), its kind (70), its
+    /// definition points, its style (3), its text (1) when it has words of
+    /// its own, its text's angle (53) as the turn away from where the text
+    /// would read on its own, its measured value (42), and where its text
+    /// is (11) — the placement point itself for a radius or diameter, which
+    /// is where the text goes. A linear dimension is a rotated one: the
+    /// aligned subclass, then the rotation (50).
     fn dimension(&mut self, dimension: &DimensionEntity, drawing: &Drawing) {
         let style = drawing
             .dim_styles()
             .get(dimension.style)
             .map_or(DimStyle::STANDARD, |style| style.name.as_str())
             .to_owned();
-        let layout = dimension.layout(drawing.tables().dim_style(dimension.style));
+        let style_row = drawing.tables().dim_style(dimension.style);
+        let layout = dimension.layout(style_row);
+        self.dimensions_named += 1;
         self.group(100, "AcDbDimension");
-        let (kind, definition) = match dimension.measure {
-            Measure::Linear { .. } => (0, dimension.line_point),
-            Measure::Aligned { .. } => (1, dimension.line_point),
-            Measure::Angular { .. } => (5, dimension.line_point),
-            Measure::Radius { center, .. } => (4, center),
+        self.group(2, &dimension_block_name(self.dimensions_named));
+        let (kind, definition, text_point) = match dimension.measure {
+            Measure::Linear { .. } => (0, dimension.line_point, layout.text.insertion),
+            Measure::Aligned { .. } => (1, dimension.line_point, layout.text.insertion),
+            Measure::Angular { .. } => (5, dimension.line_point, layout.text.insertion),
+            Measure::Radius { center, .. } => (4, center, dimension.line_point),
             // The point on the circle opposite the leader.
             Measure::Diameter { .. } => (
                 3,
                 dimension
                     .circle_points()
                     .map_or(dimension.line_point, |(_, far)| far),
+                dimension.line_point,
             ),
         };
         self.point(10, definition);
-        self.point(11, layout.text.insertion);
+        self.point(11, text_point);
         // 32: the block is this dimension's own; 128: the text is where the
         // drafter put it.
         self.int(70, kind | 32 | 128);
@@ -607,7 +703,13 @@ impl Writer {
             self.group(1, text);
         }
         if let Some(angle) = dimension.text_angle {
-            self.real(53, angle.to_degrees());
+            let on_its_own = dimension
+                .clone()
+                .turned(None)
+                .layout(style_row)
+                .text
+                .rotation;
+            self.real(53, (angle - on_its_own).to_degrees());
         }
         self.group(3, &style);
         match dimension.measure {

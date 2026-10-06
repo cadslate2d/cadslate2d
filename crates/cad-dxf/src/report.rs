@@ -20,6 +20,8 @@ pub struct ImportReport {
     /// INSERT entities imported into the drawing itself (those inside
     /// block definitions are part of their block).
     pub block_references: usize,
+    /// DIMENSION entities imported.
+    pub dimensions: usize,
     /// Entities that were skipped, by DXF type name, in name order.
     pub unsupported: BTreeMap<String, usize>,
     /// Imported entities that carried properties the drawing cannot hold
@@ -42,6 +44,8 @@ pub struct ImportReport {
     pub created_text_styles: usize,
     /// Dimension styles besides `Standard` in the drawing after the import.
     pub dim_styles: usize,
+    /// Dimension styles a dimension named but the file did not define.
+    pub created_dim_styles: usize,
     /// Block definitions in the drawing after the import.
     pub blocks: usize,
     /// MTEXT entities whose formatting — fonts, heights, colours,
@@ -76,7 +80,13 @@ impl ImportReport {
 
     /// Entities brought into the drawing.
     pub fn imported_total(&self) -> usize {
-        self.lines + self.circles + self.arcs + self.polylines + self.texts + self.block_references
+        self.lines
+            + self.circles
+            + self.arcs
+            + self.polylines
+            + self.texts
+            + self.block_references
+            + self.dimensions
     }
 
     pub(crate) fn count_unsupported(&mut self, kind: &str) {
@@ -96,6 +106,7 @@ impl ImportReport {
             (self.polylines, "polyline", "polylines"),
             (self.texts, "text", "texts"),
             (self.block_references, "block reference", "block references"),
+            (self.dimensions, "dimension", "dimensions"),
         ];
         let imported: Vec<String> = kinds
             .into_iter()
@@ -123,11 +134,21 @@ impl ImportReport {
             .collect();
             lines.push(format!("With {}.", joined(&tables)));
         }
-        if self.created_layers + self.created_linetypes + self.created_text_styles > 0 {
+        if self.created_layers
+            + self.created_linetypes
+            + self.created_text_styles
+            + self.created_dim_styles
+            > 0
+        {
             let created: Vec<String> = [
                 (self.created_layers, "layer", "layers"),
                 (self.created_linetypes, "linetype", "linetypes"),
                 (self.created_text_styles, "text style", "text styles"),
+                (
+                    self.created_dim_styles,
+                    "dimension style",
+                    "dimension styles",
+                ),
             ]
             .into_iter()
             .filter(|(count, ..)| *count > 0)

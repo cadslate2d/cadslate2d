@@ -1011,6 +1011,109 @@ fn dimension_styles_from_another_writer() {
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }
 
+/// DIMENSION from another writer (ADR-0020, #166): every kind the drawing
+/// has a measure for, read from its points; its style, made when the file
+/// did not define it; the drafter's text and turned text; the anonymous
+/// blocks passed over; an ordinate dimension reported. Our export writes
+/// the dimensions with anonymous blocks of their own, which the corpus
+/// runner round-trips byte for byte.
+#[test]
+fn dimensions_from_another_writer() {
+    use cad_document::Measure;
+    let import = load("corpus", "r2010-dimensions.dxf").unwrap();
+    let drawing = &import.drawing;
+    let dimensions: Vec<_> = in_file_order(drawing)
+        .into_iter()
+        .filter_map(|entity| match entity {
+            Entity::Dimension(dimension) => Some(dimension),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(dimensions.len(), 8);
+    let kinds: Vec<&str> = dimensions
+        .iter()
+        .map(|dimension| dimension.measure.kind())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "linear", "linear", "linear", "angular", "angular", "radius", "diameter", "linear"
+        ]
+    );
+    let values: Vec<f64> = dimensions
+        .iter()
+        .map(|d| (d.value() * 1e6).round() / 1e6)
+        .collect();
+    assert_eq!(values, [100.0, 50.0, 40.0, 90.0, 90.0, 30.0, 60.0, 60.0]);
+
+    // The first is in ARCH, which the file defines; the rest in Standard.
+    let arch = drawing.dim_styles().find("ARCH").unwrap();
+    assert_eq!(dimensions[0].style, arch);
+    assert_eq!(drawing.dim_styles().get(arch).unwrap().text_height, 3.5);
+    assert!(dimensions[1..].iter().all(|d| d.style == DimStyleId::FIRST));
+    // The two lines' angle, measured where the arc was placed.
+    let Measure::Angular { vertex, .. } = dimensions[3].measure else {
+        panic!("angular");
+    };
+    assert!(vertex.distance_to(Point2::new(0.0, 100.0)) < 1e-9);
+    assert_eq!(dimensions[3].line_point, Point2::new(15.0, 115.0));
+    // The radius: centre and radius from the two points, placed where the
+    // text was.
+    assert_eq!(
+        dimensions[5].measure,
+        Measure::Radius {
+            center: Point2::new(200.0, 0.0),
+            radius: 30.0
+        }
+    );
+    // The drafter's text, and its turn away from where it would read.
+    assert_eq!(dimensions[7].text_override.as_deref(), Some("TYP"));
+    let turn = dimensions[7].text_angle.expect("turned");
+    assert!((turn - 30f64.to_radians()).abs() < 1e-9, "{turn}");
+
+    // The *D blocks are not blocks of ours; ezdxf's arrowhead block is.
+    let block_names: Vec<&str> = drawing
+        .blocks()
+        .iter()
+        .map(|(_, block)| block.name.as_str())
+        .collect();
+    assert_eq!(block_names, ["*Model_Space", "_CLOSEDFILLED"]);
+    let report = &import.report;
+    assert_eq!(report.dimensions, 8);
+    assert_eq!(report.unsupported.get("(ordinate DIMENSION)"), Some(&1));
+    assert_eq!(report.summary()[0], "Imported 8 dimensions.");
+
+    // Our file: a block record and an anonymous block per dimension, named
+    // by each DIMENSION, holding what the style laid out.
+    let text = export(drawing);
+    for n in 1..=8 {
+        assert!(
+            text.contains(&format!("AcDbBlockTableRecord\n  2\n*D{n}\n")),
+            "record *D{n}"
+        );
+        assert!(
+            text.contains(&format!("AcDbBlockBegin\n  2\n*D{n}\n 70\n1\n")),
+            "block *D{n}"
+        );
+        assert!(
+            text.contains(&format!("AcDbDimension\n  2\n*D{n}\n")),
+            "dimension {n}"
+        );
+    }
+    let turn_written: f64 = text
+        .split(" 53\n")
+        .nth(1)
+        .and_then(|rest| rest.lines().next())
+        .and_then(|value| value.parse().ok())
+        .expect("the text's turn is written");
+    assert!((turn_written - 30.0).abs() < 1e-9, "{turn_written}");
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(back.report.dimensions, 8);
+    assert!(!back.report.has_unsupported_content());
+    assert_eq!(back.drawing.blocks().len(), 2);
+    assert_eq!(export(&back.drawing), text, "export → import → export");
+}
+
 /// A newer file's MTEXT: words and line breaks kept, formatting dropped
 /// and reported, attachment points placed, long text in pieces joined.
 #[test]

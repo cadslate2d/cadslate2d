@@ -45,23 +45,7 @@ impl Corner {
     fn measure(self, place: Point2) -> Measure {
         match self {
             Corner::Points { vertex, a, b } => Measure::Angular { vertex, a, b },
-            Corner::Lines { vertex, a, b } => {
-                // The rays divide the turn into four; the placement lies in
-                // one of them, the one of the smallest arc through it.
-                let across = |point: Point2| vertex - (point - vertex);
-                let sweep =
-                    |a, b| DimensionEntity::new(Measure::Angular { vertex, a, b }, place).value();
-                [
-                    (a, b),
-                    (across(a), b),
-                    (a, across(b)),
-                    (across(a), across(b)),
-                ]
-                .into_iter()
-                .min_by(|(a0, b0), (a1, b1)| sweep(*a0, *b0).total_cmp(&sweep(*a1, *b1)))
-                .map(|(a, b)| Measure::Angular { vertex, a, b })
-                .expect("four candidates")
-            }
+            Corner::Lines { vertex, a, b } => Measure::between_lines(vertex, a, b, place),
         }
     }
 }

@@ -11,6 +11,7 @@
 
 use cad_core::tolerance::LinearTolerance;
 use cad_core::{Aabb, Point2, Vec2};
+use cad_geometry::intersect::line_line;
 use cad_geometry::{
     Arc, Arrowhead, Segment, Transform, foot_on_line, normalized, perpendicular, readable_angle,
 };
@@ -62,6 +63,53 @@ impl Measure {
             Self::Angular { vertex, a, b } => vec![vertex, a, b],
             Self::Radius { center, .. } | Self::Diameter { center, .. } => vec![center],
         }
+    }
+
+    /// The angle between two lines through `vertex` — one through `a`, one
+    /// through `b` — that `place` falls in: of the four the lines make, the
+    /// one whose arc through `place` is smallest. The dimension at `place`
+    /// then measures that angle, never a reflex one.
+    pub fn between_lines(vertex: Point2, a: Point2, b: Point2, place: Point2) -> Self {
+        let across = |point: Point2| vertex - (point - vertex);
+        let sweep = |a, b| DimensionEntity::new(Self::Angular { vertex, a, b }, place).value();
+        [
+            (a, b),
+            (across(a), b),
+            (a, across(b)),
+            (across(a), across(b)),
+        ]
+        .into_iter()
+        .min_by(|(a0, b0), (a1, b1)| sweep(*a0, *b0).total_cmp(&sweep(*a1, *b1)))
+        .map(|(a, b)| Self::Angular { vertex, a, b })
+        .expect("four candidates")
+    }
+
+    /// The angle between two lines, each given by two points, that `place`
+    /// falls in (see [`Measure::between_lines`]); the rays go through each
+    /// line's point farther from where they meet. `None` when the lines
+    /// are parallel, or one has no length.
+    pub fn between_line_segments(
+        first: [Point2; 2],
+        second: [Point2; 2],
+        place: Point2,
+    ) -> Option<Self> {
+        let vertex = line_line(
+            &Segment::new(first[0], first[1]),
+            &Segment::new(second[0], second[1]),
+        )?;
+        let away = |points: [Point2; 2]| {
+            if vertex.distance_to(points[0]) >= vertex.distance_to(points[1]) {
+                points[0]
+            } else {
+                points[1]
+            }
+        };
+        Some(Self::between_lines(
+            vertex,
+            away(first),
+            away(second),
+            place,
+        ))
     }
 
     /// The same measure with point `index` (as [`Measure::points`] orders
@@ -1076,6 +1124,41 @@ mod tests {
         };
         assert_eq!(moved.line_point, p(0.0, -7.0));
         assert!(entity.grip_moved(3, p(0.0, 0.0)).is_none());
+    }
+
+    #[test]
+    fn the_angle_between_two_lines_is_the_one_the_placement_falls_in() {
+        // Lines at 0° and 60° through the origin.
+        let (vertex, a, b) = (p(0.0, 0.0), p(100.0, 0.0), p(50.0, 86.602_540_378_443_86));
+        let at = |place| {
+            DimensionEntity::new(Measure::between_lines(vertex, a, b, place), place).value()
+        };
+        assert!((at(p(60.0, 20.0)) - 60.0).abs() < 1e-9);
+        assert!((at(p(-60.0, 20.0)) - 120.0).abs() < 1e-9);
+        assert!((at(p(-60.0, -20.0)) - 60.0).abs() < 1e-9);
+        assert!((at(p(60.0, -20.0)) - 120.0).abs() < 1e-9);
+        // From the lines' points: the same angles, the rays through the
+        // farther ends.
+        let between = Measure::between_line_segments(
+            [p(-10.0, 0.0), p(100.0, 0.0)],
+            [
+                p(-5.0, -8.660_254_037_844_386),
+                p(50.0, 86.602_540_378_443_86),
+            ],
+            p(60.0, 20.0),
+        )
+        .unwrap();
+        let value = DimensionEntity::new(between, p(60.0, 20.0)).value();
+        assert!((value - 60.0).abs() < 1e-6, "{value} from {between:?}");
+        assert_eq!(
+            Measure::between_line_segments(
+                [p(0.0, 0.0), p(10.0, 0.0)],
+                [p(0.0, 5.0), p(10.0, 5.0)],
+                p(5.0, 2.0)
+            ),
+            None,
+            "parallel"
+        );
     }
 
     #[test]

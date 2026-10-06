@@ -17,9 +17,10 @@ use std::collections::HashMap;
 use cad_core::{LengthUnit, Point2};
 use cad_document::{
     ArcEntity, Block, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, DimStyle,
-    DimStyleId, Drawing, DrawingSettings, Entity, EntityRecord, Justification, Layer, LayerId,
-    LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity, PolylineEntity,
-    Properties, TextEntity, TextStyle, TextStyleId, check_name, nearest_index, same_name,
+    DimStyleId, DimensionEntity, Drawing, DrawingSettings, Entity, EntityRecord, Justification,
+    Layer, LayerId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity,
+    Measure, PolylineEntity, Properties, TextEntity, TextStyle, TextStyleId, check_name,
+    nearest_index, same_name,
 };
 
 use crate::export::insunits_code;
@@ -50,6 +51,9 @@ const BAD_DIM_STYLE_NAME: &str = "(dimension style name)";
 /// Report key for a dimension style with a value a dimension cannot be
 /// drawn by: the row is kept with the default for that value.
 const BAD_DIM_STYLE: &str = "(dimension style values)";
+/// Report keys for the DIMENSION kinds the drawing has no measure for.
+const ORDINATE: &str = "(ordinate DIMENSION)";
+const UNKNOWN_DIMENSION: &str = "(DIMENSION of an unknown kind)";
 const BAD_BLOCK_NAME: &str = "(block name)";
 /// Report key for a layer whose colour is a true colour: the drawing holds
 /// the index palette, so the layer takes the nearest index (ADR-0018).
@@ -244,6 +248,8 @@ struct Pending {
     lineweight: Lineweight,
     /// A text's style, by name.
     style: Option<String>,
+    /// A dimension's style, by name.
+    dim_style: Option<String>,
     /// A reference's block, by name.
     block: Option<String>,
     /// It carried something the drawing cannot hold.
@@ -258,6 +264,7 @@ impl Default for Pending {
             linetype: LinetypeRef::ByLayer,
             lineweight: Lineweight::ByLayer,
             style: None,
+            dim_style: None,
             block: None,
             dropped: false,
         }
@@ -302,6 +309,7 @@ struct Tables {
     created_layers: usize,
     created_linetypes: usize,
     created_text_styles: usize,
+    created_dim_styles: usize,
     /// Rows a table may have.
     max_rows: usize,
 }
@@ -400,6 +408,21 @@ impl Tables {
 
     fn has_dim_style(&self, name: &str) -> bool {
         self.dim_style_ids.contains_key(&Self::key(name))
+    }
+
+    /// The ID the dimension style of that name will have, making it with
+    /// the defaults if the file did not define it. `None` for a name no
+    /// style can have, or one there is no room left to make.
+    fn dim_style(&mut self, name: &str) -> Option<DimStyleId> {
+        if same_name(name, DimStyle::STANDARD) {
+            return Some(DimStyleId::FIRST);
+        }
+        if !self.has_dim_style(name) {
+            check_name(name).ok()?;
+            self.add_dim_style(DimStyle::named(name)).ok()?;
+            self.created_dim_styles += 1;
+        }
+        self.dim_style_ids.get(&Self::key(name)).copied().flatten()
     }
 
     /// Keeps a dimension style the file defined.
@@ -687,6 +710,7 @@ impl<'a> Reader<'a> {
                 self.push(Entity::MText(text), body.pending())?;
             }
             (_, "INSERT") if entities => self.insert(record, body)?,
+            (_, "DIMENSION") if entities => self.dimension(body)?,
             (RecordContext::Tables, "STYLE") => self.table_text_style(body)?,
             (RecordContext::Tables, "DIMSTYLE") => self.table_dim_style(body)?,
             (_, "LWPOLYLINE") if entities => {
@@ -923,6 +947,100 @@ impl<'a> Reader<'a> {
     }
 
     /// A row of the STYLE table: a name is all the drawing keeps of it.
+    /// A DIMENSION: its kind from the low bits of 70 — rotated (0) and
+    /// aligned (1) from their two points (13, 14) and the dimension line's
+    /// (10), rotated with its angle (50); the angle between two lines (2)
+    /// from the lines' points (13–14 and 15–10) and the arc's (16); a
+    /// diameter (3) from the two points on the circle (10, 15); a radius
+    /// (4) from the centre (10) and the point on the circle (15); the
+    /// angle at a vertex (5) from the vertex (15), the points (13, 14), and
+    /// the arc's (10). Where the text is (11) places a radius or diameter.
+    /// The text (1) is the drafter's unless empty or `<>`; the text's angle
+    /// (53) is a turn away from where it would read on its own. The style
+    /// is named (3) and made if the file did not define it; the anonymous
+    /// block is not read, the layout engine drawing the dimension afresh
+    /// (ADR-0020). An ordinate dimension (6), one of a kind unknown, and
+    /// one that cannot be laid out are reported.
+    fn dimension(&mut self, body: &RecordBody) -> Result<(), DxfError> {
+        let point = |x: Option<f64>, y: Option<f64>| Some(Point2::new(x?, y?));
+        let (p10, p11) = (point(body.x0, body.y0), point(body.x1, body.y1));
+        let (p13, p14) = (point(body.x13, body.y13), point(body.x14, body.y14));
+        let (p15, p16) = (point(body.x15, body.y15), point(body.x16, body.y16));
+        let built = match body.flags & 15 {
+            kind @ (0 | 1) => (|| {
+                let (a, b, place) = (p13?, p14?, p10?);
+                let measure = if kind == 0 {
+                    let rotation = body.start_degrees.unwrap_or(0.0).to_radians();
+                    Measure::Linear { a, b, rotation }
+                } else {
+                    Measure::Aligned { a, b }
+                };
+                Some(DimensionEntity::new(measure, place))
+            })(),
+            2 => (|| {
+                let place = p16?;
+                let measure = Measure::between_line_segments([p13?, p14?], [p15?, p10?], place)?;
+                Some(DimensionEntity::new(measure, place))
+            })(),
+            3 => (|| {
+                let (far, near) = (p10?, p15?);
+                let center = far + (near - far) * 0.5;
+                let measure = Measure::Diameter {
+                    center,
+                    radius: center.distance_to(near),
+                };
+                Some(DimensionEntity::new(measure, p11.unwrap_or(near)))
+            })(),
+            4 => (|| {
+                let (center, near) = (p10?, p15?);
+                let measure = Measure::Radius {
+                    center,
+                    radius: center.distance_to(near),
+                };
+                Some(DimensionEntity::new(measure, p11.unwrap_or(near)))
+            })(),
+            5 => (|| {
+                let (vertex, a, b, place) = (p15?, p13?, p14?, p10?);
+                Some(DimensionEntity::new(
+                    Measure::Angular { vertex, a, b },
+                    place,
+                ))
+            })(),
+            6 => {
+                self.report.count_unsupported(ORDINATE);
+                return Ok(());
+            }
+            _ => {
+                self.report.count_unsupported(UNKNOWN_DIMENSION);
+                return Ok(());
+            }
+        };
+        let Some(mut dimension) = built else {
+            self.report.count_unsupported(INVALID);
+            return Ok(());
+        };
+        match body.text.as_deref().map(str::trim) {
+            None | Some("") | Some("<>") => {}
+            Some(words) => dimension.text_override = Some(words.to_owned()),
+        }
+        if let Some(turn) = body.text_rotation
+            && turn != 0.0
+        {
+            let on_its_own = dimension
+                .layout(&DimStyle::named(DimStyle::STANDARD))
+                .text
+                .rotation;
+            dimension.text_angle = Some(on_its_own + turn.to_radians());
+        }
+        if dimension.check().is_err() {
+            self.report.count_unsupported(INVALID);
+            return Ok(());
+        }
+        let mut pending = body.pending();
+        pending.dim_style = body.description.clone();
+        self.push(Entity::Dimension(dimension), pending)
+    }
+
     /// A row of the DIMSTYLE table: the name and the variables the drawing
     /// holds — text height (140), arrow size (41), text gap (147), extension
     /// offset (42) and overshoot (44), decimals (271), and the suffix
@@ -1038,8 +1156,7 @@ impl<'a> Reader<'a> {
                     Entity::Text(_) | Entity::MText(_) => self.report.texts += 1,
                     // Counted once its block is found.
                     Entity::BlockRef(_) => {}
-                    // Not read yet (#166): a DIMENSION is reported by name.
-                    Entity::Dimension(_) => {}
+                    Entity::Dimension(_) => self.report.dimensions += 1,
                 }
                 self.entities.push((entity, properties));
             }
@@ -1077,6 +1194,14 @@ impl<'a> Reader<'a> {
         match &mut entity {
             Entity::Text(text) => text.style = style,
             Entity::MText(text) => text.style = style,
+            // A dimension's style likewise: the file's, or Standard.
+            Entity::Dimension(dimension) => {
+                dimension.style = pending
+                    .dim_style
+                    .as_deref()
+                    .and_then(|name| self.tables.dim_style(name))
+                    .unwrap_or(DimStyleId::FIRST);
+            }
             Entity::BlockRef(reference) => {
                 let block = pending
                     .block
@@ -1186,6 +1311,7 @@ impl<'a> Reader<'a> {
         self.report.created_layers = self.tables.created_layers;
         self.report.created_linetypes = self.tables.created_linetypes;
         self.report.created_text_styles = self.tables.created_text_styles;
+        self.report.created_dim_styles = self.tables.created_dim_styles;
 
         // Settings the header names something for; what it names must be
         // usable, or the default stands.
@@ -1291,6 +1417,17 @@ struct RecordBody {
     /// Group 42 of a record with one point: a reference's Y scale, or a
     /// dimension style's extension-line offset.
     scale_y: Option<f64>,
+    /// Groups 13–16 (and 23–26) of a dimension: its further points.
+    x13: Option<f64>,
+    y13: Option<f64>,
+    x14: Option<f64>,
+    y14: Option<f64>,
+    x15: Option<f64>,
+    y15: Option<f64>,
+    x16: Option<f64>,
+    y16: Option<f64>,
+    /// Group 53 of a dimension: its text's turn, in degrees.
+    text_rotation: Option<f64>,
     /// Groups 44, 140, 147, 271 of a dimension style: extension overshoot,
     /// text height, text gap, decimals.
     dim_overshoot: Option<f64>,
@@ -1340,6 +1477,15 @@ impl RecordBody {
             70 => self.flags = group.value.parse().unwrap_or(0),
             11 => self.x1 = Some(real(group)?),
             21 => self.y1 = Some(real(group)?),
+            13 => self.x13 = Some(real(group)?),
+            23 => self.y13 = Some(real(group)?),
+            14 => self.x14 = Some(real(group)?),
+            24 => self.y14 = Some(real(group)?),
+            15 => self.x15 = Some(real(group)?),
+            25 => self.y15 = Some(real(group)?),
+            16 => self.x16 = Some(real(group)?),
+            26 => self.y16 = Some(real(group)?),
+            53 => self.text_rotation = Some(real(group)?),
             40 => self.radius = Some(real(group)?),
             50 => self.start_degrees = Some(real(group)?),
             51 => self.end_degrees = Some(real(group)?),
@@ -1412,6 +1558,7 @@ impl RecordBody {
                 .and_then(lineweight_from_dxf)
                 .unwrap_or(Lineweight::ByLayer),
             style: self.style.clone(),
+            dim_style: None,
             block: None,
             dropped: self.has_dropped_properties || true_colour_dropped,
         }

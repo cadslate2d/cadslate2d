@@ -263,6 +263,43 @@ def true_colour(release: str) -> None:
     ])
 
 
+def dimensions(release: str) -> None:
+    """Every kind of dimension the drawing has a measure for, each rendered so
+    the file carries its anonymous block (which CadSlate2D does not read), a
+    style of its own, the drafter's text, a turned text, and an ordinate
+    dimension, which is reported."""
+    doc, msp = new(release)
+    arch = doc.dimstyles.add("ARCH")
+    arch.dxf.dimtxt = 3.5
+    msp.add_linear_dim(base=(0, 20), p1=(0, 0), p2=(100, 0), dimstyle="ARCH").render()
+    msp.add_aligned_dim(p1=(0, -50), p2=(30, -10), distance=10).render()
+    msp.add_linear_dim(base=(-20, -50), p1=(0, -50), p2=(30, -10), angle=90).render()
+    msp.add_angular_dim_2l(
+        base=(15, 115), line1=((0, 100), (50, 100)), line2=((0, 100), (0, 150))
+    ).render()
+    msp.add_angular_dim_3p(base=(60, -160), center=(0, -200), p1=(50, -200), p2=(0, -150)).render()
+    msp.add_radius_dim(center=(200, 0), radius=30, angle=45).render()
+    msp.add_diameter_dim(center=(300, 0), radius=30, angle=45).render()
+    msp.add_linear_dim(
+        base=(0, -300), p1=(0, -320), p2=(60, -320), text="TYP", text_rotation=30
+    ).render()
+    msp.add_ordinate_x_dim(feature_location=(400, 10), offset=(0, 20)).render()
+    save(doc, f"{release.lower()}-dimensions", [
+        "imported dimensions 8",
+        'unsupported "(ordinate DIMENSION)" 1',
+        "tables dim_styles 1",
+        "entities 8",
+        "dimension 0 linear 100",
+        "dimension 1 linear 50",  # ezdxf writes an aligned dimension as a rotated one
+        "dimension 2 linear 40",
+        "dimension 3 angular 90",
+        "dimension 4 angular 90",
+        "dimension 5 radius 30",
+        "dimension 6 diameter 60",
+        "dimension 7 linear 60",
+    ])
+
+
 def attributes(release: str) -> None:
     doc, msp = new(release)
     tag = doc.blocks.new("TAG")
@@ -336,7 +373,7 @@ def main() -> None:
     for old in HERE.glob("*.expect"):
         old.unlink()
     for release in RELEASES:
-        for kind in [curves, polylines, text, layers, blocks, header, unsupported, attributes, mixed, degenerate]:
+        for kind in [curves, polylines, text, layers, blocks, header, unsupported, attributes, mixed, degenerate, dimensions]:
             kind(release)
         if modern(release):
             mtext(release)
