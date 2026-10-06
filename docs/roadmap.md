@@ -11,41 +11,59 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M2 — OSNAP, Grips, and Basic Modify | Every deliverable is implemented ([review](reviews/m2-exit-review.md)). Open only for the hands-on assessment of its exit condition, which needs a person. |
 | M3 — Robust Modify Geometry | Complete and closed ([review](reviews/m3-exit-review.md)). |
 | M4 — Drawing Organization | Complete and closed ([review](reviews/m4-exit-review.md)). |
-| M5 — DXF Compatibility | Next. Rewritten after M4 and broken into issues. |
-| M6–M7 | PROVISIONAL placeholders, to be broken down at the preceding exit review. |
+| M5 — DXF Compatibility | Complete and closed ([review](reviews/m5-exit-review.md)). |
+| M6 — Annotation and Hatch | Next. Rewritten after M5 and broken into issues. |
+| M7 | PROVISIONAL placeholder, to be broken down at the M6 exit review. |
 | M8 | FUTURE. Not planned against. |
 
-## M5, as rewritten after M4
+## M6, as rewritten after M5
 
-DESIGN §33 lists candidate work: broader DXF versions, expanded import and export, a compatibility matrix, unsupported-content warnings, a round-trip fixture corpus, local recovery persistence, and capability-enhanced save handles. §25 constrains the persistence: no Worker introduced for it, and browsers without writable handles still get a polished workflow.
+DESIGN §34 lists candidate work for annotation and hatch, in a dependency order it insists on: stable text metrics, then the dimension layout engine, then dimension rendering, then hatch. It forbids dimensions before text metrics are reliable enough to place text, gaps, arrowheads, and extension lines consistently.
 
-M4 left M5 these pieces: a drawing with layers, linetypes, text styles, blocks, and settings, all of which the R12 writer writes except lineweights and the unity of a paragraph, which it reports; a reader that takes every release and reports what it does not hold; a dozen fixtures from one library; a byte and entity limit on import; a `confirm` dialog before a lossy export; and a download as the only way to save.
+M5 left M6 these pieces: text drawn with a stroke font whose metrics are plain functions on the host (ADR-0016); a document whose entities carry properties and whose tables change through one history; a block model where a reference's geometry is computed from a table whenever it is asked for (ADR-0017) — the pattern a dimension will follow; a renderer that draws lines and arcs and nothing filled; a DXF reader and writer at R2000, where `DIMENSION`, `DIMSTYLE`, and `HATCH` all live; and a corpus and a matrix that a new record joins as rows.
 
 ### Order of work
 
-1. **The DXF release** (#152). Three things M4 built are lost on every save; ADR-0005's "revisit when" has been reached. An ADR with evidence chooses the release — R2000 is the candidate: lineweights, MTEXT, and everything it requires (handles, `BLOCK_RECORD`, `OBJECTS`) — and the writer gains it. First, because the corpus, the matrix, and the autosave all want to test and store the final form of the file. **True colour** (#153) is decided with the release, since group 420 needs it.
-2. **The compatibility matrix** (#154) and the **fixture corpus** (#155). What the reader and writer do becomes one page, every row backed by a test; and fixtures become a directory where a file and a one-line-per-expectation sidecar are a case, as the geometry corpora are, with files from four releases and a place for exports from interactive programs when someone can make them.
-3. **Parser hardening** (#156). §43's list — malformed counts, allocation bombs, recursion bombs, oversized entities — becomes limits with tests, hostile fixtures, and a fuzz run in `scripts/stress.sh`. After the release, so the fuzzer knows the writer's own output too.
-4. **The import report and the lossy-export warning in the shell** (#157): the §24.2 behaviour as a panel and a narrow dialog that names what will be lost, instead of log lines and a fixed sentence.
-5. **Local recovery persistence** (#158): an ADR measuring IndexedDB against the OPFS async API on the main thread, then autosave after each transaction in our own file format and recovery on load. After the release, so that nothing autosaved is lossy. Then **saving to a file handle** where the browser has the API, with the download as the fallback everywhere else (#159).
-6. **Exit** (#160): scenario, review, and the M6 breakdown.
+1. **Text metrics for dimensions** (#161). §34's first item, taken literally: the width, cap height, ascent, descent, and box of a string are named as the API the layout engine may rely on and held under property tests, and the renderer's strokes are shown to lie inside the document's box. §34's second item, an improved text renderer, is not taken up: ADR-0016's stroke font stands until #110 measures rendering on hardware.
+2. **Dimension styles** (#162). A table like the others — a row type, a `Change` variant, builder methods that refuse inconsistency — with `DIMSTYLE` and the DXF table both ways. Before the entity, because a dimension is drawn by its style.
+3. **The dimension entity and its layout engine** (#163), with an ADR: definition points, a style, an optional text override; the geometry computed by pure functions whenever it is asked for, so a style change redraws every dimension as one row changes (§19.6 again); what each kind's grips hold fixed. Property tests over every kind before any command.
+4. **The commands**: `DIMLINEAR` and `DIMALIGNED` (#164), then `DIMANGULAR`, `DIMRADIUS`, and `DIMDIAMETER` (#165), each with previews through the layout engine and one transaction; **dimensions in DXF** (#166), with the anonymous block readers expect.
+5. **Hatch** (#167): an experiment and an ADR on how a filled region reaches a renderer that draws lines — triangles as a new committed instance kind, or a dense family of lines — then the entity, solid fill, and `HATCH`; **patterns** as line families clipped to the boundary (#168); **hatches in DXF** (#169).
+6. **Exit** (#170): scenario, review, and the M7 breakdown, folding in the hardening issues that have waited since M2 (#108–#112, #151).
 
-### Not in M5
+### Not in M6
 
-- DWG (§24.3) and opaque passthrough of unsupported records (§24.2: FUTURE).
-- Entities the model does not have — dimensions, hatches, splines, ellipses, points — are counted and reported, not imported; dimensions and hatches are M6.
-- A native project format (§39) and a Worker for persistence (§25.2).
-- Cloud storage of any kind (§43, §45).
+- Associative dimensions, ordinate and arc-length dimensions, leaders, tolerances, alternate units.
+- Gradient fills; hatch boundaries from splines or ellipses, which the model lacks.
+- A second font or an atlas text renderer (ADR-0016; #110).
+- `MLEADER`, tables, fields, and the rest of annotation beyond dimensions and hatches.
 
 ### Needs a person
 
+- An interactive CAD program (AutoCAD, BricsCAD, LibreCAD, QCAD) reading our R2000 files — blocks, lineweights, paragraphs, `$INSUNITS`; ezdxf does, with no audit errors ([ADR-0018](adr/0018-dxf-release-r2000.md)). One file saved by such a program belongs in the corpus.
+- The File System Access path in a real browser: open, edit, Ctrl+S, the file changed; the permission prompt; the handle after a reload ([M5 review](reviews/m5-exit-review.md)).
+- WebKit, for the persistence measurement and the end-to-end suite.
 - How M4 feels against classic CAD: `BLOCK`'s order of questions, `INSERT`'s prompts, `EXPLODE` one level at a time, the lineweight display rule, the stroke font ([M4 review](reviews/m4-exit-review.md)).
-- Whether interactive CAD programs (AutoCAD, BricsCAD, LibreCAD, QCAD) open our R2000 files — blocks, lineweights, paragraphs, `$INSUNITS`; ezdxf does, with no audit errors ([ADR-0018](adr/0018-dxf-release-r2000.md)).
 - How the M3 commands feel against classic CAD: round corners on polyline offsets, JOIN and gaps between arcs, the STRETCH window, BREAK on circles ([M3 review](reviews/m3-exit-review.md)).
 - The hands-on assessment of the M2 exit condition.
 - Confirming the arc grip behaviour against AutoCAD (ADR-0010).
 - Measuring rendering on real GPU hardware.
 - Deciding whether to report the R-tree bulk-load crash upstream.
+
+## M5, as it was planned
+
+Kept for the record; the review says how it went.
+
+DESIGN §33 lists candidate work for DXF compatibility and local persistence. The order of work, after M4, was:
+
+1. **The DXF release**, by ADR — R2000, so that lineweights and paragraphs are saved rather than reported — with **true colour** decided alongside.
+2. **The compatibility matrix** and the **fixture corpus** from another writer.
+3. **Parser hardening** against hostile files (§43).
+4. **The import report and the lossy-export warning in the shell**.
+5. **Local recovery persistence**, by ADR, then **saving to a file handle** where the browser has the API.
+6. **Exit.**
+
+Left out on purpose: DWG and opaque passthrough; entities the model lacks (counted and reported); a native project format; a persistence Worker; cloud storage.
 
 ## M4, as it was planned
 

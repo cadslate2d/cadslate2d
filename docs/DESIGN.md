@@ -1955,6 +1955,8 @@ Potential work:
 
 > **Rewritten at the M4 exit:** the order of work and what is left out are in the [roadmap](roadmap.md) and the issues of the M5 milestone; the [M4 review](reviews/m4-exit-review.md) says what M4 left for it.
 
+> **Done (2026-10-06):** every item above is implemented; the [M5 review](reviews/m5-exit-review.md) links each criterion to its tests. The writer writes R2000 (ADR-0018); what every record becomes is [`dxf-matrix.md`](dxf-matrix.md), backed by a 45-file corpus; every quantity a file can grow is bounded (§43); the import report and the lossy-export warning are in the shell (§24.2); the drawing is kept in IndexedDB and offered back (ADR-0019), and saved back to its file where the browser can (§25.3).
+
 ---
 
 # 34. M6 — Annotation and Hatch
@@ -1984,6 +1986,8 @@ Potential work:
 7. hatch pattern support.
 
 Dimensions must not begin before text metrics are reliable enough to place text, gaps, arrowheads, and extension lines consistently.
+
+> **Rewritten at the M5 exit:** the order of work and what is left out are in the [roadmap](roadmap.md) and the issues of the M6 milestone; the [M5 review](reviews/m5-exit-review.md) says what M5 left for it. The "improved text renderer" is not taken up: ADR-0016's stroke font stands until rendering is measured on hardware (#110).
 
 ---
 
