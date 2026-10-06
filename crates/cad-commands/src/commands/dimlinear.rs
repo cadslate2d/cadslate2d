@@ -16,15 +16,13 @@ use cad_core::tolerance::LinearTolerance;
 use cad_document::{DimStyleId, DimensionEntity, Entity, Measure};
 use cad_input::{ExpectedInput, Keyword};
 
+use super::dimtext::{ANGLE, OPTIONS as ALIGNED_OPTIONS, TEXT, TextOptions, commit};
 use crate::{Command, CommandContext, CommandInput, OverlayItem, Prompt, Step};
 
 const HORIZONTAL: Keyword = Keyword::new("Horizontal");
 const VERTICAL: Keyword = Keyword::new("Vertical");
 const ROTATED: Keyword = Keyword::new("Rotated");
-const TEXT: Keyword = Keyword::new("Text");
-const ANGLE: Keyword = Keyword::new("Angle");
 const LINEAR_OPTIONS: [Keyword; 5] = [HORIZONTAL, VERTICAL, ROTATED, TEXT, ANGLE];
-const ALIGNED_OPTIONS: [Keyword; 2] = [TEXT, ANGLE];
 
 /// How the dimension line lies.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -55,25 +53,13 @@ enum State {
         a: Point2,
         b: Point2,
     },
-    /// `Text`: words in place of the value, which is the default.
-    Text {
-        a: Point2,
-        b: Point2,
-        measured: String,
-    },
-    /// `Angle`: the text's angle.
-    TextAngle {
-        a: Point2,
-        b: Point2,
-    },
 }
 
 #[derive(Debug)]
 pub(crate) struct DimLinearCommand {
     state: State,
     direction: Direction,
-    text: Option<String>,
-    text_angle: Option<f64>,
+    options: TextOptions,
     /// The style new dimensions take, as the command found it.
     style: DimStyleId,
 }
@@ -93,8 +79,7 @@ impl DimLinearCommand {
         Self {
             state: State::First,
             direction,
-            text: None,
-            text_angle: None,
+            options: TextOptions::new(),
             style: DimStyleId::FIRST,
         }
     }
@@ -115,13 +100,11 @@ impl DimLinearCommand {
                 rotation: auto_rotation(a, b, place),
             },
         };
-        DimensionEntity::new(measure, place)
-            .in_style(self.style)
-            .saying(self.text.clone())
-            .turned(self.text_angle)
+        self.options
+            .apply(DimensionEntity::new(measure, place).in_style(self.style))
     }
 
-    fn options(&self) -> &'static [Keyword] {
+    fn keywords(&self) -> &'static [Keyword] {
         if self.is_aligned() {
             &ALIGNED_OPTIONS
         } else {
@@ -160,6 +143,9 @@ impl Command for DimLinearCommand {
     }
 
     fn prompt(&self) -> Prompt {
+        if let Some(prompt) = self.options.prompt() {
+            return prompt;
+        }
         match &self.state {
             State::First => {
                 Prompt::new("Specify first extension line origin").with_default("select object")
@@ -170,27 +156,26 @@ impl Command for DimLinearCommand {
             State::Rotation { .. } => {
                 Prompt::new("Specify angle of dimension line").with_default("0")
             }
-            State::Text { measured, .. } => {
-                Prompt::new("Enter dimension text").with_default(measured.clone())
-            }
-            State::TextAngle { .. } => {
-                Prompt::new("Specify angle of dimension text").with_default("0")
-            }
         }
     }
 
     fn expected(&self) -> ExpectedInput {
+        if let Some(expected) = self.options.expected() {
+            return expected;
+        }
         match &self.state {
             State::First => ExpectedInput::point(),
             State::Object => ExpectedInput::object(),
             State::Second { .. } => ExpectedInput::point().with_direct_distance(),
-            State::Place { .. } => ExpectedInput::point().with_keywords(self.options()),
-            State::Rotation { .. } | State::TextAngle { .. } => ExpectedInput::angle(),
-            State::Text { .. } => ExpectedInput::text(),
+            State::Place { .. } => ExpectedInput::point().with_keywords(self.keywords()),
+            State::Rotation { .. } => ExpectedInput::angle(),
         }
     }
 
     fn step(&mut self, input: CommandInput, ctx: &mut CommandContext<'_>) -> Step {
+        if self.options.step(&input) {
+            return Step::Continue;
+        }
         match (&self.state, input) {
             (State::First, CommandInput::Point(a)) => self.state = State::Second { a },
             (State::First, CommandInput::Accept) => self.state = State::Object,
@@ -212,18 +197,7 @@ impl Command for DimLinearCommand {
                 }
             }
             (State::Place { a, b }, CommandInput::Point(place)) => {
-                let dimension = self.dimension(*a, *b, place);
-                let mut transaction = ctx.drawing.transaction();
-                match transaction.insert(dimension) {
-                    Ok(_) => {
-                        transaction.commit();
-                        return Step::Finished;
-                    }
-                    Err(error) => {
-                        drop(transaction);
-                        ctx.message(error.to_string());
-                    }
-                }
+                return commit(self.dimension(*a, *b, place), ctx);
             }
             (State::Place { a, b }, CommandInput::Keyword(keyword)) => {
                 let (a, b) = (*a, *b);
@@ -231,19 +205,13 @@ impl Command for DimLinearCommand {
                     HORIZONTAL => self.direction = Direction::Rotated(0.0),
                     VERTICAL => self.direction = Direction::Rotated(FRAC_PI_2),
                     ROTATED => self.state = State::Rotation { a, b },
-                    TEXT => {
-                        // The default is what the text would say: measured
-                        // as the dimension stands, horizontal until placed.
-                        let style = ctx.drawing.tables().dim_style(self.style);
-                        let measured = DimensionEntity {
-                            text_override: None,
-                            ..self.dimension(a, b, a + (b - a) * 0.5)
-                        }
-                        .content(style);
-                        self.state = State::Text { a, b, measured };
+                    other => {
+                        // Measured as the dimension stands: horizontal
+                        // until placed.
+                        let measured =
+                            TextOptions::measured(&self.dimension(a, b, a + (b - a) * 0.5), ctx);
+                        self.options.open(other, || measured);
                     }
-                    ANGLE => self.state = State::TextAngle { a, b },
-                    _ => {}
                 }
             }
             (State::Rotation { a, b }, CommandInput::Angle(degrees)) => {
@@ -252,22 +220,6 @@ impl Command for DimLinearCommand {
             }
             (State::Rotation { a, b }, CommandInput::Accept) => {
                 self.direction = Direction::Rotated(0.0);
-                self.state = State::Place { a: *a, b: *b };
-            }
-            (State::Text { a, b, .. }, CommandInput::Text(words)) => {
-                self.text = Some(words);
-                self.state = State::Place { a: *a, b: *b };
-            }
-            (State::Text { a, b, .. }, CommandInput::Accept) => {
-                self.text = None;
-                self.state = State::Place { a: *a, b: *b };
-            }
-            (State::TextAngle { a, b }, CommandInput::Angle(degrees)) => {
-                self.text_angle = Some(degrees.to_radians());
-                self.state = State::Place { a: *a, b: *b };
-            }
-            (State::TextAngle { a, b }, CommandInput::Accept) => {
-                self.text_angle = None;
                 self.state = State::Place { a: *a, b: *b };
             }
             (_, CommandInput::Accept) => return Step::Finished,

@@ -9,6 +9,7 @@ mod bulged;
 mod chprop;
 mod color;
 mod corner;
+mod dimcurve;
 mod dimension;
 mod dimlinear;
 mod dimstyle;

@@ -92,6 +92,7 @@ dependencies = [
  "cad-document",
  "cad-geometry",
  "cad-input",
+ "proptest",
 ]
 
 [[package]]

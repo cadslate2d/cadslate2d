@@ -9,6 +9,7 @@ import {
   group,
   litPixels,
   litPixelsAround,
+  num,
   openApp,
   prompt,
 } from "./support";
@@ -53,5 +54,47 @@ test.describe("dimensions", () => {
     expect(dimensions).toHaveLength(2);
     expect(dimensions.map((record) => group(record, 3))).toEqual(["Standard", "Standard"]);
     expect(dimensions.map((record) => group(record, 42))).toEqual(["200.0", "200.0"]);
+  });
+
+  test("DIMANGULAR, DIMRADIUS, and DIMDIAMETER, each once", async ({ page }) => {
+    const canvas = await openApp(page);
+    await page.keyboard.press("F7");
+    await enter(page, "LINE", "-200,-60", "0,60", "");
+    await enter(page, "LINE", "-200,60", "0,-60", "");
+    await enter(page, "CIRCLE", "120,0", "40");
+    await expect(prompt(page)).toHaveText("Command:");
+
+    // The angle between the lines, on the side the pointer is.
+    await enter(page, "DIMANGULAR");
+    await expect(prompt(page)).toHaveText("Select arc, circle, line <specify vertex>:");
+    await clickWorld(page, canvas, -50, 30);
+    await expect(prompt(page)).toHaveText("Select second line:");
+    await clickWorld(page, canvas, -50, -30);
+    await expect(prompt(page)).toHaveText("Specify dimension arc line location or [Text/Angle]:");
+    await enter(page, "-40,0");
+    await expect(prompt(page)).toHaveText("Command:");
+
+    // The radius inside the circle, the diameter outside it.
+    await enter(page, "DIMRADIUS");
+    await clickWorld(page, canvas, 160, 0);
+    await expect(prompt(page)).toHaveText("Specify dimension line location or [Text/Angle]:");
+    await enter(page, "140,0");
+    await enter(page, "DIMDIAMETER");
+    await clickWorld(page, canvas, 120, 40);
+    await enter(page, "120,70");
+    await expect(prompt(page)).toHaveText("Command:");
+
+    // The radius dimension is picked by its leader.
+    await clickWorld(page, canvas, 150, 0);
+    await expect(page.getByTestId("selection-headline")).toHaveText("1 dimension");
+    await page.keyboard.press("Escape");
+
+    const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    const dimensions = entities(file.text, "DIMENSION");
+    // Kinds 5, 4, 3, with the block and user-text flags (32 + 128).
+    expect(dimensions.map((record) => group(record, 70))).toEqual(["165", "164", "163"]);
+    expect(num(dimensions[0], 42)).toBeCloseTo(61.9275, 3);
+    expect(group(dimensions[1], 42)).toBe("40.0");
+    expect(group(dimensions[2], 42)).toBe("80.0");
   });
 });
