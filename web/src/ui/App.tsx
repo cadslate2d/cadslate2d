@@ -7,6 +7,7 @@ import { Header } from "./Header";
 import { LayersPanel } from "./LayersPanel";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { StatusBar } from "./StatusBar";
+import { TextEditor } from "./TextEditor";
 import { Toolbar } from "./Toolbar";
 
 type CoreState =
@@ -96,6 +97,7 @@ export function App() {
       />
       {toolbar.visible && <Toolbar app={core.app} />}
       <CanvasView app={core.app} />
+      <TextEditor app={core.app} />
       <CommandLine app={core.app} />
       {panels && (
         <div className="panels">

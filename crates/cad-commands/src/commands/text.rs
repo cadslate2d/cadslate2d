@@ -1,10 +1,11 @@
-//! TEXT and TEXTEDIT: a single line of text, and changing what one says
+//! TEXT and TEXTEDIT: a single line of text, and changing what a text says
 //! (DESIGN §11, §32; ADR-0016).
 //!
 //! TEXT asks for the start point — or a justification first — the height,
 //! the rotation, and then the text itself, typed with the text input kind,
 //! so spaces are part of it. TEXTEDIT picks a text and asks for its new
-//! content; Enter keeps the old.
+//! content; Enter keeps the old. Picked a paragraph, it opens the host's
+//! editor on the old words instead (see `mtext.rs`).
 
 use cad_core::Point2;
 use cad_core::tolerance::LinearTolerance;
@@ -189,7 +190,16 @@ impl Command for TextCommand {
 #[derive(Debug)]
 enum EditState {
     Pick,
-    Content { id: cad_core::EntityId, old: String },
+    /// A single-line text: the new words are typed at the prompt.
+    Content {
+        id: cad_core::EntityId,
+        old: String,
+    },
+    /// A paragraph: the host's editor opens with the old words.
+    Paragraph {
+        id: cad_core::EntityId,
+        old: String,
+    },
 }
 
 #[derive(Debug)]
@@ -212,13 +222,14 @@ impl Command for TextEditCommand {
             EditState::Content { old, .. } => {
                 Prompt::new("Enter new text").with_default(old.clone())
             }
+            EditState::Paragraph { .. } => Prompt::new("Edit the text in the editor"),
         }
     }
 
     fn expected(&self) -> ExpectedInput {
         match &self.state {
             EditState::Pick => ExpectedInput::object(),
-            EditState::Content { .. } => ExpectedInput::text(),
+            EditState::Content { .. } | EditState::Paragraph { .. } => ExpectedInput::text(),
         }
     }
 
@@ -228,6 +239,12 @@ impl Command for TextEditCommand {
                 match ctx.drawing.entity(entity) {
                     Some(Entity::Text(text)) => {
                         self.state = EditState::Content {
+                            id: entity,
+                            old: text.content.clone(),
+                        };
+                    }
+                    Some(Entity::MText(text)) => {
+                        self.state = EditState::Paragraph {
                             id: entity,
                             old: text.content.clone(),
                         };
@@ -252,9 +269,32 @@ impl Command for TextEditCommand {
                 }
                 return Step::Finished;
             }
-            (EditState::Content { .. }, CommandInput::Accept) => return Step::Finished,
+            (EditState::Paragraph { id, old }, CommandInput::Text(content)) => {
+                if content != *old
+                    && !content.trim().is_empty()
+                    && let Some(Entity::MText(text)) = ctx.drawing.entity(*id)
+                {
+                    let edited = text.saying(content);
+                    let mut transaction = ctx.drawing.transaction();
+                    transaction
+                        .replace(*id, edited)
+                        .expect("the picked paragraph is live and keeps its style");
+                    transaction.commit();
+                }
+                return Step::Finished;
+            }
+            (EditState::Content { .. } | EditState::Paragraph { .. }, CommandInput::Accept) => {
+                return Step::Finished;
+            }
             _ => {}
         }
         Step::Continue
+    }
+
+    fn editor(&self) -> Option<&str> {
+        match &self.state {
+            EditState::Paragraph { old, .. } => Some(old),
+            _ => None,
+        }
     }
 }

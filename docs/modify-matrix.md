@@ -56,6 +56,8 @@ Tests: `cad-commands/src/tests/layers.rs`, `cad-document/src/drawing.rs`, `cad-r
 | ERASE | yes | yes | yes | yes | yes | yes |
 | TEXTEDIT | — | — | — | — | — | changes what it says |
 
+A paragraph (`MTEXT`) is treated exactly as a text in every row: moved, turned, scaled, and mirrored whole (and readable), one grip at its top-left insertion point, refused by every curve command, stretched by its insertion point.
+
 A text is not a curve: it has no primitives, so nothing intersects it, trims against it, or snaps to the strokes of its glyphs — only to its insertion point (the Insertion snap). It is picked and selected by its box, so a click inside a letter's counter picks it. Commands that work on curves refuse it by name: "A text cannot be offset."
 
 Polylines may have arc segments throughout: every command reads a polyline through the same primitives — segments and arcs — as it reads separate lines and arcs.

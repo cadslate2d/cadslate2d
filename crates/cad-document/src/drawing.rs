@@ -912,7 +912,11 @@ impl TransactionBuilder<'_> {
             .text_style_now(id)
             .cloned()
             .ok_or(TransactionError::UnknownTextStyle(id))?;
-        let uses = |entity: &Entity| matches!(entity, Entity::Text(text) if text.style == id);
+        let uses = |entity: &Entity| match entity {
+            Entity::Text(text) => text.style == id,
+            Entity::MText(text) => text.style == id,
+            _ => false,
+        };
         let pending = self.changes.iter().any(|change| match change {
             Change::Entity(EntityChange::Insert { record, .. }) => uses(&record.entity),
             Change::Entity(EntityChange::Replace { after, .. }) => uses(&after.entity),
@@ -1024,12 +1028,15 @@ impl TransactionBuilder<'_> {
     /// Whether the entity may be stored: a text's style must exist once
     /// this transaction commits.
     fn known_text_style(&self, entity: &Entity) -> Result<(), TransactionError> {
-        match entity {
-            Entity::Text(text) if self.text_style_now(text.style).is_none() => {
-                Err(TransactionError::UnknownTextStyle(text.style))
-            }
-            _ => Ok(()),
+        let style = match entity {
+            Entity::Text(text) => text.style,
+            Entity::MText(text) => text.style,
+            _ => return Ok(()),
+        };
+        if self.text_style_now(style).is_none() {
+            return Err(TransactionError::UnknownTextStyle(style));
         }
+        Ok(())
     }
 
     /// Whether `linetype` may be given to an entity, a layer, or new

@@ -9,9 +9,9 @@ use std::fmt::Write;
 
 use cad_core::{EntityId, LengthUnit};
 use cad_document::{
-    ArcEntity, CircleEntity, Color, Drawing, DrawingSettings, Entity, Justification, Layer,
-    LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight, PolylineEntity, Properties,
-    TextEntity, TextStyle, TextStyleTable,
+    ArcEntity, CircleEntity, Color, Drawing, DrawingSettings, Entity, Justification, LINE_SPACING,
+    Layer, LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight, PolylineEntity,
+    Properties, TextEntity, TextStyle, TextStyleTable,
 };
 
 use crate::properties::{
@@ -154,6 +154,21 @@ pub fn export_with_report(drawing: &Drawing) -> Export {
                 Entity::Arc(arc) => write_arc(out, arc, common),
                 Entity::Polyline(polyline) => write_polyline(out, polyline, layer, common),
                 Entity::Text(text) => write_text(out, text, drawing.text_styles(), common),
+                // R12 has no MTEXT: a paragraph is written as one TEXT per
+                // line, as it is set.
+                Entity::MText(text) => {
+                    let lines = text.lines();
+                    for (index, line) in lines.iter().enumerate() {
+                        let start = text.insertion
+                            - text_up(text.rotation)
+                                * (text.height * (1.0 + LINE_SPACING * index as f64));
+                        let single =
+                            TextEntity::new(start, text.height, text.rotation, line.clone());
+                        write_text(out, &single, drawing.text_styles(), |out| {
+                            write_properties(out, layer, properties, linetypes);
+                        });
+                    }
+                }
             }
         }
     });
@@ -267,6 +282,11 @@ fn write_arc(out: &mut String, arc: &ArcEntity, properties: impl FnOnce(&mut Str
     real(out, 40, arc.radius);
     real(out, 50, arc.start_angle.to_degrees());
     real(out, 51, arc.end_angle.to_degrees());
+}
+
+/// The unit vector up from a baseline at `rotation`.
+fn text_up(rotation: f64) -> cad_core::Vec2 {
+    cad_core::Vec2::new(-rotation.sin(), rotation.cos())
 }
 
 /// A TEXT: its insertion point, height, content, rotation, style, and —

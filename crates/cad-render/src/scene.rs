@@ -138,7 +138,7 @@ impl RenderScene {
             let mut properties = drawing.properties(id).unwrap_or_default();
             // A linetype is for curves: a text is drawn continuous, or its
             // glyphs would fall apart into dashes.
-            if matches!(entity, Entity::Text(_)) {
+            if matches!(entity, Entity::Text(_) | Entity::MText(_)) {
                 properties.linetype = Linetype::CONTINUOUS;
             }
             let style = *indices.entry(properties).or_insert_with(|| {

@@ -176,6 +176,58 @@ impl Font {
     }
 }
 
+impl Font {
+    /// Breaks `text` into lines no wider than `width` cap heights, at
+    /// spaces: the lines a paragraph is set in. An explicit line break
+    /// always breaks; a word wider than the width stands on a line of its
+    /// own, whole, rather than being cut; spaces at the end of a line are
+    /// dropped, and never count against the width. `width` of zero or
+    /// less means no wrapping: only the explicit breaks.
+    pub fn wrap(&self, text: &str, width: f64) -> Vec<String> {
+        let mut lines = Vec::new();
+        for paragraph in text.split('\n') {
+            if width <= 0.0 {
+                lines.push(paragraph.trim_end().to_owned());
+                continue;
+            }
+            // Words and the runs of spaces between them, in turn.
+            let mut line = String::new();
+            let mut pending = String::new();
+            for token in runs(paragraph) {
+                if token.starts_with(' ') {
+                    pending.push_str(token);
+                    continue;
+                }
+                let candidate = format!("{line}{pending}{token}");
+                if line.trim().is_empty() || self.advance(&candidate) <= width {
+                    line = candidate;
+                } else {
+                    lines.push(line.trim_end().to_owned());
+                    line = token.to_owned();
+                }
+                pending.clear();
+            }
+            lines.push(line.trim_end().to_owned());
+        }
+        lines
+    }
+}
+
+/// The maximal runs of spaces and of other characters in `text`, in order.
+fn runs(text: &str) -> impl Iterator<Item = &str> {
+    let mut rest = text;
+    std::iter::from_fn(move || {
+        let first = rest.chars().next()?;
+        let spaces = first == ' ';
+        let end = rest
+            .find(|c: char| (c == ' ') != spaces)
+            .unwrap_or(rest.len());
+        let (run, after) = rest.split_at(end);
+        rest = after;
+        Some(run)
+    })
+}
+
 /// One line of a `.jhf` file.
 fn parse_glyph(line: &str, number: usize) -> Result<Glyph, FontError> {
     let bytes = line.as_bytes();
@@ -341,7 +393,72 @@ mod tests {
         assert_eq!(one.len(), 1);
     }
 
+    #[test]
+    fn a_paragraph_wraps_at_spaces_to_the_width_and_at_explicit_breaks() {
+        let font = Font::simplex();
+        let width = font.advance("one two") + 0.01;
+        assert_eq!(
+            font.wrap("one two three four", width),
+            vec!["one two", "three", "four"]
+        );
+        let wider = font.advance("two three") + 0.01;
+        assert_eq!(font.wrap("one\ntwo three", wider), vec!["one", "two three"]);
+        assert_eq!(font.wrap("", width), vec![""]);
+        assert_eq!(
+            font.wrap("a\n\nb", width),
+            vec!["a", "", "b"],
+            "a blank line stays"
+        );
+        // A word wider than the width stands alone, whole.
+        let long = "supercalifragilistic";
+        assert_eq!(
+            font.wrap(&format!("a {long} b"), width),
+            vec!["a", long, "b"]
+        );
+        // Spaces at the end of a line are dropped and do not count; spaces
+        // inside a line are kept.
+        assert_eq!(font.wrap("one two    ", width), vec!["one two"]);
+        assert_eq!(font.wrap("one  two", wider), vec!["one  two"]);
+        assert_eq!(
+            font.wrap("  one", wider),
+            vec!["  one"],
+            "an indent is kept"
+        );
+        assert_eq!(
+            font.wrap("one two three   ", width),
+            vec!["one two", "three"]
+        );
+        // No width: only the explicit breaks.
+        assert_eq!(
+            font.wrap("one two three\nfour", 0.0),
+            vec!["one two three", "four"]
+        );
+        // Every line fits, unless it is one word.
+        for line in font.wrap("the quick brown fox jumps over the lazy dog", 3.0) {
+            assert!(font.advance(&line) <= 3.0 || !line.contains(' '), "{line}");
+        }
+    }
+
     proptest! {
+        /// Wrapping loses no word and keeps their order, and every line
+        /// with a space in it fits.
+        #[test]
+        fn wrapping_keeps_every_word_in_order(
+            text in "[ -~\n]{0,60}",
+            width in 0.5..20.0f64,
+        ) {
+            let font = Font::simplex();
+            let lines = font.wrap(&text, width);
+            let words: Vec<&str> = text.split(['\n', ' ']).filter(|w| !w.is_empty()).collect();
+            let wrapped: Vec<&str> = lines.iter().flat_map(|l| l.split(' ')).filter(|w| !w.is_empty()).collect();
+            prop_assert_eq!(wrapped, words);
+            for line in &lines {
+                prop_assert!(font.advance(line) <= width + 1e-9 || !line.trim().contains(' '), "{}", line);
+                prop_assert!(!line.ends_with(' '));
+            }
+            prop_assert!(lines.len() > text.matches('\n').count(), "one line per break at least");
+        }
+
         /// Width is additive over concatenation, and the strokes of a
         /// string are finite and within its box.
         #[test]

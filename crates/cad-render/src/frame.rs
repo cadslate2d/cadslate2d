@@ -310,12 +310,16 @@ impl PackedFrame {
             // A text is the strokes of its glyphs (ADR-0016): segments like
             // any other. The scene draws every text continuous, whatever
             // its linetype says, as drafting programs do.
-            Entity::Text(text) => {
-                for stroke in text.strokes() {
-                    for pair in stroke.windows(2) {
-                        self.push_segment(style, pair[0], pair[1]);
-                    }
-                }
+            Entity::Text(text) => self.push_strokes(style, text.strokes()),
+            Entity::MText(text) => self.push_strokes(style, text.strokes()),
+        }
+    }
+
+    /// The segments of polylines, each at the start of its own path.
+    fn push_strokes(&mut self, style: StyleRole, strokes: Vec<Vec<Point2>>) {
+        for stroke in strokes {
+            for pair in stroke.windows(2) {
+                self.push_segment(style, pair[0], pair[1]);
             }
         }
     }

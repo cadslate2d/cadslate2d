@@ -146,9 +146,14 @@ pub fn entity_snap_points(entity: &Entity, mode: SnapMode) -> Vec<Point2> {
     // A text offers its insertion point and nothing else: not the ends of
     // its glyphs' strokes (ADR-0016). It has no primitives, so the rest
     // of this finds nothing on it either.
-    if let Entity::Text(text) = entity {
+    let insertion = match entity {
+        Entity::Text(text) => Some(text.insertion),
+        Entity::MText(text) => Some(text.insertion),
+        _ => None,
+    };
+    if let Some(insertion) = insertion {
         return match mode {
-            SnapMode::Insertion => vec![text.insertion],
+            SnapMode::Insertion => vec![insertion],
             _ => Vec::new(),
         };
     }

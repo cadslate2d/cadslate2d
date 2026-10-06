@@ -15,6 +15,7 @@ mod layers;
 mod linetype;
 mod lweight;
 mod modify;
+mod mtext;
 mod offset;
 mod properties;
 mod reconciliation;

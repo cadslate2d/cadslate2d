@@ -19,6 +19,7 @@ mod joining;
 mod layer;
 mod linetype;
 mod lineweight;
+mod mtext;
 mod names;
 mod properties;
 mod revision;
@@ -36,13 +37,15 @@ pub use editing::{
     BreakError, CornerError, Cornered, ExtendError, OffsetError, StretchHold, TrimError, TrimParts,
 };
 pub use entity::{
-    ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity, SharedEntity, TextEntity,
+    ArcEntity, CircleEntity, Entity, LineEntity, MTextEntity, PolylineEntity, SharedEntity,
+    TextEntity,
 };
 pub use grips::{EntityGrip, GripKind};
 pub use joining::{JoinError, Joined, close_into_circle, join};
 pub use layer::{Layer, LayerChange, LayerId, LayerTable};
 pub use linetype::{LinetypeChange, LinetypeDef, LinetypeError, LinetypeId, LinetypeTable};
 pub use lineweight::Weight;
+pub use mtext::LINE_SPACING;
 pub use names::{NameError, Named, check_name, same_name};
 pub use properties::{Color, EntityRecord, Linetype, Lineweight, Properties};
 pub use revision::Revision;

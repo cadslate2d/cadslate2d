@@ -107,6 +107,16 @@ impl TextFrame {
     }
 }
 
+/// `angle` brought into (−π, π].
+pub(crate) fn signed_angle(angle: f64) -> f64 {
+    let turned = angle.rem_euclid(std::f64::consts::TAU);
+    if turned > std::f64::consts::PI {
+        turned - std::f64::consts::TAU
+    } else {
+        turned
+    }
+}
+
 impl TextEntity {
     pub fn new(insertion: Point2, height: f64, rotation: f64, content: impl Into<String>) -> Self {
         Self {
@@ -233,6 +243,7 @@ impl TextEntity {
         } else {
             start
         };
+        let along = signed_angle(along);
         let direction = Vec2::new(along.cos(), along.sin());
         let up = Vec2::new(-direction.y, direction.x);
         // The mirrored box's top may now be on the down side of the

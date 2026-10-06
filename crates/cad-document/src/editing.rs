@@ -15,7 +15,7 @@ use cad_geometry::{
     trim_segment_parts,
 };
 
-use crate::{ArcEntity, CircleEntity, Entity, LineEntity, PolylineEntity, TextEntity};
+use crate::{ArcEntity, CircleEntity, Entity, LineEntity, MTextEntity, PolylineEntity, TextEntity};
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
 
@@ -155,6 +155,7 @@ impl Entity {
             Entity::Polyline(polyline) => held(&polyline.vertices),
             // A text goes with its insertion point, whole.
             Entity::Text(text) => held(&[text.insertion]),
+            Entity::MText(text) => held(&[text.insertion]),
         }
     }
 
@@ -190,6 +191,13 @@ impl Entity {
             Entity::Circle(_) => Some(self.clone()),
             Entity::Text(text) => Some(
                 TextEntity {
+                    insertion: moved(text.insertion),
+                    ..text.clone()
+                }
+                .into(),
+            ),
+            Entity::MText(text) => Some(
+                MTextEntity {
                     insertion: moved(text.insertion),
                     ..text.clone()
                 }
@@ -277,7 +285,7 @@ impl Entity {
             Entity::Circle(circle) => break_circle(&circle.circle(), first, second, TOLERANCE)
                 .map(|arc| vec![ArcEntity::from(arc).into()])
                 .ok_or(BreakError::NeedsTwoPoints("circle")),
-            Entity::Text(_) => Err(BreakError::Unsupported("text")),
+            Entity::Text(_) | Entity::MText(_) => Err(BreakError::Unsupported(self.kind_name())),
             Entity::Polyline(polyline) => {
                 let path = polyline.path();
                 path.broken(first, second, TOLERANCE)
@@ -333,7 +341,7 @@ impl Entity {
             |piece: cad_geometry::Segment| Entity::from(LineEntity::new(piece.start, piece.end));
         let arc = |piece: cad_geometry::Arc| Entity::from(ArcEntity::from(piece));
         match self {
-            Entity::Text(_) => Err(TrimError::Unsupported("text")),
+            Entity::Text(_) | Entity::MText(_) => Err(TrimError::Unsupported(self.kind_name())),
             Entity::Line(entity) => trim_segment_parts(&entity.segment(), cuts, pick, TOLERANCE)
                 .map(|parts| TrimParts {
                     kept: parts.kept.into_iter().map(line).collect(),
@@ -400,7 +408,7 @@ impl Entity {
             Entity::Polyline(polyline) if polyline.closed => {
                 Err(ExtendError::Unsupported("closed polyline"))
             }
-            Entity::Text(_) => Err(ExtendError::Unsupported("text")),
+            Entity::Text(_) | Entity::MText(_) => Err(ExtendError::Unsupported(self.kind_name())),
             Entity::Polyline(polyline) => {
                 let from_end = polyline_end_is_nearer(polyline, pick);
                 polyline
@@ -458,7 +466,7 @@ impl Entity {
                 };
                 alone.extension_reach(pick, within)
             }
-            Entity::Circle(_) | Entity::Polyline(_) | Entity::Text(_) => None,
+            Entity::Circle(_) | Entity::Polyline(_) | Entity::Text(_) | Entity::MText(_) => None,
         }
     }
 
@@ -514,7 +522,7 @@ impl Entity {
             Entity::Line(line) => Ok(Primitive::Segment(line.segment())),
             Entity::Circle(circle) => Ok(Primitive::Circle(circle.circle())),
             Entity::Arc(arc) => Ok(Primitive::Arc(arc.arc())),
-            Entity::Polyline(_) | Entity::Text(_) => {
+            Entity::Polyline(_) | Entity::Text(_) | Entity::MText(_) => {
                 Err(CornerError::Unsupported(entity.kind_name()))
             }
         };
@@ -617,6 +625,7 @@ impl Entity {
             Entity::Arc(_) => "arc",
             Entity::Polyline(_) => "polyline",
             Entity::Text(_) => "text",
+            Entity::MText(_) => "multiline text",
         }
     }
 
@@ -664,7 +673,7 @@ impl Entity {
                     PathOffsetError::NoSide => OffsetError::NoSide,
                     PathOffsetError::Vanishes => OffsetError::Collapses,
                 }),
-            Entity::Text(_) => Err(OffsetError::Unsupported("text")),
+            Entity::Text(_) | Entity::MText(_) => Err(OffsetError::Unsupported(self.kind_name())),
         }
     }
 
@@ -679,7 +688,9 @@ impl Entity {
             Entity::Circle(circle) => (circle.center.distance_to(point) - circle.radius).abs(),
             Entity::Arc(arc) => (arc.center.distance_to(point) - arc.radius).abs(),
             Entity::Polyline(_) => self.distance_to(point),
-            Entity::Text(_) => return Err(OffsetError::Unsupported("text")),
+            Entity::Text(_) | Entity::MText(_) => {
+                return Err(OffsetError::Unsupported(self.kind_name()));
+            }
         };
         self.offset(distance, point)
     }

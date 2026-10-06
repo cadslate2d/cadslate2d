@@ -29,6 +29,8 @@ export interface UiSnapshot {
   readonly linetypes: readonly string[];
   /** The selection as the Properties panel shows it: a summary, never the objects. */
   readonly selection: SelectionSummary;
+  /** The text the paragraph editor opens with, while a command waits for a paragraph. */
+  readonly textEditor: string | undefined;
 }
 
 const NO_SELECTION: SelectionSummary = {
@@ -62,6 +64,7 @@ const INITIAL: UiSnapshot = {
   layers: [],
   linetypes: [],
   selection: NO_SELECTION,
+  textEditor: undefined,
 };
 
 export class UiStore {
@@ -108,6 +111,7 @@ export class UiStore {
       layers: state.layers,
       linetypes: state.linetypes,
       selection: state.selection,
+      textEditor: state.textEditor,
     };
     this.#listeners.forEach((listener) => listener());
   }

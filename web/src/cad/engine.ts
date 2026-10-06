@@ -88,6 +88,8 @@ export interface UiState {
   readonly linetypes: readonly string[];
   /** The selection as the Properties panel shows it (#141). */
   readonly selection: SelectionSummary;
+  /** The text to open the paragraph editor with, while a command waits for one (#144). */
+  readonly textEditor?: string;
 }
 
 /**

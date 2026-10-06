@@ -298,6 +298,11 @@ impl Session {
                 .map(|(_, def)| def.name.clone())
                 .collect(),
             selection: self.selection_summary(),
+            text_editor: self
+                .active
+                .as_ref()
+                .and_then(|active| active.command.editor())
+                .map(str::to_owned),
         }
     }
 
@@ -553,7 +558,8 @@ impl Session {
     /// the same text can be a command at the idle prompt and an error — or,
     /// later, a keyword — inside a command (DESIGN §13.3).
     pub fn submit_text(&mut self, text: &str) -> Dirty {
-        let echo = format!("{} {}", self.prompt(), text.trim());
+        // A paragraph from the editor is echoed on one line.
+        let echo = format!("{} {}", self.prompt(), text.trim().replace('\n', " ⏎ "));
         self.log.push(echo.trim_end().to_owned());
         self.history.record(text);
 

@@ -5,6 +5,7 @@ use cad_geometry::{
     Arc, Circle, Path, Primitive, Segment, Transform, is_straight, polyline_primitives,
 };
 
+pub use crate::mtext::MTextEntity;
 pub use crate::text::TextEntity;
 
 /// A straight line between two points.
@@ -175,6 +176,8 @@ pub enum Entity {
     /// A single line of text (ADR-0016). Not a curve: it has no
     /// primitives, and is picked and selected by its box.
     Text(TextEntity),
+    /// A paragraph of text, wrapped to a width; otherwise like a text.
+    MText(MTextEntity),
 }
 
 impl Entity {
@@ -192,6 +195,7 @@ impl Entity {
                 .reduce(|a, b| a.union(&b))
                 .unwrap_or_else(|| Aabb::from_points(Point2::ORIGIN, Point2::ORIGIN)),
             Entity::Text(text) => text.bounds(),
+            Entity::MText(text) => text.bounds(),
         }
     }
 
@@ -206,6 +210,7 @@ impl Entity {
                 .map(|primitive| primitive.distance_to_point(point))
                 .fold(f64::INFINITY, f64::min),
             Entity::Text(text) => text.distance_to(point),
+            Entity::MText(text) => text.distance_to(point),
         }
     }
 
@@ -219,7 +224,7 @@ impl Entity {
             Entity::Polyline(polyline) => polyline.primitives().collect(),
             // Nothing intersects, trims against, or snaps to the strokes
             // of a text.
-            Entity::Text(_) => Vec::new(),
+            Entity::Text(_) | Entity::MText(_) => Vec::new(),
         }
     }
 
@@ -249,6 +254,7 @@ impl Entity {
                 .primitives()
                 .any(|primitive| primitive.intersects_aabb(bounds)),
             Entity::Text(text) => text.crosses(bounds),
+            Entity::MText(text) => text.crosses(bounds),
         }
     }
 
@@ -306,6 +312,7 @@ impl Entity {
                 .into()
             }
             Entity::Text(text) => text.transformed(transform).into(),
+            Entity::MText(text) => text.transformed(transform).into(),
         }
     }
 
@@ -344,6 +351,12 @@ impl From<ArcEntity> for Entity {
 impl From<TextEntity> for Entity {
     fn from(text: TextEntity) -> Self {
         Entity::Text(text)
+    }
+}
+
+impl From<MTextEntity> for Entity {
+    fn from(text: MTextEntity) -> Self {
+        Entity::MText(text)
     }
 }
 
@@ -459,6 +472,7 @@ mod tests {
             }
             Entity::Polyline(polyline) => polyline.vertices.clone(),
             Entity::Text(text) => text.frame().corners().to_vec(),
+            Entity::MText(text) => text.frame().corners().to_vec(),
         }
     }
 

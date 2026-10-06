@@ -46,6 +46,9 @@ pub struct UiState {
     /// The selection as the Properties panel shows it: counts and shared
     /// values, bounded whatever the selection's size.
     pub selection: SelectionSummary,
+    /// The text to open the paragraph editor with, while the active
+    /// command waits for a paragraph (MTEXT, TEXTEDIT on one).
+    pub text_editor: Option<String>,
 }
 
 /// One row of the Layers panel.

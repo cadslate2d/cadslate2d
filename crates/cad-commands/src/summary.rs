@@ -12,12 +12,13 @@ use cad_document::{Drawing, Entity, Properties};
 use crate::Selection;
 
 /// The kinds an entity can be, in the order they are listed.
-const KINDS: [(&str, &str); 5] = [
+const KINDS: [(&str, &str); 6] = [
     ("line", "lines"),
     ("circle", "circles"),
     ("arc", "arcs"),
     ("polyline", "polylines"),
     ("text", "texts"),
+    ("multiline text", "multiline texts"),
 ];
 
 fn kind_index(entity: &Entity) -> usize {
@@ -27,6 +28,7 @@ fn kind_index(entity: &Entity) -> usize {
         Entity::Arc(_) => 2,
         Entity::Polyline(_) => 3,
         Entity::Text(_) => 4,
+        Entity::MText(_) => 5,
     }
 }
 
@@ -206,6 +208,14 @@ fn geometry_of(entity: &Entity) -> Vec<(String, String)> {
             row("Rotation", degrees(text.rotation)),
             row("Justification", text.justification.label().to_owned()),
             row("Width", number(text.width())),
+        ],
+        Entity::MText(text) => vec![
+            row("Contents", text.content.replace('\n', " ⏎ ")),
+            row("Insertion", point(text.insertion)),
+            row("Height", number(text.height)),
+            row("Width", number(text.width)),
+            row("Rotation", degrees(text.rotation)),
+            row("Lines", text.lines().len().to_string()),
         ],
     }
 }

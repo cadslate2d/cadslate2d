@@ -198,6 +198,14 @@ pub trait Command: Debug {
     fn transient_sources(&self) -> &[EntityId] {
         &[]
     }
+
+    /// The text the host should open its paragraph editor with, while this
+    /// command waits for a paragraph (DESIGN §5: a narrow, task-specific
+    /// editor). What the editor submits arrives as `CommandInput::Text`,
+    /// line breaks included, through the command line like anything typed.
+    fn editor(&self) -> Option<&str> {
+        None
+    }
 }
 
 #[cfg(test)]

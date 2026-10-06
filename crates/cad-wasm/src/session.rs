@@ -82,6 +82,7 @@ struct UiStateDto {
     layers: Vec<LayerRowDto>,
     linetypes: Vec<String>,
     selection: SelectionSummaryDto,
+    text_editor: Option<String>,
 }
 
 /// The selection as the Properties panel shows it: bounded whatever the
@@ -169,6 +170,7 @@ impl From<UiState> for UiStateDto {
             layers: state.layers.into_iter().map(LayerRowDto::from).collect(),
             linetypes: state.linetypes,
             selection: state.selection.into(),
+            text_editor: state.text_editor,
         }
     }
 }
