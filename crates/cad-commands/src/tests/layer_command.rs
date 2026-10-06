@@ -430,3 +430,46 @@ fn enter_at_a_name_prompt_goes_back_to_the_options_and_escape_cancels() {
     h.click_world(Point2::new(5.0, 5.0));
     assert_eq!(h.prompt(), "Enter name(s) for new layer(s):");
 }
+
+/// #140: the Layers panel is drawn from the UI state — names and looks,
+/// in table order, with the current layer marked; nothing else.
+#[test]
+fn the_ui_state_lists_the_layers_as_the_panel_shows_them() {
+    use crate::LayerRow;
+
+    let mut h = with_layers();
+    h.enter_all(&["LT", "L", "Dashed", ""]);
+    h.enter_all(&[
+        "LA", "C", "1", "walls", "LW", "0.5", "walls", "LT", "Dashed", "walls", "OFF", "doors",
+        "L", "doors", "S", "walls", "",
+    ]);
+    let row = |name: &str, color: u8, rgb: Option<[u8; 3]>| LayerRow {
+        name: name.to_owned(),
+        color,
+        rgb,
+        on: true,
+        locked: false,
+        current: false,
+        linetype: "Continuous".to_owned(),
+        lineweight: "Default".to_owned(),
+    };
+    assert_eq!(
+        h.session.ui_state().layers,
+        vec![
+            row("0", 7, None),
+            LayerRow {
+                current: true,
+                linetype: "Dashed".to_owned(),
+                lineweight: "0.50 mm".to_owned(),
+                ..row("walls", 1, Some([255, 0, 0]))
+            },
+            LayerRow {
+                on: false,
+                locked: true,
+                ..row("doors", 7, None)
+            },
+        ]
+    );
+    h.undo();
+    assert!(h.session.ui_state().layers.iter().all(|row| row.on));
+}

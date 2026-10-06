@@ -35,4 +35,25 @@ pub struct UiState {
     /// imported, so exporting it will not reproduce that file. The UI must
     /// warn before exporting (DESIGN §24.2).
     pub export_is_lossy: bool,
+    /// The layers, in the order they were made, as the Layers panel shows
+    /// them. Presentation only: names and looks, no IDs and no geometry.
+    pub layers: Vec<LayerRow>,
+}
+
+/// One row of the Layers panel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LayerRow {
+    pub name: String,
+    /// The layer's colour number, 1 to 255.
+    pub color: u8,
+    /// What the colour looks like, or `None` for the theme's foreground.
+    pub rgb: Option<[u8; 3]>,
+    pub on: bool,
+    pub locked: bool,
+    /// New objects go on this layer.
+    pub current: bool,
+    /// The linetype's name.
+    pub linetype: String,
+    /// The lineweight as it is shown: `Default`, `0.25 mm`.
+    pub lineweight: String,
 }

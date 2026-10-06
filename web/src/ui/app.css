@@ -20,18 +20,224 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* The canvas owns most of the screen; the command line is always present (DESIGN §5). */
+/* The canvas owns most of the screen; the command line is always present
+   (DESIGN §5). A panel, when shown, docks on the right beside the canvas
+   and the command line. */
 .shell {
   display: grid;
   /* One column exactly as wide as the window: no row may widen the shell,
      or the canvas would change size with the number of toolbar buttons. */
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: var(--size-header) minmax(0, 1fr) auto var(--size-status);
+  grid-template-areas:
+    "header"
+    "canvas"
+    "command"
+    "status";
   height: 100%;
 }
 
 .shell--with-toolbar {
   grid-template-rows: var(--size-header) var(--size-toolbar) minmax(0, 1fr) auto var(--size-status);
+  grid-template-areas:
+    "header"
+    "toolbar"
+    "canvas"
+    "command"
+    "status";
+}
+
+.shell--with-panel {
+  grid-template-columns: minmax(0, 1fr) var(--size-panel);
+  grid-template-areas:
+    "header header"
+    "canvas layers"
+    "command layers"
+    "status status";
+}
+
+.shell--with-toolbar.shell--with-panel {
+  grid-template-areas:
+    "header header"
+    "toolbar toolbar"
+    "canvas layers"
+    "command layers"
+    "status status";
+}
+
+.header {
+  grid-area: header;
+}
+
+.toolbar {
+  grid-area: toolbar;
+}
+
+.canvas-region {
+  grid-area: canvas;
+}
+
+.command {
+  grid-area: command;
+}
+
+.status {
+  grid-area: status;
+}
+
+/* ── Layers panel ── */
+
+.layers {
+  grid-area: layers;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin: var(--space-2) var(--space-2) var(--space-2) 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-panel);
+  font-size: var(--font-size-sm);
+}
+
+.layers__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.layers__title {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+}
+
+.layers__scroll {
+  min-height: 0;
+  overflow: auto;
+}
+
+.layers__table {
+  width: 100%;
+  border-collapse: collapse;
+  white-space: nowrap;
+}
+
+.layers__table th {
+  position: sticky;
+  top: 0;
+  padding: var(--space-1) 6px;
+  background: var(--color-surface-panel);
+  color: var(--color-text-muted);
+  font-weight: 500;
+  text-align: left;
+}
+
+.layers__table td {
+  padding: 0 6px;
+  border-top: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+
+.layers__row--current {
+  background: var(--color-accent-soft);
+}
+
+.layers__name {
+  width: 100%;
+}
+
+.layers__button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.layers__button[aria-pressed="true"] {
+  color: var(--color-text);
+}
+
+.layers__button:hover:not(:disabled),
+.layers__button:focus-visible {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
+}
+
+.layers__button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.layers__button--name {
+  color: var(--color-text);
+  padding: var(--space-1) var(--space-2);
+}
+
+.layers__row--current .layers__button--name {
+  font-weight: 600;
+  opacity: 1;
+}
+
+.layers__button--danger:hover:not(:disabled) {
+  color: var(--color-danger);
+}
+
+.layers__tools {
+  text-align: right;
+}
+
+.layers__swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: var(--space-1);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 2px;
+  vertical-align: -2px;
+}
+
+.layers__muted {
+  color: var(--color-text-muted);
+}
+
+.layers__form {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+}
+
+.layers__field {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-canvas);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.layers__note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-faint);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .toolbar {

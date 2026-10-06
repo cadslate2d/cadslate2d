@@ -1,7 +1,7 @@
 //! The one exported handle (ADR-0002 §1).
 
 use cad_commands::{
-    Dirty, HostRequest, KeyAction, Modifiers, PointerButton, Session, Toggle, UiState,
+    Dirty, HostRequest, KeyAction, LayerRow, Modifiers, PointerButton, Session, Toggle, UiState,
 };
 use cad_core::{ClipTransform, ScreenPoint};
 use cad_render::{OverlayFrame, SceneCache};
@@ -78,6 +78,36 @@ struct UiStateDto {
     document_name: Option<String>,
     unsaved_changes: bool,
     export_is_lossy: bool,
+    layers: Vec<LayerRowDto>,
+}
+
+/// One row of the Layers panel: presentation data only (ADR-0002 §5).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LayerRowDto {
+    name: String,
+    color: u8,
+    rgb: Option<[u8; 3]>,
+    on: bool,
+    locked: bool,
+    current: bool,
+    linetype: String,
+    lineweight: String,
+}
+
+impl From<LayerRow> for LayerRowDto {
+    fn from(row: LayerRow) -> Self {
+        Self {
+            name: row.name,
+            color: row.color,
+            rgb: row.rgb,
+            on: row.on,
+            locked: row.locked,
+            current: row.current,
+            linetype: row.linetype,
+            lineweight: row.lineweight,
+        }
+    }
 }
 
 impl From<UiState> for UiStateDto {
@@ -97,6 +127,7 @@ impl From<UiState> for UiStateDto {
             document_name: state.document_name,
             unsaved_changes: state.unsaved_changes,
             export_is_lossy: state.export_is_lossy,
+            layers: state.layers.into_iter().map(LayerRowDto::from).collect(),
         }
     }
 }

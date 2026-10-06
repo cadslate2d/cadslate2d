@@ -4,6 +4,7 @@ import { CadEngine, coreVersion, loadEngine } from "../cad/engine";
 import { CanvasView } from "./CanvasView";
 import { CommandLine } from "./CommandLine";
 import { Header } from "./Header";
+import { LayersPanel } from "./LayersPanel";
 import { StatusBar } from "./StatusBar";
 import { Toolbar } from "./Toolbar";
 
@@ -12,22 +13,27 @@ type CoreState =
   | { status: "ready"; app: CadApp; version: string }
   | { status: "failed"; reason: string };
 
-const TOOLBAR_KEY = "cadslate2d.toolbar";
+/** Whether a part of the shell is shown, and how to flip it. */
+export interface Visibility {
+  visible: boolean;
+  toggle: () => void;
+}
 
-/** Toolbar visibility is a UI preference: it lives in the browser, not in the drawing. */
-function useToolbarPreference(): [boolean, () => void] {
-  const [visible, setVisible] = useState(() => localStorage.getItem(TOOLBAR_KEY) !== "hidden");
+/** Whether the toolbar or a panel is shown is a UI preference: it lives in the browser, not in the drawing. */
+function useVisibilityPreference(key: string): Visibility {
+  const [visible, setVisible] = useState(() => localStorage.getItem(key) !== "hidden");
   const toggle = () =>
     setVisible((current) => {
-      localStorage.setItem(TOOLBAR_KEY, current ? "hidden" : "shown");
+      localStorage.setItem(key, current ? "hidden" : "shown");
       return !current;
     });
-  return [visible, toggle];
+  return { visible, toggle };
 }
 
 export function App() {
   const [core, setCore] = useState<CoreState>({ status: "loading" });
-  const [toolbarVisible, toggleToolbar] = useToolbarPreference();
+  const toolbar = useVisibilityPreference("cadslate2d.toolbar");
+  const layers = useVisibilityPreference("cadslate2d.layers");
 
   useEffect(() => {
     let cancelled = false;
@@ -74,15 +80,20 @@ export function App() {
     );
   }
 
+  const shell = [
+    "shell",
+    toolbar.visible && "shell--with-toolbar",
+    layers.visible && "shell--with-panel",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
-    <div className={`shell${toolbarVisible ? " shell--with-toolbar" : ""}`}>
-      <Header
-        coreVersion={core.version}
-        toolbar={{ visible: toolbarVisible, toggle: toggleToolbar }}
-      />
-      {toolbarVisible && <Toolbar app={core.app} />}
+    <div className={shell}>
+      <Header coreVersion={core.version} toolbar={toolbar} layers={layers} />
+      {toolbar.visible && <Toolbar app={core.app} />}
       <CanvasView app={core.app} />
       <CommandLine app={core.app} />
+      {layers.visible && <LayersPanel app={core.app} />}
       <StatusBar app={core.app} />
     </div>
   );

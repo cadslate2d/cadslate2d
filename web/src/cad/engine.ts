@@ -82,6 +82,23 @@ export interface UiState {
   readonly unsavedChanges: boolean;
   /** Exporting will not reproduce the file this drawing came from; warn first. */
   readonly exportIsLossy: boolean;
+  /** The layers as the Layers panel shows them, in table order (#140). */
+  readonly layers: readonly LayerRow[];
+}
+
+/** One row of the Layers panel: names and looks only, never IDs or geometry. */
+export interface LayerRow {
+  readonly name: string;
+  /** The colour number, 1 to 255. */
+  readonly color: number;
+  /** What the colour looks like, or `undefined` for the theme's foreground. */
+  readonly rgb?: readonly [number, number, number];
+  readonly on: boolean;
+  readonly locked: boolean;
+  /** New objects go on this layer. */
+  readonly current: boolean;
+  readonly linetype: string;
+  readonly lineweight: string;
 }
 
 /** What a batch of geometry is; the renderer maps each role to a themed style. */

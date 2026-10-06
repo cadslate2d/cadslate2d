@@ -14,7 +14,7 @@ Milestones **M0 — The Line**, **M1 — Input and Basic Entities**, and **M3 �
 
 ## What works today
 
-Type anywhere on the page; you never need to click the command line first. The toolbar is optional: every button runs the same command you could type, and the `Toolbar` button in the header hides it.
+Type anywhere on the page; you never need to click the command line first. The toolbar and the Layers panel are optional: every button runs the same command you could type — a panel action is `LAYER` with its answers, and the log shows each step — and the `Toolbar` and `Layers` buttons in the header hide them.
 
 | Command | Aliases | What it does |
 | --- | --- | --- |
@@ -107,7 +107,7 @@ A position that would collapse the object — a line of no length, a circle of n
 
 ### Layers
 
-Every object is on a layer; new objects go on the current one, and an object made from another — a copy, an offset, a piece of a trim — stays on its source's. `LAYER` makes and manages them. A layer that is **off** hides its objects from the screen and from the pointer. A layer that is **locked** still shows them, and they can be snapped to and trimmed against, but no command changes them.
+Every object is on a layer; new objects go on the current one, and an object made from another — a copy, an offset, a piece of a trim — stays on its source's. `LAYER` makes and manages them, and the Layers panel on the right does the same by button: switch on or off, lock, make current, create, rename, delete. It waits while a command is in progress. A layer that is **off** hides its objects from the screen and from the pointer. A layer that is **locked** still shows them, and they can be snapped to and trimmed against, but no command changes them.
 
 Objects are drawn in the colour of their layer (`LAYER`, `Color`), or in a colour of their own if they were drawn after `COLOR` set one. A colour is a number from 1 to 255 or one of seven names: 1 red, 2 yellow, 3 green, 4 cyan, 5 blue, 6 magenta, 7 white. Colour 7, which a new layer has, is the foreground: light on the dark canvas.
 

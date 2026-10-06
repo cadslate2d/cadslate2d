@@ -42,4 +42,4 @@ pub use settings::DraftingSettings;
 pub use snap::{SnapMode, SnapModes, SnapPoint};
 pub use toggles::{Toggle, Toggles};
 pub use transient::TransientEdit;
-pub use ui_state::UiState;
+pub use ui_state::{LayerRow, UiState};

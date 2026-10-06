@@ -61,6 +61,16 @@ export class CadApp {
     this.#afterInput(this.engine.invoke(name));
   }
 
+  /**
+   * Runs a command with its answers, exactly as if each had been typed: a
+   * panel's button is a macro over the command line, never a second path
+   * into the drawing (DESIGN §5, §15). The log shows every step.
+   */
+  run(name: string, ...answers: readonly string[]): void {
+    this.invoke(name);
+    for (const answer of answers) this.submitText(answer);
+  }
+
   key(action: KeyAction): void {
     this.loop.flushPointerMove();
     this.#afterInput(this.engine.key(action));

@@ -246,3 +246,54 @@ describe("unsupported content", () => {
     expect(host.saved[0]?.text).not.toContain("TEXT");
   });
 });
+
+// #140: the Layers panel acts through the command line and reads the UI state.
+describe("layers for the panel", () => {
+  test("the UI state lists the layers, and a panel action is LAYER with its answers", async () => {
+    const { app, tick, enter } = harness();
+    await tick();
+    expect(app.ui.getSnapshot().layers).toEqual([
+      {
+        name: "0",
+        color: 7,
+        on: true,
+        locked: false,
+        current: true,
+        linetype: "Continuous",
+        lineweight: "Default",
+      },
+    ]);
+
+    app.run("LAYER", "New", "walls", "");
+    app.run("LAYER", "Set", "walls", "");
+    app.run("LAYER", "Lock", "walls", "");
+    await tick();
+    const snapshot = app.ui.getSnapshot();
+    expect(snapshot.layers.map((layer) => [layer.name, layer.current, layer.locked])).toEqual([
+      ["0", false, false],
+      ["walls", true, true],
+    ]);
+    // Every step is in the log, as if typed.
+    expect(snapshot.log).toContain(
+      "Press Enter to finish or [?/New/Set/Color/LWeight/LType/ON/OFF/Lock/Unlock/Rename/Delete]: New",
+    );
+    expect(snapshot.log).toContain("Enter name(s) for new layer(s): walls");
+    expect(snapshot.log).toContain("1 layer created.");
+    expect(snapshot.log).toContain('Current layer: "walls"');
+    expect(snapshot.log).toContain("1 layer locked.");
+    expect(snapshot.command).toBeUndefined();
+
+    // A refusal is explained in the log; nothing else happens.
+    app.run("LAYER", "Delete", "walls", "");
+    await tick();
+    expect(app.ui.getSnapshot().log.at(-2)).toBe(
+      'Layer "walls" is the current layer: it cannot be switched off or deleted.',
+    );
+    expect(app.ui.getSnapshot().layers).toHaveLength(2);
+
+    // Undo takes the whole panel action back at once.
+    enter("U");
+    await tick();
+    expect(app.ui.getSnapshot().layers[1]?.locked).toBe(false);
+  });
+});

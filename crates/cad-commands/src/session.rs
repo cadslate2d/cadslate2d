@@ -1,7 +1,7 @@
 //! The session facade.
 
 use cad_core::{Aabb, EntityId, PixelTolerance, Point2, ScreenPoint, View};
-use cad_document::{Drawing, Revision};
+use cad_document::{Color, Drawing, FOREGROUND_INDEX, Paint, Revision, index_paint};
 use cad_input::{ExpectedInput, Input, InputKind};
 
 use crate::aids::{self, POLAR_APERTURE, Track, TrackKind};
@@ -13,8 +13,8 @@ use crate::log::CommandLog;
 use crate::snap::find_snap_from;
 use crate::{
     Command, CommandContext, CommandInput, CommandRegistry, Dirty, DraftingSettings, Grip,
-    HostRequest, HoveredObject, KeyAction, Modifiers, OverlayItem, PointerButton, Selection,
-    SnapModes, SnapPoint, Step, Toggle, Toggles, UiState,
+    HostRequest, HoveredObject, KeyAction, LayerRow, Modifiers, OverlayItem, PointerButton,
+    Selection, SnapModes, SnapPoint, Step, Toggle, Toggles, UiState,
 };
 
 const IDLE_PROMPT: &str = "Command:";
@@ -282,7 +282,39 @@ impl Session {
             document_name: self.document_name.clone(),
             unsaved_changes: self.drawing.revision() != self.saved_revision,
             export_is_lossy: self.export_is_lossy,
+            layers: self.layer_rows(),
         }
+    }
+
+    /// The layer table as the Layers panel shows it.
+    fn layer_rows(&self) -> Vec<LayerRow> {
+        let current = self.drawing.current_layer();
+        self.drawing
+            .layers()
+            .iter()
+            .map(|(id, layer)| {
+                // A layer's colour is a number; an indirection, which a
+                // layer should not have, shows as the colour a new layer has.
+                let color = match layer.color {
+                    Color::Index(index) => index,
+                    Color::ByLayer | Color::ByBlock => FOREGROUND_INDEX,
+                };
+                let rgb = match index_paint(color) {
+                    Paint::Rgb(rgb) => Some(rgb),
+                    Paint::Foreground => None,
+                };
+                LayerRow {
+                    name: layer.name.clone(),
+                    color,
+                    rgb,
+                    on: layer.on,
+                    locked: layer.locked,
+                    current: id == current,
+                    linetype: layer.linetype.describe(self.drawing.linetypes()),
+                    lineweight: layer.lineweight.describe(),
+                }
+            })
+            .collect()
     }
 
     /// Log lines numbered `since` and later, oldest first.

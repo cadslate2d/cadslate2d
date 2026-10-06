@@ -1,7 +1,7 @@
 // The single external store React subscribes to (Observer pattern).
 // It mirrors presentation state pulled from the engine: prompt, log,
 // cursor readout, counters. It never holds drawing geometry.
-import type { UiState } from "../cad/engine";
+import type { LayerRow, UiState } from "../cad/engine";
 
 /** Log lines kept for display. Older lines scroll out. */
 export const LOG_LINES_KEPT = 200;
@@ -24,6 +24,8 @@ export interface UiSnapshot {
   readonly documentName: string | undefined;
   readonly unsavedChanges: boolean;
   readonly exportIsLossy: boolean;
+  /** The layers as the Layers panel shows them: presentation data, not the table. */
+  readonly layers: readonly LayerRow[];
 }
 
 /** What the store reads from the engine. */
@@ -47,6 +49,7 @@ const INITIAL: UiSnapshot = {
   documentName: undefined,
   unsavedChanges: false,
   exportIsLossy: false,
+  layers: [],
 };
 
 export class UiStore {
@@ -90,6 +93,7 @@ export class UiStore {
       documentName: state.documentName,
       unsavedChanges: state.unsavedChanges,
       exportIsLossy: state.exportIsLossy,
+      layers: state.layers,
     };
     this.#listeners.forEach((listener) => listener());
   }

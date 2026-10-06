@@ -14,6 +14,7 @@ class FakeSource implements UiSource {
     toggles: 0,
     unsavedChanges: false,
     exportIsLossy: false,
+    layers: [],
   };
   logReads = 0;
 
