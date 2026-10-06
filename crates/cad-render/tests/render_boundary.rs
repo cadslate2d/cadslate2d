@@ -475,3 +475,197 @@ fn an_objects_own_colour_wins_over_its_layers_on_screen() {
         "only the ByLayer line followed its layer"
     );
 }
+
+// ── block references (#147, ADR-0017) ──
+
+mod blocks {
+    use cad_commands::testing::Harness;
+    use cad_core::Point2;
+    use cad_document::{
+        Block, BlockId, BlockReferenceEntity, Color, Drawing, Entity, EntityRecord, Layer, LayerId,
+        LineEntity, Lineweight, Properties,
+    };
+    use cad_render::SceneCache;
+
+    fn line(x0: f64, y0: f64, x1: f64, y1: f64) -> Entity {
+        Entity::Line(LineEntity::new(Point2::new(x0, y0), Point2::new(x1, y1)))
+    }
+
+    fn by_block() -> Properties {
+        Properties {
+            color: Color::ByBlock,
+            lineweight: Lineweight::ByBlock,
+            ..Properties::default()
+        }
+    }
+
+    /// A chair (two lines, one on layer 0 ByBlock, one on `fixed` in red),
+    /// a pair of chairs, and two pairs placed: eight lines on screen.
+    fn nested() -> (Drawing, BlockId, BlockId) {
+        let mut drawing = Drawing::from_parts(
+            [Layer {
+                color: Color::Index(5),
+                ..Layer::named("fixed")
+            }],
+            [],
+            [],
+        )
+        .unwrap();
+        let mut tx = drawing.transaction();
+        let chair = tx
+            .define_block(Block::new(
+                "Chair",
+                Point2::ORIGIN,
+                vec![
+                    EntityRecord::new(line(0.0, 0.0, 10.0, 0.0), by_block()),
+                    EntityRecord::new(
+                        line(0.0, 0.0, 0.0, 10.0),
+                        Properties {
+                            color: Color::Index(1),
+                            ..Properties::on(LayerId::from_raw(1))
+                        },
+                    ),
+                ],
+            ))
+            .unwrap();
+        let pair = tx
+            .define_block(Block::new(
+                "Pair",
+                Point2::ORIGIN,
+                // The inner references are ByBlock themselves, so what is
+                // ByBlock in a chair reaches the outer reference.
+                vec![
+                    EntityRecord::new(
+                        BlockReferenceEntity::new(chair, Point2::ORIGIN, 1.0, 0.0),
+                        by_block(),
+                    ),
+                    EntityRecord::new(
+                        BlockReferenceEntity::new(chair, Point2::new(20.0, 0.0), 1.0, 0.0),
+                        by_block(),
+                    ),
+                ],
+            ))
+            .unwrap();
+        tx.insert(BlockReferenceEntity::new(
+            pair,
+            Point2::new(100.0, 0.0),
+            1.0,
+            0.0,
+        ))
+        .unwrap();
+        tx.insert_with(
+            BlockReferenceEntity::new(pair, Point2::new(100.0, 100.0), 2.0, 0.0),
+            Properties {
+                color: Color::Index(3),
+                lineweight: Lineweight::Hundredths(50),
+                ..Properties::default()
+            },
+        )
+        .unwrap();
+        tx.commit();
+        (drawing, chair, pair)
+    }
+
+    #[test]
+    fn a_reference_is_drawn_as_its_definitions_geometry_nested_and_transformed() {
+        let (drawing, ..) = nested();
+        let mut cache = SceneCache::new();
+        let scene = cache.scene(&drawing);
+        let frame = scene.frame();
+        assert_eq!(
+            frame.segment_count(),
+            8,
+            "two pairs of two chairs of two lines"
+        );
+        // The second pair is scaled by two: its chairs' lines are 20 long,
+        // from (100,100) and (140,100) — the inner reference's offset of 20
+        // is scaled as well.
+        let segments = frame.segments();
+        let origin = frame.origin();
+        let world = |i: usize| {
+            (
+                f64::from(segments[i * 4]) + origin.x,
+                f64::from(segments[i * 4 + 1]) + origin.y,
+                f64::from(segments[i * 4 + 2]) + origin.x,
+                f64::from(segments[i * 4 + 3]) + origin.y,
+            )
+        };
+        assert_eq!(world(0), (100.0, 0.0, 110.0, 0.0));
+        assert_eq!(world(6), (140.0, 100.0, 160.0, 100.0));
+        assert_eq!(world(7), (140.0, 100.0, 140.0, 120.0));
+        // Determinism: the same drawing yields the same bytes.
+        let again = SceneCache::new().scene(&drawing).clone();
+        assert_eq!(&again, scene);
+    }
+
+    #[test]
+    fn by_block_takes_the_references_own_and_each_result_is_a_style() {
+        let (drawing, ..) = nested();
+        let mut cache = SceneCache::new();
+        let scene = cache.scene(&drawing);
+        let (rows, _) = scene.styles().as_chunks::<8>();
+        let rows: Vec<[u8; 5]> = rows
+            .iter()
+            .map(|row| [row[0], row[1], row[2], row[3], row[4]])
+            .collect();
+        let style_of = |segment: usize| rows[scene.segment_styles()[segment] as usize];
+        // First pair, plain: the ByBlock line is ByLayer of the reference,
+        // on layer 0 — the foreground; the red line is red.
+        assert_eq!(style_of(0)[3], 0, "foreground");
+        assert_eq!(&style_of(1)[..4], &[255, 0, 0, 255]);
+        // Second pair, green and heavy: the ByBlock line is green and 0.50 mm;
+        // the red line keeps its red and takes its layer's default weight.
+        assert_eq!(&style_of(6)[..4], &[0, 255, 0, 255]);
+        assert_eq!(style_of(6)[4], 50);
+        assert_eq!(&style_of(7)[..4], &[255, 0, 0, 255]);
+        assert_eq!(style_of(7)[4], 255);
+    }
+
+    #[test]
+    fn a_redefinition_changes_the_scene_revision_once_and_every_reference_follows() {
+        let (mut drawing, chair, _) = nested();
+        let mut cache = SceneCache::new();
+        let before = cache.scene(&drawing).revision();
+        let mut tx = drawing.transaction();
+        tx.redefine_block(
+            chair,
+            Block::new(
+                "Chair",
+                Point2::ORIGIN,
+                vec![EntityRecord::new(
+                    line(0.0, 0.0, 5.0, 5.0),
+                    Properties::default(),
+                )],
+            ),
+        )
+        .unwrap();
+        tx.commit();
+        let scene = cache.scene(&drawing);
+        let (revision, segments) = (scene.revision(), scene.frame().segment_count());
+        assert_ne!(revision, before, "what is shown changed");
+        assert_eq!(segments, 4, "one line per chair now");
+        assert_eq!(cache.build_count(), 2, "one rebuild for the one change");
+        cache.scene(&drawing);
+        assert_eq!(cache.build_count(), 2, "and no more");
+        drawing.undo();
+        assert_ne!(cache.scene(&drawing).revision(), revision);
+        assert_eq!(cache.scene(&drawing).frame().segment_count(), 8);
+    }
+
+    #[test]
+    fn a_selected_reference_is_highlighted_whole_in_the_overlay() {
+        let (drawing, ..) = nested();
+        let mut h = Harness::with_drawing(drawing);
+        h.click_world(Point2::new(105.0, 0.0));
+        assert_eq!(h.session.selection().len(), 1);
+        let overlay = super::overlay_of(&h);
+        let highlighted: u32 = overlay
+            .frame()
+            .batches()
+            .iter()
+            .filter(|batch| batch.style == cad_render::StyleRole::Selection)
+            .map(|batch| batch.count)
+            .sum();
+        assert_eq!(highlighted, 4, "the whole pair, both chairs");
+    }
+}
