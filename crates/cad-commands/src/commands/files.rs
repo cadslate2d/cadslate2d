@@ -33,6 +33,7 @@ impl Command for ExportCommand {
 
 #[cfg(test)]
 mod tests {
+    use crate::ImportReport;
     use cad_core::Point2;
     use cad_document::{Drawing, Entity, LineEntity};
 
@@ -104,8 +105,8 @@ mod tests {
         let dirty = h.session.open_drawing(
             imported(),
             "plan.dxf",
-            false,
             vec!["Imported 2 lines.".to_owned()],
+            Vec::new(),
         );
 
         assert!(dirty.contains(Dirty::SCENE | Dirty::VIEW | Dirty::OVERLAY | Dirty::UI));
@@ -116,7 +117,7 @@ mod tests {
 
         let state = h.session.ui_state();
         assert_eq!(state.document_name.as_deref(), Some("plan.dxf"));
-        assert!(!state.unsaved_changes && !state.export_is_lossy && !state.can_undo);
+        assert!(!state.unsaved_changes && state.export_losses.is_empty() && !state.can_undo);
 
         // "Zoom extents": the whole drawing is visible.
         let extents = h.session.drawing().extents().unwrap();
@@ -128,7 +129,7 @@ mod tests {
         let mut h = Harness::new();
         h.enter_all(&["L", "500,500", ""]);
         h.session
-            .open_drawing(Drawing::new(), "empty.dxf", false, Vec::new());
+            .open_drawing(Drawing::new(), "empty.dxf", Vec::new(), Vec::new());
         h.enter_all(&["L", "@1,1", "@1,0", ""]);
         assert_eq!(h.lines()[0].start, Point2::new(1.0, 1.0));
     }
@@ -160,18 +161,43 @@ mod tests {
     #[test]
     fn a_lossy_import_is_remembered_until_another_drawing_is_opened() {
         let mut h = Harness::new();
+        let losses = vec!["Not imported (unsupported): 1 HATCH.".to_owned()];
+        let report = vec!["Imported 1 line.".to_owned(), losses[0].clone()];
         h.session
-            .open_drawing(imported(), "mixed.dxf", true, Vec::new());
-        assert!(h.session.ui_state().export_is_lossy);
+            .open_drawing(imported(), "mixed.dxf", report.clone(), losses.clone());
+        let state = h.session.ui_state();
+        assert_eq!(state.export_losses, losses);
+        assert_eq!(
+            state.import_report,
+            Some(ImportReport {
+                serial: 1,
+                lines: report
+            })
+        );
+        assert_eq!(
+            h.log()[h.log().len() - 2..],
+            ["Imported 1 line.", "Not imported (unsupported): 1 HATCH."]
+        );
 
-        // Editing and exporting do not make the original content come back.
+        // Editing and exporting do not make the original content come back;
+        // dismissing the report keeps the losses.
         h.enter_all(&["L", "0,0", "1,1", ""]);
         h.session.mark_exported();
-        assert!(h.session.ui_state().export_is_lossy);
+        h.session.dismiss_import_report();
+        let state = h.session.ui_state();
+        assert_eq!(state.export_losses, losses);
+        assert_eq!(state.import_report, None);
 
-        h.session
-            .open_drawing(imported(), "clean.dxf", false, Vec::new());
-        assert!(!h.session.ui_state().export_is_lossy);
+        // Another drawing: its own account, a new serial, no losses.
+        h.session.open_drawing(
+            imported(),
+            "clean.dxf",
+            vec!["Imported 1 line.".to_owned()],
+            Vec::new(),
+        );
+        let state = h.session.ui_state();
+        assert!(state.export_losses.is_empty());
+        assert_eq!(state.import_report.map(|report| report.serial), Some(2));
     }
 
     #[test]

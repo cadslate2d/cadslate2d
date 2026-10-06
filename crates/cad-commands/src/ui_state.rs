@@ -2,6 +2,15 @@
 
 use crate::SelectionSummary;
 
+/// What an import did and did not bring in, as lines for the host.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportReport {
+    /// Counts the imports of the session, so the host can tell a new
+    /// report from one it has shown.
+    pub serial: u32,
+    pub lines: Vec<String>,
+}
+
 /// A small snapshot of presentation state. It deliberately contains nothing
 /// from which drawing geometry could be reconstructed.
 #[derive(Clone, Debug, PartialEq)]
@@ -36,7 +45,14 @@ pub struct UiState {
     /// The drawing was opened from a file with content that could not be
     /// imported, so exporting it will not reproduce that file. The UI must
     /// warn before exporting (DESIGN §24.2).
-    pub export_is_lossy: bool,
+    /// What an export will not include, line by line: content the file the
+    /// drawing came from held and the drawing could not. Empty when an
+    /// export reproduces the drawing whole; the host warns before exporting
+    /// otherwise (DESIGN §24.2).
+    pub export_losses: Vec<String>,
+    /// The account of the last import, for the host to show until it is
+    /// dismissed or another drawing is opened.
+    pub import_report: Option<ImportReport>,
     /// The layers, in the order they were made, as the Layers panel shows
     /// them. Presentation only: names and looks, no IDs and no geometry.
     pub layers: Vec<LayerRow>,

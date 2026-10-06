@@ -147,6 +147,107 @@ body {
   color: var(--color-surface-canvas);
 }
 
+/* The import report sits over the top of the canvas until dismissed. */
+.report {
+  grid-area: canvas;
+  align-self: start;
+  justify-self: end;
+  z-index: 1;
+  width: min(420px, calc(100% - 2 * var(--space-4)));
+  margin: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-panel);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+  font-size: var(--font-size-sm);
+}
+
+.report--lossy {
+  border-color: var(--color-danger);
+}
+
+.report__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.report__title {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.report__badge {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-sm);
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+}
+
+.report__dismiss {
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--font-size-md);
+  cursor: pointer;
+}
+
+.report__lines {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  color: var(--color-text-muted);
+}
+
+.report__line--loss {
+  color: var(--color-danger);
+}
+
+/* The export warning: a narrow dialog over the canvas (§5). */
+.warning {
+  grid-area: canvas;
+  align-self: center;
+  justify-self: center;
+  z-index: 2;
+  width: min(480px, calc(100% - 2 * var(--space-4)));
+  padding: var(--space-3);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-panel);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+}
+
+.warning__title {
+  margin: 0;
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.warning__lines {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.warning__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.status__lossy {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
 .command {
   grid-area: command;
 }

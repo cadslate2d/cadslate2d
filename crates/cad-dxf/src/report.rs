@@ -106,17 +106,7 @@ impl ImportReport {
         } else {
             format!("Imported {}.", imported.join(", "))
         }];
-        if !self.unsupported.is_empty() {
-            let skipped: Vec<String> = self
-                .unsupported
-                .iter()
-                .map(|(kind, count)| format!("{count} {kind}"))
-                .collect();
-            lines.push(format!(
-                "Not imported (unsupported): {}.",
-                skipped.join(", ")
-            ));
-        }
+        lines.extend(self.unsupported_line());
         if self.layers + self.linetypes + self.text_styles + self.blocks > 0 {
             let tables: Vec<String> = [
                 (self.layers, "layer", "layers"),
@@ -145,27 +135,67 @@ impl ImportReport {
                 joined(&created)
             ));
         }
-        if self.formatting_dropped > 0 {
-            let texts = counted(self.formatting_dropped, "paragraph", "paragraphs");
-            lines.push(format!(
-                "Formatting — fonts, heights, colours, stacking — was dropped from {texts}; the words and line breaks were kept."
-            ));
-        }
-        if self.with_dropped_properties > 0 {
-            let entities = counted(self.with_dropped_properties, "entity", "entities");
-            lines.push(format!(
-                "Properties the drawing cannot hold were dropped from {entities}."
-            ));
-        }
+        lines.extend(self.formatting_line());
+        lines.extend(self.dropped_line());
         if let Some(unit) = self.unit {
             lines.push(format!("Drawing unit: {}.", unit.name()));
         }
-        if let Some(code) = self.unsupported_unit {
-            lines.push(format!(
-                "The file's drawing unit (code {code}) is not supported: the drawing is unitless."
-            ));
-        }
+        lines.extend(self.unit_line());
         lines
+    }
+
+    /// What an export of the imported drawing will not include: the lines
+    /// of the summary that name content the drawing could not hold. Empty
+    /// exactly when `has_unsupported_content` is false (§24.2).
+    pub fn losses(&self) -> Vec<String> {
+        [
+            self.unsupported_line(),
+            self.formatting_line(),
+            self.dropped_line(),
+            self.unit_line(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
+    fn unsupported_line(&self) -> Option<String> {
+        if self.unsupported.is_empty() {
+            return None;
+        }
+        let skipped: Vec<String> = self
+            .unsupported
+            .iter()
+            .map(|(kind, count)| format!("{count} {kind}"))
+            .collect();
+        Some(format!(
+            "Not imported (unsupported): {}.",
+            skipped.join(", ")
+        ))
+    }
+
+    fn formatting_line(&self) -> Option<String> {
+        (self.formatting_dropped > 0).then(|| {
+            let texts = counted(self.formatting_dropped, "paragraph", "paragraphs");
+            format!(
+                "Formatting — fonts, heights, colours, stacking — was dropped from {texts}; the words and line breaks were kept."
+            )
+        })
+    }
+
+    fn dropped_line(&self) -> Option<String> {
+        (self.with_dropped_properties > 0).then(|| {
+            let entities = counted(self.with_dropped_properties, "entity", "entities");
+            format!("Properties the drawing cannot hold were dropped from {entities}.")
+        })
+    }
+
+    fn unit_line(&self) -> Option<String> {
+        self.unsupported_unit.map(|code| {
+            format!(
+                "The file's drawing unit (code {code}) is not supported: the drawing is unitless."
+            )
+        })
     }
 }
 
@@ -240,6 +270,37 @@ mod tests {
                 "Imported 12 lines.",
                 "Not imported (unsupported): 2 HATCH, 1 TEXT."
             ]
+        );
+    }
+
+    #[test]
+    fn the_losses_are_the_summary_lines_that_name_what_was_not_held() {
+        let mut report = ImportReport {
+            lines: 2,
+            layers: 1,
+            with_dropped_properties: 1,
+            unsupported_unit: Some(9),
+            ..Default::default()
+        };
+        report.count_unsupported("HATCH");
+        let losses = report.losses();
+        assert_eq!(
+            losses,
+            vec![
+                "Not imported (unsupported): 1 HATCH.",
+                "Properties the drawing cannot hold were dropped from 1 entity.",
+                "The file's drawing unit (code 9) is not supported: the drawing is unitless.",
+            ]
+        );
+        assert!(losses.iter().all(|line| report.summary().contains(line)));
+        assert!(
+            ImportReport {
+                lines: 1,
+                layers: 2,
+                ..Default::default()
+            }
+            .losses()
+            .is_empty()
         );
     }
 

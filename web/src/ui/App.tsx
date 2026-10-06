@@ -3,7 +3,9 @@ import { CadApp } from "../app/cad-app";
 import { CadEngine, coreVersion, loadEngine } from "../cad/engine";
 import { CanvasView } from "./CanvasView";
 import { CommandLine } from "./CommandLine";
+import { ExportWarning } from "./ExportWarning";
 import { Header } from "./Header";
+import { ImportReport } from "./ImportReport";
 import { LayersPanel } from "./LayersPanel";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { StatusBar } from "./StatusBar";
@@ -97,6 +99,8 @@ export function App() {
       />
       {toolbar.visible && <Toolbar app={core.app} />}
       <CanvasView app={core.app} />
+      <ImportReport app={core.app} />
+      <ExportWarning app={core.app} />
       <TextEditor app={core.app} />
       <CommandLine app={core.app} />
       {panels && (

@@ -14,6 +14,15 @@ export function StatusBar({ app }: { app: CadApp }) {
   return (
     <footer className="status" aria-label="Status bar">
       <span className="status__chip status__chip--active">Model</span>
+      {ui.exportLosses.length > 0 && (
+        <span
+          className="status__chip status__lossy"
+          data-testid="lossy"
+          title={`An export will not include everything:\n${ui.exportLosses.join("\n")}`}
+        >
+          LOSSY
+        </span>
+      )}
       <span className="status__spacer" />
       {ui.tracking && (
         <span className="status__chip status__tracking" data-testid="tracking">

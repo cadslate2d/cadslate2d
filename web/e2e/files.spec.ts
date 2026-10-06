@@ -133,23 +133,37 @@ test.describe("unsupported content", () => {
       logLines(page).filter({ hasText: "Not imported (unsupported): 1 (INSERT array)" }),
     ).toHaveCount(1);
 
-    // Declining the warning exports nothing.
-    const messages: string[] = [];
-    page.once("dialog", (dialog) => {
-      messages.push(dialog.message());
-      void dialog.dismiss();
-    });
+    // The report is on screen, naming the losses, and the status bar says so.
+    const report = page.getByTestId("import-report");
+    await expect(report).toContainText("Imported 1 line, 6 block references.");
+    await expect(report).toContainText("Not imported (unsupported): 1 (INSERT array)");
+    await expect(page.getByTestId("lossy")).toHaveText("LOSSY");
+
+    // Declining the warning exports nothing; it named what would be lost.
     let downloads = 0;
     page.on("download", () => (downloads += 1));
     await enter(page, "DXFOUT");
+    const warning = page.getByTestId("export-warning");
+    await expect(warning).toContainText("(INSERT of an undefined block)");
+    await warning.getByRole("button", { name: "Cancel" }).click();
+    await expect(warning).toHaveCount(0);
     await settle(page);
-    expect(messages[0]).toContain("could not import");
     expect(downloads).toBe(0);
+
+    // Dismissed, the report goes; the losses stay.
+    await report.getByRole("button", { name: "Dismiss the import report" }).click();
+    await expect(report).toHaveCount(0);
+    await expect(page.getByTestId("lossy")).toHaveText("LOSSY");
 
     // Accepting it exports what the drawing holds: the definitions and the
     // six references, the ghost among them no more.
-    page.once("dialog", (dialog) => void dialog.accept());
-    const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    const file = await downloadFrom(page, async () => {
+      await enter(page, "DXFOUT");
+      await page
+        .getByTestId("export-warning")
+        .getByRole("button", { name: "Export anyway" })
+        .click();
+    });
     expect(file.name).toBe("ezdxf-r12-blocks.dxf");
     expect(blocks(file.text)).toEqual(["CHAIR", "PAIR"]);
     expect(file.text.match(/^INSERT$/gm)).toHaveLength(8);

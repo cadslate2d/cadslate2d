@@ -78,11 +78,20 @@ struct UiStateDto {
     toggles: u32,
     document_name: Option<String>,
     unsaved_changes: bool,
-    export_is_lossy: bool,
+    export_losses: Vec<String>,
+    import_report: Option<ImportReportDto>,
     layers: Vec<LayerRowDto>,
     linetypes: Vec<String>,
     selection: SelectionSummaryDto,
     text_editor: Option<String>,
+}
+
+/// The last import's account: lines for the host to show (#157).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportReportDto {
+    serial: u32,
+    lines: Vec<String>,
 }
 
 /// The selection as the Properties panel shows it: bounded whatever the
@@ -166,7 +175,11 @@ impl From<UiState> for UiStateDto {
             toggles: state.toggles,
             document_name: state.document_name,
             unsaved_changes: state.unsaved_changes,
-            export_is_lossy: state.export_is_lossy,
+            export_losses: state.export_losses,
+            import_report: state.import_report.map(|report| ImportReportDto {
+                serial: report.serial,
+                lines: report.lines,
+            }),
             layers: state.layers.into_iter().map(LayerRowDto::from).collect(),
             linetypes: state.linetypes,
             selection: state.selection.into(),
@@ -321,13 +334,20 @@ impl CadSession {
     /// current drawing is kept and the reason is written to the command log.
     pub fn load_dxf(&mut self, bytes: &[u8], name: &str) -> u32 {
         let dirty = match cad_dxf::import(bytes) {
-            Ok(import) => {
-                let lossy = import.report.has_unsupported_content();
-                self.session
-                    .open_drawing(import.drawing, name, lossy, import.report.summary())
-            }
+            Ok(import) => self.session.open_drawing(
+                import.drawing,
+                name,
+                import.report.summary(),
+                import.report.losses(),
+            ),
             Err(error) => self.session.notify(format!("Cannot open {name}: {error}.")),
         };
+        self.report(dirty)
+    }
+
+    /// Takes the import report off the screen (#157).
+    pub fn dismiss_import_report(&mut self) -> u32 {
+        let dirty = self.session.dismiss_import_report();
         self.report(dirty)
     }
 

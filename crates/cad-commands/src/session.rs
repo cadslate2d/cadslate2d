@@ -15,8 +15,9 @@ use crate::log::CommandLog;
 use crate::snap::find_snap_from;
 use crate::{
     Command, CommandContext, CommandInput, CommandRegistry, Dirty, DraftingSettings, Grip,
-    HostRequest, HoveredObject, KeyAction, LayerRow, Modifiers, OverlayItem, PointerButton,
-    Selection, SelectionSummary, SnapModes, SnapPoint, Step, Toggle, Toggles, UiState,
+    HostRequest, HoveredObject, ImportReport, KeyAction, LayerRow, Modifiers, OverlayItem,
+    PointerButton, Selection, SelectionSummary, SnapModes, SnapPoint, Step, Toggle, Toggles,
+    UiState,
 };
 
 const IDLE_PROMPT: &str = "Command:";
@@ -72,7 +73,11 @@ pub struct Session {
     /// The drawing's revision when it was opened or last exported.
     saved_revision: Revision,
     /// The drawing came from a file with content that could not be imported.
-    export_is_lossy: bool,
+    /// What an export will not include: the losses of the last import.
+    export_losses: Vec<String>,
+    /// The last import's account, until dismissed or replaced.
+    import_report: Option<ImportReport>,
+    imports: u32,
     /// The command Enter repeats at the idle prompt.
     last_command: Option<&'static str>,
     toggles: Toggles,
@@ -121,7 +126,9 @@ impl Session {
             history: InputHistory::default(),
             host_request: None,
             document_name: None,
-            export_is_lossy: false,
+            export_losses: Vec::new(),
+            import_report: None,
+            imports: 0,
             last_command: None,
             toggles: Toggles::default(),
             settings: DraftingSettings::default(),
@@ -289,7 +296,8 @@ impl Session {
             toggles: self.toggles.bits(),
             document_name: self.document_name.clone(),
             unsaved_changes: self.drawing.revision() != self.saved_revision,
-            export_is_lossy: self.export_is_lossy,
+            export_losses: self.export_losses.clone(),
+            import_report: self.import_report.clone(),
             layers: self.layer_rows(),
             linetypes: self
                 .drawing
@@ -662,19 +670,26 @@ impl Session {
     /// Replaces the drawing with one the host has loaded.
     ///
     /// Opening is not an edit: the new drawing starts with an empty history,
-    /// and all interaction state tied to the old one is dropped. `lossy`
-    /// records that the source file held content that could not be imported.
+    /// and all interaction state tied to the old one is dropped. `messages`
+    /// are the import's account, written to the log and kept as the import
+    /// report; `losses` name what the file held and the drawing could not,
+    /// which an export will not include (§24.2).
     pub fn open_drawing(
         &mut self,
         drawing: Drawing,
         name: &str,
-        lossy: bool,
         messages: Vec<String>,
+        losses: Vec<String>,
     ) -> Dirty {
         self.saved_revision = drawing.revision();
         self.drawing = drawing;
         self.document_name = Some(name.to_owned());
-        self.export_is_lossy = lossy;
+        self.export_losses = losses;
+        self.imports += 1;
+        self.import_report = (!messages.is_empty()).then(|| ImportReport {
+            serial: self.imports,
+            lines: messages.clone(),
+        });
         self.active = None;
         self.selection_box = None;
         self.selection.clear();
@@ -686,6 +701,12 @@ impl Session {
             .into_iter()
             .for_each(|message| self.log.push(message));
         Dirty::SCENE | Dirty::OVERLAY | Dirty::VIEW | Dirty::UI
+    }
+
+    /// Takes the import report off the screen; the log keeps its lines.
+    pub fn dismiss_import_report(&mut self) -> Dirty {
+        self.import_report = None;
+        Dirty::UI
     }
 
     /// Records that the host has exported the drawing in its current state.
@@ -1266,7 +1287,7 @@ mod tests {
             "undo reverts the drawing, not the drafting aids"
         );
         h.session
-            .open_drawing(Drawing::new(), "other.dxf", false, Vec::new());
+            .open_drawing(Drawing::new(), "other.dxf", Vec::new(), Vec::new());
         assert!(h.session.toggles().is_on(Toggle::Grid));
     }
 

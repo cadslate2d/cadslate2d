@@ -12,9 +12,6 @@ const DEFAULT_FILE_NAME = "drawing.dxf";
 
 export const DISCARD_CHANGES_MESSAGE =
   "The current drawing has changes that have not been exported. Discard them?";
-export const LOSSY_EXPORT_MESSAGE =
-  "This drawing was opened from a file with content CadSlate2D could not import. " +
-  "The exported file will not include that content. Export anyway?";
 
 export interface CadAppOptions {
   readonly schedule?: ScheduleFrame;
@@ -123,8 +120,33 @@ export class CadApp {
 
   #exportFile(): void {
     const state = this.engine.uiState();
-    // DESIGN §24.2: never imply a lossless round trip when content was skipped.
-    if (state.exportIsLossy && !this.#host.confirm(LOSSY_EXPORT_MESSAGE)) return;
+    // DESIGN §24.2: never imply a lossless round trip when content was
+    // skipped. The warning names what the file will lose; the user decides.
+    if (state.exportLosses.length > 0) {
+      this.ui.setExportWarning(state.exportLosses);
+      return;
+    }
+    this.#saveExport();
+  }
+
+  /** The export the warning asked about: the user chose to go ahead. */
+  exportAnyway(): void {
+    this.ui.setExportWarning(undefined);
+    this.#saveExport();
+  }
+
+  /** The export the warning asked about: the user chose not to. */
+  cancelExport(): void {
+    this.ui.setExportWarning(undefined);
+  }
+
+  /** Takes the import report off the screen. */
+  dismissImportReport(): void {
+    this.loop.invalidate(this.engine.dismissImportReport());
+  }
+
+  #saveExport(): void {
+    const state = this.engine.uiState();
     this.#host.saveFile(
       state.documentName ?? DEFAULT_FILE_NAME,
       this.engine.exportDxf(),

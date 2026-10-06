@@ -80,8 +80,14 @@ export interface UiState {
   readonly documentName?: string;
   /** The drawing changed since it was opened or last exported. */
   readonly unsavedChanges: boolean;
-  /** Exporting will not reproduce the file this drawing came from; warn first. */
-  readonly exportIsLossy: boolean;
+  /**
+   * What an export will not include, line by line: content the file this
+   * drawing came from held and the drawing could not. Empty when an export
+   * reproduces the drawing whole; otherwise warn first (DESIGN §24.2).
+   */
+  readonly exportLosses: readonly string[];
+  /** The last import's account, shown until dismissed or the drawing is replaced (#157). */
+  readonly importReport?: ImportReport;
   /** The layers as the Layers panel shows them, in table order (#140). */
   readonly layers: readonly LayerRow[];
   /** The names of the loaded linetypes, for a linetype field to offer. */
@@ -90,6 +96,13 @@ export interface UiState {
   readonly selection: SelectionSummary;
   /** The text to open the paragraph editor with, while a command waits for one (#144). */
   readonly textEditor?: string;
+}
+
+/** What an import did and did not bring in, as lines for the shell. */
+export interface ImportReport {
+  /** Counts the session's imports, so a new report is told from one already shown. */
+  readonly serial: number;
+  readonly lines: readonly string[];
 }
 
 /**
@@ -315,6 +328,11 @@ export class CadEngine {
   /** The drawing as ASCII DXF. Marks the drawing as saved. */
   exportDxf(): string {
     return this.#session.export_dxf();
+  }
+
+  /** Takes the import report off the screen; the log keeps its lines. */
+  dismissImportReport(): number {
+    return this.#session.dismiss_import_report();
   }
 
   // ── output: pulled in bulk ──

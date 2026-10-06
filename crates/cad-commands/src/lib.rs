@@ -44,4 +44,4 @@ pub use snap::{SnapMode, SnapModes, SnapPoint};
 pub use summary::SelectionSummary;
 pub use toggles::{Toggle, Toggles};
 pub use transient::TransientEdit;
-pub use ui_state::{LayerRow, UiState};
+pub use ui_state::{ImportReport, LayerRow, UiState};

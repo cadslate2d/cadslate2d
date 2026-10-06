@@ -1515,6 +1515,8 @@ On import:
 
 CadSlate2D must not silently imply lossless round-tripping when unsupported data exists.
 
+> **Resolved in M5 (#157):** the import report is a panel that stays until dismissed or the drawing is replaced; a status-bar marker shows while an export would lose something; and the export asks first in a narrow dialog that names, line by line, what the file will not include. What is lossy is decided in Rust (`UiState.export_losses`) and shown by the shell.
+
 Opaque passthrough is FUTURE.
 
 ## 24.3 DWG

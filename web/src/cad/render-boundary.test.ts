@@ -25,6 +25,7 @@ describe("WASM API surface", () => {
   // reviewed for coarseness before it ships.
   test("is exactly the reviewed set of coarse calls", async () => {
     expect(await exportedSessionApi()).toEqual([
+      "dismiss_import_report",
       "export_dxf",
       "history_next",
       "history_previous",

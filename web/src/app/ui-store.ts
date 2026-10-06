@@ -1,7 +1,7 @@
 // The single external store React subscribes to (Observer pattern).
 // It mirrors presentation state pulled from the engine: prompt, log,
 // cursor readout, counters. It never holds drawing geometry.
-import type { LayerRow, SelectionSummary, UiState } from "../cad/engine";
+import type { ImportReport, LayerRow, SelectionSummary, UiState } from "../cad/engine";
 
 /** Log lines kept for display. Older lines scroll out. */
 export const LOG_LINES_KEPT = 200;
@@ -23,7 +23,12 @@ export interface UiSnapshot {
   readonly toggles: number;
   readonly documentName: string | undefined;
   readonly unsavedChanges: boolean;
-  readonly exportIsLossy: boolean;
+  /** What an export will not include; empty when nothing (DESIGN §24.2). */
+  readonly exportLosses: readonly string[];
+  /** The last import's account, until dismissed or the drawing is replaced. */
+  readonly importReport: ImportReport | undefined;
+  /** The losses an export the user asked for would have; the warning dialog shows them. */
+  readonly exportWarning: readonly string[] | undefined;
   /** The layers as the Layers panel shows them: presentation data, not the table. */
   readonly layers: readonly LayerRow[];
   readonly linetypes: readonly string[];
@@ -60,7 +65,9 @@ const INITIAL: UiSnapshot = {
   toggles: 0,
   documentName: undefined,
   unsavedChanges: false,
-  exportIsLossy: false,
+  exportLosses: [],
+  importReport: undefined,
+  exportWarning: undefined,
   layers: [],
   linetypes: [],
   selection: NO_SELECTION,
@@ -70,6 +77,7 @@ const INITIAL: UiSnapshot = {
 export class UiStore {
   #snapshot: UiSnapshot = INITIAL;
   #logSeen = 0;
+  #exportWarning: readonly string[] | undefined;
   readonly #listeners = new Set<() => void>();
 
   // Arrow properties: React calls these detached from the instance.
@@ -83,6 +91,13 @@ export class UiStore {
   /** Log lines written since the session began, including any no longer kept. */
   get logTotal(): number {
     return this.#logSeen;
+  }
+
+  /** Shows the export warning with what the file will lose, or hides it. */
+  setExportWarning(losses: readonly string[] | undefined): void {
+    this.#exportWarning = losses;
+    this.#snapshot = { ...this.#snapshot, exportWarning: losses };
+    this.#listeners.forEach((listener) => listener());
   }
 
   /** Pulls the current state and any new log lines, then notifies subscribers. */
@@ -107,7 +122,9 @@ export class UiStore {
       toggles: state.toggles,
       documentName: state.documentName,
       unsavedChanges: state.unsavedChanges,
-      exportIsLossy: state.exportIsLossy,
+      exportLosses: state.exportLosses,
+      importReport: state.importReport,
+      exportWarning: this.#exportWarning,
       layers: state.layers,
       linetypes: state.linetypes,
       selection: state.selection,

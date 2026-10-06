@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { CadEngine, KeyAction } from "../cad/engine";
 import { loadEngineForTests } from "../cad/test-support";
-import { CadApp, DISCARD_CHANGES_MESSAGE, LOSSY_EXPORT_MESSAGE } from "./cad-app";
+import { CadApp, DISCARD_CHANGES_MESSAGE } from "./cad-app";
 import type { HostServices, PickedFile } from "./host-services";
 
 beforeAll(loadEngineForTests);
@@ -160,7 +160,7 @@ describe("open", () => {
     expect(app.ui.getSnapshot()).toMatchObject({
       documentName: "plan.dxf",
       unsavedChanges: false,
-      exportIsLossy: false,
+      exportLosses: [],
     });
     expect(app.ui.getSnapshot().log.at(-1)).toBe("Imported 1 line.");
   });
@@ -228,23 +228,42 @@ describe("unsupported content", () => {
     enter("OPEN");
     await tick();
 
-    expect(app.ui.getSnapshot().exportIsLossy).toBe(true);
-    expect(app.ui.getSnapshot().log.slice(-2)).toEqual([
-      "Imported 1 line.",
-      "Not imported (unsupported): 1 HATCH.",
-    ]);
+    const losses = ["Not imported (unsupported): 1 HATCH."];
+    expect(app.ui.getSnapshot().exportLosses).toEqual(losses);
+    expect(app.ui.getSnapshot().importReport).toEqual({
+      serial: 1,
+      lines: ["Imported 1 line.", ...losses],
+    });
+    expect(app.ui.getSnapshot().log.slice(-2)).toEqual(["Imported 1 line.", ...losses]);
 
-    host.confirmAnswer = false;
+    // The warning names the losses; cancelling exports nothing.
     enter("DXFOUT");
     await tick();
-    expect(host.confirmations).toEqual([LOSSY_EXPORT_MESSAGE]);
+    expect(app.ui.getSnapshot().exportWarning).toEqual(losses);
     expect(host.saved).toHaveLength(0);
+    app.cancelExport();
+    expect(app.ui.getSnapshot().exportWarning).toBeUndefined();
+    expect(host.saved).toHaveLength(0);
+    expect(host.confirmations).toEqual([]);
 
-    host.confirmAnswer = true;
+    // Asked again and told to go ahead: the file, without what was lost.
     enter("DXFOUT");
     await tick();
+    app.exportAnyway();
+    await tick();
+    expect(app.ui.getSnapshot().exportWarning).toBeUndefined();
     expect(host.saved).toHaveLength(1);
     expect(host.saved[0]?.text).not.toContain("HATCH");
+    // Exporting does not bring the lost content back.
+    expect(app.ui.getSnapshot().exportLosses).toEqual(losses);
+
+    // The report is dismissed from the screen; the log keeps its lines.
+    app.dismissImportReport();
+    await tick();
+    expect(app.ui.getSnapshot().importReport).toBeUndefined();
+    expect(app.ui.getSnapshot().log).toEqual(
+      expect.arrayContaining(["Imported 1 line.", ...losses]),
+    );
   });
 });
 
