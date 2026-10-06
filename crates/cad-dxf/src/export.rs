@@ -606,6 +606,9 @@ impl Writer {
         if let Some(text) = &dimension.text_override {
             self.group(1, text);
         }
+        if let Some(angle) = dimension.text_angle {
+            self.real(53, angle.to_degrees());
+        }
         self.group(3, &style);
         match dimension.measure {
             Measure::Linear { a, b, rotation } => {

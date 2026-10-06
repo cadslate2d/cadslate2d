@@ -11,11 +11,12 @@ use cad_input::{CommandAliases, DuplicateCommandName};
 use crate::Command;
 use crate::commands::{
     ArcCommand, BlockCommand, BreakCommand, ChpropCommand, CircleCommand, ColorCommand,
-    CornerCommand, DimStyleCommand, EdgeCommand, EraseCommand, ExplodeCommand, ExportCommand,
-    GridCommand, InsertCommand, JoinCommand, LayerCommand, LineCommand, LinetypeCommand,
-    LtscaleCommand, LweightCommand, MTextCommand, MirrorCommand, OffsetCommand, OpenCommand,
-    OsnapCommand, PlineCommand, PolarAngleCommand, RectangCommand, RedoCommand, SaveCommand,
-    StretchCommand, TextCommand, TextEditCommand, TransformCommand, UndoCommand, UnitsCommand,
+    CornerCommand, DimLinearCommand, DimStyleCommand, EdgeCommand, EraseCommand, ExplodeCommand,
+    ExportCommand, GridCommand, InsertCommand, JoinCommand, LayerCommand, LineCommand,
+    LinetypeCommand, LtscaleCommand, LweightCommand, MTextCommand, MirrorCommand, OffsetCommand,
+    OpenCommand, OsnapCommand, PlineCommand, PolarAngleCommand, RectangCommand, RedoCommand,
+    SaveCommand, StretchCommand, TextCommand, TextEditCommand, TransformCommand, UndoCommand,
+    UnitsCommand,
 };
 
 type CommandFactory = fn() -> Box<dyn Command>;
@@ -51,7 +52,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 41] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 43] = [
             ("ERASE", &["E"], || Box::new(EraseCommand)),
             ("MOVE", &["M"], || Box::new(TransformCommand::moving())),
             ("COPY", &["CO", "CP"], || {
@@ -110,6 +111,12 @@ impl CommandRegistry {
             ("SAVE", &["QSAVE"], || Box::new(SaveCommand)),
             ("DIMSTYLE", &["D", "DST"], || {
                 Box::new(DimStyleCommand::new())
+            }),
+            ("DIMLINEAR", &["DLI", "DIMLIN"], || {
+                Box::new(DimLinearCommand::linear())
+            }),
+            ("DIMALIGNED", &["DAL", "DIMALI"], || {
+                Box::new(DimLinearCommand::aligned())
             }),
         ];
         for (name, aliases, factory) in standard {

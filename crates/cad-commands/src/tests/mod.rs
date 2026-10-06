@@ -10,6 +10,7 @@ mod chprop;
 mod color;
 mod corner;
 mod dimension;
+mod dimlinear;
 mod dimstyle;
 mod edge;
 mod grips;

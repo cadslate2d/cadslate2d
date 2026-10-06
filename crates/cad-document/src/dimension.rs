@@ -145,6 +145,9 @@ pub struct DimensionEntity {
     pub style: DimStyleId,
     /// Text in place of the measured value, when the drafter wrote some.
     pub text_override: Option<String>,
+    /// The text's angle, radians from +X, when the drafter set one; else
+    /// the text reads along the dimension line, the right way up.
+    pub text_angle: Option<f64>,
 }
 
 /// A dimension drawn: what the renderer draws, picking feels, and the
@@ -212,6 +215,7 @@ impl DimensionEntity {
             line_point,
             style: DimStyleId::FIRST,
             text_override: None,
+            text_angle: None,
         }
     }
 
@@ -230,10 +234,21 @@ impl DimensionEntity {
         }
     }
 
+    /// The same dimension with its text at `angle` (radians from +X);
+    /// `None` lets it read along the dimension line again.
+    #[must_use]
+    pub fn turned(self, angle: Option<f64>) -> Self {
+        Self {
+            text_angle: angle,
+            ..self
+        }
+    }
+
     /// Whether the dimension can be laid out.
     pub fn check(&self) -> Result<(), DimensionError> {
         let finite = self.line_point.is_finite()
-            && self.measure.points().iter().all(|point| point.is_finite());
+            && self.measure.points().iter().all(|point| point.is_finite())
+            && self.text_angle.is_none_or(f64::is_finite);
         if !finite {
             return Err(DimensionError::NotFinite);
         }
@@ -392,7 +407,7 @@ impl DimensionEntity {
         let span = foot_b - foot_a;
         let room = span.length();
         let along = normalized(span).unwrap_or(direction);
-        let mut text = text_along(content, style, along);
+        let mut text = self.text_along(content, style, along);
         let width = text.width();
         let mut layout = DimensionLayout::new(text.clone(), self.value());
         extension_line(&mut layout.lines, a, foot_a, style);
@@ -441,12 +456,12 @@ impl DimensionEntity {
         let Some(arc) = self.angular_arc(vertex, a, b) else {
             // Not a dimension that can be laid out; shown as its text at
             // the placement point so that it can at least be picked.
-            let mut text = text_along(content, style, Vec2::new(1.0, 0.0));
+            let mut text = self.text_along(content, style, Vec2::new(1.0, 0.0));
             text.insertion = self.line_point;
             return DimensionLayout::new(text, 0.0);
         };
         let tangent = |angle: f64| perpendicular(Vec2::from_polar(1.0, angle));
-        let mut text = text_along(content, style, Vec2::new(1.0, 0.0));
+        let mut text = self.text_along(content, style, Vec2::new(1.0, 0.0));
         let width = text.width();
         let mut layout = DimensionLayout::new(text.clone(), arc.sweep.to_degrees());
         for point in [a, b] {
@@ -485,7 +500,7 @@ impl DimensionEntity {
         };
         if text_inside {
             let middle = arc.start + arc.sweep / 2.0;
-            text = text_along(text.content, style, tangent(middle));
+            text = self.text_along(text.content, style, tangent(middle));
             place_beside(
                 &mut text,
                 arc.point_at(middle),
@@ -500,7 +515,7 @@ impl DimensionEntity {
                 from,
                 from + along * (start + width + style.text_gap),
             ));
-            text = text_along(text.content, style, along);
+            text = self.text_along(text.content, style, along);
             place_above(&mut text, from + along * (start + width / 2.0), style);
         }
         layout.text = text;
@@ -524,7 +539,7 @@ impl DimensionEntity {
         let on_circle = center + outwards * radius;
         let far_side = center - outwards * radius;
         let distance = center.distance_to(self.line_point);
-        let mut text = text_along(content, style, outwards);
+        let mut text = self.text_along(content, style, outwards);
         let width = text.width();
         let mut layout = DimensionLayout::new(text.clone(), self.value());
         let arrow = style.arrow_size;
@@ -568,8 +583,20 @@ impl DimensionEntity {
         Self {
             measure: self.measure.transformed(transform),
             line_point: transform.apply(self.line_point),
+            text_angle: self.text_angle.map(|angle| transform.apply_angle(angle)),
             ..self.clone()
         }
+    }
+
+    /// The dimension's text, centred, at the style's height, reading along
+    /// `along` turned the right way up — or at the drafter's angle, as
+    /// given; placed at the origin until it is placed.
+    fn text_along(&self, content: String, style: &DimStyle, along: Vec2) -> TextEntity {
+        let angle = self
+            .text_angle
+            .unwrap_or_else(|| readable_angle(along.y.atan2(along.x)));
+        TextEntity::new(Point2::ORIGIN, style.text_height, angle, content)
+            .justified(Justification::Center)
     }
 }
 
@@ -586,14 +613,6 @@ fn extension_line(lines: &mut Vec<Segment>, point: Point2, foot: Point2, style: 
     if start != end {
         lines.push(Segment::new(start, end));
     }
-}
-
-/// The dimension's text, centred, at the style's height, reading along
-/// `along` turned the right way up; placed at the origin until it is placed.
-fn text_along(content: String, style: &DimStyle, along: Vec2) -> TextEntity {
-    let angle = readable_angle(along.y.atan2(along.x));
-    TextEntity::new(Point2::ORIGIN, style.text_height, angle, content)
-        .justified(Justification::Center)
 }
 
 /// The text's up direction.
@@ -894,8 +913,18 @@ mod tests {
         assert_eq!(worded.layout(&style).text.content, "TYP");
         assert_eq!(worded.saying(None).content(&style), "12.3 mm");
         assert_eq!(
-            dim.in_style(DimStyleId::from_raw(3)).style,
+            dim.clone().in_style(DimStyleId::from_raw(3)).style,
             DimStyleId::from_raw(3)
+        );
+        // The drafter's angle is taken as given, upside down or not; it
+        // turns with the dimension.
+        let turned = dim.clone().turned(Some(FRAC_PI_4 * 5.0));
+        assert_eq!(turned.layout(&style).text.rotation, FRAC_PI_4 * 5.0);
+        let rotated = turned.transformed(&Transform::rotation(p(0.0, 0.0), 90.0));
+        assert!((rotated.text_angle.unwrap() - (FRAC_PI_4 * 7.0)).abs() < 1e-9);
+        assert_eq!(
+            dim.turned(Some(f64::NAN)).check(),
+            Err(DimensionError::NotFinite)
         );
     }
 
