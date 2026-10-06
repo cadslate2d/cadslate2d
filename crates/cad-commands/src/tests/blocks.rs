@@ -228,3 +228,39 @@ fn curve_commands_refuse_a_reference_by_name() {
         "A block reference cannot be broken."
     );
 }
+
+#[test]
+fn a_references_lines_are_cutting_edges_and_boundaries() {
+    let (drawing, ..) = nested_drawing();
+    let mut h = Harness::with_drawing(drawing);
+    // A line through the first pair's second chair upright at x = 120.
+    h.enter_all(&["L", "115,5", "135,5", ""]);
+    h.enter("TR");
+    h.click_world(p(120.0, 2.0));
+    h.enter("");
+    h.click_world(p(117.0, 5.0));
+    h.escape();
+    assert_eq!(
+        h.lines(),
+        vec![LineEntity::new(p(120.0, 5.0), p(135.0, 5.0))],
+        "the reference's upright cut the line"
+    );
+    // And back out to it with EXTEND.
+    h.enter_all(&["EX", ""]);
+    h.click_world(p(133.0, 5.0));
+    h.escape();
+    assert_eq!(
+        h.lines(),
+        vec![LineEntity::new(p(120.0, 5.0), p(135.0, 5.0))],
+        "nothing lies beyond the far end"
+    );
+    h.enter_all(&["L", "150,105", "170,105", ""]);
+    h.enter_all(&["EX", ""]);
+    h.click_world(p(152.0, 105.0));
+    h.escape();
+    assert_eq!(
+        h.lines()[1],
+        LineEntity::new(p(140.0, 105.0), p(170.0, 105.0)),
+        "extended to the scaled pair's upright at x = 140"
+    );
+}

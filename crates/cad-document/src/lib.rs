@@ -13,6 +13,7 @@ mod block;
 mod drawing;
 mod editing;
 mod entity;
+mod exploding;
 mod grips;
 mod history;
 mod id_alloc;
@@ -42,6 +43,7 @@ pub use entity::{
     ArcEntity, CircleEntity, Entity, LineEntity, MTextEntity, PolylineEntity, SharedEntity,
     TextEntity,
 };
+pub use exploding::ExplodeError;
 pub use grips::{EntityGrip, GripKind};
 pub use joining::{JoinError, Joined, close_into_circle, join};
 pub use layer::{Layer, LayerChange, LayerId, LayerTable};

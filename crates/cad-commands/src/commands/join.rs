@@ -8,7 +8,7 @@ use cad_core::EntityId;
 use cad_document::{Entity, JoinError, close_into_circle, join};
 use cad_input::{ExpectedInput, Keyword};
 
-use super::modify::selection_expected;
+use super::modify::{counted, selection_expected};
 use crate::{Command, CommandContext, CommandInput, Prompt, Step};
 
 const CLOSE: Keyword = Keyword::new("Close");
@@ -27,12 +27,6 @@ fn explain(error: JoinError) -> &'static str {
             "Close makes a circle out of arcs of one circle; select only those."
         }
     }
-}
-
-/// "1 polyline", "2 polylines".
-fn counted(count: usize, noun: &str) -> String {
-    let plural = if count == 1 { "" } else { "s" };
-    format!("{count} {noun}{plural}")
 }
 
 impl JoinCommand {

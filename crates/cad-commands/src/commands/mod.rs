@@ -23,6 +23,7 @@ macro_rules! immediate_command {
 }
 
 mod arc;
+mod block;
 #[path = "break_.rs"]
 mod break_command;
 mod chprop;
@@ -62,6 +63,7 @@ mod keywords {
 }
 
 pub(crate) use arc::ArcCommand;
+pub(crate) use block::{BlockCommand, ExplodeCommand, InsertCommand};
 pub(crate) use break_command::BreakCommand;
 pub(crate) use chprop::ChpropCommand;
 pub(crate) use circle::CircleCommand;

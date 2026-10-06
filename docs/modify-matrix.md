@@ -17,6 +17,9 @@ Every object has a layer, a colour, a linetype, and a lineweight beside its geom
 | Made from another: a copy, a mirror image kept beside its original, an offset, a further piece of a trim or a break | Those of the object it was made from |
 | A fillet arc or a chamfer bevel | Those of the object picked first |
 | Joined from several | Those of its oldest member, whose identity it keeps |
+| Made into a block (`BLOCK`) | Kept as they were inside the definition; the one reference that replaces the objects is a new object |
+| Exploded from a block reference | Those it was drawn with through the reference: its own inside the definition, with layer `0` and every `ByBlock` replaced by the reference's ([ADR-0017](adr/0017-blocks.md)) |
+| Exploded from a polyline | The polyline's |
 | Newly drawn | Those new objects are given: the current layer (`LAYER`, `Set`), colour (`COLOR`), linetype (`LINETYPE`, `Set`), and lineweight (`LWEIGHT`) |
 | `CHPROP` | Gives every selected object the layer, colour, linetype, or lineweight named, keeping the rest; one transaction per property, one undo for the command. Objects on a locked layer are not in the selection and are not changed. |
 
@@ -41,24 +44,27 @@ Tests: `cad-commands/src/tests/layers.rs`, `cad-document/src/drawing.rs`, `cad-r
 
 ## At a glance
 
-| Command | Line | Arc | Circle | Open polyline | Closed polyline | Text |
-| --- | --- | --- | --- | --- | --- | --- |
-| [MOVE, COPY, ROTATE, SCALE, MIRROR](#move-copy-rotate-scale-mirror) | yes | yes | yes | yes | yes | yes; a mirrored text stays readable |
-| [Grip editing](#grip-editing) | ends, midpoint | ends, midpoint, centre | centre, quadrants | vertices | vertices | insertion point |
-| [OFFSET](#offset) | yes | yes | yes | yes | yes | no: not a curve |
-| [TRIM](#trim) | yes | yes | if crossed twice | yes | if crossed twice | no; never a cutting edge |
-| [EXTEND](#extend) | yes | yes | no: it has no end | yes | no: it has no end | no; never a boundary |
-| [FILLET](#fillet) | with a line, arc, or circle | with a line, arc, or circle | with a line, arc, or circle; left whole | between two of its own segments | between two of its own segments | no |
-| [CHAMFER](#chamfer) | with a line | no | no | between two of its own segments | between two of its own segments | no |
-| [BREAK](#break) | yes | yes | two points; becomes an arc | yes | two points; opens | no |
-| [JOIN](#join) | yes | yes | no: it has no end | yes | no: it has no end | no: it has no ends |
-| [STRETCH](#stretch) | by its ends | by its ends | whole, by its centre | by its vertices | by its vertices | whole, by its insertion point |
-| ERASE | yes | yes | yes | yes | yes | yes |
-| TEXTEDIT | — | — | — | — | — | changes what it says |
+| Command | Line | Arc | Circle | Open polyline | Closed polyline | Text | Block reference |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [MOVE, COPY, ROTATE, SCALE, MIRROR](#move-copy-rotate-scale-mirror) | yes | yes | yes | yes | yes | yes; a mirrored text stays readable | yes; a mirrored reference stays a reference |
+| [Grip editing](#grip-editing) | ends, midpoint | ends, midpoint, centre | centre, quadrants | vertices | vertices | insertion point | insertion point |
+| [OFFSET](#offset) | yes | yes | yes | yes | yes | no: not a curve | no |
+| [TRIM](#trim) | yes | yes | if crossed twice | yes | if crossed twice | no; never a cutting edge | no; its lines and arcs are cutting edges |
+| [EXTEND](#extend) | yes | yes | no: it has no end | yes | no: it has no end | no; never a boundary | no; its lines and arcs are boundaries |
+| [FILLET](#fillet) | with a line, arc, or circle | with a line, arc, or circle | with a line, arc, or circle; left whole | between two of its own segments | between two of its own segments | no | no |
+| [CHAMFER](#chamfer) | with a line | no | no | between two of its own segments | between two of its own segments | no | no |
+| [BREAK](#break) | yes | yes | two points; becomes an arc | yes | two points; opens | no | no |
+| [JOIN](#join) | yes | yes | no: it has no end | yes | no: it has no end | no: it has no ends | no |
+| [STRETCH](#stretch) | by its ends | by its ends | whole, by its centre | by its vertices | by its vertices | whole, by its insertion point | whole, by its insertion point |
+| ERASE | yes | yes | yes | yes | yes | yes | yes |
+| TEXTEDIT | — | — | — | — | — | changes what it says | — |
+| [EXPLODE](#explode) | no | no | no | its lines and arcs | its lines and arcs | no | its definition's objects, placed; one level |
 
 A paragraph (`MTEXT`) is treated exactly as a text in every row: moved, turned, scaled, and mirrored whole (and readable), one grip at its top-left insertion point, refused by every curve command, stretched by its insertion point.
 
 A text is not a curve: it has no primitives, so nothing intersects it, trims against it, or snaps to the strokes of its glyphs — only to its insertion point (the Insertion snap). It is picked and selected by its box, so a click inside a letter's counter picks it. Commands that work on curves refuse it by name: "A text cannot be offset."
+
+A block reference is one object whose geometry is its definition's, placed ([ADR-0017](adr/0017-blocks.md)): a click anywhere on that geometry picks the whole reference, a window must hold all of it, a crossing box any of it; object snap reaches every line and arc inside it, through any depth of nesting, and offers its insertion point. The transform commands keep it a reference — scaled, turned, mirrored — and the curve commands refuse it by name ("A block reference cannot be offset."), though its lines and arcs serve TRIM and EXTEND as edges. `BLOCK` makes one, `INSERT` places one, and `EXPLODE` takes one apart.
 
 Polylines may have arc segments throughout: every command reads a polyline through the same primitives — segments and arcs — as it reads separate lines and arcs.
 
@@ -306,3 +312,22 @@ Rules:
 Not implemented: choosing objects by clicking them (they would move whole) or with several windows; the `Displacement` option; a selection made before the command, which is ignored.
 
 Tests: `cad-document/src/editing.rs` (`stretch_hold`, `stretched`), `cad-commands/src/tests/stretch.rs`, `web/e2e/stretch.spec.ts`.
+
+## EXPLODE
+
+A selection, made before the command or at its prompt; each object comes apart one level, in one transaction.
+
+| Object | Its parts |
+| --- | --- |
+| Block reference | Its definition's objects, placed as the reference placed them — scaled, turned, mirrored, moved. A reference inside the definition stays a reference: a nest comes apart one level at a time |
+| Polyline, open or closed | Its segments as separate objects: a line per straight segment, an arc per arc segment |
+| Line, arc, circle, text | Refused by name: "A line cannot be exploded." |
+
+Rules:
+
+- The parts occupy exactly where the object was, and look as it looked: a polyline's parts have its properties; a reference's parts have the properties they were drawn with through it — their own inside the definition, with layer `0` and every `ByBlock` replaced by the reference's.
+- The definition stays in the block table, however many references are exploded; `BLOCK` can redefine it, and `INSERT` place it again.
+- What has no parts is left as it is and named once per kind; the rest of the selection is still exploded: "1 polyline exploded into 2 objects." then "A line cannot be exploded.".
+- The parts are new objects; one undo brings the object back in their place.
+
+Tests: `cad-document/src/exploding.rs` (including the property that an exploded reference, however placed, occupies where the reference was), `cad-commands/src/tests/block_commands.rs`, `web/e2e/blocks.spec.ts`.

@@ -11,10 +11,16 @@ use cad_input::{ExpectedInput, InputKind};
 use crate::{Command, CommandContext, CommandInput, Prompt, Step, TransientEdit};
 
 pub(super) const SELECT_OBJECTS: &str = "Select objects";
-const NOTHING_SELECTED: &str = "No objects selected.";
+pub(super) const NOTHING_SELECTED: &str = "No objects selected.";
 
 pub(super) fn selection_expected() -> ExpectedInput {
     ExpectedInput::new(InputKind::Selection)
+}
+
+/// "1 polyline", "2 polylines".
+pub(super) fn counted(count: usize, noun: &str) -> String {
+    let plural = if count == 1 { "" } else { "s" };
+    format!("{count} {noun}{plural}")
 }
 
 /// The current selection as the sources of an edit. With nothing selected
