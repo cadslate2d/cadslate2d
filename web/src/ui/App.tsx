@@ -5,6 +5,7 @@ import { CanvasView } from "./CanvasView";
 import { CommandLine } from "./CommandLine";
 import { Header } from "./Header";
 import { LayersPanel } from "./LayersPanel";
+import { PropertiesPanel } from "./PropertiesPanel";
 import { StatusBar } from "./StatusBar";
 import { Toolbar } from "./Toolbar";
 
@@ -34,6 +35,7 @@ export function App() {
   const [core, setCore] = useState<CoreState>({ status: "loading" });
   const toolbar = useVisibilityPreference("cadslate2d.toolbar");
   const layers = useVisibilityPreference("cadslate2d.layers");
+  const properties = useVisibilityPreference("cadslate2d.properties");
 
   useEffect(() => {
     let cancelled = false;
@@ -80,20 +82,27 @@ export function App() {
     );
   }
 
-  const shell = [
-    "shell",
-    toolbar.visible && "shell--with-toolbar",
-    layers.visible && "shell--with-panel",
-  ]
+  const panels = layers.visible || properties.visible;
+  const shell = ["shell", toolbar.visible && "shell--with-toolbar", panels && "shell--with-panels"]
     .filter(Boolean)
     .join(" ");
   return (
     <div className={shell}>
-      <Header coreVersion={core.version} toolbar={toolbar} layers={layers} />
+      <Header
+        coreVersion={core.version}
+        toolbar={toolbar}
+        layers={layers}
+        properties={properties}
+      />
       {toolbar.visible && <Toolbar app={core.app} />}
       <CanvasView app={core.app} />
       <CommandLine app={core.app} />
-      {layers.visible && <LayersPanel app={core.app} />}
+      {panels && (
+        <div className="panels">
+          {layers.visible && <LayersPanel app={core.app} />}
+          {properties.visible && <PropertiesPanel app={core.app} />}
+        </div>
+      )}
       <StatusBar app={core.app} />
     </div>
   );

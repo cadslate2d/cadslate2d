@@ -1,5 +1,7 @@
 //! The session facade.
 
+use std::cell::RefCell;
+
 use cad_core::{Aabb, EntityId, PixelTolerance, Point2, ScreenPoint, View};
 use cad_document::{Color, Drawing, FOREGROUND_INDEX, Paint, Revision, index_paint};
 use cad_input::{ExpectedInput, Input, InputKind};
@@ -14,7 +16,7 @@ use crate::snap::find_snap_from;
 use crate::{
     Command, CommandContext, CommandInput, CommandRegistry, Dirty, DraftingSettings, Grip,
     HostRequest, HoveredObject, KeyAction, LayerRow, Modifiers, OverlayItem, PointerButton,
-    Selection, SnapModes, SnapPoint, Step, Toggle, Toggles, UiState,
+    Selection, SelectionSummary, SnapModes, SnapPoint, Step, Toggle, Toggles, UiState,
 };
 
 const IDLE_PROMPT: &str = "Command:";
@@ -78,6 +80,11 @@ pub struct Session {
     /// Where the primary button went down on a grip. Releasing it somewhere
     /// else drops the grip there, so a grip can be dragged as well as clicked.
     grip_press: Option<ScreenPoint>,
+    /// The selection as the Properties panel shows it, with the drawing
+    /// revision and selection generation it was computed for. Reused while
+    /// neither changes, so pointer movement over a large selection costs
+    /// nothing.
+    summary: RefCell<Option<(Revision, u64, SelectionSummary)>>,
 }
 
 impl Default for Session {
@@ -119,6 +126,7 @@ impl Session {
             toggles: Toggles::default(),
             settings: DraftingSettings::default(),
             grip_press: None,
+            summary: RefCell::new(None),
         }
     }
 
@@ -283,6 +291,30 @@ impl Session {
             unsaved_changes: self.drawing.revision() != self.saved_revision,
             export_is_lossy: self.export_is_lossy,
             layers: self.layer_rows(),
+            linetypes: self
+                .drawing
+                .linetypes()
+                .iter()
+                .map(|(_, def)| def.name.clone())
+                .collect(),
+            selection: self.selection_summary(),
+        }
+    }
+
+    /// The selection as the Properties panel shows it, computed once per
+    /// change of the selection or the drawing.
+    pub fn selection_summary(&self) -> SelectionSummary {
+        let key = (self.drawing.revision(), self.selection.generation());
+        let mut cached = self.summary.borrow_mut();
+        match &*cached {
+            Some((revision, generation, summary)) if (*revision, *generation) == key => {
+                summary.clone()
+            }
+            _ => {
+                let summary = SelectionSummary::of(&self.drawing, &self.selection);
+                *cached = Some((key.0, key.1, summary.clone()));
+                summary
+            }
         }
     }
 

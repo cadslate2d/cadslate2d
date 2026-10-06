@@ -10,8 +10,8 @@ use cad_input::{CommandAliases, DuplicateCommandName};
 
 use crate::Command;
 use crate::commands::{
-    ArcCommand, BreakCommand, CircleCommand, ColorCommand, CornerCommand, EdgeCommand,
-    EraseCommand, ExportCommand, GridCommand, JoinCommand, LayerCommand, LineCommand,
+    ArcCommand, BreakCommand, ChpropCommand, CircleCommand, ColorCommand, CornerCommand,
+    EdgeCommand, EraseCommand, ExportCommand, GridCommand, JoinCommand, LayerCommand, LineCommand,
     LinetypeCommand, LtscaleCommand, LweightCommand, MirrorCommand, OffsetCommand, OpenCommand,
     OsnapCommand, PlineCommand, PolarAngleCommand, RectangCommand, RedoCommand, StretchCommand,
     TransformCommand, UndoCommand, UnitsCommand,
@@ -50,7 +50,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 32] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 33] = [
             ("ERASE", &["E"], || Box::new(EraseCommand)),
             ("MOVE", &["M"], || Box::new(TransformCommand::moving())),
             ("COPY", &["CO", "CP"], || {
@@ -74,6 +74,9 @@ impl CommandRegistry {
                 Box::new(LinetypeCommand::new())
             }),
             ("LTSCALE", &["LTS"], || Box::new(LtscaleCommand::new())),
+            ("CHPROP", &["CH", "PROPERTIES"], || {
+                Box::new(ChpropCommand::new())
+            }),
             (
                 "COLOR",
                 &["COL", "COLOUR"],

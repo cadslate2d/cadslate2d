@@ -4,6 +4,7 @@ mod aids;
 #[path = "break_.rs"]
 mod break_command;
 mod bulged;
+mod chprop;
 mod color;
 mod corner;
 mod edge;

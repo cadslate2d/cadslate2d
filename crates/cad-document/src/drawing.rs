@@ -1,5 +1,6 @@
 //! The drawing: the authoritative CAD state.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
@@ -435,6 +436,8 @@ impl Drawing {
         TransactionBuilder {
             drawing: self,
             changes: Vec::new(),
+            touched: HashSet::new(),
+            others: Vec::new(),
         }
     }
 
@@ -539,6 +542,12 @@ impl Drawing {
 pub struct TransactionBuilder<'d> {
     drawing: &'d mut Drawing,
     changes: Vec<Change>,
+    /// The entities `changes` already touch, so that a transaction over
+    /// many entities checks each in constant time rather than by scanning.
+    touched: HashSet<EntityId>,
+    /// Where in `changes` the table and settings changes are: the few a
+    /// transaction over many entities has to look at for each of them.
+    others: Vec<usize>,
 }
 
 impl TransactionBuilder<'_> {
@@ -628,8 +637,7 @@ impl TransactionBuilder<'_> {
         self.free_name(&layer.name, None)?;
         self.known_linetype(layer.linetype)?;
         let id = self.drawing.layers.allocate();
-        self.changes
-            .push(Change::Layer(TableChange::Insert { id, row: layer }));
+        self.push_other(Change::Layer(TableChange::Insert { id, row: layer }));
         Ok(id)
     }
 
@@ -650,7 +658,7 @@ impl TransactionBuilder<'_> {
         if !layer.on && self.settings_now().current_layer == id {
             return Err(TransactionError::CurrentLayer(id));
         }
-        self.changes.push(Change::Layer(TableChange::Replace {
+        self.push_other(Change::Layer(TableChange::Replace {
             id,
             before,
             after: layer,
@@ -683,8 +691,7 @@ impl TransactionBuilder<'_> {
         if pending || self.drawing.records().any(|(_, record)| on_layer(record)) {
             return Err(TransactionError::LayerInUse(id));
         }
-        self.changes
-            .push(Change::Layer(TableChange::Remove { id, row }));
+        self.push_other(Change::Layer(TableChange::Remove { id, row }));
         Ok(())
     }
 
@@ -726,7 +733,7 @@ impl TransactionBuilder<'_> {
     /// transaction is abandoned.
     pub fn add_linetype(&mut self, linetype: LinetypeDef) -> Result<LinetypeId, TransactionError> {
         linetype.check().map_err(TransactionError::BadLinetype)?;
-        let added = self.changes.iter().filter_map(|change| match change {
+        let added = self.others().filter_map(|change| match change {
             Change::Linetype(TableChange::Insert { row, .. }) => Some(row),
             _ => None,
         });
@@ -746,8 +753,7 @@ impl TransactionBuilder<'_> {
             ));
         }
         let id = self.drawing.linetypes.allocate();
-        self.changes
-            .push(Change::Linetype(TableChange::Insert { id, row: linetype }));
+        self.push_other(Change::Linetype(TableChange::Insert { id, row: linetype }));
         Ok(id)
     }
 
@@ -795,8 +801,7 @@ impl TransactionBuilder<'_> {
         if in_use {
             return Err(TransactionError::LinetypeInUse(id));
         }
-        self.changes
-            .push(Change::Linetype(TableChange::Remove { id, row }));
+        self.push_other(Change::Linetype(TableChange::Remove { id, row }));
         Ok(())
     }
 
@@ -852,15 +857,24 @@ impl TransactionBuilder<'_> {
     }
 
     fn push(&mut self, change: EntityChange) {
+        self.touched.insert(change.id());
         self.changes.push(Change::Entity(change));
     }
 
+    /// Records a table or settings change.
+    fn push_other(&mut self, change: Change) {
+        debug_assert!(!matches!(change, Change::Entity(_)));
+        self.others.push(self.changes.len());
+        self.changes.push(change);
+    }
+
+    /// The table and settings changes recorded so far, in order.
+    fn others(&self) -> impl DoubleEndedIterator<Item = &Change> {
+        self.others.iter().map(|index| &self.changes[*index])
+    }
+
     fn existing(&self, id: EntityId) -> Result<EntityRecord, TransactionError> {
-        let already_changed = self.changes.iter().any(|change| match change {
-            Change::Entity(change) => change.id() == id,
-            Change::Layer(_) | Change::Linetype(_) | Change::Settings(_) => false,
-        });
-        if already_changed {
+        if self.touched.contains(&id) {
             return Err(TransactionError::AlreadyChanged(id));
         }
         self.drawing
@@ -872,7 +886,7 @@ impl TransactionBuilder<'_> {
 
     /// How this transaction has changed the layer `id` so far, if it has.
     fn layer_change(&self, id: LayerId) -> Option<&TableChange<Layer>> {
-        self.changes.iter().find_map(|change| match change {
+        self.others().find_map(|change| match change {
             Change::Layer(change) if change.id() == id => Some(change),
             _ => None,
         })
@@ -890,7 +904,7 @@ impl TransactionBuilder<'_> {
 
     /// How this transaction has changed the linetype `id` so far, if it has.
     fn linetype_change(&self, id: LinetypeId) -> Option<&TableChange<LinetypeDef>> {
-        self.changes.iter().find_map(|change| match change {
+        self.others().find_map(|change| match change {
             Change::Linetype(change) if change.id() == id => Some(change),
             _ => None,
         })
@@ -920,8 +934,7 @@ impl TransactionBuilder<'_> {
 
     /// The settings as they will be once this transaction commits.
     fn settings_now(&self) -> DrawingSettings {
-        self.changes
-            .iter()
+        self.others()
             .rev()
             .find_map(|change| match change {
                 Change::Settings(change) => Some(change.after),
@@ -933,13 +946,20 @@ impl TransactionBuilder<'_> {
     /// Records the settings as `after`. A transaction holds at most one
     /// settings change: a second one moves the first one's end.
     fn set_settings(&mut self, after: DrawingSettings) {
-        let pending = self.changes.iter_mut().find_map(|change| match change {
-            Change::Settings(change) => Some(change),
-            _ => None,
-        });
+        let pending = self
+            .others
+            .iter()
+            .find_map(|index| match &self.changes[*index] {
+                Change::Settings(_) => Some(*index),
+                _ => None,
+            });
         match pending {
-            Some(change) => change.after = after,
-            None => self.changes.push(Change::Settings(SettingsChange {
+            Some(index) => {
+                if let Change::Settings(change) = &mut self.changes[index] {
+                    change.after = after;
+                }
+            }
+            None => self.push_other(Change::Settings(SettingsChange {
                 before: self.drawing.settings,
                 after,
             })),
@@ -972,7 +992,7 @@ impl TransactionBuilder<'_> {
     /// commits.
     fn free_name(&self, name: &str, renamed: Option<LayerId>) -> Result<(), TransactionError> {
         check_name(name).map_err(TransactionError::BadLayerName)?;
-        let added = self.changes.iter().filter_map(|change| match change {
+        let added = self.others().filter_map(|change| match change {
             Change::Layer(TableChange::Insert { id, .. }) => Some(*id),
             _ => None,
         });

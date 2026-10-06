@@ -1,8 +1,11 @@
 import { describe, expect, test } from "vitest";
 import type { LayerRow } from "../cad/engine";
 import {
+  changeProperty,
+  COLOR_CHOICES,
   createLayer,
   deleteLayer,
+  LINEWEIGHT_CHOICES,
   renameLayer,
   setCurrent,
   swatchColor,
@@ -64,5 +67,21 @@ describe("the Layers panel's actions are LAYER options with their answers", () =
   test("a swatch is the layer's colour, or the theme's foreground for colour 7", () => {
     expect(swatchColor(walls)).toBe("rgb(255 0 0)");
     expect(swatchColor({ ...walls, color: 7, rgb: undefined })).toBe("var(--canvas-entity)");
+  });
+});
+
+describe("the Properties panel's changes are CHPROP with its answers", () => {
+  test("each property maps to CHPROP's option name and ends with Enter", () => {
+    expect(changeProperty("Layer", "walls")).toEqual(["CHPROP", "LAyer", "walls", ""]);
+    expect(changeProperty("Color", "red")).toEqual(["CHPROP", "Color", "red", ""]);
+    expect(changeProperty("Linetype", "Dashed")).toEqual(["CHPROP", "LType", "Dashed", ""]);
+    expect(changeProperty("Lineweight", "0.5")).toEqual(["CHPROP", "LWeight", "0.5", ""]);
+  });
+
+  test("the choices offered are the words the commands accept", () => {
+    expect(COLOR_CHOICES).toContain("ByLayer");
+    expect(COLOR_CHOICES).toHaveLength(9);
+    expect(LINEWEIGHT_CHOICES).toHaveLength(27);
+    expect(LINEWEIGHT_CHOICES.at(-1)).toBe("2.11");
   });
 });

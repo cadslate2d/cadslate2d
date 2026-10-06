@@ -1,7 +1,8 @@
 //! The one exported handle (ADR-0002 §1).
 
 use cad_commands::{
-    Dirty, HostRequest, KeyAction, LayerRow, Modifiers, PointerButton, Session, Toggle, UiState,
+    Dirty, HostRequest, KeyAction, LayerRow, Modifiers, PointerButton, SelectionSummary, Session,
+    Toggle, UiState,
 };
 use cad_core::{ClipTransform, ScreenPoint};
 use cad_render::{OverlayFrame, SceneCache};
@@ -79,6 +80,44 @@ struct UiStateDto {
     unsaved_changes: bool,
     export_is_lossy: bool,
     layers: Vec<LayerRowDto>,
+    linetypes: Vec<String>,
+    selection: SelectionSummaryDto,
+}
+
+/// The selection as the Properties panel shows it: bounded whatever the
+/// selection's size (#141).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SelectionSummaryDto {
+    count: u32,
+    headline: String,
+    /// `[kind, count]` pairs, at most one per kind of entity.
+    kinds: Vec<(String, u32)>,
+    layer: Option<String>,
+    color: Option<String>,
+    linetype: Option<String>,
+    lineweight: Option<String>,
+    /// `[label, value]` pairs: one object's defining geometry.
+    geometry: Vec<(String, String)>,
+}
+
+impl From<SelectionSummary> for SelectionSummaryDto {
+    fn from(summary: SelectionSummary) -> Self {
+        Self {
+            count: summary.count as u32,
+            headline: summary.headline(),
+            kinds: summary
+                .kinds
+                .iter()
+                .map(|(kind, count)| (kind.clone(), *count as u32))
+                .collect(),
+            layer: summary.layer,
+            color: summary.color,
+            linetype: summary.linetype,
+            lineweight: summary.lineweight,
+            geometry: summary.geometry,
+        }
+    }
 }
 
 /// One row of the Layers panel: presentation data only (ADR-0002 §5).
@@ -128,6 +167,8 @@ impl From<UiState> for UiStateDto {
             unsaved_changes: state.unsaved_changes,
             export_is_lossy: state.export_is_lossy,
             layers: state.layers.into_iter().map(LayerRowDto::from).collect(),
+            linetypes: state.linetypes,
+            selection: state.selection.into(),
         }
     }
 }

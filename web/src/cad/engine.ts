@@ -84,6 +84,29 @@ export interface UiState {
   readonly exportIsLossy: boolean;
   /** The layers as the Layers panel shows them, in table order (#140). */
   readonly layers: readonly LayerRow[];
+  /** The names of the loaded linetypes, for a linetype field to offer. */
+  readonly linetypes: readonly string[];
+  /** The selection as the Properties panel shows it (#141). */
+  readonly selection: SelectionSummary;
+}
+
+/**
+ * What the Properties panel shows about the selection: counts and the
+ * values the objects share. Bounded whatever the selection's size — never
+ * a record per object.
+ */
+export interface SelectionSummary {
+  readonly count: number;
+  /** "No selection", "1 line", "3 objects: 2 lines, 1 circle". */
+  readonly headline: string;
+  readonly kinds: readonly (readonly [kind: string, count: number])[];
+  /** The layer every selected object is on; absent when they differ. */
+  readonly layer?: string;
+  readonly color?: string;
+  readonly linetype?: string;
+  readonly lineweight?: string;
+  /** For one object: label and value of what defines it, read only. */
+  readonly geometry: readonly (readonly [label: string, value: string])[];
 }
 
 /** One row of the Layers panel: names and looks only, never IDs or geometry. */

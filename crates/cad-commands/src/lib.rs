@@ -21,6 +21,7 @@ mod selection;
 mod session;
 mod settings;
 pub mod snap;
+mod summary;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(test)]
@@ -40,6 +41,7 @@ pub use selection::Selection;
 pub use session::{Aim, Session};
 pub use settings::DraftingSettings;
 pub use snap::{SnapMode, SnapModes, SnapPoint};
+pub use summary::SelectionSummary;
 pub use toggles::{Toggle, Toggles};
 pub use transient::TransientEdit;
 pub use ui_state::{LayerRow, UiState};

@@ -18,6 +18,7 @@ Every object has a layer, a colour, a linetype, and a lineweight beside its geom
 | A fillet arc or a chamfer bevel | Those of the object picked first |
 | Joined from several | Those of its oldest member, whose identity it keeps |
 | Newly drawn | Those new objects are given: the current layer (`LAYER`, `Set`), colour (`COLOR`), linetype (`LINETYPE`, `Set`), and lineweight (`LWEIGHT`) |
+| `CHPROP` | Gives every selected object the layer, colour, linetype, or lineweight named, keeping the rest; one transaction per property, one undo for the command. Objects on a locked layer are not in the selection and are not changed. |
 
 Undo brings an erased or changed object back with the properties it had.
 

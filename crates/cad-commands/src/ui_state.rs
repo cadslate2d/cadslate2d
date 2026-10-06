@@ -1,5 +1,7 @@
 //! What the UI shell needs to present the session (ADR-0002 §5).
 
+use crate::SelectionSummary;
+
 /// A small snapshot of presentation state. It deliberately contains nothing
 /// from which drawing geometry could be reconstructed.
 #[derive(Clone, Debug, PartialEq)]
@@ -38,6 +40,12 @@ pub struct UiState {
     /// The layers, in the order they were made, as the Layers panel shows
     /// them. Presentation only: names and looks, no IDs and no geometry.
     pub layers: Vec<LayerRow>,
+    /// The names of the loaded linetypes, in the order they were loaded:
+    /// what a linetype field can offer.
+    pub linetypes: Vec<String>,
+    /// The selection as the Properties panel shows it: counts and shared
+    /// values, bounded whatever the selection's size.
+    pub selection: SelectionSummary,
 }
 
 /// One row of the Layers panel.

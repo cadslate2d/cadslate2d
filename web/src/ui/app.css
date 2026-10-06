@@ -47,22 +47,32 @@ body {
     "status";
 }
 
-.shell--with-panel {
+.shell--with-panels {
   grid-template-columns: minmax(0, 1fr) var(--size-panel);
   grid-template-areas:
     "header header"
-    "canvas layers"
-    "command layers"
+    "canvas panels"
+    "command panels"
     "status status";
 }
 
-.shell--with-toolbar.shell--with-panel {
+.shell--with-toolbar.shell--with-panels {
   grid-template-areas:
     "header header"
     "toolbar toolbar"
-    "canvas layers"
-    "command layers"
+    "canvas panels"
+    "command panels"
     "status status";
+}
+
+/* The docked panels share the right column, top to bottom. */
+.panels {
+  grid-area: panels;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  margin: var(--space-2) var(--space-2) var(--space-2) 0;
 }
 
 .header {
@@ -87,19 +97,20 @@ body {
 
 /* ── Layers panel ── */
 
-.layers {
-  grid-area: layers;
+.layers,
+.properties {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
   min-height: 0;
-  margin: var(--space-2) var(--space-2) var(--space-2) 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface-panel);
   font-size: var(--font-size-sm);
 }
 
-.layers__header {
+.layers__header,
+.properties__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -107,13 +118,15 @@ body {
   border-bottom: 1px solid var(--color-border);
 }
 
-.layers__title {
+.layers__title,
+.properties__title {
   margin: 0;
   font-size: var(--font-size-md);
   font-weight: 600;
 }
 
-.layers__scroll {
+.layers__scroll,
+.properties__scroll {
   min-height: 0;
   overflow: auto;
 }
@@ -224,11 +237,91 @@ body {
   font: inherit;
 }
 
-.layers__note {
+.layers__note,
+.properties__note {
   margin: 0;
   padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--color-border);
   color: var(--color-text-faint);
+}
+
+/* ── Properties panel ── */
+
+.properties__headline {
+  color: var(--color-text-muted);
+}
+
+.properties__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.properties__table th {
+  padding: var(--space-1) var(--space-3);
+  color: var(--color-text-muted);
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.properties__table td {
+  width: 60%;
+  padding: 0 var(--space-2) 0 0;
+}
+
+.properties__group th {
+  padding-top: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.properties__value {
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.properties__value:hover:not(:disabled),
+.properties__value:focus-visible {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
+}
+
+.properties__value:disabled {
+  cursor: default;
+}
+
+.properties__value--varies {
+  color: var(--color-text-faint);
+  font-style: italic;
+}
+
+.properties__readonly {
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+}
+
+.properties__form {
+  margin: 0;
+}
+
+.properties__field {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-canvas);
+  color: var(--color-text);
+  font: inherit;
 }
 
 .visually-hidden {

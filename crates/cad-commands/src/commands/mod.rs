@@ -25,6 +25,7 @@ macro_rules! immediate_command {
 mod arc;
 #[path = "break_.rs"]
 mod break_command;
+mod chprop;
 mod circle;
 mod color;
 mod corner;
@@ -60,6 +61,7 @@ mod keywords {
 
 pub(crate) use arc::ArcCommand;
 pub(crate) use break_command::BreakCommand;
+pub(crate) use chprop::ChpropCommand;
 pub(crate) use circle::CircleCommand;
 pub(crate) use color::ColorCommand;
 pub(crate) use corner::CornerCommand;

@@ -297,3 +297,49 @@ describe("layers for the panel", () => {
     expect(app.ui.getSnapshot().layers[1]?.locked).toBe(false);
   });
 });
+
+// #141: the Properties panel reads a bounded summary and changes through CHPROP.
+describe("properties for the panel", () => {
+  test("the UI state summarises the selection; a panel change is CHPROP with its answers", async () => {
+    const { app, engine, tick, enter } = harness();
+    enter("L", "0,0", "30,40", "", "LA", "N", "walls", "");
+    await tick();
+    expect(app.ui.getSnapshot().selection).toMatchObject({ count: 0, headline: "No selection" });
+    expect(app.ui.getSnapshot().linetypes).toEqual(["Continuous"]);
+
+    // A click on the line at the idle prompt selects it. The view is 800×600
+    // with the origin at its centre and y up.
+    app.loop.invalidate(engine.pointerDown(415, 280, 0, 0));
+    app.loop.invalidate(engine.pointerUp(415, 280, 0, 0));
+    await tick();
+    const { selection } = app.ui.getSnapshot();
+    expect(selection).toMatchObject({
+      count: 1,
+      headline: "1 line",
+      kinds: [["line", 1]],
+      layer: "0",
+      color: "ByLayer",
+      linetype: "ByLayer",
+      lineweight: "ByLayer",
+    });
+    expect(selection.geometry).toEqual([
+      ["Start", "0.0000, 0.0000"],
+      ["End", "30.0000, 40.0000"],
+      ["Length", "50.0000"],
+      ["Angle", "53.1301°"],
+    ]);
+
+    app.run("CHPROP", "LAyer", "walls", "");
+    app.run("CHPROP", "Color", "red", "");
+    await tick();
+    const changed = app.ui.getSnapshot();
+    expect(changed.selection).toMatchObject({ layer: "walls", color: "red" });
+    expect(changed.log).toContain('1 object changed to layer "walls".');
+    expect(changed.log).toContain("1 object changed to red.");
+    expect(changed.command).toBeUndefined();
+
+    app.key(KeyAction.Escape);
+    await tick();
+    expect(app.ui.getSnapshot().selection.count).toBe(0);
+  });
+});

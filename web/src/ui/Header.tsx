@@ -4,8 +4,9 @@ interface HeaderProps {
   coreVersion: string;
   /** Present once the app is ready: whether the toolbar is shown, and how to flip it. */
   toolbar?: Visibility;
-  /** Likewise for the Layers panel. */
+  /** Likewise for the Layers panel and the Properties panel. */
   layers?: Visibility;
+  properties?: Visibility;
 }
 
 function Switch({ label, part }: { label: string; part: Visibility }) {
@@ -22,7 +23,7 @@ function Switch({ label, part }: { label: string; part: Visibility }) {
   );
 }
 
-export function Header({ coreVersion, toolbar, layers }: HeaderProps) {
+export function Header({ coreVersion, toolbar, layers, properties }: HeaderProps) {
   return (
     <header className="header" data-core-version={coreVersion}>
       <h1 className="header__brand">
@@ -32,6 +33,7 @@ export function Header({ coreVersion, toolbar, layers }: HeaderProps) {
       <span className="header__spacer" />
       {toolbar && <Switch label="Toolbar" part={toolbar} />}
       {layers && <Switch label="Layers" part={layers} />}
+      {properties && <Switch label="Properties" part={properties} />}
     </header>
   );
 }

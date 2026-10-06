@@ -14,7 +14,7 @@ Milestones **M0 — The Line**, **M1 — Input and Basic Entities**, and **M3 �
 
 ## What works today
 
-Type anywhere on the page; you never need to click the command line first. The toolbar and the Layers panel are optional: every button runs the same command you could type — a panel action is `LAYER` with its answers, and the log shows each step — and the `Toolbar` and `Layers` buttons in the header hide them.
+Type anywhere on the page; you never need to click the command line first. The toolbar and the panels are optional: every button runs the same command you could type — a Layers panel action is `LAYER` with its answers, a change in the Properties panel is `CHPROP`, and the log shows each step — and the `Toolbar`, `Layers`, and `Properties` buttons in the header hide them.
 
 | Command | Aliases | What it does |
 | --- | --- | --- |
@@ -28,6 +28,7 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `UNITS` | `UN` | Says what the drawing's numbers are: unitless (the default), millimetres, centimetres, metres, inches, or feet. Nothing is rescaled; the unit is what a typed `25mm` is converted into, and it is saved with the drawing. |
 | `LINETYPE` | `LT` | Linetypes from the command line: `Load` one of the built-in patterns (`Dashed`, `Hidden`, `Center`, `Phantom`, `Dot`, `Dashdot`), `Set` the linetype new objects are given (a loaded name, `ByLayer`, or `ByBlock`), `Delete` one nothing uses, and `?` to list. |
 | `LTSCALE` | `LTS` | What every linetype pattern is multiplied by. Patterns are defined in drawing units — a `Dashed` dash is 0.5 — so a drawing in millimetres wants a larger scale than one in metres. |
+| `CHPROP` | `CH`, `PROPERTIES` | Changes the layer (`LAyer`), colour, linetype, or lineweight of the selected objects, all of them in one step; several properties in one go, until Enter. |
 | `LAYER` | `LA` | Layers from the command line: `New`, `Set` (the layer new objects go on), `Color`, `LWeight`, `LType`, `ON`, `OFF`, `Lock`, `Unlock`, `Rename`, `Delete`, and `?` to list. Names may contain spaces; several can be given at once, separated by commas. Objects on a layer that is off are hidden and cannot be picked; objects on a locked layer cannot be changed. |
 | `ERASE` | `E`, Delete | Erases the selected objects. |
 | `MOVE` | `M` | Moves the selection from a base point to a second point. |
@@ -110,6 +111,8 @@ A position that would collapse the object — a line of no length, a circle of n
 Every object is on a layer; new objects go on the current one, and an object made from another — a copy, an offset, a piece of a trim — stays on its source's. `LAYER` makes and manages them, and the Layers panel on the right does the same by button: switch on or off, lock, make current, create, rename, delete. It waits while a command is in progress. A layer that is **off** hides its objects from the screen and from the pointer. A layer that is **locked** still shows them, and they can be snapped to and trimmed against, but no command changes them.
 
 Objects are drawn in the colour of their layer (`LAYER`, `Color`), or in a colour of their own if they were drawn after `COLOR` set one. A colour is a number from 1 to 255 or one of seven names: 1 red, 2 yellow, 3 green, 4 cyan, 5 blue, 6 magenta, 7 white. Colour 7, which a new layer has, is the foreground: light on the dark canvas.
+
+The Properties panel shows what is selected — how many objects of which kinds — and the layer, colour, linetype, and lineweight they share, or that they vary; for one object it also lists what defines it, read only. Changing a value there runs `CHPROP` on the selection. The summary is computed in Rust and is a few counts and strings however large the selection.
 
 A layer also has a lineweight (`LAYER`, `LWeight`), and an object can have one of its own (`LWEIGHT`). They are drawn at their true width — 1 mm is about 3.8 pixels — while **LWT** on the status bar is on, and at the ordinary width while it is off. A lineweight never changes how an object is picked or snapped to.
 

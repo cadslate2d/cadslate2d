@@ -43,3 +43,64 @@ export function swatchColor(layer: LayerRow): string {
     ? `rgb(${layer.rgb[0]} ${layer.rgb[1]} ${layer.rgb[2]})`
     : "var(--canvas-entity)";
 }
+
+// ── the Properties panel (#141): CHPROP with its answers ──
+
+/** The four properties CHPROP changes, as the panel labels them and as CHPROP's option names them. */
+export const CHANGEABLE = [
+  { label: "Layer", option: "LAyer" },
+  { label: "Color", option: "Color" },
+  { label: "Linetype", option: "LType" },
+  { label: "Lineweight", option: "LWeight" },
+] as const;
+export type Changeable = (typeof CHANGEABLE)[number]["label"];
+
+/** CHPROP over the current selection: one property, one value. */
+export function changeProperty(property: Changeable, value: string): CommandScript {
+  const option = CHANGEABLE.find((entry) => entry.label === property)?.option ?? property;
+  return ["CHPROP", option, value, ""];
+}
+
+/** The seven colour names and the two indirections: what a colour field offers. */
+export const COLOR_CHOICES = [
+  "ByLayer",
+  "ByBlock",
+  "red",
+  "yellow",
+  "green",
+  "cyan",
+  "blue",
+  "magenta",
+  "white",
+] as const;
+
+/** The standard lineweights in millimetres, with the three words. */
+export const LINEWEIGHT_CHOICES = [
+  "ByLayer",
+  "ByBlock",
+  "Default",
+  "0",
+  "0.05",
+  "0.09",
+  "0.13",
+  "0.15",
+  "0.18",
+  "0.2",
+  "0.25",
+  "0.3",
+  "0.35",
+  "0.4",
+  "0.5",
+  "0.53",
+  "0.6",
+  "0.7",
+  "0.8",
+  "0.9",
+  "1",
+  "1.06",
+  "1.2",
+  "1.4",
+  "1.58",
+  "2",
+  "2.11",
+] as const;
