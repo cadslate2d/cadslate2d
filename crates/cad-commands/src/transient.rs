@@ -160,18 +160,30 @@ mod tests {
 
         edit.commit(&mut drawing, by(100.0, 0.0));
         assert_eq!(
-            drawing.entity(ids[0]).unwrap().bounds().min(),
+            drawing
+                .entity(ids[0])
+                .unwrap()
+                .bounds(cad_document::empty_blocks())
+                .min(),
             Point2::new(100.0, 0.0)
         );
         assert_eq!(
-            drawing.entity(ids[1]).unwrap().bounds().min(),
+            drawing
+                .entity(ids[1])
+                .unwrap()
+                .bounds(cad_document::empty_blocks())
+                .min(),
             Point2::new(103.0, 3.0)
         );
         assert_eq!(drawing.len(), 3);
 
         drawing.undo().unwrap();
         assert_eq!(
-            drawing.entity(ids[0]).unwrap().bounds().min(),
+            drawing
+                .entity(ids[0])
+                .unwrap()
+                .bounds(cad_document::empty_blocks())
+                .min(),
             Point2::new(0.0, 0.0)
         );
         assert!(!drawing.can_undo() || drawing.undo().is_some());
@@ -219,11 +231,19 @@ mod tests {
             "copies get fresh IDs"
         );
         assert_eq!(
-            drawing.entity(edit.sources()[0]).unwrap().bounds().min(),
+            drawing
+                .entity(edit.sources()[0])
+                .unwrap()
+                .bounds(cad_document::empty_blocks())
+                .min(),
             Point2::new(0.0, 0.0)
         );
         assert_eq!(
-            drawing.entity(copies[0]).unwrap().bounds().min(),
+            drawing
+                .entity(copies[0])
+                .unwrap()
+                .bounds(cad_document::empty_blocks())
+                .min(),
             Point2::new(0.0, 50.0)
         );
 

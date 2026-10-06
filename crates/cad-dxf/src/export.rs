@@ -32,12 +32,14 @@ pub struct ExportReport {
     pub lineweights_on_entities: usize,
     /// Layers with a lineweight other than the default.
     pub lineweights_on_layers: usize,
+    /// Block references, which the writer does not write yet (#149).
+    pub block_references: usize,
 }
 
 impl ExportReport {
     /// Whether the file holds less than the drawing did.
     pub fn is_lossy(&self) -> bool {
-        self.lineweights_on_entities + self.lineweights_on_layers > 0
+        self.lineweights_on_entities + self.lineweights_on_layers + self.block_references > 0
     }
 
     /// A short, user-facing account of what was lost; empty when nothing was.
@@ -56,10 +58,24 @@ impl ExportReport {
         .filter(|(count, ..)| *count > 0)
         .map(|(count, one, many)| counted(count, one, many))
         .collect();
-        vec![format!(
-            "Lineweights are not written in DXF R12: dropped from {}.",
-            carriers.join(" and ")
-        )]
+        let mut lines = Vec::new();
+        if !carriers.is_empty() {
+            lines.push(format!(
+                "Lineweights are not written in DXF R12: dropped from {}.",
+                carriers.join(" and ")
+            ));
+        }
+        if self.block_references > 0 {
+            lines.push(format!(
+                "{} not written: blocks reach DXF with #149.",
+                counted(
+                    self.block_references,
+                    "block reference was",
+                    "block references were"
+                )
+            ));
+        }
+        lines
     }
 }
 
@@ -161,6 +177,7 @@ pub fn export_with_report(drawing: &Drawing) -> Export {
                 Entity::Text(text) => write_text(out, text, drawing.text_styles(), common),
                 // R12 has no MTEXT: a paragraph is written as one TEXT per
                 // line, as it is set.
+                Entity::BlockRef(_) => report.block_references += 1,
                 Entity::MText(text) => {
                     let lines = text.lines();
                     for (index, line) in lines.iter().enumerate() {
@@ -698,6 +715,7 @@ mod tests {
             ExportReport {
                 lineweights_on_entities: 2,
                 lineweights_on_layers: 1,
+                block_references: 0,
             }
         );
         assert!(export.report.is_lossy());
@@ -708,6 +726,7 @@ mod tests {
         let only_layers = ExportReport {
             lineweights_on_entities: 0,
             lineweights_on_layers: 2,
+            block_references: 0,
         };
         assert_eq!(
             only_layers.summary(),

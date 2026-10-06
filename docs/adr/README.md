@@ -27,6 +27,7 @@ There are two kinds:
 | [0014](0014-colours-across-the-render-boundary.md) | Colours across the render boundary: a style index per instance and a style table | Accepted | Evidence |
 | [0015](0015-linetype-rendering.md) | Linetype rendering: dashes drawn by the shader from a distance along the path | Accepted | Evidence |
 | [0016](0016-text-rendering.md) | Text rendering: a stroke font drawn through the line instances | Accepted | Evidence |
+| [0017](0017-blocks.md) | Blocks: definitions as table rows, references resolved through the table | Accepted | Bootstrap |
 
 ## Expected evidence ADRs
 

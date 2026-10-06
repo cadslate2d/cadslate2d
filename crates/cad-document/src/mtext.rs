@@ -284,7 +284,7 @@ mod tests {
                 .all(|point| point.x >= 10.0 - 1e-9)
         );
         let as_entity = crate::Entity::MText(note.clone());
-        assert!(as_entity.primitives().is_empty());
+        assert!(as_entity.primitives(crate::block::no_blocks()).is_empty());
         assert_eq!(as_entity.kind_name(), "multiline text");
     }
 

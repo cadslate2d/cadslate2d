@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use cad_core::{Aabb, EntityId, LengthUnit};
 
+use crate::block::{Block, BlockId, BlockTable, initial_blocks};
 use crate::history::History;
 use crate::id_alloc::EntityIdAllocator;
 use crate::layer::{Layer, LayerId, LayerTable, initial_layers};
@@ -34,6 +35,7 @@ pub struct Drawing {
     layers: LayerTable,
     linetypes: LinetypeTable,
     text_styles: TextStyleTable,
+    blocks: BlockTable,
     settings: DrawingSettings,
     ids: EntityIdAllocator,
     index: Box<dyn SpatialIndex>,
@@ -106,6 +108,25 @@ pub enum TransactionError {
     BadTextStyleName(NameError),
     /// This text style already has the name, give or take its case.
     DuplicateTextStyleName(TextStyleId),
+    /// The block does not exist, in the drawing or earlier in this
+    /// transaction.
+    UnknownBlock(BlockId),
+    /// The block was already changed earlier in this transaction.
+    BlockAlreadyChanged(BlockId),
+    /// `*Model_Space` is the drawing: it cannot be referenced, redefined,
+    /// or removed.
+    PermanentBlock,
+    /// A reference places the block, so it cannot be removed.
+    BlockInUse(BlockId),
+    /// The name cannot be a block's name.
+    BadBlockName(NameError),
+    /// This block already has the name, give or take its case.
+    DuplicateBlockName(BlockId),
+    /// The definition would hold a reference to itself, directly or
+    /// through other blocks.
+    BlockCycle(BlockId),
+    /// A reference's scale must be a positive number.
+    BadBlockScale,
 }
 
 impl fmt::Display for TransactionError {
@@ -143,6 +164,16 @@ impl fmt::Display for TransactionError {
             Self::DuplicateTextStyleName(id) => {
                 write!(f, "text style {id} already has that name")
             }
+            Self::UnknownBlock(id) => write!(f, "block {id} does not exist"),
+            Self::BlockAlreadyChanged(id) => {
+                write!(f, "block {id} was already changed in this transaction")
+            }
+            Self::PermanentBlock => write!(f, "*Model_Space is the drawing itself"),
+            Self::BlockInUse(id) => write!(f, "block {id} is placed by a reference"),
+            Self::BadBlockName(error) => write!(f, "{}", error.explain("block")),
+            Self::DuplicateBlockName(id) => write!(f, "block {id} already has that name"),
+            Self::BlockCycle(id) => write!(f, "block {id} would contain itself"),
+            Self::BadBlockScale => write!(f, "a block reference's scale must be positive"),
         }
     }
 }
@@ -168,6 +199,7 @@ impl Drawing {
             layers: initial_layers(),
             linetypes: initial_linetypes(),
             text_styles: initial_text_styles(),
+            blocks: initial_blocks(),
             settings: DrawingSettings::default(),
             ids: EntityIdAllocator::new(),
             index,
@@ -309,7 +341,7 @@ impl Drawing {
             &mut drawing
                 .entities
                 .iter()
-                .map(|(id, entity)| (id, entity.bounds())),
+                .map(|(id, entity)| (id, entity.bounds(&drawing.blocks))),
         );
         Ok(drawing)
     }
@@ -371,6 +403,17 @@ impl Drawing {
     /// The text style table. It always holds `Standard`.
     pub fn text_styles(&self) -> &TextStyleTable {
         &self.text_styles
+    }
+
+    /// The block table. It always holds `*Model_Space`, the drawing itself.
+    pub fn blocks(&self) -> &BlockTable {
+        &self.blocks
+    }
+
+    /// The bounds of an entity of this drawing, as the spatial index holds
+    /// them: a block reference's come from its definition.
+    pub fn bounds_of(&self, entity: &Entity) -> Aabb {
+        entity.bounds(&self.blocks)
     }
 
     /// The drawing's settings.
@@ -480,7 +523,7 @@ impl Drawing {
     /// The bounding box of all entities, or `None` for an empty drawing.
     pub fn extents(&self) -> Option<Aabb> {
         self.entities()
-            .map(|(_, entity)| entity.bounds())
+            .map(|(_, entity)| entity.bounds(&self.blocks))
             .reduce(|a, b| a.union(&b))
     }
 
@@ -492,6 +535,12 @@ impl Drawing {
 
     pub fn can_undo(&self) -> bool {
         self.history.can_undo()
+    }
+
+    /// How many transactions can be undone: for tests of what is one step.
+    #[cfg(test)]
+    fn history_len_for_test(&self) -> Option<usize> {
+        Some(self.history.undo_len())
     }
 
     pub fn can_redo(&self) -> bool {
@@ -555,14 +604,17 @@ impl Drawing {
                 Change::Entity(_) => true,
                 Change::Layer(TableChange::Replace { before, after, .. }) => before.on != after.on,
                 // A layer that is made or removed has nothing on it.
+                // A block redefined changes the geometry of every reference.
+                Change::Block(TableChange::Replace { .. }) => true,
                 Change::Layer(_)
                 | Change::Linetype(_)
                 | Change::TextStyle(_)
+                | Change::Block(_)
                 | Change::Settings(_) => false,
             };
             match change {
                 Change::Entity(EntityChange::Insert { id, record }) => {
-                    self.index.insert(*id, record.entity.bounds());
+                    self.index.insert(*id, record.entity.bounds(&self.blocks));
                     self.entities
                         .insert(*id, record.clone())
                         .expect("transactions never insert a live ID");
@@ -578,7 +630,7 @@ impl Drawing {
                 Change::Entity(EntityChange::Replace { id, before, after }) => {
                     // A change of properties alone leaves the index as it is.
                     if !Arc::ptr_eq(&before.entity, &after.entity) {
-                        self.index.update(*id, after.entity.bounds());
+                        self.index.update(*id, after.entity.bounds(&self.blocks));
                     }
                     self.entities
                         .replace(*id, after.clone())
@@ -596,6 +648,34 @@ impl Drawing {
                 Change::TextStyle(change) => {
                     self.text_styles.apply(change);
                     report.tables_changed = true;
+                }
+                Change::Block(change) => {
+                    self.blocks.apply(change);
+                    report.tables_changed = true;
+                    // One change to the row; derived state for every
+                    // reference that places it, directly or through other
+                    // blocks, is recomputed here (§19.6).
+                    if let TableChange::Replace { id, .. } = change {
+                        let dependents: Vec<EntityId> = self
+                            .entities
+                            .iter()
+                            .filter_map(|(entity_id, entity)| match &**entity {
+                                Entity::BlockRef(reference)
+                                    if reference.block == *id
+                                        || self.blocks.reaches(reference.block, *id) =>
+                                {
+                                    Some(entity_id)
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        for entity_id in dependents {
+                            if let Some(entity) = self.entities.get(entity_id) {
+                                self.index.update(entity_id, entity.bounds(&self.blocks));
+                            }
+                            report.replaced.push(entity_id);
+                        }
+                    }
                 }
                 Change::Settings(change) => self.settings = change.after,
             }
@@ -644,6 +724,7 @@ impl TransactionBuilder<'_> {
         };
         let entity = entity.into();
         self.known_text_style(&entity)?;
+        self.known_block(&entity)?;
         Ok(self.insert_record(EntityRecord::new(entity, properties)))
     }
 
@@ -657,6 +738,7 @@ impl TransactionBuilder<'_> {
         self.known_linetype(properties.linetype)?;
         let entity = entity.into();
         self.known_text_style(&entity)?;
+        self.known_block(&entity)?;
         Ok(self.insert_record(EntityRecord::new(entity, properties)))
     }
 
@@ -673,6 +755,7 @@ impl TransactionBuilder<'_> {
             .ok_or(TransactionError::UnknownEntity(source))?;
         let entity = entity.into();
         self.known_text_style(&entity)?;
+        self.known_block(&entity)?;
         Ok(self.insert_record(EntityRecord::new(entity, properties)))
     }
 
@@ -692,6 +775,7 @@ impl TransactionBuilder<'_> {
     ) -> Result<(), TransactionError> {
         let entity = entity.into();
         self.known_text_style(&entity)?;
+        self.known_block(&entity)?;
         let before = self.existing(id)?;
         let after = before.with_entity(entity);
         self.push(EntityChange::Replace { id, before, after });
@@ -770,6 +854,7 @@ impl TransactionBuilder<'_> {
             | Change::Layer(_)
             | Change::Linetype(_)
             | Change::TextStyle(_)
+            | Change::Block(_)
             | Change::Settings(_) => false,
         });
         if pending || self.drawing.records().any(|(_, record)| on_layer(record)) {
@@ -971,6 +1056,84 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
+    /// Defines a block and returns its ID. Its name must be allowed and
+    /// not taken, and its entities must be ones the drawing could hold:
+    /// on layers that exist, with linetypes, text styles, and blocks that
+    /// exist — and no block that would hold this one.
+    pub fn define_block(&mut self, block: Block) -> Result<BlockId, TransactionError> {
+        self.free_block_name(&block.name, None)?;
+        let id = self.drawing.blocks.allocate();
+        self.check_block_contents(id, &block)?;
+        self.push_other(Change::Block(TableChange::Insert { id, row: block }));
+        Ok(id)
+    }
+
+    /// Replaces a block's row — its entities, base point, or name —
+    /// keeping its ID, and so every reference to it. One change, however
+    /// many references there are (§19.6). `*Model_Space` stays as it is.
+    pub fn redefine_block(&mut self, id: BlockId, block: Block) -> Result<(), TransactionError> {
+        if id == BlockId::FIRST {
+            return Err(TransactionError::PermanentBlock);
+        }
+        if self.block_change(id).is_some() {
+            return Err(TransactionError::BlockAlreadyChanged(id));
+        }
+        let before = self
+            .drawing
+            .blocks
+            .get(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownBlock(id))?;
+        if block.name != before.name {
+            self.free_block_name(&block.name, Some(id))?;
+        }
+        self.check_block_contents(id, &block)?;
+        self.push_other(Change::Block(TableChange::Replace {
+            id,
+            before,
+            after: block,
+        }));
+        Ok(())
+    }
+
+    /// Removes a block nothing places: no reference in the drawing, none
+    /// inside another block, none this transaction adds.
+    pub fn remove_block(&mut self, id: BlockId) -> Result<(), TransactionError> {
+        if id == BlockId::FIRST {
+            return Err(TransactionError::PermanentBlock);
+        }
+        if self.block_change(id).is_some() {
+            return Err(TransactionError::BlockAlreadyChanged(id));
+        }
+        let row = self
+            .drawing
+            .blocks
+            .get(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownBlock(id))?;
+        let places = |entity: &Entity| matches!(entity, Entity::BlockRef(r) if r.block == id);
+        let pending = self.changes.iter().any(|change| match change {
+            Change::Entity(EntityChange::Insert { record, .. }) => places(&record.entity),
+            Change::Entity(EntityChange::Replace { after, .. }) => places(&after.entity),
+            Change::Block(TableChange::Insert { row, .. })
+            | Change::Block(TableChange::Replace { after: row, .. }) => {
+                row.references().any(|inner| inner == id)
+            }
+            _ => false,
+        });
+        let in_use =
+            pending
+                || self.drawing.entities().any(|(_, entity)| places(entity))
+                || self.drawing.blocks.iter().any(|(other, block)| {
+                    other != id && block.references().any(|inner| inner == id)
+                });
+        if in_use {
+            return Err(TransactionError::BlockInUse(id));
+        }
+        self.push_other(Change::Block(TableChange::Remove { id, row }));
+        Ok(())
+    }
+
     /// Applies the changes as one undo step and discards any redo branch.
     /// An empty transaction is a no-op: no history entry, no new revision.
     pub fn commit(self) -> ApplyReport {
@@ -1050,6 +1213,86 @@ impl TransactionBuilder<'_> {
             Some(TableChange::Insert { row, .. }) => Some(row),
             Some(TableChange::Replace { after, .. }) => Some(after),
             None => self.drawing.linetypes.get(id),
+        }
+    }
+
+    /// How this transaction has changed the block `id` so far, if it has.
+    fn block_change(&self, id: BlockId) -> Option<&TableChange<Block>> {
+        self.others().find_map(|change| match change {
+            Change::Block(change) if change.id() == id => Some(change),
+            _ => None,
+        })
+    }
+
+    /// The block `id` as it will be once this transaction commits.
+    fn block_now(&self, id: BlockId) -> Option<&Block> {
+        match self.block_change(id) {
+            Some(TableChange::Remove { .. }) => None,
+            Some(TableChange::Insert { row, .. }) => Some(row),
+            Some(TableChange::Replace { after, .. }) => Some(after),
+            None => self.drawing.blocks.get(id),
+        }
+    }
+
+    /// Whether `entity` may be stored: a block reference must place a
+    /// block that exists — never the drawing itself — at a positive scale.
+    fn known_block(&self, entity: &Entity) -> Result<(), TransactionError> {
+        let Entity::BlockRef(reference) = entity else {
+            return Ok(());
+        };
+        if reference.block == BlockId::FIRST {
+            return Err(TransactionError::PermanentBlock);
+        }
+        if self.block_now(reference.block).is_none() {
+            return Err(TransactionError::UnknownBlock(reference.block));
+        }
+        if !(reference.scale.is_finite() && reference.scale > 0.0) {
+            return Err(TransactionError::BadBlockScale);
+        }
+        Ok(())
+    }
+
+    /// Whether a definition's entities are ones the drawing could hold,
+    /// and none of them places `id` itself, directly or through others.
+    fn check_block_contents(&self, id: BlockId, block: &Block) -> Result<(), TransactionError> {
+        for record in block.entities.iter() {
+            self.known_layer(record.properties.layer)?;
+            self.known_linetype(record.properties.linetype)?;
+            self.known_text_style(&record.entity)?;
+            self.known_block(&record.entity)?;
+        }
+        if self.drawing.blocks.would_cycle(id, block) {
+            return Err(TransactionError::BlockCycle(id));
+        }
+        Ok(())
+    }
+
+    /// Whether `name` can be given to a block — to `renamed`, or to a new
+    /// one.
+    fn free_block_name(
+        &self,
+        name: &str,
+        renamed: Option<BlockId>,
+    ) -> Result<(), TransactionError> {
+        check_name(name).map_err(TransactionError::BadBlockName)?;
+        let added = self.others().filter_map(|change| match change {
+            Change::Block(TableChange::Insert { id, .. }) => Some(*id),
+            _ => None,
+        });
+        let taken = self
+            .drawing
+            .blocks
+            .iter()
+            .map(|(id, _)| id)
+            .chain(added)
+            .filter(|id| Some(*id) != renamed)
+            .find(|id| {
+                self.block_now(*id)
+                    .is_some_and(|block| same_name(&block.name, name))
+            });
+        match taken {
+            Some(id) => Err(TransactionError::DuplicateBlockName(id)),
+            None => Ok(()),
         }
     }
 
@@ -1182,7 +1425,7 @@ mod tests {
 
     use super::*;
     use crate::spatial::LinearIndex;
-    use crate::{LineEntity, TextEntity};
+    use crate::{BlockReferenceEntity, LineEntity, TextEntity};
 
     fn line(x0: f64, y0: f64, x1: f64, y1: f64) -> LineEntity {
         LineEntity::new(Point2::new(x0, y0), Point2::new(x1, y1))
@@ -2727,6 +2970,295 @@ mod tests {
         assert_eq!(drawing.text_styles().len(), 2, "one history for all tables");
     }
 
+    // ── blocks (#146, ADR-0017) ──
+
+    fn chair_block() -> Block {
+        Block::new(
+            "Chair",
+            Point2::ORIGIN,
+            vec![
+                EntityRecord::new(line(0.0, 0.0, 10.0, 0.0), Properties::default()),
+                EntityRecord::new(line(0.0, 0.0, 0.0, 10.0), Properties::default()),
+            ],
+        )
+    }
+
+    fn define(drawing: &mut Drawing, block: Block) -> BlockId {
+        let mut tx = drawing.transaction();
+        let id = tx.define_block(block).unwrap();
+        tx.commit();
+        id
+    }
+
+    fn place(drawing: &mut Drawing, block: BlockId, at: Point2) -> EntityId {
+        let mut tx = drawing.transaction();
+        let id = tx
+            .insert(BlockReferenceEntity::new(block, at, 1.0, 0.0))
+            .unwrap();
+        tx.commit();
+        id
+    }
+
+    #[test]
+    fn a_block_is_defined_placed_and_its_references_have_its_bounds() {
+        let mut drawing = Drawing::new();
+        let chair = define(&mut drawing, chair_block());
+        assert_eq!(chair, BlockId::from_raw(1));
+        assert_eq!(drawing.blocks().find("CHAIR"), Some(chair));
+        let a = place(&mut drawing, chair, Point2::new(100.0, 100.0));
+        let bounds = drawing.bounds_of(drawing.entity(a).unwrap());
+        assert_eq!(bounds.min(), Point2::new(100.0, 100.0));
+        assert_eq!(bounds.max(), Point2::new(110.0, 110.0));
+        // The index knows the reference by its definition's extent.
+        let hit = Aabb::from_points(Point2::new(108.0, 100.5), Point2::new(109.0, 101.0));
+        assert_eq!(drawing.query(&hit), vec![a]);
+        assert!(
+            drawing
+                .query(&Aabb::from_points(
+                    Point2::new(120.0, 120.0),
+                    Point2::new(130.0, 130.0)
+                ))
+                .is_empty()
+        );
+        assert_eq!(drawing.extents(), Some(bounds));
+    }
+
+    #[test]
+    fn redefining_a_block_is_one_change_that_moves_every_reference_and_undoes_as_one() {
+        let mut drawing = Drawing::new();
+        let chair = define(&mut drawing, chair_block());
+        let ids: Vec<EntityId> = (0..10_000)
+            .map(|i| place(&mut drawing, chair, Point2::new(f64::from(i) * 20.0, 0.0)))
+            .collect();
+        let far = Aabb::from_points(Point2::new(-5.0, 12.0), Point2::new(5.0, 40.0));
+        assert!(drawing.query(&far).is_empty());
+
+        // A taller chair: the one change in the transaction.
+        let mut tx = drawing.transaction();
+        tx.redefine_block(
+            chair,
+            Block::new(
+                "Chair",
+                Point2::ORIGIN,
+                vec![EntityRecord::new(
+                    line(0.0, 0.0, 0.0, 30.0),
+                    Properties::default(),
+                )],
+            ),
+        )
+        .unwrap();
+        let report = tx.commit();
+        assert_eq!(
+            report.replaced.len(),
+            10_000,
+            "every reference is derived state that changed"
+        );
+        let history_entry = drawing.history_len_for_test();
+        assert_eq!(
+            history_entry,
+            Some(10_002),
+            "a definition, ten thousand inserts, one redefinition"
+        );
+        assert_eq!(drawing.query(&far), vec![ids[0]], "the index follows");
+        let bounds = drawing.bounds_of(drawing.entity(ids[9_999]).unwrap());
+        assert_eq!(bounds.max(), Point2::new(199_980.0, 30.0));
+
+        drawing.undo();
+        assert!(
+            drawing.query(&far).is_empty(),
+            "undone, the chairs are short again"
+        );
+        drawing.redo();
+        assert_eq!(drawing.query(&far), vec![ids[0]]);
+        // Fresh index equals the maintained one.
+        let mut fresh = LinearIndex::new();
+        fresh.rebuild(&mut drawing.entities().map(|(id, e)| (id, drawing.bounds_of(e))));
+        assert_eq!(
+            sorted(drawing.query(&everything())),
+            sorted(fresh.query(&everything()))
+        );
+    }
+
+    #[test]
+    fn a_block_cannot_hold_itself_directly_or_through_others() {
+        let mut drawing = Drawing::new();
+        let chair = define(&mut drawing, chair_block());
+        let pair = define(
+            &mut drawing,
+            Block::new(
+                "Pair",
+                Point2::ORIGIN,
+                vec![EntityRecord::new(
+                    BlockReferenceEntity::new(chair, Point2::new(20.0, 0.0), 1.0, 0.0),
+                    Properties::default(),
+                )],
+            ),
+        );
+        let holding = |block: BlockId| {
+            Block::new(
+                "Chair",
+                Point2::ORIGIN,
+                vec![EntityRecord::new(
+                    BlockReferenceEntity::new(block, Point2::ORIGIN, 1.0, 0.0),
+                    Properties::default(),
+                )],
+            )
+        };
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.redefine_block(chair, holding(chair)),
+            Err(TransactionError::BlockCycle(chair))
+        );
+        assert_eq!(
+            tx.redefine_block(chair, holding(pair)),
+            Err(TransactionError::BlockCycle(chair))
+        );
+        // A definition may hold the drawing itself no more than a reference may.
+        assert_eq!(
+            tx.define_block(Block::new(
+                "Odd",
+                Point2::ORIGIN,
+                vec![EntityRecord::new(
+                    BlockReferenceEntity::new(BlockId::FIRST, Point2::ORIGIN, 1.0, 0.0),
+                    Properties::default(),
+                )]
+            )),
+            Err(TransactionError::PermanentBlock)
+        );
+        assert_eq!(
+            tx.define_block(Block::new(
+                "Odd",
+                Point2::ORIGIN,
+                vec![EntityRecord::new(
+                    BlockReferenceEntity::new(BlockId::from_raw(40), Point2::ORIGIN, 1.0, 0.0),
+                    Properties::default(),
+                )]
+            )),
+            Err(TransactionError::UnknownBlock(BlockId::from_raw(40)))
+        );
+        assert_eq!(
+            tx.define_block(Block::new("chair", Point2::ORIGIN, vec![])),
+            Err(TransactionError::DuplicateBlockName(chair))
+        );
+        assert_eq!(
+            tx.define_block(Block::new("a*b", Point2::ORIGIN, vec![])),
+            Err(TransactionError::BadBlockName(NameError::Forbidden('*')))
+        );
+        assert_eq!(
+            tx.redefine_block(BlockId::FIRST, chair_block()),
+            Err(TransactionError::PermanentBlock)
+        );
+        // A reference must place something that exists, at a positive scale.
+        assert_eq!(
+            tx.insert(BlockReferenceEntity::new(
+                BlockId::from_raw(40),
+                Point2::ORIGIN,
+                1.0,
+                0.0
+            )),
+            Err(TransactionError::UnknownBlock(BlockId::from_raw(40)))
+        );
+        assert_eq!(
+            tx.insert(BlockReferenceEntity::new(chair, Point2::ORIGIN, 0.0, 0.0)),
+            Err(TransactionError::BadBlockScale)
+        );
+        assert_eq!(
+            tx.insert(BlockReferenceEntity::new(
+                BlockId::FIRST,
+                Point2::ORIGIN,
+                1.0,
+                0.0
+            )),
+            Err(TransactionError::PermanentBlock)
+        );
+        // Rename through redefinition, and a block defined and placed in one go.
+        tx.redefine_block(
+            chair,
+            Block {
+                name: "Seat".to_owned(),
+                ..chair_block()
+            },
+        )
+        .unwrap();
+        let table = tx
+            .define_block(Block::new("Table", Point2::ORIGIN, vec![]))
+            .unwrap();
+        tx.insert(BlockReferenceEntity::new(table, Point2::ORIGIN, 2.0, 0.0))
+            .unwrap();
+        tx.commit();
+        assert_eq!(drawing.blocks().find("seat"), Some(chair));
+        assert_eq!(drawing.blocks().len(), 4);
+    }
+
+    #[test]
+    fn a_block_in_use_cannot_be_removed_and_model_space_never_is() {
+        let mut drawing = Drawing::new();
+        let chair = define(&mut drawing, chair_block());
+        let pair = define(
+            &mut drawing,
+            Block::new(
+                "Pair",
+                Point2::ORIGIN,
+                vec![EntityRecord::new(
+                    BlockReferenceEntity::new(chair, Point2::new(20.0, 0.0), 1.0, 0.0),
+                    Properties::default(),
+                )],
+            ),
+        );
+        let placed = place(&mut drawing, pair, Point2::ORIGIN);
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.remove_block(BlockId::FIRST),
+            Err(TransactionError::PermanentBlock)
+        );
+        assert_eq!(
+            tx.remove_block(chair),
+            Err(TransactionError::BlockInUse(chair)),
+            "held by Pair"
+        );
+        assert_eq!(
+            tx.remove_block(pair),
+            Err(TransactionError::BlockInUse(pair)),
+            "placed"
+        );
+        assert_eq!(
+            tx.remove_block(BlockId::from_raw(40)),
+            Err(TransactionError::UnknownBlock(BlockId::from_raw(40)))
+        );
+        drop(tx);
+        let mut tx = drawing.transaction();
+        tx.remove(placed).unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        // Adding a reference in this transaction counts too.
+        tx.insert(BlockReferenceEntity::new(pair, Point2::ORIGIN, 1.0, 0.0))
+            .unwrap();
+        assert_eq!(
+            tx.remove_block(pair),
+            Err(TransactionError::BlockInUse(pair))
+        );
+        drop(tx);
+        let mut tx = drawing.transaction();
+        tx.remove_block(pair).unwrap();
+        assert_eq!(
+            tx.remove_block(pair),
+            Err(TransactionError::BlockAlreadyChanged(pair))
+        );
+        assert_eq!(
+            tx.remove_block(chair),
+            Err(TransactionError::BlockInUse(chair)),
+            "Pair still holds it in the drawing until commit"
+        );
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.remove_block(chair).unwrap();
+        tx.commit();
+        assert_eq!(drawing.blocks().len(), 1);
+        drawing.undo();
+        drawing.undo();
+        assert_eq!(drawing.blocks().len(), 3, "one history for every table");
+    }
+
     #[test]
     fn ltscale_is_a_positive_setting_with_its_own_undo() {
         let mut drawing = Drawing::new();
@@ -2853,6 +3385,15 @@ mod tests {
         AddTextStyle(u8),
         CreateText(f64, usize),
         RemoveTextStyle(usize),
+        /// A block of one line by name; a reference to a block by index
+        /// (one past the table is a block that does not exist); a block
+        /// redefined with a line of another length, or to hold another
+        /// block; a block removed.
+        DefineBlock(u8, f64),
+        PlaceBlock(usize, f64, f64),
+        RedefineBlock(usize, f64),
+        NestBlock(usize, usize),
+        RemoveBlock(usize),
         /// A layer, an entity on it, and an edit of another, as one step.
         Together(usize, f64),
         Undo,
@@ -2884,6 +3425,11 @@ mod tests {
             1 => any::<usize>().prop_map(Op::SetCurrentLinetype),
             1 => (-1.0..5.0_f64).prop_map(Op::SetLtscale),
             1 => (0..6u8).prop_map(Op::AddTextStyle),
+            2 => (0..5u8, 1.0..50.0f64).prop_map(|(n, len)| Op::DefineBlock(n, len)),
+            3 => (any::<usize>(), coordinate(), 0.1..4.0f64).prop_map(|(b, x, s)| Op::PlaceBlock(b, x, s)),
+            2 => (any::<usize>(), 1.0..50.0f64).prop_map(|(b, len)| Op::RedefineBlock(b, len)),
+            1 => (any::<usize>(), any::<usize>()).prop_map(|(b, inner)| Op::NestBlock(b, inner)),
+            1 => any::<usize>().prop_map(Op::RemoveBlock),
             2 => (coordinate(), any::<usize>()).prop_map(|(x, style)| Op::CreateText(x, style)),
             1 => any::<usize>().prop_map(Op::RemoveTextStyle),
             1 => (any::<usize>(), coordinate()).prop_map(|(i, x)| Op::Together(i, x)),
@@ -2899,6 +3445,7 @@ mod tests {
         Vec<(LayerId, Layer)>,
         Vec<(LinetypeId, LinetypeDef)>,
         Vec<(TextStyleId, TextStyle)>,
+        Vec<(BlockId, Block)>,
         DrawingSettings,
     );
 
@@ -2923,7 +3470,19 @@ mod tests {
             .iter()
             .map(|(id, style)| (id, style.clone()))
             .collect();
-        (entities, layers, linetypes, text_styles, drawing.settings())
+        let blocks = drawing
+            .blocks()
+            .iter()
+            .map(|(id, block)| (id, block.clone()))
+            .collect();
+        (
+            entities,
+            layers,
+            linetypes,
+            text_styles,
+            blocks,
+            drawing.settings(),
+        )
     }
 
     proptest! {
@@ -3151,6 +3710,71 @@ mod tests {
                         tx.commit();
                         prop_assert_eq!(removed.is_ok(), id != TextStyleId::FIRST && !used, "{:?}", removed);
                     }
+                    Op::DefineBlock(name, len) => {
+                        let name = format!("Block {name}");
+                        let taken = drawing.blocks().find(&name);
+                        let block = Block::new(name.to_uppercase(), Point2::ORIGIN, vec![
+                            EntityRecord::new(line(0.0, 0.0, len, 0.0), Properties::default()),
+                        ]);
+                        let mut tx = drawing.transaction();
+                        let defined = tx.define_block(block);
+                        tx.commit();
+                        match (defined, taken) {
+                            (Ok(_), None) => {}
+                            (Err(TransactionError::DuplicateBlockName(id)), Some(existing)) => prop_assert_eq!(id, existing),
+                            other => prop_assert!(false, "defining a block: {:?}", other),
+                        }
+                    }
+                    Op::PlaceBlock(pick, x, scale) => {
+                        let blocks: Vec<BlockId> = drawing.blocks().iter().map(|(id, _)| id).collect();
+                        let index = pick % (blocks.len() + 1);
+                        let block = blocks.get(index).copied().unwrap_or(BlockId::from_raw(u32::MAX));
+                        let mut tx = drawing.transaction();
+                        let placed = tx.insert(BlockReferenceEntity::new(block, Point2::new(x, 0.0), scale, 0.3));
+                        tx.commit();
+                        prop_assert_eq!(placed.is_ok(), index < blocks.len() && block != BlockId::FIRST, "{:?}", placed);
+                        if let Ok(id) = placed {
+                            allocated.push(id);
+                        }
+                    }
+                    Op::RedefineBlock(pick, len) => {
+                        let blocks: Vec<BlockId> = drawing.blocks().iter().map(|(id, _)| id).collect();
+                        let id = blocks[pick % blocks.len()];
+                        let name = drawing.blocks().get(id).unwrap().name.clone();
+                        let block = Block::new(name, Point2::new(1.0, 1.0), vec![
+                            EntityRecord::new(line(0.0, 0.0, 0.0, len), Properties::default()),
+                        ]);
+                        let mut tx = drawing.transaction();
+                        let redefined = tx.redefine_block(id, block);
+                        tx.commit();
+                        prop_assert_eq!(redefined.is_ok(), id != BlockId::FIRST, "{:?}", redefined);
+                    }
+                    Op::NestBlock(pick, inner) => {
+                        let blocks: Vec<BlockId> = drawing.blocks().iter().map(|(id, _)| id).collect();
+                        let id = blocks[pick % blocks.len()];
+                        let inner = blocks[inner % blocks.len()];
+                        let name = drawing.blocks().get(id).unwrap().name.clone();
+                        let block = Block::new(name, Point2::ORIGIN, vec![EntityRecord::new(
+                            BlockReferenceEntity::new(inner, Point2::new(5.0, 5.0), 1.0, 0.0),
+                            Properties::default(),
+                        )]);
+                        let cycle = inner == id || drawing.blocks().reaches(inner, id);
+                        let mut tx = drawing.transaction();
+                        let nested = tx.redefine_block(id, block);
+                        tx.commit();
+                        let allowed = id != BlockId::FIRST && inner != BlockId::FIRST && !cycle;
+                        prop_assert_eq!(nested.is_ok(), allowed, "{:?}", nested);
+                    }
+                    Op::RemoveBlock(pick) => {
+                        let blocks: Vec<BlockId> = drawing.blocks().iter().map(|(id, _)| id).collect();
+                        let id = blocks[pick % blocks.len()];
+                        let used = drawing.entities().any(|(_, e)| matches!(e, Entity::BlockRef(r) if r.block == id))
+                            || drawing.blocks().iter().any(|(other, b)| other != id && b.references().any(|i| i == id));
+                        let mut tx = drawing.transaction();
+                        let removed = tx.remove_block(id);
+                        tx.commit();
+                        prop_assert_eq!(removed.is_ok(), id != BlockId::FIRST && !used, "{:?}", removed);
+                    }
                     Op::Together(pick, x) => {
                         together += 1;
                         let mut tx = drawing.transaction();
@@ -3206,7 +3830,15 @@ mod tests {
             }
 
             let mut reference = LinearIndex::new();
-            reference.rebuild(&mut drawing.entities().map(|(id, entity)| (id, entity.bounds())));
+            reference.rebuild(&mut drawing.entities().map(|(id, entity)| (id, drawing.bounds_of(entity))));
+            for (id, entity) in drawing.entities() {
+                if let Entity::BlockRef(r) = entity {
+                    prop_assert!(drawing.blocks().contains(r.block) && r.block != BlockId::FIRST, "reference {} places nothing", id);
+                }
+            }
+            for (id, _) in drawing.blocks().iter() {
+                prop_assert!(!drawing.blocks().reaches(id, id), "block {} holds itself", id);
+            }
 
             prop_assert_eq!(sorted(drawing.query(&everything())), live_ids(&drawing));
             for (x, y, w, h) in queries {

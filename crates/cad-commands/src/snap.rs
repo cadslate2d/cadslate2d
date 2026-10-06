@@ -9,7 +9,7 @@
 //! view at the moment of use; it is never a geometric tolerance (§18.3).
 
 use cad_core::{EntityId, PixelTolerance, Point2, ScreenPoint, View};
-use cad_document::{Drawing, Entity};
+use cad_document::{BlockTable, Drawing, Entity};
 use cad_geometry::Primitive;
 
 /// How close, on screen, the cursor must be to a snap point to take it.
@@ -142,7 +142,7 @@ pub struct SnapPoint {
 /// A polyline's arc segments offer what an arc offers. Perpendicular applies
 /// to every kind (the foot must land on the object); Tangent to circles and
 /// arcs, from a point outside them.
-pub fn entity_snap_points(entity: &Entity, mode: SnapMode) -> Vec<Point2> {
+pub fn entity_snap_points(entity: &Entity, mode: SnapMode, blocks: &BlockTable) -> Vec<Point2> {
     // A text offers its insertion point and nothing else: not the ends of
     // its glyphs' strokes (ADR-0016). It has no primitives, so the rest
     // of this finds nothing on it either.
@@ -157,8 +157,13 @@ pub fn entity_snap_points(entity: &Entity, mode: SnapMode) -> Vec<Point2> {
             _ => Vec::new(),
         };
     }
+    // A block reference offers its insertion point, and its definition's
+    // geometry offers what it would on its own.
+    if let (Entity::BlockRef(reference), SnapMode::Insertion) = (entity, mode) {
+        return vec![reference.insertion];
+    }
     entity
-        .primitives()
+        .primitives(blocks)
         .iter()
         .flat_map(|primitive| match (mode, primitive) {
             (SnapMode::Endpoint, Primitive::Segment(segment)) => vec![segment.start, segment.end],
@@ -270,13 +275,13 @@ pub fn find_snap_from(
 
     let mut found: Vec<Ranked> = Vec::new();
     for entity in &candidates {
-        let on_curve = within(entity.distance_to(at) * view.scale());
+        let on_curve = within(entity.distance_to(at, drawing.blocks()) * view.scale());
         for mode in modes.enabled() {
             match mode {
                 SnapMode::Intersection => {}
                 SnapMode::Nearest if on_curve => {
                     let nearest = entity
-                        .primitives()
+                        .primitives(drawing.blocks())
                         .iter()
                         .map(|primitive| primitive.closest_point(at))
                         .min_by(|a, b| pixels_to(*a).total_cmp(&pixels_to(*b)));
@@ -289,15 +294,19 @@ pub fn find_snap_from(
                 // Hovering a circle or arc offers its centre, as in classic
                 // CAD — but ranked behind any snap point actually under the cursor.
                 SnapMode::Center if on_curve => {
-                    found.extend(entity_snap_points(entity, mode).into_iter().map(|point| {
-                        Ranked::hovered(mode, point, pixels_to(point), Tier::HoveredCenter)
-                    }));
+                    found.extend(
+                        entity_snap_points(entity, mode, drawing.blocks())
+                            .into_iter()
+                            .map(|point| {
+                                Ranked::hovered(mode, point, pixels_to(point), Tier::HoveredCenter)
+                            }),
+                    );
                 }
                 // Constructions from the base point: offered while the cursor
                 // is on the piece of the object they land on, or on the point itself.
                 SnapMode::Perpendicular | SnapMode::Tangent => {
                     let Some(base) = base else { continue };
-                    for primitive in entity.primitives() {
+                    for primitive in entity.primitives(drawing.blocks()) {
                         let touching = within(primitive.distance_to_point(at) * view.scale());
                         let points = match mode {
                             SnapMode::Perpendicular => primitive.perpendicular_feet(base),
@@ -319,7 +328,7 @@ pub fn find_snap_from(
                     }
                 }
                 _ => found.extend(
-                    entity_snap_points(entity, mode)
+                    entity_snap_points(entity, mode, drawing.blocks())
                         .into_iter()
                         .map(|point| Ranked::at(mode, point, pixels_to(point)))
                         .filter(|ranked| within(ranked.pixels)),
@@ -333,7 +342,7 @@ pub fn find_snap_from(
             for second in &candidates[index + 1..] {
                 found.extend(
                     first
-                        .intersections(second)
+                        .intersections(second, drawing.blocks())
                         .into_iter()
                         .map(|point| Ranked::at(SnapMode::Intersection, point, pixels_to(point)))
                         .filter(|ranked| within(ranked.pixels)),
@@ -404,38 +413,55 @@ mod tests {
     fn snap_points_per_mode_and_entity_kind() {
         let segment = line(0.0, 0.0, 10.0, 0.0);
         assert_eq!(
-            entity_snap_points(&segment, SnapMode::Endpoint),
+            entity_snap_points(&segment, SnapMode::Endpoint, cad_document::empty_blocks()),
             vec![p(0.0, 0.0), p(10.0, 0.0)]
         );
         assert_eq!(
-            entity_snap_points(&segment, SnapMode::Midpoint),
+            entity_snap_points(&segment, SnapMode::Midpoint, cad_document::empty_blocks()),
             vec![p(5.0, 0.0)]
         );
-        assert!(entity_snap_points(&segment, SnapMode::Center).is_empty());
-        assert!(entity_snap_points(&segment, SnapMode::Quadrant).is_empty());
+        assert!(
+            entity_snap_points(&segment, SnapMode::Center, cad_document::empty_blocks()).is_empty()
+        );
+        assert!(
+            entity_snap_points(&segment, SnapMode::Quadrant, cad_document::empty_blocks())
+                .is_empty()
+        );
 
         let circle: Entity = CircleEntity::new(p(10.0, 10.0), 5.0).into();
         assert_eq!(
-            entity_snap_points(&circle, SnapMode::Center),
+            entity_snap_points(&circle, SnapMode::Center, cad_document::empty_blocks()),
             vec![p(10.0, 10.0)]
         );
-        assert_eq!(entity_snap_points(&circle, SnapMode::Quadrant).len(), 4);
-        assert!(entity_snap_points(&circle, SnapMode::Endpoint).is_empty());
+        assert_eq!(
+            entity_snap_points(&circle, SnapMode::Quadrant, cad_document::empty_blocks()).len(),
+            4
+        );
+        assert!(
+            entity_snap_points(&circle, SnapMode::Endpoint, cad_document::empty_blocks())
+                .is_empty()
+        );
 
         // A quarter arc in the first quadrant: two ends, one middle, a centre,
         // and the two axis extremes it reaches (its own ends).
         let arc: Entity = ArcEntity::new(p(0.0, 0.0), 10.0, 0.0, FRAC_PI_2).into();
-        assert_eq!(entity_snap_points(&arc, SnapMode::Endpoint).len(), 2);
-        let middle = entity_snap_points(&arc, SnapMode::Midpoint)[0];
+        assert_eq!(
+            entity_snap_points(&arc, SnapMode::Endpoint, cad_document::empty_blocks()).len(),
+            2
+        );
+        let middle = entity_snap_points(&arc, SnapMode::Midpoint, cad_document::empty_blocks())[0];
         assert!(middle.distance_to(p(50f64.sqrt(), 50f64.sqrt())) < 1e-9);
         assert_eq!(
-            entity_snap_points(&arc, SnapMode::Center),
+            entity_snap_points(&arc, SnapMode::Center, cad_document::empty_blocks()),
             vec![p(0.0, 0.0)]
         );
-        assert_eq!(entity_snap_points(&arc, SnapMode::Quadrant).len(), 2);
+        assert_eq!(
+            entity_snap_points(&arc, SnapMode::Quadrant, cad_document::empty_blocks()).len(),
+            2
+        );
         let half: Entity = ArcEntity::new(p(0.0, 0.0), 10.0, 0.1, PI - 0.1).into();
         assert_eq!(
-            entity_snap_points(&half, SnapMode::Quadrant).len(),
+            entity_snap_points(&half, SnapMode::Quadrant, cad_document::empty_blocks()).len(),
             1,
             "only 90° lies inside"
         );
@@ -443,11 +469,14 @@ mod tests {
         let polyline: Entity =
             PolylineEntity::new(vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0)], true).into();
         assert_eq!(
-            entity_snap_points(&polyline, SnapMode::Endpoint).len(),
+            entity_snap_points(&polyline, SnapMode::Endpoint, cad_document::empty_blocks()).len(),
             6,
             "two per segment, shared vertices twice"
         );
-        assert_eq!(entity_snap_points(&polyline, SnapMode::Midpoint).len(), 3);
+        assert_eq!(
+            entity_snap_points(&polyline, SnapMode::Midpoint, cad_document::empty_blocks()).len(),
+            3
+        );
     }
 
     // ── the engine ──
@@ -603,7 +632,7 @@ mod tests {
         )
         .into();
         assert_eq!(
-            entity_snap_points(&slot, SnapMode::Center),
+            entity_snap_points(&slot, SnapMode::Center, cad_document::empty_blocks()),
             vec![p(200.0, 40.0), p(0.0, 40.0)]
         );
         let d = drawing(vec![slot]);

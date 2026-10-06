@@ -383,7 +383,7 @@ fn two_picks_on_one_polyline_fillet_the_corner_between_them() {
     assert_eq!(rounded.vertices.len(), 5);
     assert!(rounded.vertices.contains(&p(90.0, 0.0)) && rounded.vertices.contains(&p(100.0, 10.0)));
     assert!(
-        Entity::Polyline(rounded).distance_to(p(100.0, 0.0)) > 4.0,
+        Entity::Polyline(rounded).distance_to(p(100.0, 0.0), cad_document::empty_blocks()) > 4.0,
         "the sharp corner is gone"
     );
 

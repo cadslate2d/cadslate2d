@@ -118,10 +118,11 @@ impl EdgeCommand {
             .ok_or_else(|| "That object no longer exists.".to_owned())?;
         match self.operation {
             Operation::Trim => {
-                let cuts: Vec<Point2> = Self::edges_near(edges, drawing, target, &shape.bounds())
-                    .into_iter()
-                    .flat_map(|edge| shape.intersections(edge))
-                    .collect();
+                let cuts: Vec<Point2> =
+                    Self::edges_near(edges, drawing, target, &drawing.bounds_of(shape))
+                        .into_iter()
+                        .flat_map(|edge| shape.intersections(edge, drawing.blocks()))
+                        .collect();
                 let parts = shape
                     .trim_parts_at(&cuts, pick)
                     .map_err(|error| match error {
@@ -143,13 +144,15 @@ impl EdgeCommand {
                 })
             }
             Operation::Extend => {
-                let within = drawing.extents().unwrap_or_else(|| shape.bounds());
+                let within = drawing
+                    .extents()
+                    .unwrap_or_else(|| drawing.bounds_of(shape));
                 let boundary: Vec<Primitive> = shape
                     .extension_reach(pick, &within)
                     .map(|reach| Self::edges_near(edges, drawing, target, &reach))
                     .unwrap_or_default()
                     .into_iter()
-                    .flat_map(Entity::primitives)
+                    .flat_map(|edge| edge.primitives(drawing.blocks()))
                     .collect();
                 let longer = shape
                     .extended_to(&boundary, pick)

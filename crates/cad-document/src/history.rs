@@ -37,6 +37,12 @@ impl History {
         self.undo.last()
     }
 
+    /// How many steps can be undone.
+    #[cfg(test)]
+    pub(crate) fn undo_len(&self) -> usize {
+        self.undo.len()
+    }
+
     pub(crate) fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }

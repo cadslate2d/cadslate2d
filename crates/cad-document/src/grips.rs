@@ -10,6 +10,7 @@
 //! | Polyline | one Vertex per vertex | moves that vertex |
 //! | Text | Insertion | moves the text |
 //! | MText | Insertion | moves the paragraph |
+//! | Block reference | Insertion | moves the reference |
 //!
 //! Arc grips follow the familiar *stretch* behaviour (ADR-0010): an arc is
 //! always the arc through its start, its midpoint, and its end. Dragging
@@ -22,7 +23,10 @@ use cad_core::Point2;
 use cad_core::tolerance::LinearTolerance;
 use cad_geometry::Arc;
 
-use crate::{ArcEntity, CircleEntity, Entity, LineEntity, MTextEntity, PolylineEntity, TextEntity};
+use crate::{
+    ArcEntity, BlockReferenceEntity, CircleEntity, Entity, LineEntity, MTextEntity, PolylineEntity,
+    TextEntity,
+};
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
 
@@ -89,6 +93,7 @@ impl Entity {
                 .collect(),
             Entity::Text(text) => vec![grip(GripKind::Insertion, text.insertion)],
             Entity::MText(text) => vec![grip(GripKind::Insertion, text.insertion)],
+            Entity::BlockRef(reference) => vec![grip(GripKind::Insertion, reference.insertion)],
         }
     }
 
@@ -177,6 +182,13 @@ impl Entity {
                 MTextEntity {
                     insertion: to,
                     ..text.clone()
+                }
+                .into()
+            }),
+            Entity::BlockRef(reference) => (index == 0).then(|| {
+                BlockReferenceEntity {
+                    insertion: to,
+                    ..reference.clone()
                 }
                 .into()
             }),

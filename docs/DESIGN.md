@@ -1236,6 +1236,8 @@ invalidate/recompute derived bounds + render data
 
 This preserves semantic undo while allowing large derived-state invalidation.
 
+> **Resolved in M4:** a block definition is a row of the block table holding entity records of its own, behind an `Arc`; a reference is an entity holding the row's ID, an insertion point, a uniform scale, a rotation, and a mirror flag, and *no* geometry of its own — every question about its geometry is answered through the table. So redefining a block is one `TableChange::Replace` on one row, however many references place it; `Drawing::apply` then re-indexes every reference that reaches the row, directly or through other blocks, and reports them as replaced, and the scene is rebuilt from the shown revision. A redefinition of a block with ten thousand references is one change in history and ten thousand index updates — [ADR-0017](adr/0017-blocks.md).
+
 ## 19.7 Selection reconciliation
 
 Selection is interaction state, but undo/redo should behave predictably.

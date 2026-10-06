@@ -378,7 +378,11 @@ mod tests {
         let polyline = &polylines(&h)[0];
         // Straight to the left of the direction of travel: a semicircle.
         assert!(close_to(polyline.bulge(0), 1.0));
-        assert!(Entity::Polyline(polyline.clone()).distance_to(p(5.0, 5.0)) < 1e-9);
+        assert!(
+            Entity::Polyline(polyline.clone())
+                .distance_to(p(5.0, 5.0), cad_document::empty_blocks())
+                < 1e-9
+        );
     }
 
     /// Closing with an arc.

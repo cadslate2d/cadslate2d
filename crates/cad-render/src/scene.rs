@@ -135,7 +135,30 @@ impl RenderScene {
         let mut indices: HashMap<Properties, u16> = HashMap::new();
         // Objects on a layer that is off are not drawn: no instances.
         for (id, entity) in drawing.shown() {
-            let mut properties = drawing.properties(id).unwrap_or_default();
+            let properties = drawing.properties(id).unwrap_or_default();
+            // A block reference is its definition's entities, each drawn
+            // with its own properties resolved against the reference's
+            // (ADR-0017): one style per distinct result.
+            let parts: Vec<(Entity, Properties)> = match entity {
+                Entity::BlockRef(reference) => drawing.blocks().flatten(reference, properties),
+                other => vec![(other.clone(), properties)],
+            };
+            for (entity, properties) in parts {
+                self.push_part(drawing, &entity, properties, &mut indices);
+            }
+        }
+        self.revision = drawing.shown_revision();
+    }
+
+    /// One drawn entity with the properties it is drawn with.
+    fn push_part(
+        &mut self,
+        drawing: &Drawing,
+        entity: &Entity,
+        mut properties: Properties,
+        indices: &mut HashMap<Properties, u16>,
+    ) {
+        {
             // A linetype is for curves: a text is drawn continuous, or its
             // glyphs would fall apart into dashes.
             if matches!(entity, Entity::Text(_) | Entity::MText(_)) {
@@ -151,7 +174,8 @@ impl RenderScene {
                 index as u16
             });
             let (segments, arcs) = (self.frame.segment_count(), self.frame.arc_count());
-            self.frame.push_entity(StyleRole::Entity, entity);
+            self.frame
+                .push_entity(StyleRole::Entity, entity, drawing.blocks());
             let added = |before: u32, after: u32| (after - before) as usize;
             self.segment_styles.extend(std::iter::repeat_n(
                 style,
@@ -162,7 +186,6 @@ impl RenderScene {
                 added(arcs, self.frame.arc_count()),
             ));
         }
-        self.revision = drawing.shown_revision();
     }
 
     /// Resolves every style in use against the layers, linetypes, and

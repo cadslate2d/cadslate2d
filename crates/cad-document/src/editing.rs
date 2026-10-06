@@ -15,7 +15,10 @@ use cad_geometry::{
     trim_segment_parts,
 };
 
-use crate::{ArcEntity, CircleEntity, Entity, LineEntity, MTextEntity, PolylineEntity, TextEntity};
+use crate::{
+    ArcEntity, BlockReferenceEntity, CircleEntity, Entity, LineEntity, MTextEntity, PolylineEntity,
+    TextEntity,
+};
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
 
@@ -156,6 +159,7 @@ impl Entity {
             // A text goes with its insertion point, whole.
             Entity::Text(text) => held(&[text.insertion]),
             Entity::MText(text) => held(&[text.insertion]),
+            Entity::BlockRef(reference) => held(&[reference.insertion]),
         }
     }
 
@@ -200,6 +204,13 @@ impl Entity {
                 MTextEntity {
                     insertion: moved(text.insertion),
                     ..text.clone()
+                }
+                .into(),
+            ),
+            Entity::BlockRef(reference) => Some(
+                BlockReferenceEntity {
+                    insertion: moved(reference.insertion),
+                    ..reference.clone()
                 }
                 .into(),
             ),
@@ -285,7 +296,9 @@ impl Entity {
             Entity::Circle(circle) => break_circle(&circle.circle(), first, second, TOLERANCE)
                 .map(|arc| vec![ArcEntity::from(arc).into()])
                 .ok_or(BreakError::NeedsTwoPoints("circle")),
-            Entity::Text(_) | Entity::MText(_) => Err(BreakError::Unsupported(self.kind_name())),
+            Entity::Text(_) | Entity::MText(_) | Entity::BlockRef(_) => {
+                Err(BreakError::Unsupported(self.kind_name()))
+            }
             Entity::Polyline(polyline) => {
                 let path = polyline.path();
                 path.broken(first, second, TOLERANCE)
@@ -300,7 +313,7 @@ impl Entity {
                             return BreakError::NeedsTwoPoints("closed polyline");
                         }
                         let nearest = |point: Point2| {
-                            self.primitives()
+                            self.own_primitives()
                                 .iter()
                                 .map(|primitive| primitive.closest_point(point))
                                 .min_by(|x, y| {
@@ -330,7 +343,10 @@ impl Entity {
     /// [`Entity::trimmed`], together with the part that is cut away — which
     /// is what a preview of the trim shows.
     pub fn trim_parts(&self, cutting: &Entity, pick: Point2) -> Result<TrimParts, TrimError> {
-        self.trim_parts_at(&self.intersections(cutting), pick)
+        self.trim_parts_at(
+            &self.intersections(cutting, crate::block::no_blocks()),
+            pick,
+        )
     }
 
     /// [`Entity::trim_parts`] for cuts found beforehand — the crossings of
@@ -341,7 +357,9 @@ impl Entity {
             |piece: cad_geometry::Segment| Entity::from(LineEntity::new(piece.start, piece.end));
         let arc = |piece: cad_geometry::Arc| Entity::from(ArcEntity::from(piece));
         match self {
-            Entity::Text(_) | Entity::MText(_) => Err(TrimError::Unsupported(self.kind_name())),
+            Entity::Text(_) | Entity::MText(_) | Entity::BlockRef(_) => {
+                Err(TrimError::Unsupported(self.kind_name()))
+            }
             Entity::Line(entity) => trim_segment_parts(&entity.segment(), cuts, pick, TOLERANCE)
                 .map(|parts| TrimParts {
                     kept: parts.kept.into_iter().map(line).collect(),
@@ -383,7 +401,7 @@ impl Entity {
     /// This entity lengthened from the end nearer to `pick` until it meets
     /// `boundary`: a line straight on, an arc along its circle.
     pub fn extended(&self, boundary: &Entity, pick: Point2) -> Result<Entity, ExtendError> {
-        self.extended_to(&boundary.primitives(), pick)
+        self.extended_to(&boundary.own_primitives(), pick)
     }
 
     /// [`Entity::extended`] against the geometry of any number of boundary
@@ -408,7 +426,9 @@ impl Entity {
             Entity::Polyline(polyline) if polyline.closed => {
                 Err(ExtendError::Unsupported("closed polyline"))
             }
-            Entity::Text(_) | Entity::MText(_) => Err(ExtendError::Unsupported(self.kind_name())),
+            Entity::Text(_) | Entity::MText(_) | Entity::BlockRef(_) => {
+                Err(ExtendError::Unsupported(self.kind_name()))
+            }
             Entity::Polyline(polyline) => {
                 let from_end = polyline_end_is_nearer(polyline, pick);
                 polyline
@@ -466,7 +486,11 @@ impl Entity {
                 };
                 alone.extension_reach(pick, within)
             }
-            Entity::Circle(_) | Entity::Polyline(_) | Entity::Text(_) | Entity::MText(_) => None,
+            Entity::Circle(_)
+            | Entity::Polyline(_)
+            | Entity::Text(_)
+            | Entity::MText(_)
+            | Entity::BlockRef(_) => None,
         }
     }
 
@@ -522,7 +546,7 @@ impl Entity {
             Entity::Line(line) => Ok(Primitive::Segment(line.segment())),
             Entity::Circle(circle) => Ok(Primitive::Circle(circle.circle())),
             Entity::Arc(arc) => Ok(Primitive::Arc(arc.arc())),
-            Entity::Polyline(_) | Entity::Text(_) | Entity::MText(_) => {
+            Entity::Polyline(_) | Entity::Text(_) | Entity::MText(_) | Entity::BlockRef(_) => {
                 Err(CornerError::Unsupported(entity.kind_name()))
             }
         };
@@ -626,6 +650,7 @@ impl Entity {
             Entity::Polyline(_) => "polyline",
             Entity::Text(_) => "text",
             Entity::MText(_) => "multiline text",
+            Entity::BlockRef(_) => "block reference",
         }
     }
 
@@ -673,7 +698,9 @@ impl Entity {
                     PathOffsetError::NoSide => OffsetError::NoSide,
                     PathOffsetError::Vanishes => OffsetError::Collapses,
                 }),
-            Entity::Text(_) | Entity::MText(_) => Err(OffsetError::Unsupported(self.kind_name())),
+            Entity::Text(_) | Entity::MText(_) | Entity::BlockRef(_) => {
+                Err(OffsetError::Unsupported(self.kind_name()))
+            }
         }
     }
 
@@ -687,8 +714,8 @@ impl Entity {
             }
             Entity::Circle(circle) => (circle.center.distance_to(point) - circle.radius).abs(),
             Entity::Arc(arc) => (arc.center.distance_to(point) - arc.radius).abs(),
-            Entity::Polyline(_) => self.distance_to(point),
-            Entity::Text(_) | Entity::MText(_) => {
+            Entity::Polyline(_) => self.own_distance_to(point),
+            Entity::Text(_) | Entity::MText(_) | Entity::BlockRef(_) => {
                 return Err(OffsetError::Unsupported(self.kind_name()));
             }
         };
@@ -823,7 +850,7 @@ mod tests {
             assert!(close(kept.start_point(), p(90.0, 0.0)), "cut by {name}");
             assert!(kept.sweep < PI - 1e-6, "cut by {name}: nothing was removed");
             assert!(
-                edge.distance_to(kept.end_point()) < 1e-9,
+                edge.own_distance_to(kept.end_point()) < 1e-9,
                 "cut by {name}: ends on the edge"
             );
         }
@@ -847,8 +874,8 @@ mod tests {
             assert!(kept.distance_to_point(p(10.0, 0.0)) > 1.0, "cut by {name}");
             assert!(kept.distance_to_point(p(70.0, 0.0)) < 1e-9, "cut by {name}");
             assert!(
-                edge.distance_to(kept.start_point()) < 1e-9
-                    && edge.distance_to(kept.end_point()) < 1e-9
+                edge.own_distance_to(kept.start_point()) < 1e-9
+                    && edge.distance_to(kept.end_point(), crate::block::no_blocks()) < 1e-9
             );
         }
     }
@@ -907,7 +934,7 @@ mod tests {
                 "cut by {name}"
             );
             assert!(
-                edge.distance_to(kept.vertices[0]) < 1e-9,
+                edge.distance_to(kept.vertices[0], crate::block::no_blocks()) < 1e-9,
                 "cut by {name}: starts on the edge"
             );
             assert!(
@@ -928,7 +955,7 @@ mod tests {
         let second: Entity = LineEntity::new(p(150.0, 90.0), p(150.0, 110.0)).into();
         let cuts: Vec<Point2> = [first, second]
             .iter()
-            .flat_map(|edge| target.intersections(edge))
+            .flat_map(|edge| target.intersections(edge, crate::block::no_blocks()))
             .collect();
         let parts = target.trim_parts_at(&cuts, p(100.0, 50.0)).unwrap();
         assert_eq!(
@@ -1005,7 +1032,7 @@ mod tests {
         );
         assert_eq!(kept.bulges().collect::<Vec<_>>(), vec![0.0, 1.0, 0.0, 0.0]);
         assert!(
-            pieces[0].distance_to(p(-20.0, 20.0)) < 1e-9,
+            pieces[0].distance_to(p(-20.0, 20.0), crate::block::no_blocks()) < 1e-9,
             "the left end is still round"
         );
 
@@ -1023,11 +1050,11 @@ mod tests {
             "{bulges:?}"
         );
         assert!(
-            pieces[0].distance_to(p(50.0, 0.0)) < 1e-9,
+            pieces[0].distance_to(p(50.0, 0.0), crate::block::no_blocks()) < 1e-9,
             "the bottom side stays"
         );
         assert!(
-            pieces[0].distance_to(p(50.0, 40.0)) > 1.0,
+            pieces[0].distance_to(p(50.0, 40.0), crate::block::no_blocks()) > 1.0,
             "the picked top side is gone"
         );
     }
@@ -1536,7 +1563,7 @@ mod tests {
         ];
         let cuts: Vec<Point2> = edges
             .iter()
-            .flat_map(|edge| target.intersections(edge))
+            .flat_map(|edge| target.intersections(edge, crate::block::no_blocks()))
             .collect();
 
         // Between the second and third edge: only that stretch goes.
@@ -1570,7 +1597,10 @@ mod tests {
         let target: Entity = LineEntity::new(p(0.0, 0.0), p(10.0, 0.0)).into();
         let far: Entity = LineEntity::new(p(80.0, -10.0), p(80.0, 10.0)).into();
         let near: Entity = CircleEntity::new(p(50.0, 0.0), 10.0).into();
-        let boundary: Vec<Primitive> = [far, near].iter().flat_map(Entity::primitives).collect();
+        let boundary: Vec<Primitive> = [far, near]
+            .iter()
+            .flat_map(Entity::own_primitives)
+            .collect();
         assert_eq!(
             target.extended_to(&boundary, p(9.0, 0.0)),
             Ok(LineEntity::new(p(0.0, 0.0), p(40.0, 0.0)).into())
@@ -2050,7 +2080,7 @@ mod tests {
                     .into()
             ]
         );
-        assert!(offsets[0].distance_to(through) < 1e-9);
+        assert!(offsets[0].distance_to(through, crate::block::no_blocks()) < 1e-9);
         assert_eq!(
             corner.offset_through(p(40.0, 0.0)),
             Err(OffsetError::NoSide)

@@ -115,16 +115,19 @@ impl OverlayFrame {
                 OverlayItem::Grid { spacing } => self.push_grid(*spacing, view),
                 OverlayItem::Highlight(id) => {
                     if let Some(entity) = drawing.entity(*id) {
-                        self.frame.push_entity(StyleRole::Selection, entity);
+                        self.frame
+                            .push_entity(StyleRole::Selection, entity, drawing.blocks());
                     }
                 }
                 OverlayItem::Hover(id) => {
                     if let Some(entity) = drawing.entity(*id) {
-                        self.frame.push_entity(StyleRole::Hover, entity);
+                        self.frame
+                            .push_entity(StyleRole::Hover, entity, drawing.blocks());
                     }
                 }
                 OverlayItem::PreviewRemoval(entity) => {
-                    self.frame.push_entity(StyleRole::Removal, entity);
+                    self.frame
+                        .push_entity(StyleRole::Removal, entity, drawing.blocks());
                 }
                 OverlayItem::Grips { at } => {
                     for grip in at {
@@ -139,19 +142,24 @@ impl OverlayFrame {
                         .entity(id.entity)
                         .and_then(|entity| entity.grip_preview(id.index, *to));
                     if let Some(preview) = preview {
-                        self.frame.push_entity(StyleRole::Preview, &preview);
+                        self.frame
+                            .push_entity(StyleRole::Preview, &preview, drawing.blocks());
                     }
                 }
                 OverlayItem::PreviewSegment { start, end } => {
                     self.frame.push_segment(StyleRole::Preview, *start, *end);
                 }
                 OverlayItem::PreviewEntity(entity) => {
-                    self.frame.push_entity(StyleRole::Preview, entity)
+                    self.frame
+                        .push_entity(StyleRole::Preview, entity, drawing.blocks())
                 }
                 OverlayItem::PreviewTransformed { ids, transform } => {
                     for entity in ids.iter().filter_map(|id| drawing.entity(*id)) {
-                        self.frame
-                            .push_entity(StyleRole::Preview, &entity.transformed(transform));
+                        self.frame.push_entity(
+                            StyleRole::Preview,
+                            &entity.transformed(transform),
+                            drawing.blocks(),
+                        );
                     }
                 }
                 OverlayItem::SelectionBox { from, to, crossing } => {

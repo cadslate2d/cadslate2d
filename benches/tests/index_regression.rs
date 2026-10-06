@@ -23,7 +23,7 @@ fn a_rebuilt_index_accepts_inserts_and_updates() {
         .map(|(index, line)| {
             (
                 EntityId::from_raw(index as u64 + 1),
-                Entity::Line(line).bounds(),
+                Entity::Line(line).bounds(cad_document::empty_blocks()),
             )
         })
         .collect();

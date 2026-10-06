@@ -31,7 +31,7 @@ fn tolerance_for(entities: &[&Entity]) -> LinearTolerance {
     let corners: Vec<_> = entities
         .iter()
         .flat_map(|entity| {
-            let bounds = entity.bounds();
+            let bounds = entity.own_bounds();
             [bounds.min(), bounds.max()]
         })
         .collect();
@@ -97,7 +97,11 @@ fn open_path(entity: &Entity) -> Option<Path> {
             })
         }
         Entity::Polyline(polyline) if !polyline.closed => Some(polyline.path()),
-        Entity::Polyline(_) | Entity::Circle(_) | Entity::Text(_) | Entity::MText(_) => None,
+        Entity::Polyline(_)
+        | Entity::Circle(_)
+        | Entity::Text(_)
+        | Entity::MText(_)
+        | Entity::BlockRef(_) => None,
     }
 }
 

@@ -9,6 +9,7 @@
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
 mod aci;
+mod block;
 mod drawing;
 mod editing;
 mod entity;
@@ -32,6 +33,7 @@ mod text_style;
 mod transaction;
 
 pub use aci::{FOREGROUND_INDEX, Paint, index_paint};
+pub use block::{Block, BlockChange, BlockId, BlockReferenceEntity, BlockTable, empty_blocks};
 pub use drawing::{ApplyReport, Drawing, TransactionBuilder, TransactionError};
 pub use editing::{
     BreakError, CornerError, Cornered, ExtendError, OffsetError, StretchHold, TrimError, TrimParts,

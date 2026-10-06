@@ -32,7 +32,7 @@ fn shared(lines: &[LineEntity]) -> Vec<(EntityId, SharedEntity)> {
 fn bounds(lines: &[LineEntity]) -> Vec<(EntityId, Aabb)> {
     shared(lines)
         .iter()
-        .map(|(id, entity)| (*id, entity.bounds()))
+        .map(|(id, entity)| (*id, entity.bounds(cad_document::empty_blocks())))
         .collect()
 }
 
@@ -63,14 +63,14 @@ fn store(c: &mut Criterion) {
             b.iter(|| {
                 dense
                     .iter()
-                    .map(|(_, entity)| entity.bounds().min().x)
+                    .map(|(_, entity)| entity.bounds(cad_document::empty_blocks()).min().x)
                     .sum::<f64>()
             })
         });
         group.bench_function(BenchmarkId::new("hashmap", size), |b| {
             b.iter(|| {
                 hash.iter()
-                    .map(|(_, entity)| entity.bounds().min().x)
+                    .map(|(_, entity)| entity.bounds(cad_document::empty_blocks()).min().x)
                     .sum::<f64>()
             })
         });

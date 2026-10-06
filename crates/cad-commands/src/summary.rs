@@ -12,13 +12,14 @@ use cad_document::{Drawing, Entity, Properties};
 use crate::Selection;
 
 /// The kinds an entity can be, in the order they are listed.
-const KINDS: [(&str, &str); 6] = [
+const KINDS: [(&str, &str); 7] = [
     ("line", "lines"),
     ("circle", "circles"),
     ("arc", "arcs"),
     ("polyline", "polylines"),
     ("text", "texts"),
     ("multiline text", "multiline texts"),
+    ("block reference", "block references"),
 ];
 
 fn kind_index(entity: &Entity) -> usize {
@@ -29,6 +30,7 @@ fn kind_index(entity: &Entity) -> usize {
         Entity::Polyline(_) => 3,
         Entity::Text(_) => 4,
         Entity::MText(_) => 5,
+        Entity::BlockRef(_) => 6,
     }
 }
 
@@ -87,7 +89,9 @@ impl SelectionSummary {
             color: common.color,
             linetype: common.linetype,
             lineweight: common.lineweight,
-            geometry: only.map(geometry_of).unwrap_or_default(),
+            geometry: only
+                .map(|entity| geometry_of(entity, drawing))
+                .unwrap_or_default(),
         }
     }
 
@@ -155,7 +159,7 @@ fn degrees(radians: f64) -> String {
 }
 
 /// What defines one entity, as the panel lists it.
-fn geometry_of(entity: &Entity) -> Vec<(String, String)> {
+fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, String)> {
     let row = |label: &str, value: String| (label.to_owned(), value);
     match entity {
         Entity::Line(line) => {
@@ -216,6 +220,22 @@ fn geometry_of(entity: &Entity) -> Vec<(String, String)> {
             row("Width", number(text.width)),
             row("Rotation", degrees(text.rotation)),
             row("Lines", text.lines().len().to_string()),
+        ],
+        Entity::BlockRef(reference) => vec![
+            row(
+                "Block",
+                drawing
+                    .blocks()
+                    .get(reference.block)
+                    .map_or_else(|| reference.block.to_string(), |block| block.name.clone()),
+            ),
+            row("Insertion", point(reference.insertion)),
+            row("Scale", number(reference.scale)),
+            row("Rotation", degrees(reference.rotation)),
+            row(
+                "Mirrored",
+                (if reference.mirrored { "Yes" } else { "No" }).to_owned(),
+            ),
         ],
     }
 }

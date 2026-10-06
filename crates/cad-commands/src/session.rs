@@ -744,7 +744,14 @@ impl Session {
         self.drawing
             .query_shown(&self.view.pick_bounds(at, PICK_TOLERANCE))
             .into_iter()
-            .filter_map(|id| Some((id, self.drawing.entity(id)?.distance_to(point))))
+            .filter_map(|id| {
+                Some((
+                    id,
+                    self.drawing
+                        .entity(id)?
+                        .distance_to(point, self.drawing.blocks()),
+                ))
+            })
             .filter(|(_, distance)| *distance <= reach)
             // Nearest wins; ties go to the older entity so picking is deterministic.
             .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
@@ -797,9 +804,9 @@ impl Session {
             .filter(|&id| {
                 self.drawing.entity(id).is_some_and(|entity| {
                     if crossing {
-                        entity.crosses(&bounds)
+                        entity.crosses(&bounds, self.drawing.blocks())
                     } else {
-                        entity.is_inside(&bounds)
+                        entity.is_inside(&bounds, self.drawing.blocks())
                     }
                 })
             })
