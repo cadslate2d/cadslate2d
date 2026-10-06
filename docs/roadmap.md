@@ -10,43 +10,59 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M1 — Input and Basic Entities | Complete and closed ([review](reviews/m1-exit-review.md)). |
 | M2 — OSNAP, Grips, and Basic Modify | Every deliverable is implemented ([review](reviews/m2-exit-review.md)). Open only for the hands-on assessment of its exit condition, which needs a person. |
 | M3 — Robust Modify Geometry | Complete and closed ([review](reviews/m3-exit-review.md)). |
-| M4 — Drawing Organization | Next. Rewritten after M3 and broken into issues. |
-| M5–M7 | PROVISIONAL placeholders, to be broken down at the preceding exit review. |
+| M4 — Drawing Organization | Complete and closed ([review](reviews/m4-exit-review.md)). |
+| M5 — DXF Compatibility | Next. Rewritten after M4 and broken into issues. |
+| M6–M7 | PROVISIONAL placeholders, to be broken down at the preceding exit review. |
 | M8 | FUTURE. Not planned against. |
 
-## M4, as rewritten after M3
+## M5, as rewritten after M4
 
-DESIGN §32 lists candidate work: layers, colours, linetypes, lineweights, blocks, insert, explode, text, multiline text, and a properties UI. It fixes two things about how: every table changes through the unified transaction system, and redefining a block is one semantic change.
+DESIGN §33 lists candidate work: broader DXF versions, expanded import and export, a compatibility matrix, unsupported-content warnings, a round-trip fixture corpus, local recovery persistence, and capability-enhanced save handles. §25 constrains the persistence: no Worker introduced for it, and browsers without writable handles still get a polished workflow.
 
-M3 left M4 these pieces: entities that are geometry and nothing else, on an implied layer 0; a `Change` with one variant; a render boundary that carries style roles but no colours; stroke width already applied in the shader; a DXF reader and writer that know one layer; a command line that takes points, numbers, keywords, and picks, but no free text; and a shell with a toolbar and no panels.
+M4 left M5 these pieces: a drawing with layers, linetypes, text styles, blocks, and settings, all of which the R12 writer writes except lineweights and the unity of a paragraph, which it reports; a reader that takes every release and reports what it does not hold; a dozen fixtures from one library; a byte and entity limit on import; a `confirm` dialog before a lossy export; and a download as the only way to save.
 
 ### Order of work
 
-1. **Entity properties and the generalized change model.** Entities gain a layer, a colour, a linetype, and a lineweight, and `Change` gains its table variants. This comes first because layers, linetypes, text styles, and blocks are all tables, and every later issue assumes objects carry properties. It starts with an ADR, since where properties live decides how much every `match` on an entity has to know about them. It also settles what each modify command does with properties: which object a fillet arc or a joined polyline takes them from.
-2. **Layers**, then the **`LAYER` command**. The command line is the primary interface, so layers are complete there before there is a panel. Layer names are the first free text the command line takes, which brings a text input kind that `TEXT` reuses. **Drawing units** (already written up as an issue) follow, since they are the second drawing setting.
-3. **Colours across the render boundary.** How resolved colours reach the GPU — a style table looked up per instance, or a colour per instance — is a transport decision like ADR-0008's, made the same way: by measuring. Then **object colour** and **lineweights**, which travel the same path.
-4. **Linetypes.** §23.2 wants dashes stable across segments and zoom. Whether they are cut when the scene is built or drawn by the shader from a distance along the path is an experiment and an ADR, as curve rendering was ([ADR-0015](adr/0015-linetype-rendering.md): the shader). The table and commands follow (done: `LINETYPE`, `LTSCALE`, `LAYER LType`).
-5. **DXF for properties and tables**, so that nothing M4 adds is lost on save (done; lineweights wait on the release decision in M5 and are reported meanwhile). Then the **Layers panel** and the **Properties panel** with `CHPROP` (both done), which act only by invoking commands and show only presentation data.
-6. **Text.** Its rendering is PROVISIONAL (§23.5), and two constraints narrow it: the document needs text extents without a browser, and M6's dimensions wait on reliable metrics (§34). So it starts with an experiment and an ADR ([ADR-0016](adr/0016-text-rendering.md): a stroke font through the line instances; done), then `TEXT` and `MTEXT`, and their DXF (all done; MTEXT is written as TEXT lines until the release decision in M5).
-7. **Blocks.** The model first, with an ADR, because §19.6 fixes how redefinition must behave before any code exists: one change, however many references ([ADR-0017](adr/0017-blocks.md); done). Then drawing, picking, and snapping references (done); `BLOCK`, `INSERT`, and `EXPLODE` (done); and DXF (done).
-8. **Exit:** scenario, review, and the M5 breakdown.
+1. **The DXF release** (#152). Three things M4 built are lost on every save; ADR-0005's "revisit when" has been reached. An ADR with evidence chooses the release — R2000 is the candidate: lineweights, MTEXT, and everything it requires (handles, `BLOCK_RECORD`, `OBJECTS`) — and the writer gains it. First, because the corpus, the matrix, and the autosave all want to test and store the final form of the file. **True colour** (#153) is decided with the release, since group 420 needs it.
+2. **The compatibility matrix** (#154) and the **fixture corpus** (#155). What the reader and writer do becomes one page, every row backed by a test; and fixtures become a directory where a file and a one-line-per-expectation sidecar are a case, as the geometry corpora are, with files from four releases and a place for exports from interactive programs when someone can make them.
+3. **Parser hardening** (#156). §43's list — malformed counts, allocation bombs, recursion bombs, oversized entities — becomes limits with tests, hostile fixtures, and a fuzz run in `scripts/stress.sh`. After the release, so the fuzzer knows the writer's own output too.
+4. **The import report and the lossy-export warning in the shell** (#157): the §24.2 behaviour as a panel and a narrow dialog that names what will be lost, instead of log lines and a fixed sentence.
+5. **Local recovery persistence** (#158): an ADR measuring IndexedDB against the OPFS async API on the main thread, then autosave after each transaction in our own file format and recovery on load. After the release, so that nothing autosaved is lossy. Then **saving to a file handle** where the browser has the API, with the download as the fallback everywhere else (#159).
+6. **Exit** (#160): scenario, review, and the M6 breakdown.
 
-### Not in M4
+### Not in M5
 
-- Freeze and thaw, layer transparency, layer states and filters. The visual reference shows some of them; §32 does not list them.
-- True colour, which needs a DXF release newer than the baseline: decided with M5.
-- Complex linetypes; a linetype scale per object.
-- Text formatting codes; attributes, dynamic blocks, external references, non-uniform block scale.
-- A grip menu (Lengthen, Radius, add or remove vertex). It was a candidate for M4 "alongside properties"; M4 is already the largest milestone so far, and nothing in it depends on the menu.
-- Dynamic input near the cursor (§13.5).
+- DWG (§24.3) and opaque passthrough of unsupported records (§24.2: FUTURE).
+- Entities the model does not have — dimensions, hatches, splines, ellipses, points — are counted and reported, not imported; dimensions and hatches are M6.
+- A native project format (§39) and a Worker for persistence (§25.2).
+- Cloud storage of any kind (§43, §45).
 
 ### Needs a person
 
+- How M4 feels against classic CAD: `BLOCK`'s order of questions, `INSERT`'s prompts, `EXPLODE` one level at a time, the lineweight display rule, the stroke font ([M4 review](reviews/m4-exit-review.md)).
+- Whether interactive CAD programs read our `BLOCKS` section, `INSERT`s, and `$INSUNITS` in an R12 header; ezdxf does.
 - How the M3 commands feel against classic CAD: round corners on polyline offsets, JOIN and gaps between arcs, the STRETCH window, BREAK on circles ([M3 review](reviews/m3-exit-review.md)).
 - The hands-on assessment of the M2 exit condition.
 - Confirming the arc grip behaviour against AutoCAD (ADR-0010).
 - Measuring rendering on real GPU hardware.
 - Deciding whether to report the R-tree bulk-load crash upstream.
+
+## M4, as it was planned
+
+Kept for the record; the review says how it went.
+
+DESIGN §32 lists candidate work and fixes two things about how: every table changes through the unified transaction system, and redefining a block is one semantic change. The order of work, after M3, was:
+
+1. **Entity properties and the generalized change model**, with an ADR, since everything else stands on it.
+2. **Layers**, the **`LAYER` command** with text input for names, and **drawing units**.
+3. **Colours across the render boundary**, by measurement, then **object colour** and **lineweights**.
+4. **Linetypes**: an experiment and ADR on how dashes are drawn, then the table and commands.
+5. **DXF for properties and tables**; the **Layers panel** and the **Properties panel** with `CHPROP`.
+6. **Text**: an experiment and ADR on rendering and metrics, then `TEXT`, `MTEXT`, and their DXF.
+7. **Blocks**: the model and ADR, then drawing, picking, and snapping, then `BLOCK`, `INSERT`, `EXPLODE`, and DXF.
+8. **Exit.**
+
+Left out on purpose: freeze and thaw, layer transparency, states and filters; true colour (decided with M5's release); complex linetypes and a linetype scale per object; text formatting codes, attributes, dynamic blocks, external references, non-uniform block scale; a grip menu; dynamic input near the cursor.
 
 ## M3, as it was planned
 

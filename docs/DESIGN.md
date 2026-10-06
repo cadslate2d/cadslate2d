@@ -1927,6 +1927,8 @@ Block redefinition must remain one semantic block transaction while invalidating
 
 > **Rewritten at the M3 exit:** the order of work and what is left out are in the [roadmap](roadmap.md) and the issues of the M4 milestone.
 
+> **Done (2026-10-06):** every item above is implemented; the [M4 review](reviews/m4-exit-review.md) links each criterion to its tests. Properties live beside geometry (ADR-0013); colours cross the boundary as a style table (ADR-0014); dashes are drawn by the shader (ADR-0015); text is a stroke font (ADR-0016); blocks are table rows resolved through the table (ADR-0017).
+
 ---
 
 # 33. M5 — DXF Compatibility
@@ -1942,6 +1944,8 @@ Potential work:
 - round-trip fixture corpus;
 - local recovery persistence;
 - capability-enhanced save handles.
+
+> **Rewritten at the M4 exit:** the order of work and what is left out are in the [roadmap](roadmap.md) and the issues of the M5 milestone; the [M4 review](reviews/m4-exit-review.md) says what M4 left for it.
 
 ---
 
