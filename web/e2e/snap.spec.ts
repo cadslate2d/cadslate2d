@@ -5,6 +5,7 @@ import {
   downloadFrom,
   enter,
   hoverWorld,
+  lines,
   markerPixels,
   openApp,
   rendererStats,
@@ -38,7 +39,7 @@ test.describe("object snap", () => {
     await enter(page, "@0,50", "");
 
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text).toContain("LINE\n  8\n0\n 10\n100.0\n 20\n0.0\n 11\n100.0\n 21\n50.0\n");
+    expect(lines(file.text)).toContainEqual([100, 0, 100, 50]);
   });
 
   test("there is no snapping at the idle prompt, where the pointer selects", async ({ page }) => {
@@ -129,7 +130,7 @@ test.describe("perpendicular and tangent snaps", () => {
     await enter(page, "");
 
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text).toContain("LINE\n  8\n0\n 10\n30.0\n 20\n70.0\n 11\n30.0\n 21\n0.0\n");
+    expect(lines(file.text)).toContainEqual([30, 70, 30, 0]);
   });
 
   test("a line is drawn tangent to a circle", async ({ page }) => {

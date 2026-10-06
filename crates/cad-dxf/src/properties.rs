@@ -58,6 +58,16 @@ pub(crate) fn lineweight_from_dxf(code: i64) -> Option<Lineweight> {
     }
 }
 
+/// Group 370 for a lineweight.
+pub(crate) fn lineweight_to_dxf(lineweight: Lineweight) -> i64 {
+    match lineweight {
+        Lineweight::ByLayer => LINEWEIGHT_BY_LAYER,
+        Lineweight::ByBlock => LINEWEIGHT_BY_BLOCK,
+        Lineweight::Default => LINEWEIGHT_DEFAULT,
+        Lineweight::Hundredths(hundredths) => i64::from(hundredths),
+    }
+}
+
 /// A linetype's pattern as DXF lists it in groups 49: a dash is positive, a
 /// gap negative, a dot zero. The drawing keeps dash and gap lengths
 /// alternately from a dash, so the list is normalised: neighbouring dashes

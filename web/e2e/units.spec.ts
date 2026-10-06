@@ -1,5 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
-import { chooseFile, downloadFrom, enter, logLines, openApp, prompt } from "./support";
+import {
+  chooseFile,
+  circles,
+  downloadFrom,
+  enter,
+  lines,
+  logLines,
+  openApp,
+  prompt,
+} from "./support";
 
 const exported = async (page: Page) => await downloadFrom(page, () => enter(page, "DXFOUT"));
 
@@ -14,7 +23,7 @@ test.describe("UNITS", () => {
     // 25 mm in a metre drawing is 0.025; a bare number is still metres.
     await enter(page, "L", "0,0", "25mm,0", "@0,2", "");
     const file = await exported(page);
-    expect(file.text).toContain("LINE\n  8\n0\n 10\n0.0\n 20\n0.0\n 11\n0.025\n 21\n0.0\n");
+    expect(lines(file.text)).toContainEqual([0, 0, 0.025, 0]);
     expect(file.text).toContain(" 11\n0.025\n 21\n2.0\n");
     expect(file.text).toContain("$INSUNITS\n 70\n6\n");
 
@@ -45,9 +54,7 @@ test.describe("UNITS", () => {
 
     await enter(page, "UNITS", "MM");
     await enter(page, "C", "0,0", "1in");
-    expect((await exported(page)).text).toContain(
-      "CIRCLE\n  8\n0\n 10\n0.0\n 20\n0.0\n 40\n25.4\n",
-    );
+    expect(circles((await exported(page)).text)).toContainEqual([0, 0, 25.4]);
 
     await page.keyboard.press("Control+z"); // the circle
     await page.keyboard.press("Control+z"); // the unit

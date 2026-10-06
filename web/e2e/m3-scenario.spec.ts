@@ -15,47 +15,18 @@ import {
   downloadFrom,
   enter,
   hoverWorld,
+  lines,
   logLines,
   openApp,
+  polylines,
   prompt,
   rendererStats,
 } from "./support";
+import type { Polyline } from "./support";
 
 const exported = async (page: Page) => (await downloadFrom(page, () => enter(page, "DXFOUT"))).text;
 const count = (text: string, record: string) =>
   (text.match(new RegExp(`^${record}$`, "gm")) ?? []).length;
-
-interface Polyline {
-  closed: boolean;
-  /** x, y, and the bulge of the segment that starts there (0 when straight). */
-  vertices: [number, number, number][];
-}
-
-/** Every POLYLINE in a DXF export. */
-function polylines(text: string): Polyline[] {
-  return text
-    .split(/^POLYLINE\n/m)
-    .slice(1)
-    .map((block) => {
-      const body = block.split(/^SEQEND$/m)[0] ?? "";
-      const header = body.split(/^VERTEX$/m)[0] ?? "";
-      const vertex = /^VERTEX\n {2}8\n0\n 10\n(.+)\n 20\n(.+)\n(?: 42\n(.+)\n)?/gm;
-      return {
-        closed: /^ 70\n1$/m.test(header),
-        vertices: [...body.matchAll(vertex)].map((match): [number, number, number] => [
-          Number(match[1]),
-          Number(match[2]),
-          Number(match[3] ?? 0),
-        ]),
-      };
-    });
-}
-
-/** Every LINE in a DXF export, as [x0, y0, x1, y1]. */
-function lines(text: string): number[][] {
-  const pattern = /^LINE\n {2}8\n0\n 10\n(.+)\n 20\n(.+)\n 11\n(.+)\n 21\n(.+)\n/gm;
-  return [...text.matchAll(pattern)].map((match) => match.slice(1).map(Number));
-}
 
 /** The polyline has exactly these vertices and bulges, in this order. */
 function expectPolyline(
@@ -91,7 +62,7 @@ test("the M3 drafting scenario", async ({ page }) => {
     [0, 40, 1],
   ];
   let text = await exported(page);
-  expect(count(text, "POLYLINE")).toBe(1);
+  expect(count(text, "LWPOLYLINE")).toBe(1);
   expectPolyline(polylines(text)[0], true, slot);
 
   // ── OFFSET the polyline outwards: a larger slot, arcs offset as arcs ──
@@ -102,7 +73,7 @@ test("the M3 drafting scenario", async ({ page }) => {
   await clickWorld(page, canvas, 50, -30);
   await enter(page, "");
   text = await exported(page);
-  expect(count(text, "POLYLINE")).toBe(2);
+  expect(count(text, "LWPOLYLINE")).toBe(2);
   expectPolyline(polylines(text)[0], true, slot);
   expectPolyline(polylines(text)[1], true, [
     [0, -10, 0],
@@ -156,7 +127,7 @@ test("the M3 drafting scenario", async ({ page }) => {
   await enter(page, "");
   await expect(logLines(page).last()).toHaveText("3 objects joined into 1 polyline.");
   text = await exported(page);
-  expect(count(text, "POLYLINE")).toBe(2);
+  expect(count(text, "LWPOLYLINE")).toBe(2);
   expect(lines(text)).toEqual([
     [30, -10, 30, 0],
     [70, -10, 70, 0],
@@ -194,14 +165,14 @@ test("the M3 drafting scenario", async ({ page }) => {
     [70, 50, 0],
     [70, 40, 0],
   ]);
-  expect(count(finished.text, "POLYLINE")).toBe(2);
+  expect(count(finished.text, "LWPOLYLINE")).toBe(2);
   expect(count(finished.text, "LINE")).toBe(2);
   await expect(logLines(page).filter({ hasText: "Unknown command" })).toHaveCount(0);
 
   // ── seven commands, seven undo steps; redo brings it all back ──
   for (let step = 0; step < 7; step += 1) await page.keyboard.press("Control+z");
   text = await exported(page);
-  expect(count(text, "POLYLINE") + count(text, "LINE")).toBe(0);
+  expect(count(text, "LWPOLYLINE") + count(text, "LINE")).toBe(0);
   await page.keyboard.press("Control+z");
   await expect(logLines(page).last()).toHaveText("Nothing to undo.");
 

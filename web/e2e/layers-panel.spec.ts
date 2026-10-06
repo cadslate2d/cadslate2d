@@ -1,7 +1,7 @@
 // The Layers panel (#140): a second way to do what LAYER does. Every action
 // goes through the command line, so the log shows it and the export has it.
 import { expect, test, type Page } from "@playwright/test";
-import { downloadFrom, enter, logLines, openApp, prompt } from "./support";
+import { downloadFrom, enter, group, logLines, openApp, prompt, tableRow } from "./support";
 
 const panel = (page: Page) => page.getByRole("complementary", { name: "Layers" });
 const row = (page: Page, name: string) =>
@@ -52,8 +52,9 @@ test.describe("Layers panel", () => {
     await expect(prompt(page)).toHaveText("Command:");
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
     expect(file.text).toContain("  9\n$CLAYER\n  8\npartitions\n");
-    expect(file.text).toContain("  0\nLAYER\n  2\npartitions\n 70\n4\n 62\n7\n");
-    expect(file.text).toContain("  0\nLAYER\n  2\n0\n 70\n0\n 62\n-7\n");
+    const partitions = tableRow(file.text, "LAYER", "partitions");
+    expect([group(partitions, 70), group(partitions, 62)]).toEqual(["4", "7"]);
+    expect(group(tableRow(file.text, "LAYER", "0"), 62)).toBe("-7");
 
     // A refusal is explained, like a typed one.
     await panel(page).getByRole("button", { name: "Delete partitions" }).click();

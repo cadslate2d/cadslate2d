@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
+  arcs,
   centerOf,
   chooseFile,
   clickWorld,
@@ -10,6 +11,7 @@ import {
   litPixels,
   logLines,
   openApp,
+  polylines,
   prompt,
   rendererStats,
   settle,
@@ -36,8 +38,8 @@ test.describe("PLINE arc segments", () => {
     await page.keyboard.press("Escape");
 
     const first = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(first.text.match(/^POLYLINE$/gm)).toHaveLength(1);
-    expect(first.text.match(/^VERTEX$/gm)).toHaveLength(4);
+    expect(first.text.match(/^LWPOLYLINE$/gm)).toHaveLength(1);
+    expect(polylines(first.text)[0]?.vertices).toHaveLength(4);
     // Two semicircular ends: bulge 1 on the vertices that start them.
     const bulges = [...entitiesSection(first.text).matchAll(/^ 42\n(.+)$/gm)].map((match) =>
       Number(match[1]),
@@ -165,9 +167,8 @@ test.describe("ARC", () => {
     await expect(prompt(page)).toHaveText("Specify included angle:");
     await enter(page, "90");
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text).toContain(
-      "ARC\n  8\n0\n 10\n0.0\n 20\n0.0\n 40\n100.0\n 50\n0.0\n 51\n90.0\n",
-    );
+    expect(arcs(file.text)).toContainEqual([0, 0, 100, 0, 90]);
+    expect(file.text).toContain("AcDbArc\n 50\n0.0\n 51\n90.0\n");
   });
 });
 
@@ -189,9 +190,9 @@ test.describe("polylines", () => {
     expect(await highlightPixels(canvas)).toBeGreaterThan(1000);
 
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text.match(/^POLYLINE$/gm)).toHaveLength(1);
-    expect(file.text.match(/^VERTEX$/gm)).toHaveLength(4);
-    expect(file.text).toContain("POLYLINE\n  8\n0\n 66\n1\n 70\n1\n");
+    expect(file.text.match(/^LWPOLYLINE$/gm)).toHaveLength(1);
+    expect(polylines(file.text)[0]?.vertices).toHaveLength(4);
+    expect(polylines(file.text)[0]?.closed).toBe(true);
   });
 
   test("PLINE commits one polyline when it ends, and nothing if cancelled", async ({ page }) => {

@@ -1,11 +1,15 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
+  arcs,
+  circles,
   clickWorld,
   downloadFrom,
   enter,
   entitiesSection,
+  lines,
   logLines,
   openApp,
+  polylines,
   prompt,
 } from "./support";
 
@@ -37,15 +41,13 @@ test.describe("FILLET", () => {
     await expect(prompt(page)).toHaveText("Command:");
 
     const text = await exported(page);
-    expect(text).toContain("LINE\n  8\n0\n 10\n20.0\n 20\n0.0\n 11\n100.0\n 21\n0.0\n");
-    expect(text).toContain("LINE\n  8\n0\n 10\n0.0\n 20\n20.0\n 11\n0.0\n 21\n80.0\n");
+    expect(lines(text)).toContainEqual([20, 0, 100, 0]);
+    expect(lines(text)).toContainEqual([0, 20, 0, 80]);
     // The arc: centre (20, 20), radius 20, from 180° to 270°.
-    const arc = /ARC\n {2}8\n0\n 10\n(.+)\n 20\n(.+)\n 40\n(.+)\n 50\n(.+)\n 51\n(.+)\n/.exec(text);
+    const arc = arcs(text)[0] ?? [];
     const expected = [20, 20, 20, 180, 270];
-    expect(arc?.slice(1).map(Number).length).toBe(expected.length);
-    arc
-      ?.slice(1)
-      .forEach((value, index) => expect(Number(value)).toBeCloseTo(expected[index] ?? NaN, 9));
+    expect(arc.length).toBe(expected.length);
+    arc.forEach((value, index) => expect(value).toBeCloseTo(expected[index] ?? NaN, 9));
   });
 
   test("with radius zero makes a sharp corner, and one undo takes it back", async ({ page }) => {
@@ -53,12 +55,12 @@ test.describe("FILLET", () => {
     await enter(page, "F");
     await pickBoth(page, canvas);
     let text = await exported(page);
-    expect(text).toContain(" 10\n0.0\n 20\n0.0\n 11\n100.0\n 21\n0.0\n");
+    expect(lines(text)).toContainEqual([0, 0, 100, 0]);
     expect(text.match(/^ARC$/gm)).toBeNull();
 
     await page.keyboard.press("Control+z");
     text = await exported(page);
-    expect(text).toContain(" 10\n10.0\n 20\n0.0\n 11\n100.0\n 21\n0.0\n");
+    expect(lines(text)).toContainEqual([10, 0, 100, 0]);
   });
 
   test("refuses a radius that is too large", async ({ page }) => {
@@ -81,12 +83,12 @@ test.describe("FILLET with curves", () => {
     await expect(prompt(page)).toHaveText("Command:");
 
     const text = await exported(page);
-    expect(text).toContain("CIRCLE\n  8\n0\n 10\n0.0\n 20\n40.0\n 40\n30.0\n");
+    expect(circles(text)).toContainEqual([0, 40, 30]);
     // The fillet's centre: 10 above the line, 40 from the circle's centre.
-    const arc = /ARC\n {2}8\n0\n 10\n(.+)\n 20\n(.+)\n 40\n(.+)\n/.exec(text);
-    expect(Number(arc?.[1])).toBeCloseTo(Math.sqrt(700), 9);
-    expect(Number(arc?.[2])).toBeCloseTo(10, 9);
-    expect(Number(arc?.[3])).toBeCloseTo(10, 9);
+    const [cx, cy, radius] = arcs(text)[0] ?? [];
+    expect(cx).toBeCloseTo(Math.sqrt(700), 9);
+    expect(cy).toBeCloseTo(10, 9);
+    expect(radius).toBeCloseTo(10, 9);
   });
 
   test("says when no arc of the radius fits", async ({ page }) => {
@@ -105,8 +107,8 @@ test.describe("corners of a polyline", () => {
     await clickWorld(page, canvas, 50, 0);
     await clickWorld(page, canvas, 100, 30);
     let text = await exported(page);
-    expect(text.match(/^POLYLINE$/gm)).toHaveLength(1);
-    expect(text.match(/^VERTEX$/gm)).toHaveLength(5);
+    expect(text.match(/^LWPOLYLINE$/gm)).toHaveLength(1);
+    expect(polylines(text)[0]?.vertices).toHaveLength(5);
     expect(entitiesSection(text).match(/^ 42$/gm)).toHaveLength(1);
 
     await page.keyboard.press("Control+z");
@@ -115,7 +117,7 @@ test.describe("corners of a polyline", () => {
     await clickWorld(page, canvas, 50, 0);
     await expect(logLines(page).last()).toHaveText("4 corners filleted, 0 skipped.");
     text = await exported(page);
-    expect(text.match(/^VERTEX$/gm)).toHaveLength(8);
+    expect(polylines(text)[0]?.vertices).toHaveLength(8);
     expect(entitiesSection(text).match(/^ 42$/gm)).toHaveLength(4);
   });
 });
@@ -132,7 +134,7 @@ test.describe("CHAMFER", () => {
 
     const text = await exported(page);
     expect(text.match(/^LINE$/gm)).toHaveLength(3);
-    expect(text).toContain("LINE\n  8\n0\n 10\n30.0\n 20\n0.0\n 11\n0.0\n 21\n5.0\n");
+    expect(lines(text)).toContainEqual([30, 0, 0, 5]);
   });
 
   test("refuses parallel lines", async ({ page }) => {

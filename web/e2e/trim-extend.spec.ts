@@ -5,9 +5,11 @@ import {
   enter,
   hotGripPixels,
   hoverWorld,
+  lines,
   litPixelsAround,
   logLines,
   openApp,
+  polylines,
   prompt,
   rendererStats,
 } from "./support";
@@ -26,7 +28,7 @@ test.describe("TRIM", () => {
     await enter(page, "");
 
     const text = await exported(page);
-    expect(text).toContain("LINE\n  8\n0\n 10\n0.0\n 20\n0.0\n 11\n40.0\n 21\n0.0\n");
+    expect(lines(text)).toContainEqual([0, 0, 40, 0]);
     expect(text.match(/^LINE$/gm)).toHaveLength(2);
   });
 
@@ -56,7 +58,7 @@ test.describe("TRIM", () => {
     await clickWorld(page, canvas, 80, -30);
     await expect(logLines(page).last()).toHaveText("The object does not cross a cutting edge.");
     await enter(page, "");
-    expect(await exported(page)).toContain(" 10\n60.0\n 20\n-30.0\n 11\n100.0\n 21\n-30.0\n");
+    expect(lines(await exported(page))).toContainEqual([60, -30, 100, -30]);
   });
 });
 
@@ -87,8 +89,8 @@ test.describe("several edges", () => {
 
     const text = await exported(page);
     expect(text.match(/^LINE$/gm)).toHaveLength(4);
-    expect(text).toContain(" 10\n0.0\n 20\n0.0\n 11\n30.0\n 21\n0.0\n");
-    expect(text).toContain(" 10\n70.0\n 20\n0.0\n 11\n100.0\n 21\n0.0\n");
+    expect(lines(text)).toContainEqual([0, 0, 30, 0]);
+    expect(lines(text)).toContainEqual([70, 0, 100, 0]);
   });
 
   test("two chosen edges can trim each other", async ({ page }) => {
@@ -102,8 +104,8 @@ test.describe("several edges", () => {
     await enter(page, "");
 
     const text = await exported(page);
-    expect(text).toContain(" 10\n-50.0\n 20\n0.0\n 11\n0.0\n 21\n0.0\n");
-    expect(text).toContain(" 10\n0.0\n 20\n0.0\n 11\n0.0\n 21\n50.0\n");
+    expect(lines(text)).toContainEqual([-50, 0, 0, 0]);
+    expect(lines(text)).toContainEqual([0, 0, 0, 50]);
   });
 });
 
@@ -117,17 +119,18 @@ test.describe("polylines", () => {
     await enter(page, "");
 
     let text = await exported(page);
-    expect(text.match(/^VERTEX$/gm)).toHaveLength(4);
-    expect(text).toContain("POLYLINE\n  8\n0\n 66\n1\n 70\n0\n"); // now open
-    expect(text).toContain("VERTEX\n  8\n0\n 10\n50.0\n 20\n60.0\n");
-    expect(text).toContain("VERTEX\n  8\n0\n 10\n50.0\n 20\n0.0\n");
+    expect(polylines(text)[0]?.vertices).toHaveLength(4);
+    expect(polylines(text)[0]?.closed).toBe(false); // now open
+    const vertices = polylines(text)[0]?.vertices.map(([x, y]) => [x, y]);
+    expect(vertices).toContainEqual([50, 60]);
+    expect(vertices).toContainEqual([50, 0]);
 
     // Extend the open polyline's lower end to a wall on the right.
     await enter(page, "L", "150,-40", "150,40", "", "EX", "");
     await clickWorld(page, canvas, 45, 0);
     await enter(page, "");
     text = await exported(page);
-    expect(text).toContain("VERTEX\n  8\n0\n 10\n150.0\n 20\n0.0\n");
+    expect(polylines(text)[0]?.vertices.map(([x, y]) => [x, y])).toContainEqual([150, 0]);
   });
 });
 
@@ -159,9 +162,7 @@ test.describe("hover feedback", () => {
     await hoverWorld(page, canvas, 150, 100);
     expect(await hotGripPixels(canvas)).toBe(0);
     await enter(page, "");
-    expect(await exported(page)).toContain(
-      "LINE\n  8\n0\n 10\n40.0\n 20\n0.0\n 11\n100.0\n 21\n0.0\n",
-    );
+    expect(lines(await exported(page))).toContainEqual([40, 0, 100, 0]);
   });
 
   test("EXTEND shows the object as a click would leave it", async ({ page }) => {
@@ -190,9 +191,7 @@ test.describe("EXTEND", () => {
     await expect(prompt(page)).toHaveText("Select object to extend:");
     await clickWorld(page, canvas, 55, 0);
     await enter(page, "");
-    expect(await exported(page)).toContain(
-      "LINE\n  8\n0\n 10\n0.0\n 20\n0.0\n 11\n100.0\n 21\n0.0\n",
-    );
+    expect(lines(await exported(page))).toContainEqual([0, 0, 100, 0]);
   });
 
   test("says when the object would never meet the boundary", async ({ page }) => {

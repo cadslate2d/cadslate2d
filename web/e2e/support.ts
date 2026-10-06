@@ -227,7 +227,126 @@ export function recordRequests(page: Page): { url: string; method: string }[] {
   return requests;
 }
 
-/** The ENTITIES section of a DXF export: where group 42 is a bulge and nothing else. */
+// ── reading a DXF export back ──
+
+/** One DXF record: its type (the value of its group 0) and the groups that follow. */
+export interface DxfRecord {
+  type: string;
+  groups: [code: number, value: string][];
+}
+
+/** Every record of a file, in order; SECTION, TABLE, and their ends included. */
+export function dxfRecords(text: string): DxfRecord[] {
+  const lines = text.split("\n");
+  const records: DxfRecord[] = [];
+  for (let at = 0; at + 1 < lines.length; at += 2) {
+    const code = Number(lines[at]);
+    const value = lines[at + 1] ?? "";
+    if (code === 0) records.push({ type: value, groups: [] });
+    else records.at(-1)?.groups.push([code, value]);
+  }
+  return records;
+}
+
+/** The records inside one section, its SECTION and ENDSEC left out. */
+export function dxfSection(text: string, name: string): DxfRecord[] {
+  const records = dxfRecords(text);
+  const start = records.findIndex(
+    (record) => record.type === "SECTION" && group(record, 2) === name,
+  );
+  if (start < 0) return [];
+  const end = records.findIndex((record, index) => index > start && record.type === "ENDSEC");
+  return records.slice(start + 1, end < 0 ? undefined : end);
+}
+
+/** The first value of a group in a record. */
+export function group(record: DxfRecord | undefined, code: number): string | undefined {
+  return record?.groups.find(([c]) => c === code)?.[1];
+}
+
+/** Every value of a group in a record, in order. */
+export function groupsOf(record: DxfRecord | undefined, code: number): string[] {
+  return (record?.groups ?? []).filter(([c]) => c === code).map(([, value]) => value);
+}
+
+/** A group's value as a number. */
+export function num(record: DxfRecord | undefined, code: number): number {
+  return Number(group(record, code));
+}
+
+/** The entities of the model (or of another section), of one type when given. */
+export function entities(text: string, type?: string, section = "ENTITIES"): DxfRecord[] {
+  return dxfSection(text, section).filter((record) => !type || record.type === type);
+}
+
+/** Every LINE as [x0, y0, x1, y1], in file order. */
+export function lines(text: string, section = "ENTITIES"): number[][] {
+  return entities(text, "LINE", section).map((line) => [
+    num(line, 10),
+    num(line, 20),
+    num(line, 11),
+    num(line, 21),
+  ]);
+}
+
+/** Every CIRCLE as [centre x, centre y, radius]. */
+export function circles(text: string): number[][] {
+  return entities(text, "CIRCLE").map((circle) => [
+    num(circle, 10),
+    num(circle, 20),
+    num(circle, 40),
+  ]);
+}
+
+/** Every ARC as [centre x, centre y, radius, start°, end°]. */
+export function arcs(text: string): number[][] {
+  return entities(text, "ARC").map((arc) => [
+    num(arc, 10),
+    num(arc, 20),
+    num(arc, 40),
+    num(arc, 50),
+    num(arc, 51),
+  ]);
+}
+
+export interface Polyline {
+  closed: boolean;
+  /** x, y, and the bulge of the segment that starts there (0 when straight). */
+  vertices: [number, number, number][];
+}
+
+/** Every LWPOLYLINE: a bulge belongs to the vertex before it. */
+export function polylines(text: string): Polyline[] {
+  return entities(text, "LWPOLYLINE").map((polyline) => {
+    const vertices: [number, number, number][] = [];
+    for (const [code, value] of polyline.groups) {
+      const last = vertices[vertices.length - 1];
+      if (code === 10) vertices.push([Number(value), NaN, 0]);
+      else if (code === 20 && last) last[1] = Number(value);
+      else if (code === 42 && last) last[2] = Number(value);
+    }
+    return { closed: (num(polyline, 70) & 1) === 1, vertices };
+  });
+}
+
+/** The row of a table (LAYER, LTYPE, STYLE, …) with that name. */
+export function tableRow(text: string, table: string, name: string): DxfRecord | undefined {
+  return dxfSection(text, "TABLES").find(
+    (record) => record.type === table && group(record, 2) === name,
+  );
+}
+
+/** The names of the drawing's block definitions, model and paper space left out. */
+export function blocks(text: string): string[] {
+  return dxfSection(text, "BLOCKS")
+    .filter((record) => record.type === "BLOCK")
+    .map((record) => group(record, 2) ?? "")
+    .filter((name) => !name.startsWith("*"));
+}
+
+/** The ENTITIES section of a DXF export as text: where group 42 is a bulge and nothing else. */
 export function entitiesSection(text: string): string {
-  return text.slice(text.indexOf("ENTITIES"));
+  const start = text.indexOf("  2\nENTITIES\n");
+  const end = text.indexOf("  0\nENDSEC\n", start);
+  return text.slice(start, end);
 }

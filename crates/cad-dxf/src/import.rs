@@ -1738,7 +1738,9 @@ mod tests {
         );
 
         let text = export(&first.drawing);
+        // The ENTITIES section only: the layouts after it have 42s of their own.
         let entities = &text[text.find("ENTITIES").unwrap()..];
+        let entities = &entities[..entities.find("ENDSEC").unwrap()];
         assert_eq!(entities.matches("\n 42\n").count(), 2);
         assert_eq!(
             polylines_of(&import(text.as_bytes()).unwrap()),

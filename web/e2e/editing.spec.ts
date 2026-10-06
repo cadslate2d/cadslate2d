@@ -1,10 +1,13 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   centerOf,
+  circles,
   crossingPixels,
   downloadFrom,
   enter,
+  entities,
   highlightPixels,
+  lines,
   litPixels,
   logLines,
   openApp,
@@ -111,8 +114,7 @@ test.describe("ERASE", () => {
     await expect(logLines(page).last()).toHaveText("2 erased.");
 
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text).not.toContain("LINE");
-    expect(file.text).not.toContain("CIRCLE");
+    expect(entities(file.text)).toHaveLength(0);
   });
 
   test("Delete while typing edits the text instead", async ({ page }) => {
@@ -138,9 +140,9 @@ test.describe("MOVE and COPY", () => {
     await expect(prompt(page)).toHaveText("Command:");
 
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text).toContain("LINE\n  8\n0\n 10\n0.0\n 20\n50.0\n 11\n200.0\n 21\n50.0\n");
+    expect(lines(file.text)).toContainEqual([0, 50, 200, 50]);
     // The circle was not selected and did not move.
-    expect(file.text).toContain("CIRCLE\n  8\n0\n 10\n0.0\n 20\n80.0\n 40\n30.0\n");
+    expect(circles(file.text)).toContainEqual([0, 80, 30]);
   });
 
   test("the MOVE preview is transient: overlay uploads only", async ({ page }) => {
@@ -158,7 +160,7 @@ test.describe("MOVE and COPY", () => {
 
     await page.keyboard.press("Escape");
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text).toContain("LINE\n  8\n0\n 10\n-100.0\n 20\n0.0\n 11\n100.0\n 21\n0.0\n");
+    expect(lines(file.text)).toContainEqual([-100, 0, 100, 0]);
   });
 
   test("COPY places copies until Enter and one undo removes them all", async ({ page }) => {

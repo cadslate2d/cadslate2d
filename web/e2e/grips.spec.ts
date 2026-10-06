@@ -1,11 +1,13 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   centerOf,
+  circles,
   clickWorld,
   downloadFrom,
   enter,
   hotGripPixels,
   hoverWorld,
+  lines,
   logLines,
   openApp,
   prompt,
@@ -56,7 +58,7 @@ test.describe("grips", () => {
     await page.keyboard.press("F3"); // free placement
     await clickWorld(page, canvas, 150, 50);
     await expect(prompt(page)).toHaveText("Command:");
-    expect(await exported(page)).toContain(" 10\n0.0\n 20\n0.0\n 11\n150.0\n 21\n50.0\n");
+    expect(lines(await exported(page))).toContainEqual([0, 0, 150, 50]);
 
     await page.keyboard.press("Control+z");
     expect(await exported(page)).toContain(" 11\n100.0\n 21\n0.0\n");
@@ -85,7 +87,7 @@ test.describe("grips", () => {
     await hoverWorld(page, canvas, -60, -60);
     await page.keyboard.press("Escape");
     await expect(prompt(page)).toHaveText("Command:");
-    expect(await exported(page)).toContain(" 10\n0.0\n 20\n0.0\n 11\n100.0\n 21\n25.0\n");
+    expect(lines(await exported(page))).toContainEqual([0, 0, 100, 25]);
   });
 
   test("a grip snaps to other entities but not to its own", async ({ page }) => {
@@ -99,7 +101,7 @@ test.describe("grips", () => {
     await hoverWorld(page, canvas, 148, 42); // the other line's endpoint
     await expect(snapLabel(page)).toHaveText("Endpoint");
     await clickWorld(page, canvas, 148, 42);
-    expect(await exported(page)).toContain(" 10\n0.0\n 20\n0.0\n 11\n150.0\n 21\n40.0\n");
+    expect(lines(await exported(page))).toContainEqual([0, 0, 150, 40]);
   });
 
   test("a circle's quadrant grip sets the radius", async ({ page }) => {
@@ -108,7 +110,7 @@ test.describe("grips", () => {
     await clickWorld(page, canvas, 30, 40);
     await clickWorld(page, canvas, 50, 0);
     await enter(page, "80,0");
-    expect(await exported(page)).toContain("CIRCLE\n  8\n0\n 10\n0.0\n 20\n0.0\n 40\n80.0\n");
+    expect(circles(await exported(page))).toContainEqual([0, 0, 80]);
   });
 });
 

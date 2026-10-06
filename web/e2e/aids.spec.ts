@@ -4,6 +4,7 @@ import {
   downloadFrom,
   enter,
   hoverWorld,
+  lines,
   openApp,
   prompt,
   rendererStats,
@@ -28,8 +29,8 @@ test.describe("ORTHO", () => {
     await clickWorld(page, canvas, 95, 70);
     await enter(page, "");
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text).toContain(" 10\n0.0\n 20\n0.0\n 11\n80.0\n 21\n0.0\n");
-    expect(file.text).toContain(" 10\n80.0\n 20\n0.0\n 11\n80.0\n 21\n70.0\n");
+    expect(lines(file.text)).toContainEqual([0, 0, 80, 0]);
+    expect(lines(file.text)).toContainEqual([80, 0, 80, 70]);
   });
 
   test("typed coordinates are not constrained, and F8 does not cancel the command", async ({

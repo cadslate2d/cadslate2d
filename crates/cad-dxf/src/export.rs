@@ -1,216 +1,819 @@
-//! DXF export (ADR-0005: ASCII DXF, release 12).
+//! DXF export (ADR-0018: ASCII DXF, release 2000).
 //!
-//! The file has a HEADER with the drawing's settings, TABLES with its
-//! linetypes, text styles, and layers, BLOCKS with its block definitions
-//! when it has any, and ENTITIES, each with its layer and — when they are
-//! not its layer's — its colour and linetype. R12 has no lineweights:
-//! those are named in the [`ExportReport`], never silently dropped (§24.2).
+//! The file has a HEADER with the drawing's settings and extents, an empty
+//! CLASSES section, TABLES with the drawing's linetypes, layers, text
+//! styles, and block records (and the viewport, view, UCS, application,
+//! and dimension-style tables the release expects, empty or with their one
+//! standard row), BLOCKS with model space, paper space, and every block
+//! definition, ENTITIES with each entity's layer and — when they are not
+//! its layer's — its colour, linetype, and lineweight, and OBJECTS with the
+//! dictionary and layouts that tie the spaces together. Every record has a
+//! handle and names its owner; handles follow entity IDs, so the output is
+//! deterministic.
 
 use std::fmt::Write;
 
-use cad_core::{EntityId, LengthUnit};
+use cad_core::{EntityId, LengthUnit, Point2};
 use cad_document::{
     ArcEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, Drawing,
-    DrawingSettings, Entity, EntityRecord, Justification, LINE_SPACING, Layer, LineEntity,
-    Linetype, LinetypeDef, LinetypeTable, Lineweight, PolylineEntity, Properties, TextEntity,
-    TextStyle, TextStyleTable,
+    DrawingSettings, Entity, EntityRecord, Justification, Layer, LineEntity, Linetype, LinetypeDef,
+    LinetypeTable, Lineweight, MTextEntity, PolylineEntity, Properties, TextEntity, TextStyle,
+    TextStyleTable,
 };
 
 use crate::properties::{
     LAYER_LOCKED, LINETYPE_ALIGNMENT_A, LINETYPE_BY_BLOCK, LINETYPE_BY_LAYER, color_to_dxf,
-    pattern_to_dxf,
+    lineweight_to_dxf, pattern_to_dxf,
 };
 
-/// The DXF release written, as stored in `$ACADVER`. R12 is the simplest
-/// release every CAD tool reads and needs no handles or subclass markers.
-const ACADVER_R12: &str = "AC1009";
+/// The DXF release written, as stored in `$ACADVER`: R2000, the first
+/// release with lineweights and MTEXT, and one every reader takes.
+pub(crate) const ACADVER_R2000: &str = "AC1015";
+/// The code page an ASCII file declares.
+const CODEPAGE: &str = "ANSI_1252";
+/// A paragraph's words are written in pieces of at most this many
+/// characters (group 3), and the rest in group 1.
+const MTEXT_PIECE: usize = 250;
+/// The width-to-height ratio of the viewport that opens on the drawing.
+const VIEW_ASPECT: f64 = 1.5;
 
-/// What an export could not write (§24.2): the baseline release has no
-/// lineweights, so every one that is not `ByLayer` on an object, or not
-/// `Default` on a layer, is lost.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ExportReport {
-    /// Entities with a lineweight of their own.
-    pub lineweights_on_entities: usize,
-    /// Layers with a lineweight other than the default.
-    pub lineweights_on_layers: usize,
+/// A record's handle: a hexadecimal number unique in the file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Handle(u64);
+
+impl Handle {
+    /// The owner of what has none: the root dictionary and the tables.
+    const NONE: Self = Self(0);
+
+    fn text(self) -> String {
+        format!("{:X}", self.0)
+    }
 }
 
-impl ExportReport {
-    /// Whether the file holds less than the drawing did.
-    pub fn is_lossy(&self) -> bool {
-        self.lineweights_on_entities + self.lineweights_on_layers > 0
+/// Hands out handles in order, so that the output is deterministic.
+struct Handles(u64);
+
+impl Handles {
+    fn take(&mut self) -> Handle {
+        let handle = Handle(self.0);
+        self.0 += 1;
+        handle
     }
 
-    /// A short, user-facing account of what was lost; empty when nothing was.
-    pub fn summary(&self) -> Vec<String> {
-        if !self.is_lossy() {
-            return Vec::new();
+    /// `$HANDSEED`: the first handle a reader may give to something new.
+    fn seed(&self) -> Handle {
+        Handle(self.0)
+    }
+}
+
+/// The records everything else points at. Allocated first, so their
+/// handles do not depend on the drawing.
+struct Structure {
+    root: Handle,
+    groups: Handle,
+    layouts: Handle,
+    plot_styles: Handle,
+    plot_style: Handle,
+    model_layout: Handle,
+    paper_layout: Handle,
+    model_space: Handle,
+    paper_space: Handle,
+}
+
+impl Structure {
+    fn allocate(handles: &mut Handles) -> Self {
+        Self {
+            root: handles.take(),
+            groups: handles.take(),
+            layouts: handles.take(),
+            plot_styles: handles.take(),
+            plot_style: handles.take(),
+            model_layout: handles.take(),
+            paper_layout: handles.take(),
+            model_space: handles.take(),
+            paper_space: handles.take(),
         }
-        let counted = |count: usize, one: &str, many: &str| {
-            format!("{count} {}", if count == 1 { one } else { many })
-        };
-        let carriers: Vec<String> = [
-            (self.lineweights_on_entities, "object", "objects"),
-            (self.lineweights_on_layers, "layer", "layers"),
-        ]
-        .into_iter()
-        .filter(|(count, ..)| *count > 0)
-        .map(|(count, one, many)| counted(count, one, many))
-        .collect();
-        vec![format!(
-            "Lineweights are not written in DXF R12: dropped from {}.",
-            carriers.join(" and ")
-        )]
     }
-}
-
-/// The file and the account of what it could not hold.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Export {
-    pub text: String,
-    pub report: ExportReport,
 }
 
 /// Serialises the drawing as ASCII DXF.
 ///
-/// Output is deterministic: entities are written in `EntityId` order, and
-/// coordinates use the shortest decimal form that reads back to exactly the
-/// same `f64`.
+/// Output is deterministic: entities are written in `EntityId` order with
+/// handles in that order, and coordinates use the shortest decimal form
+/// that reads back to exactly the same `f64`.
 pub fn export(drawing: &Drawing) -> String {
-    export_with_report(drawing).text
+    let mut handles = Handles(1);
+    let structure = Structure::allocate(&mut handles);
+    // One block record per definition, in table order; the record is what
+    // a definition's entities name as their owner.
+    let block_records: Vec<Handle> = drawing
+        .blocks()
+        .iter()
+        .filter(|(id, _)| *id != BlockId::FIRST)
+        .map(|_| handles.take())
+        .collect();
+    let mut body = Writer {
+        out: String::new(),
+        handles,
+    };
+    body.group(0, "SECTION");
+    body.group(2, "CLASSES");
+    body.group(0, "ENDSEC");
+    body.section("TABLES", |w| w.tables(drawing, &structure, &block_records));
+    body.section("BLOCKS", |w| w.blocks(drawing, &structure, &block_records));
+    body.section("ENTITIES", |w| {
+        let mut records: Vec<(EntityId, &EntityRecord)> = drawing.records().collect();
+        records.sort_unstable_by_key(|(id, _)| *id);
+        for (_, record) in records {
+            w.record(record, structure.model_space, drawing);
+        }
+    });
+    body.section("OBJECTS", |w| w.objects(&structure));
+    body.group(0, "EOF");
+
+    // The header names the first free handle, so it is written last.
+    let mut header = Writer {
+        out: String::new(),
+        handles: Handles(0),
+    };
+    header.section("HEADER", |w| w.header(drawing, body.handles.seed()));
+    header.out + &body.out
 }
 
-/// Serialises the drawing as ASCII DXF, and says what the file could not hold.
-pub fn export_with_report(drawing: &Drawing) -> Export {
-    let mut out = String::new();
-    let mut report = ExportReport::default();
-    let linetypes = drawing.linetypes();
+struct Writer {
+    out: String,
+    handles: Handles,
+}
 
-    section(&mut out, "HEADER", |out| {
-        group(out, 9, "$ACADVER");
-        group(out, 1, ACADVER_R12);
-        // The drawing unit. `$INSUNITS` is newer than R12; it is written
-        // all the same so that a drawing keeps its unit when saved and
-        // reopened (ADR-0005, amended). A unitless drawing writes nothing,
-        // and so stays a plain R12 file.
+impl Writer {
+    /// One group: the code right-aligned in three columns, then the value.
+    fn group(&mut self, code: i32, value: &str) {
+        writeln!(self.out, "{code:>3}\n{value}").expect("writing to a String cannot fail");
+    }
+
+    fn real(&mut self, code: i32, value: f64) {
+        self.group(code, &format_real(value));
+    }
+
+    fn int(&mut self, code: i32, value: i64) {
+        self.group(code, &value.to_string());
+    }
+
+    fn handle(&mut self, code: i32, handle: Handle) {
+        self.group(code, &handle.text());
+    }
+
+    /// A point in groups `code`, `code + 10`, `code + 20`; the Z is zero.
+    fn point(&mut self, code: i32, point: Point2) {
+        self.real(code, point.x);
+        self.real(code + 10, point.y);
+        self.real(code + 20, 0.0);
+    }
+
+    fn section(&mut self, name: &str, body: impl FnOnce(&mut Self)) {
+        self.group(0, "SECTION");
+        self.group(2, name);
+        body(self);
+        self.group(0, "ENDSEC");
+    }
+
+    // ── HEADER ──
+
+    /// `$ACADVER` and the code page; the drawing's unit; the settings for
+    /// new objects, when they are not a new drawing's; the extents; and
+    /// the first free handle.
+    fn header(&mut self, drawing: &Drawing, seed: Handle) {
+        let linetypes = drawing.linetypes();
+        self.group(9, "$ACADVER");
+        self.group(1, ACADVER_R2000);
+        self.group(9, "$DWGCODEPAGE");
+        self.group(3, CODEPAGE);
         if let Some(unit) = drawing.unit() {
-            group(out, 9, "$INSUNITS");
-            group(out, 70, &insunits_code(unit).to_string());
+            self.group(9, "$INSUNITS");
+            self.int(70, insunits_code(unit));
         }
-        // The settings for new objects, when they are not a new drawing's.
         let settings = drawing.settings();
         let defaults = DrawingSettings::default();
         if settings.current_layer != defaults.current_layer
             && let Some(layer) = drawing.layers().get(settings.current_layer)
         {
-            group(out, 9, "$CLAYER");
-            group(out, 8, &layer.name);
+            self.group(9, "$CLAYER");
+            self.group(8, &layer.name);
         }
         if settings.current_color != defaults.current_color {
-            group(out, 9, "$CECOLOR");
-            group(out, 62, &color_to_dxf(settings.current_color).to_string());
+            self.group(9, "$CECOLOR");
+            self.int(62, color_to_dxf(settings.current_color));
         }
         if settings.current_linetype != defaults.current_linetype {
-            group(out, 9, "$CELTYPE");
-            group(out, 6, &linetype_name(settings.current_linetype, linetypes));
+            self.group(9, "$CELTYPE");
+            self.group(6, &linetype_name(settings.current_linetype, linetypes));
+        }
+        if settings.current_lineweight != defaults.current_lineweight {
+            self.group(9, "$CELWEIGHT");
+            self.int(370, lineweight_to_dxf(settings.current_lineweight));
         }
         // Exactly the default is left out; any other value is written as it is.
         #[allow(clippy::float_cmp)]
         if settings.ltscale != defaults.ltscale {
-            group(out, 9, "$LTSCALE");
-            real(out, 40, settings.ltscale);
+            self.group(9, "$LTSCALE");
+            self.real(40, settings.ltscale);
         }
-    });
-    section(&mut out, "TABLES", |out| {
-        table(out, "LTYPE", linetypes.len(), |out| {
-            for (_, def) in linetypes.iter() {
-                write_linetype(out, def);
-            }
-        });
-        table(out, "STYLE", drawing.text_styles().len(), |out| {
-            for (_, style) in drawing.text_styles().iter() {
-                write_text_style(out, style);
-            }
-        });
-        table(out, "LAYER", drawing.layers().len(), |out| {
-            for (_, layer) in drawing.layers().iter() {
-                write_layer(out, layer, linetypes);
-                if layer.lineweight != Lineweight::Default {
-                    report.lineweights_on_layers += 1;
-                }
-            }
-        });
-    });
-    // Block definitions, in ID order, each with its entities; a drawing
-    // without any writes no section, and so stays the file it was.
-    let blocks = drawing.blocks();
-    if blocks.len() > 1 {
-        section(&mut out, "BLOCKS", |out| {
-            for (_, block) in blocks.iter().filter(|(id, _)| *id != BlockId::FIRST) {
-                group(out, 0, "BLOCK");
-                group(out, 8, Layer::ZERO);
-                group(out, 2, &block.name);
-                group(out, 70, "0");
-                real(out, 10, block.base.x);
-                real(out, 20, block.base.y);
-                group(out, 3, &block.name);
-                for record in block.entities.iter() {
-                    write_record(out, record, drawing, &mut report);
-                }
-                group(out, 0, "ENDBLK");
-                group(out, 8, Layer::ZERO);
-            }
-        });
+        if let Some(extents) = drawing.extents() {
+            self.group(9, "$EXTMIN");
+            self.point(10, extents.min());
+            self.group(9, "$EXTMAX");
+            self.point(10, extents.max());
+        }
+        self.group(9, "$HANDSEED");
+        self.handle(5, seed);
     }
-    section(&mut out, "ENTITIES", |out| {
-        let mut records: Vec<(EntityId, &EntityRecord)> = drawing.records().collect();
-        records.sort_unstable_by_key(|(id, _)| *id);
-        for (_, record) in records {
-            write_record(out, record, drawing, &mut report);
-        }
-    });
-    group(&mut out, 0, "EOF");
-    Export { text: out, report }
-}
 
-/// One entity with its properties, as a record of ENTITIES or of a block.
-fn write_record(
-    out: &mut String,
-    record: &EntityRecord,
-    drawing: &Drawing,
-    report: &mut ExportReport,
-) {
-    let linetypes = drawing.linetypes();
-    let properties = &record.properties;
-    let layer = drawing
-        .layers()
-        .get(properties.layer)
-        .map_or(Layer::ZERO, |layer| layer.name.as_str());
-    if properties.lineweight != Lineweight::ByLayer {
-        report.lineweights_on_entities += 1;
-    }
-    let common = |out: &mut String| write_properties(out, layer, properties, linetypes);
-    match &*record.entity {
-        Entity::Line(line) => write_line(out, line, common),
-        Entity::Circle(circle) => write_circle(out, circle, common),
-        Entity::Arc(arc) => write_arc(out, arc, common),
-        Entity::Polyline(polyline) => write_polyline(out, polyline, layer, common),
-        Entity::Text(text) => write_text(out, text, drawing.text_styles(), common),
-        Entity::BlockRef(reference) => write_insert(out, reference, drawing.blocks(), common),
-        // R12 has no MTEXT: a paragraph is written as one TEXT per
-        // line, as it is set.
-        Entity::MText(text) => {
-            let lines = text.lines();
-            for (index, line) in lines.iter().enumerate() {
-                let start = text.insertion
-                    - text_up(text.rotation) * (text.height * (1.0 + LINE_SPACING * index as f64));
-                let single = TextEntity::new(start, text.height, text.rotation, line.clone());
-                write_text(out, &single, drawing.text_styles(), |out| {
-                    write_properties(out, layer, properties, linetypes);
+    // ── TABLES ──
+
+    fn tables(&mut self, drawing: &Drawing, structure: &Structure, block_records: &[Handle]) {
+        let linetypes = drawing.linetypes();
+        self.table("VPORT", 1, |w, table| {
+            w.row("VPORT", table, "AcDbViewportTableRecord");
+            w.viewport(drawing);
+        });
+        // The ByBlock and ByLayer rows every file of this release carries,
+        // then the drawing's own, Continuous first.
+        self.table("LTYPE", linetypes.len() + 2, |w, table| {
+            for name in ["ByBlock", "ByLayer"] {
+                w.row("LTYPE", table, "AcDbLinetypeTableRecord");
+                w.linetype(&LinetypeDef {
+                    name: name.to_owned(),
+                    description: String::new(),
+                    pattern: Vec::new(),
                 });
             }
+            for (_, def) in linetypes.iter() {
+                w.row("LTYPE", table, "AcDbLinetypeTableRecord");
+                w.linetype(def);
+            }
+        });
+        self.table("LAYER", drawing.layers().len(), |w, table| {
+            for (_, layer) in drawing.layers().iter() {
+                w.row("LAYER", table, "AcDbLayerTableRecord");
+                w.layer(layer, linetypes, structure.plot_style);
+            }
+        });
+        self.table("STYLE", drawing.text_styles().len(), |w, table| {
+            for (_, style) in drawing.text_styles().iter() {
+                w.row("STYLE", table, "AcDbTextStyleTableRecord");
+                w.text_style(style);
+            }
+        });
+        self.table("VIEW", 0, |_, _| {});
+        self.table("UCS", 0, |_, _| {});
+        self.table("APPID", 1, |w, table| {
+            w.row("APPID", table, "AcDbRegAppTableRecord");
+            w.group(2, "ACAD");
+            w.group(70, "0");
+        });
+        self.table("DIMSTYLE", 0, |w, _| {
+            w.group(100, "AcDbDimStyleTable");
+            w.group(71, "0");
+        });
+        let blocks = drawing.blocks();
+        self.table("BLOCK_RECORD", blocks.len() + 1, |w, table| {
+            for (name, record, layout) in [
+                (
+                    "*Model_Space",
+                    structure.model_space,
+                    structure.model_layout,
+                ),
+                (
+                    "*Paper_Space",
+                    structure.paper_space,
+                    structure.paper_layout,
+                ),
+            ] {
+                w.block_record(table, record, name, layout);
+            }
+            let user = blocks.iter().filter(|(id, _)| *id != BlockId::FIRST);
+            for ((_, block), record) in user.zip(block_records) {
+                w.block_record(table, *record, &block.name, Handle::NONE);
+            }
+        });
+    }
+
+    /// One table: its handle, the number of rows, and the rows.
+    fn table(&mut self, name: &str, rows: usize, body: impl FnOnce(&mut Self, Handle)) {
+        let table = self.handles.take();
+        self.group(0, "TABLE");
+        self.group(2, name);
+        self.handle(5, table);
+        self.handle(330, Handle::NONE);
+        self.group(100, "AcDbSymbolTable");
+        self.int(70, rows as i64);
+        body(self, table);
+        self.group(0, "ENDTAB");
+    }
+
+    /// The groups every table row starts with, up to its own subclass.
+    fn row(&mut self, kind: &str, table: Handle, subclass: &str) -> Handle {
+        let handle = self.handles.take();
+        self.group(0, kind);
+        self.handle(5, handle);
+        self.handle(330, table);
+        self.group(100, "AcDbSymbolTableRecord");
+        self.group(100, subclass);
+        handle
+    }
+
+    /// The one viewport, `*Active`, looking at the whole drawing.
+    fn viewport(&mut self, drawing: &Drawing) {
+        let (center, height) = match drawing.extents() {
+            Some(extents) => {
+                let size = extents.max() - extents.min();
+                let height = size.y.max(size.x / VIEW_ASPECT).max(1.0) * 1.1;
+                (extents.center(), height)
+            }
+            None => (Point2::ORIGIN, 1000.0),
+        };
+        self.group(2, "*Active");
+        self.group(70, "0");
+        self.real(10, 0.0);
+        self.real(20, 0.0);
+        self.real(11, 1.0);
+        self.real(21, 1.0);
+        self.real(12, center.x);
+        self.real(22, center.y);
+        self.real(13, 0.0);
+        self.real(23, 0.0);
+        self.real(14, 0.5);
+        self.real(24, 0.5);
+        self.real(15, 0.5);
+        self.real(25, 0.5);
+        self.real(16, 0.0);
+        self.real(26, 0.0);
+        self.real(36, 1.0);
+        self.real(17, 0.0);
+        self.real(27, 0.0);
+        self.real(37, 0.0);
+        self.real(40, height);
+        self.real(41, VIEW_ASPECT);
+        self.real(42, 50.0);
+        self.real(43, 0.0);
+        self.real(44, 0.0);
+        self.real(50, 0.0);
+        self.real(51, 0.0);
+        self.group(71, "0");
+        self.group(72, "1000");
+        self.group(73, "1");
+        self.group(74, "3");
+        self.group(75, "0");
+        self.group(76, "0");
+        self.group(77, "0");
+        self.group(78, "0");
+        self.group(281, "0");
+        self.group(65, "0");
+        self.real(146, 0.0);
+    }
+
+    /// An LTYPE row's own groups: flags, description, alignment, then the
+    /// pattern as its count, its length, and each element — gaps negative —
+    /// with the element type that says it is a plain dash.
+    fn linetype(&mut self, def: &LinetypeDef) {
+        self.group(2, &def.name);
+        self.group(70, "0");
+        self.group(3, &def.description);
+        self.int(72, LINETYPE_ALIGNMENT_A);
+        self.int(73, def.pattern.len() as i64);
+        self.real(40, def.period());
+        for element in pattern_to_dxf(&def.pattern) {
+            self.real(49, element);
+            self.group(74, "0");
         }
+    }
+
+    /// A LAYER row's own groups: flags, colour — negative when the layer
+    /// is off — linetype, lineweight, and the plot style every layer shares.
+    fn layer(&mut self, layer: &Layer, table: &LinetypeTable, plot_style: Handle) {
+        self.group(2, &layer.name);
+        self.int(70, if layer.locked { LAYER_LOCKED } else { 0 });
+        let color = match layer.color {
+            Color::Index(index) => i64::from(index),
+            // A layer's colour is what ByLayer means: an indirection here is
+            // written as the colour a new layer has.
+            Color::ByLayer | Color::ByBlock => color_to_dxf(Layer::DEFAULT_COLOR),
+        };
+        self.int(62, if layer.on { color } else { -color });
+        let linetype = match layer.linetype {
+            Linetype::Named(_) => layer.linetype,
+            Linetype::ByLayer | Linetype::ByBlock => Linetype::CONTINUOUS,
+        };
+        self.group(6, &linetype_name(linetype, table));
+        // A layer's lineweight is what ByLayer means: an indirection here
+        // is the default width.
+        let lineweight = match layer.lineweight {
+            Lineweight::Hundredths(_) => layer.lineweight,
+            Lineweight::ByLayer | Lineweight::ByBlock | Lineweight::Default => Lineweight::Default,
+        };
+        self.int(370, lineweight_to_dxf(lineweight));
+        self.handle(390, plot_style);
+    }
+
+    /// A STYLE row's own groups: flags, no fixed height, a width factor of
+    /// one, no oblique angle, the last height used, and the stroke font
+    /// every style draws with.
+    fn text_style(&mut self, style: &TextStyle) {
+        self.group(2, &style.name);
+        self.group(70, "0");
+        self.real(40, 0.0);
+        self.real(41, 1.0);
+        self.real(50, 0.0);
+        self.group(71, "0");
+        self.real(42, 2.5);
+        self.group(3, "txt");
+        self.group(4, "");
+    }
+
+    /// A BLOCK_RECORD row: the block by name, and its layout when it is a
+    /// space.
+    fn block_record(&mut self, table: Handle, record: Handle, name: &str, layout: Handle) {
+        self.group(0, "BLOCK_RECORD");
+        self.handle(5, record);
+        self.handle(330, table);
+        self.group(100, "AcDbSymbolTableRecord");
+        self.group(100, "AcDbBlockTableRecord");
+        self.group(2, name);
+        self.handle(340, layout);
+    }
+
+    // ── BLOCKS ──
+
+    /// Model space and paper space, empty, then every definition with its
+    /// entities, owned by its block record.
+    fn blocks(&mut self, drawing: &Drawing, structure: &Structure, block_records: &[Handle]) {
+        self.block(
+            "*Model_Space",
+            Point2::ORIGIN,
+            structure.model_space,
+            |_| {},
+        );
+        self.block(
+            "*Paper_Space",
+            Point2::ORIGIN,
+            structure.paper_space,
+            |_| {},
+        );
+        let user = drawing
+            .blocks()
+            .iter()
+            .filter(|(id, _)| *id != BlockId::FIRST);
+        for ((_, block), owner) in user.zip(block_records) {
+            self.block(&block.name, block.base, *owner, |w| {
+                for entity in block.entities.iter() {
+                    w.record(entity, *owner, drawing);
+                }
+            });
+        }
+    }
+
+    fn block(&mut self, name: &str, base: Point2, record: Handle, body: impl FnOnce(&mut Self)) {
+        let begin = self.handles.take();
+        self.group(0, "BLOCK");
+        self.handle(5, begin);
+        self.handle(330, record);
+        self.group(100, "AcDbEntity");
+        self.group(8, Layer::ZERO);
+        self.group(100, "AcDbBlockBegin");
+        self.group(2, name);
+        self.group(70, "0");
+        self.point(10, base);
+        self.group(3, name);
+        self.group(1, "");
+        body(self);
+        let end = self.handles.take();
+        self.group(0, "ENDBLK");
+        self.handle(5, end);
+        self.handle(330, record);
+        self.group(100, "AcDbEntity");
+        self.group(8, Layer::ZERO);
+        self.group(100, "AcDbBlockEnd");
+    }
+
+    // ── ENTITIES ──
+
+    /// One entity with its properties, as a record of ENTITIES or of a block.
+    fn record(&mut self, record: &EntityRecord, owner: Handle, drawing: &Drawing) {
+        let layer = drawing
+            .layers()
+            .get(record.properties.layer)
+            .map_or(Layer::ZERO, |layer| layer.name.as_str());
+        let kind = match &*record.entity {
+            Entity::Line(_) => "LINE",
+            Entity::Circle(_) => "CIRCLE",
+            Entity::Arc(_) => "ARC",
+            Entity::Polyline(_) => "LWPOLYLINE",
+            Entity::Text(_) => "TEXT",
+            Entity::MText(_) => "MTEXT",
+            Entity::BlockRef(_) => "INSERT",
+        };
+        self.entity(kind, owner, layer, &record.properties, drawing.linetypes());
+        match &*record.entity {
+            Entity::Line(line) => self.line(line),
+            Entity::Circle(circle) => self.circle(circle),
+            Entity::Arc(arc) => self.arc(arc),
+            Entity::Polyline(polyline) => self.polyline(polyline),
+            Entity::Text(text) => self.text(text, drawing.text_styles()),
+            Entity::MText(text) => self.mtext(text, drawing.text_styles()),
+            Entity::BlockRef(reference) => self.insert(reference, drawing.blocks()),
+        }
+    }
+
+    /// The groups every entity starts with: its handle and owner, then —
+    /// under `AcDbEntity` — its layer, and its linetype, colour, and
+    /// lineweight when they are its own.
+    fn entity(
+        &mut self,
+        kind: &str,
+        owner: Handle,
+        layer: &str,
+        properties: &Properties,
+        table: &LinetypeTable,
+    ) {
+        let handle = self.handles.take();
+        self.group(0, kind);
+        self.handle(5, handle);
+        self.handle(330, owner);
+        self.group(100, "AcDbEntity");
+        self.group(8, layer);
+        if properties.linetype != Linetype::ByLayer {
+            self.group(6, &linetype_name(properties.linetype, table));
+        }
+        if properties.color != Color::ByLayer {
+            self.int(62, color_to_dxf(properties.color));
+        }
+        if properties.lineweight != Lineweight::ByLayer {
+            self.int(370, lineweight_to_dxf(properties.lineweight));
+        }
+    }
+
+    fn line(&mut self, line: &LineEntity) {
+        self.group(100, "AcDbLine");
+        self.point(10, line.start);
+        self.point(11, line.end);
+    }
+
+    fn circle(&mut self, circle: &CircleEntity) {
+        self.group(100, "AcDbCircle");
+        self.point(10, circle.center);
+        self.real(40, circle.radius);
+    }
+
+    /// DXF arcs run counter-clockwise from the start angle to the end
+    /// angle, in degrees — the same convention as the document, in
+    /// different units.
+    fn arc(&mut self, arc: &ArcEntity) {
+        self.group(100, "AcDbCircle");
+        self.point(10, arc.center);
+        self.real(40, arc.radius);
+        self.group(100, "AcDbArc");
+        self.real(50, arc.start_angle.to_degrees());
+        self.real(51, arc.end_angle.to_degrees());
+    }
+
+    /// An LWPOLYLINE: the vertex count, the closed flag, then each vertex
+    /// and — when the segment starting there is an arc — its bulge.
+    fn polyline(&mut self, polyline: &PolylineEntity) {
+        /// Bit 1 of the polyline flags: closed.
+        const CLOSED: i64 = 1;
+        self.group(100, "AcDbPolyline");
+        self.int(90, polyline.vertices.len() as i64);
+        self.int(70, if polyline.closed { CLOSED } else { 0 });
+        for (vertex, bulge) in polyline.vertices.iter().zip(polyline.bulges()) {
+            self.real(10, vertex.x);
+            self.real(20, vertex.y);
+            if bulge.abs() > 0.0 {
+                self.real(42, bulge);
+            }
+        }
+    }
+
+    /// A TEXT: its first point, height, words, rotation, style, and — for
+    /// centred and right-justified text — the horizontal justification
+    /// (group 72) with the alignment point in 11/21, which is where the
+    /// text is justified to. A left-justified text writes neither.
+    fn text(&mut self, text: &TextEntity, styles: &TextStyleTable) {
+        self.group(100, "AcDbText");
+        // For a justified text the first point is the baseline start, as
+        // DXF readers expect, and the alignment point is the insertion.
+        self.point(10, text.start());
+        self.real(40, text.height);
+        self.group(1, &text.content);
+        if text.rotation != 0.0 {
+            self.real(50, text.rotation.to_degrees());
+        }
+        let style = styles
+            .get(text.style)
+            .map_or(TextStyle::STANDARD, |style| style.name.as_str());
+        if style != TextStyle::STANDARD {
+            self.group(7, style);
+        }
+        let justification = match text.justification {
+            Justification::Left => None,
+            Justification::Center => Some(1),
+            Justification::Right => Some(2),
+        };
+        if let Some(code) = justification {
+            self.int(72, code);
+            self.point(11, text.insertion);
+        }
+        self.group(100, "AcDbText");
+    }
+
+    /// An MTEXT: its top left, height, width, the top-left attachment, its
+    /// style, and its words — line breaks as `\P`, the characters DXF
+    /// reads as codes escaped — in pieces of 250 characters, the last in
+    /// group 1; then its rotation when it has one.
+    fn mtext(&mut self, text: &MTextEntity, styles: &TextStyleTable) {
+        /// Attachment point 1: the insertion is the top left.
+        const TOP_LEFT: &str = "1";
+        self.group(100, "AcDbMText");
+        self.point(10, text.insertion);
+        self.real(40, text.height);
+        self.real(41, text.width);
+        self.group(71, TOP_LEFT);
+        let style = styles
+            .get(text.style)
+            .map_or(TextStyle::STANDARD, |style| style.name.as_str());
+        if style != TextStyle::STANDARD {
+            self.group(7, style);
+        }
+        let coded = mtext_codes(&text.content);
+        let pieces: Vec<String> = coded
+            .chars()
+            .collect::<Vec<char>>()
+            .chunks(MTEXT_PIECE)
+            .map(|piece| piece.iter().collect())
+            .collect();
+        let (last, first) = pieces
+            .split_last()
+            .map_or(("", &[][..]), |(last, first)| (last.as_str(), first));
+        for piece in first {
+            self.group(3, piece);
+        }
+        self.group(1, last);
+        if text.rotation != 0.0 {
+            self.real(50, text.rotation.to_degrees());
+        }
+    }
+
+    /// An INSERT: the block by name, the insertion point, the scale along
+    /// X, Y, and Z when it is not one — a mirrored reference has its Y
+    /// scale negated, which is how DXF says it — and the rotation in
+    /// degrees when it is not zero.
+    fn insert(&mut self, reference: &BlockReferenceEntity, blocks: &BlockTable) {
+        self.group(100, "AcDbBlockReference");
+        let name = blocks
+            .get(reference.block)
+            .map_or("", |block| block.name.as_str());
+        self.group(2, name);
+        self.point(10, reference.insertion);
+        // Exactly one is no scale at all.
+        #[allow(clippy::float_cmp)]
+        if reference.scale != 1.0 || reference.mirrored {
+            let y = if reference.mirrored {
+                -reference.scale
+            } else {
+                reference.scale
+            };
+            self.real(41, reference.scale);
+            self.real(42, y);
+            self.real(43, reference.scale);
+        }
+        if reference.rotation != 0.0 {
+            self.real(50, reference.rotation.to_degrees());
+        }
+    }
+
+    // ── OBJECTS ──
+
+    /// The root dictionary with the groups, layouts, and plot-style
+    /// entries the release expects; the two layouts, one per space; and
+    /// the one plot style, a placeholder.
+    fn objects(&mut self, structure: &Structure) {
+        self.dictionary(structure.root, Handle::NONE);
+        self.group(3, "ACAD_GROUP");
+        self.handle(350, structure.groups);
+        self.group(3, "ACAD_LAYOUT");
+        self.handle(350, structure.layouts);
+        self.group(3, "ACAD_PLOTSTYLENAME");
+        self.handle(350, structure.plot_styles);
+
+        self.dictionary(structure.groups, structure.root);
+
+        self.dictionary(structure.layouts, structure.root);
+        self.group(3, "Layout1");
+        self.handle(350, structure.paper_layout);
+        self.group(3, "Model");
+        self.handle(350, structure.model_layout);
+
+        self.group(0, "ACDBDICTIONARYWDFLT");
+        self.handle(5, structure.plot_styles);
+        self.handle(330, structure.root);
+        self.group(100, "AcDbDictionary");
+        self.group(281, "1");
+        self.group(3, "Normal");
+        self.handle(350, structure.plot_style);
+        self.group(100, "AcDbDictionaryWithDefault");
+        self.handle(340, structure.plot_style);
+
+        self.group(0, "ACDBPLACEHOLDER");
+        self.handle(5, structure.plot_style);
+        self.handle(330, structure.plot_styles);
+
+        self.layout(
+            structure.model_layout,
+            structure.layouts,
+            "Model",
+            structure.model_space,
+            true,
+        );
+        self.layout(
+            structure.paper_layout,
+            structure.layouts,
+            "Layout1",
+            structure.paper_space,
+            false,
+        );
+    }
+
+    fn dictionary(&mut self, handle: Handle, owner: Handle) {
+        self.group(0, "DICTIONARY");
+        self.handle(5, handle);
+        self.handle(330, owner);
+        self.group(100, "AcDbDictionary");
+        // Duplicate record cloning: keep existing.
+        self.group(281, "1");
+    }
+
+    /// A LAYOUT: A3 plot settings nobody uses, and the layout proper,
+    /// which names its block record.
+    fn layout(&mut self, handle: Handle, owner: Handle, name: &str, space: Handle, model: bool) {
+        self.group(0, "LAYOUT");
+        self.handle(5, handle);
+        self.handle(330, owner);
+        self.group(100, "AcDbPlotSettings");
+        self.group(1, "");
+        self.group(4, "A3");
+        self.group(6, "");
+        for (code, value) in [
+            (40, 7.5),
+            (41, 20.0),
+            (42, 7.5),
+            (43, 20.0),
+            (44, 420.0),
+            (45, 297.0),
+            (46, 0.0),
+            (47, 0.0),
+            (48, 0.0),
+            (49, 0.0),
+            (140, 0.0),
+            (141, 0.0),
+            (142, 1.0),
+            (143, 1.0),
+        ] {
+            self.real(code, value);
+        }
+        // Plot layout flags: the model layout is "model type".
+        self.group(70, if model { "1024" } else { "0" });
+        self.group(72, "1");
+        self.group(73, "0");
+        self.group(74, "5");
+        self.group(7, "");
+        self.group(75, "16");
+        self.group(76, "0");
+        self.group(77, "2");
+        self.group(78, "300");
+        self.real(147, 1.0);
+        self.real(148, 0.0);
+        self.real(149, 0.0);
+        self.group(100, "AcDbLayout");
+        self.group(1, name);
+        self.group(70, "1");
+        self.group(71, if model { "0" } else { "1" });
+        self.real(10, 0.0);
+        self.real(20, 0.0);
+        self.real(11, 420.0);
+        self.real(21, 297.0);
+        self.point(12, Point2::ORIGIN);
+        // Extents not yet computed, as every writer leaves them.
+        for code in [14, 24, 34] {
+            self.real(code, 1e20);
+        }
+        for code in [15, 25, 35] {
+            self.real(code, -1e20);
+        }
+        self.real(146, 0.0);
+        self.point(13, Point2::ORIGIN);
+        self.point(16, Point2::new(1.0, 0.0));
+        self.point(17, Point2::new(0.0, 1.0));
+        self.group(76, "1");
+        self.handle(330, space);
     }
 }
 
@@ -226,74 +829,20 @@ fn linetype_name(linetype: Linetype, table: &LinetypeTable) -> String {
     }
 }
 
-/// The groups every entity carries after its type: its layer, and its
-/// colour and linetype when they are its own. Lineweights have no group
-/// in R12.
-fn write_properties(out: &mut String, layer: &str, properties: &Properties, table: &LinetypeTable) {
-    group(out, 8, layer);
-    if properties.linetype != Linetype::ByLayer {
-        group(out, 6, &linetype_name(properties.linetype, table));
+/// A paragraph's words as MTEXT codes: a line break is `\P`, and the
+/// characters MTEXT reads as the start of a code are escaped.
+fn mtext_codes(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    for c in content.chars() {
+        match c {
+            '\n' => out.push_str("\\P"),
+            '\\' => out.push_str("\\\\"),
+            '{' => out.push_str("\\{"),
+            '}' => out.push_str("\\}"),
+            other => out.push(other),
+        }
     }
-    if properties.color != Color::ByLayer {
-        group(out, 62, &color_to_dxf(properties.color).to_string());
-    }
-}
-
-/// An LTYPE row: name, flags, description, alignment, then the pattern as
-/// its count, its length, and each element with gaps negative.
-fn write_linetype(out: &mut String, def: &LinetypeDef) {
-    group(out, 0, "LTYPE");
-    group(out, 2, &def.name);
-    group(out, 70, "0");
-    group(out, 3, &def.description);
-    group(out, 72, &LINETYPE_ALIGNMENT_A.to_string());
-    group(out, 73, &def.pattern.len().to_string());
-    real(out, 40, def.period());
-    for element in pattern_to_dxf(&def.pattern) {
-        real(out, 49, element);
-    }
-}
-
-/// A STYLE row: name, flags, no fixed height, a width factor of one, no
-/// oblique angle, and the stroke font every style draws with.
-fn write_text_style(out: &mut String, style: &TextStyle) {
-    group(out, 0, "STYLE");
-    group(out, 2, &style.name);
-    group(out, 70, "0");
-    real(out, 40, 0.0);
-    real(out, 41, 1.0);
-    real(out, 50, 0.0);
-    group(out, 71, "0");
-    real(out, 42, 2.5);
-    group(out, 3, "txt");
-}
-
-/// A LAYER row: name, flags, colour — negative when the layer is off, the
-/// R12 way — and linetype.
-fn write_layer(out: &mut String, layer: &Layer, table: &LinetypeTable) {
-    group(out, 0, "LAYER");
-    group(out, 2, &layer.name);
-    group(
-        out,
-        70,
-        &(if layer.locked { LAYER_LOCKED } else { 0 }).to_string(),
-    );
-    let color = match layer.color {
-        Color::Index(index) => i64::from(index),
-        // A layer's colour is what ByLayer means: an indirection here is
-        // written as the colour a new layer has.
-        Color::ByLayer | Color::ByBlock => color_to_dxf(Layer::DEFAULT_COLOR),
-    };
-    group(
-        out,
-        62,
-        &(if layer.on { color } else { -color }).to_string(),
-    );
-    let linetype = match layer.linetype {
-        Linetype::Named(_) => layer.linetype,
-        Linetype::ByLayer | Linetype::ByBlock => Linetype::CONTINUOUS,
-    };
-    group(out, 6, &linetype_name(linetype, table));
+    out
 }
 
 /// The `$INSUNITS` code of a unit.
@@ -305,172 +854,6 @@ pub(crate) const fn insunits_code(unit: LengthUnit) -> i64 {
         LengthUnit::Centimetres => 5,
         LengthUnit::Metres => 6,
     }
-}
-
-fn write_line(out: &mut String, line: &LineEntity, properties: impl FnOnce(&mut String)) {
-    group(out, 0, "LINE");
-    properties(out);
-    real(out, 10, line.start.x);
-    real(out, 20, line.start.y);
-    real(out, 11, line.end.x);
-    real(out, 21, line.end.y);
-}
-
-fn write_circle(out: &mut String, circle: &CircleEntity, properties: impl FnOnce(&mut String)) {
-    group(out, 0, "CIRCLE");
-    properties(out);
-    real(out, 10, circle.center.x);
-    real(out, 20, circle.center.y);
-    real(out, 40, circle.radius);
-}
-
-/// DXF arcs run counter-clockwise from the start angle to the end angle, in
-/// degrees — the same convention as the document, in different units.
-fn write_arc(out: &mut String, arc: &ArcEntity, properties: impl FnOnce(&mut String)) {
-    group(out, 0, "ARC");
-    properties(out);
-    real(out, 10, arc.center.x);
-    real(out, 20, arc.center.y);
-    real(out, 40, arc.radius);
-    real(out, 50, arc.start_angle.to_degrees());
-    real(out, 51, arc.end_angle.to_degrees());
-}
-
-/// The unit vector up from a baseline at `rotation`.
-fn text_up(rotation: f64) -> cad_core::Vec2 {
-    cad_core::Vec2::new(-rotation.sin(), rotation.cos())
-}
-
-/// A TEXT: its insertion point, height, content, rotation, style, and —
-/// for centred and right-justified text — the horizontal justification
-/// (group 72) with the alignment point in groups 11 and 21, which is where
-/// the text is justified to. A left-justified text writes neither.
-fn write_text(
-    out: &mut String,
-    text: &TextEntity,
-    styles: &TextStyleTable,
-    properties: impl FnOnce(&mut String),
-) {
-    group(out, 0, "TEXT");
-    properties(out);
-    // For a justified text the first point is the baseline start, as DXF
-    // readers expect, and the alignment point is the insertion.
-    let start = text.start();
-    real(out, 10, start.x);
-    real(out, 20, start.y);
-    real(out, 40, text.height);
-    group(out, 1, &text.content);
-    if text.rotation != 0.0 {
-        real(out, 50, text.rotation.to_degrees());
-    }
-    let style = styles
-        .get(text.style)
-        .map_or(TextStyle::STANDARD, |style| style.name.as_str());
-    if style != TextStyle::STANDARD {
-        group(out, 7, style);
-    }
-    let justification = match text.justification {
-        Justification::Left => None,
-        Justification::Center => Some(1),
-        Justification::Right => Some(2),
-    };
-    if let Some(code) = justification {
-        group(out, 72, &code.to_string());
-        real(out, 11, text.insertion.x);
-        real(out, 21, text.insertion.y);
-    }
-}
-
-/// An INSERT: the block by name, the insertion point, the scale along X,
-/// Y, and Z when it is not one — a mirrored reference has its Y scale
-/// negated, which is how DXF says it — and the rotation in degrees when
-/// it is not zero.
-fn write_insert(
-    out: &mut String,
-    reference: &BlockReferenceEntity,
-    blocks: &BlockTable,
-    properties: impl FnOnce(&mut String),
-) {
-    group(out, 0, "INSERT");
-    properties(out);
-    let name = blocks
-        .get(reference.block)
-        .map_or("", |block| block.name.as_str());
-    group(out, 2, name);
-    real(out, 10, reference.insertion.x);
-    real(out, 20, reference.insertion.y);
-    // Exactly one is no scale at all.
-    #[allow(clippy::float_cmp)]
-    if reference.scale != 1.0 || reference.mirrored {
-        let y = if reference.mirrored {
-            -reference.scale
-        } else {
-            reference.scale
-        };
-        real(out, 41, reference.scale);
-        real(out, 42, y);
-        real(out, 43, reference.scale);
-    }
-    if reference.rotation != 0.0 {
-        real(out, 50, reference.rotation.to_degrees());
-    }
-}
-
-/// R12 has no LWPOLYLINE: a polyline is a POLYLINE header, one VERTEX per
-/// point, and a closing SEQEND (ADR-0005). A vertex that starts an arc
-/// segment carries its bulge in group 42; straight ones carry none.
-fn write_polyline(
-    out: &mut String,
-    polyline: &PolylineEntity,
-    layer: &str,
-    properties: impl FnOnce(&mut String),
-) {
-    /// "Vertices follow" — required on every R12 polyline.
-    const VERTICES_FOLLOW: &str = "1";
-    /// Bit 1 of the polyline flags: closed.
-    const CLOSED: &str = "1";
-    const OPEN: &str = "0";
-
-    group(out, 0, "POLYLINE");
-    properties(out);
-    group(out, 66, VERTICES_FOLLOW);
-    group(out, 70, if polyline.closed { CLOSED } else { OPEN });
-    for (vertex, bulge) in polyline.vertices.iter().zip(polyline.bulges()) {
-        group(out, 0, "VERTEX");
-        // A vertex is on its polyline's layer and has no properties of its own.
-        group(out, 8, layer);
-        real(out, 10, vertex.x);
-        real(out, 20, vertex.y);
-        if bulge.abs() > 0.0 {
-            real(out, 42, bulge);
-        }
-    }
-    group(out, 0, "SEQEND");
-}
-
-fn section(out: &mut String, name: &str, body: impl FnOnce(&mut String)) {
-    group(out, 0, "SECTION");
-    group(out, 2, name);
-    body(out);
-    group(out, 0, "ENDSEC");
-}
-
-/// One table of the TABLES section; group 70 is the number of rows.
-fn table(out: &mut String, name: &str, rows: usize, body: impl FnOnce(&mut String)) {
-    group(out, 0, "TABLE");
-    group(out, 2, name);
-    group(out, 70, &rows.to_string());
-    body(out);
-    group(out, 0, "ENDTAB");
-}
-
-/// One group: the code right-aligned in three columns, then the value.
-fn group(out: &mut String, code: i32, value: &str) {
-    writeln!(out, "{code:>3}\n{value}").expect("writing to a String cannot fail");
-}
-
-fn real(out: &mut String, code: i32, value: f64) {
-    group(out, code, &format_real(value));
 }
 
 /// The shortest decimal that parses back to exactly `value`, always with a
@@ -485,7 +868,10 @@ fn format_real(value: f64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use cad_core::Point2;
+    use cad_document::{Block, Layer, LayerId, LinetypeId, TextStyleId};
     use proptest::prelude::*;
 
     use super::*;
@@ -494,31 +880,186 @@ mod tests {
         Entity::Line(LineEntity::new(Point2::new(x0, y0), Point2::new(x1, y1)))
     }
 
-    #[test]
-    fn an_empty_drawing_is_a_valid_file_with_its_three_permanent_rows() {
-        let expected = "  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1009\n  0\nENDSEC\n\
-                        \x20 0\nSECTION\n  2\nTABLES\n\
-                        \x20 0\nTABLE\n  2\nLTYPE\n 70\n1\n\
-                        \x20 0\nLTYPE\n  2\nContinuous\n 70\n0\n  3\nSolid line\n 72\n65\n 73\n0\n 40\n0.0\n\
-                        \x20 0\nENDTAB\n\
-                        \x20 0\nTABLE\n  2\nSTYLE\n 70\n1\n\
-                        \x20 0\nSTYLE\n  2\nStandard\n 70\n0\n 40\n0.0\n 41\n1.0\n 50\n0.0\n 71\n0\n 42\n2.5\n  3\ntxt\n\
-                        \x20 0\nENDTAB\n\
-                        \x20 0\nTABLE\n  2\nLAYER\n 70\n1\n\
-                        \x20 0\nLAYER\n  2\n0\n 70\n0\n 62\n7\n  6\nContinuous\n\
-                        \x20 0\nENDTAB\n  0\nENDSEC\n\
-                        \x20 0\nSECTION\n  2\nENTITIES\n  0\nENDSEC\n  0\nEOF\n";
-        let export = export_with_report(&Drawing::new());
-        assert_eq!(export.text, expected);
-        assert!(!export.report.is_lossy());
-        assert!(export.report.summary().is_empty());
+    // ── reading the output back as groups ──
+
+    type Record<'a> = Vec<(i32, &'a str)>;
+
+    fn groups(text: &str) -> Vec<(i32, &str)> {
+        let lines: Vec<&str> = text.lines().collect();
+        lines
+            .chunks(2)
+            .map(|pair| (pair[0].trim().parse().unwrap(), pair[1]))
+            .collect()
+    }
+
+    /// The records of one type, each from its `0` group to the next.
+    fn records<'a>(text: &'a str, kind: &str) -> Vec<Record<'a>> {
+        let mut out = Vec::new();
+        let mut current: Option<Record<'a>> = None;
+        for (code, value) in groups(text) {
+            if code == 0 {
+                if let Some(record) = current.take() {
+                    out.push(record);
+                }
+                if value == kind {
+                    current = Some(Vec::new());
+                }
+            } else if let Some(record) = &mut current {
+                record.push((code, value));
+            }
+        }
+        out.extend(current);
+        out
+    }
+
+    fn value<'a>(record: &Record<'a>, code: i32) -> Option<&'a str> {
+        record.iter().find(|(c, _)| *c == code).map(|(_, v)| *v)
+    }
+
+    fn values<'a>(record: &Record<'a>, code: i32) -> Vec<&'a str> {
+        record
+            .iter()
+            .filter(|(c, _)| *c == code)
+            .map(|(_, v)| *v)
+            .collect()
+    }
+
+    /// The text of one section.
+    fn section<'a>(text: &'a str, name: &str) -> &'a str {
+        let start = text
+            .find(&format!("  0\nSECTION\n  2\n{name}\n"))
+            .unwrap_or_else(|| panic!("no {name} section"));
+        let rest = &text[start..];
+        let end = rest.find("  0\nENDSEC\n").unwrap();
+        &rest[..end]
+    }
+
+    /// The record of `kind` whose group 2 is `name`.
+    fn named<'a>(text: &'a str, kind: &str, name: &str) -> Record<'a> {
+        records(text, kind)
+            .into_iter()
+            .find(|record| value(record, 2) == Some(name))
+            .unwrap_or_else(|| panic!("no {kind} {name}"))
     }
 
     #[test]
-    fn a_line_is_written_with_its_layer_and_four_coordinates() {
+    fn an_empty_drawing_is_a_complete_file_with_its_permanent_rows() {
+        let dxf = export(&Drawing::new());
+        let sections: Vec<&str> = groups(&dxf)
+            .windows(2)
+            .filter(|pair| pair[0] == (0, "SECTION"))
+            .map(|pair| pair[1].1)
+            .collect();
+        assert_eq!(
+            sections,
+            [
+                "HEADER", "CLASSES", "TABLES", "BLOCKS", "ENTITIES", "OBJECTS"
+            ]
+        );
+        assert!(dxf.ends_with("  0\nEOF\n"));
+        let header = section(&dxf, "HEADER");
+        assert!(header.contains("  9\n$ACADVER\n  1\nAC1015\n"));
+        assert!(header.contains("  9\n$HANDSEED\n  5\n"));
+        assert!(!header.contains("$EXTMIN"), "nothing to have extents");
+
+        let tables: Vec<&str> = records(&dxf, "TABLE")
+            .iter()
+            .map(|table| value(table, 2).unwrap())
+            .collect();
+        assert_eq!(
+            tables,
+            [
+                "VPORT",
+                "LTYPE",
+                "LAYER",
+                "STYLE",
+                "VIEW",
+                "UCS",
+                "APPID",
+                "DIMSTYLE",
+                "BLOCK_RECORD"
+            ]
+        );
+        let names = |kind: &str| -> Vec<&str> {
+            records(&dxf, kind)
+                .iter()
+                .map(|row| value(row, 2).unwrap())
+                .collect()
+        };
+        assert_eq!(names("LTYPE"), ["ByBlock", "ByLayer", "Continuous"]);
+        assert_eq!(names("LAYER"), ["0"]);
+        assert_eq!(names("STYLE"), ["Standard"]);
+        assert_eq!(names("BLOCK_RECORD"), ["*Model_Space", "*Paper_Space"]);
+        assert_eq!(names("BLOCK"), ["*Model_Space", "*Paper_Space"]);
+        assert_eq!(value(&named(&dxf, "TABLE", "LTYPE"), 70), Some("3"));
+        assert!(section(&dxf, "ENTITIES").ends_with("ENTITIES\n"));
+
+        // Every handle is unique and every owner is a handle, or none. (The
+        // header's one group 5 is the seed, not a handle.)
+        let all = groups(&dxf[dxf.find("  0\nSECTION\n  2\nCLASSES\n").unwrap()..]);
+        let handles: Vec<&str> = all
+            .iter()
+            .filter(|(code, _)| *code == 5)
+            .map(|(_, v)| *v)
+            .collect();
+        let unique: HashSet<&str> = handles.iter().copied().collect();
+        assert_eq!(handles.len(), unique.len());
+        for (code, owner) in &all {
+            if matches!(code, 330 | 340 | 350 | 390) {
+                assert!(*owner == "0" || unique.contains(owner), "owner {owner}");
+            }
+        }
+        let seed = value(&groups(section(&dxf, "HEADER")), 5).unwrap();
+        assert!(!unique.contains(seed), "the seed is the first free handle");
+        // The root dictionary names the groups, layouts, and plot styles;
+        // the layouts dictionary names one layout per space.
+        let dictionaries = records(&dxf, "DICTIONARY");
+        assert_eq!(
+            values(&dictionaries[0], 3),
+            ["ACAD_GROUP", "ACAD_LAYOUT", "ACAD_PLOTSTYLENAME"]
+        );
+        assert_eq!(values(&dictionaries[2], 3), ["Layout1", "Model"]);
+        let layouts = records(&dxf, "LAYOUT");
+        assert_eq!(
+            layouts
+                .iter()
+                // The first group 1 is the plot settings' style sheet, empty.
+                .map(|l| *values(l, 1).last().unwrap())
+                .collect::<Vec<_>>(),
+            ["Model", "Layout1"]
+        );
+        let model = named(&dxf, "BLOCK_RECORD", "*Model_Space");
+        // A layout's first 330 is its owner, the dictionary; its last names
+        // its block record, which points back.
+        assert_eq!(values(&layouts[0], 330).last(), value(&model, 5).as_ref());
+        assert_eq!(value(&model, 340), value(&layouts[0], 5));
+    }
+
+    #[test]
+    fn a_line_is_written_with_its_handle_owner_layer_and_coordinates() {
         let dxf = export(&Drawing::from_entities([line(0.0, 0.0, 100.0, 50.5)]));
-        let entity = "  0\nLINE\n  8\n0\n 10\n0.0\n 20\n0.0\n 11\n100.0\n 21\n50.5\n";
-        assert!(dxf.contains(entity), "{dxf}");
+        let lines = records(&dxf, "LINE");
+        assert_eq!(lines.len(), 1);
+        let codes: Vec<i32> = lines[0].iter().map(|(code, _)| *code).collect();
+        assert_eq!(codes, [5, 330, 100, 8, 100, 10, 20, 30, 11, 21, 31]);
+        assert_eq!(value(&lines[0], 8), Some("0"));
+        assert_eq!(values(&lines[0], 100), ["AcDbEntity", "AcDbLine"]);
+        assert_eq!(
+            (
+                value(&lines[0], 10),
+                value(&lines[0], 20),
+                value(&lines[0], 11),
+                value(&lines[0], 21)
+            ),
+            (Some("0.0"), Some("0.0"), Some("100.0"), Some("50.5"))
+        );
+        // Its owner is model space's block record.
+        let model = named(&dxf, "BLOCK_RECORD", "*Model_Space");
+        assert_eq!(value(&lines[0], 330), value(&model, 5));
+        // And the header has the extents of the one line.
+        let header = section(&dxf, "HEADER");
+        assert!(header.contains("  9\n$EXTMIN\n 10\n0.0\n 20\n0.0\n 30\n0.0\n"));
+        assert!(header.contains("  9\n$EXTMAX\n 10\n100.0\n 20\n50.5\n 30\n0.0\n"));
     }
 
     #[test]
@@ -528,22 +1069,23 @@ mod tests {
             Entity::Circle(CircleEntity::new(Point2::new(1.0, 2.0), 3.5)),
             Entity::Arc(ArcEntity::new(Point2::new(0.0, 0.0), 10.0, FRAC_PI_2, PI)),
         ]));
-        assert!(
-            dxf.contains("  0\nCIRCLE\n  8\n0\n 10\n1.0\n 20\n2.0\n 40\n3.5\n"),
-            "{dxf}"
+        let circle = &records(&dxf, "CIRCLE")[0];
+        assert_eq!(
+            (value(circle, 10), value(circle, 20), value(circle, 40)),
+            (Some("1.0"), Some("2.0"), Some("3.5"))
         );
-        assert!(
-            dxf.contains(
-                "  0\nARC\n  8\n0\n 10\n0.0\n 20\n0.0\n 40\n10.0\n 50\n90.0\n 51\n180.0\n"
-            ),
-            "{dxf}"
+        let arc = &records(&dxf, "ARC")[0];
+        assert_eq!(values(arc, 100), ["AcDbEntity", "AcDbCircle", "AcDbArc"]);
+        assert_eq!(
+            (value(arc, 40), value(arc, 50), value(arc, 51)),
+            (Some("10.0"), Some("90.0"), Some("180.0"))
         );
     }
 
-    /// #115: a bulge is written on the vertex that starts the arc segment,
-    /// and nowhere else — straight polylines are written as before.
+    /// #115: a bulge is written after the vertex that starts the arc
+    /// segment, and nowhere else.
     #[test]
-    fn bulges_are_written_as_group_42_on_their_vertices() {
+    fn bulges_are_written_as_group_42_after_their_vertices() {
         let slot = PolylineEntity::with_bulges(
             vec![
                 Point2::new(0.0, 0.0),
@@ -555,32 +1097,51 @@ mod tests {
             true,
         );
         let dxf = export(&Drawing::from_entities([Entity::Polyline(slot)]));
-        // Bulges are the only group 42 among the entities (a STYLE row has one too).
-        let entities = &dxf[dxf.find("ENTITIES").unwrap()..];
-        assert_eq!(entities.matches("\n 42\n").count(), 2);
-        assert!(dxf.contains("VERTEX\n  8\n0\n 10\n10.0\n 20\n0.0\n 42\n1.0\n"));
-        assert!(dxf.contains("VERTEX\n  8\n0\n 10\n0.0\n 20\n4.0\n 42\n-0.5\n"));
-        assert!(dxf.contains("VERTEX\n  8\n0\n 10\n0.0\n 20\n0.0\n  0\nVERTEX"));
+        let polyline = &records(&dxf, "LWPOLYLINE")[0];
+        let data: Vec<(i32, &str)> = polyline
+            .iter()
+            .copied()
+            .filter(|(code, _)| matches!(code, 10 | 20 | 42 | 70 | 90))
+            .collect();
+        assert_eq!(
+            data,
+            [
+                (90, "4"),
+                (70, "1"),
+                (10, "0.0"),
+                (20, "0.0"),
+                (10, "10.0"),
+                (20, "0.0"),
+                (42, "1.0"),
+                (10, "10.0"),
+                (20, "4.0"),
+                (10, "0.0"),
+                (20, "4.0"),
+                (42, "-0.5"),
+            ]
+        );
     }
 
     #[test]
-    fn a_polyline_is_written_as_polyline_vertex_seqend() {
+    fn a_polyline_is_written_as_an_lwpolyline() {
         let triangle = PolylineEntity::new(
             vec![
                 Point2::new(0.0, 0.0),
                 Point2::new(4.0, 0.0),
                 Point2::new(4.0, 3.0),
             ],
-            true,
+            false,
         );
         let dxf = export(&Drawing::from_entities([Entity::Polyline(triangle)]));
-        let expected = "  0\nPOLYLINE\n  8\n0\n 66\n1\n 70\n1\n\
-                        \x20 0\nVERTEX\n  8\n0\n 10\n0.0\n 20\n0.0\n\
-                        \x20 0\nVERTEX\n  8\n0\n 10\n4.0\n 20\n0.0\n\
-                        \x20 0\nVERTEX\n  8\n0\n 10\n4.0\n 20\n3.0\n\
-                        \x20 0\nSEQEND\n";
-        assert!(dxf.contains(expected), "{dxf}");
-        assert!(!dxf.contains("LWPOLYLINE"), "R12 has no LWPOLYLINE");
+        assert!(records(&dxf, "POLYLINE").is_empty() && records(&dxf, "VERTEX").is_empty());
+        let polyline = &records(&dxf, "LWPOLYLINE")[0];
+        assert_eq!(values(polyline, 100), ["AcDbEntity", "AcDbPolyline"]);
+        assert_eq!(
+            (value(polyline, 90), value(polyline, 70)),
+            (Some("3"), Some("0"))
+        );
+        assert_eq!(values(polyline, 10), ["0.0", "4.0", "4.0"]);
+        assert_eq!(values(polyline, 20), ["0.0", "0.0", "3.0"]);
     }
 
     #[test]
@@ -601,17 +1162,16 @@ mod tests {
         tx.commit();
 
         let dxf = export(&drawing);
-        let xs: Vec<&str> = dxf
-            .lines()
-            .skip_while(|l| *l != "ENTITIES")
-            .filter(|l| l.ends_with(".0"))
+        let lines = records(section(&dxf, "ENTITIES"), "LINE");
+        let xs: Vec<&str> = lines.iter().map(|l| value(l, 10).unwrap()).collect();
+        assert_eq!(xs, ["1.0", "3.0", "4.0"]);
+        // Handles follow: one more each time.
+        let handles: Vec<u64> = lines
+            .iter()
+            .map(|l| u64::from_str_radix(value(l, 5).unwrap(), 16).unwrap())
             .collect();
-        assert_eq!(
-            xs,
-            vec![
-                "1.0", "0.0", "1.0", "1.0", "3.0", "0.0", "3.0", "1.0", "4.0", "0.0", "4.0", "1.0"
-            ]
-        );
+        assert_eq!(handles[1], handles[0] + 1);
+        assert_eq!(handles[2], handles[0] + 2);
         assert_eq!(export(&drawing), dxf);
     }
 
@@ -623,14 +1183,30 @@ mod tests {
         assert_eq!(format_real(1e21), "1000000000000000000000.0");
     }
 
-    // ── layers, colours, linetypes, lineweights (#139) ──
+    #[test]
+    fn the_viewport_looks_at_the_whole_drawing() {
+        let dxf = export(&Drawing::from_entities([line(-100.0, 0.0, 100.0, 50.0)]));
+        let viewport = named(&dxf, "VPORT", "*Active");
+        assert_eq!(
+            (value(&viewport, 12), value(&viewport, 22)),
+            (Some("0.0"), Some("25.0"))
+        );
+        // 200 across at an aspect of 1.5 wants 133.3 of height; with margin.
+        let height: f64 = value(&viewport, 40).unwrap().parse().unwrap();
+        assert!((height - 200.0 / VIEW_ASPECT * 1.1).abs() < 1e-9);
+        let empty = export(&Drawing::new());
+        assert_eq!(
+            value(&named(&empty, "VPORT", "*Active"), 40),
+            Some("1000.0")
+        );
+    }
 
-    /// Layers `walls` (dashed, colour 1, locked) and `hidden` (off), the
-    /// linetypes Dashed and Dot, and lines with every kind of property.
+    // ── layers, colours, linetypes, lineweights (#139, #152) ──
+
+    /// Layers `walls` (dashed, colour 1, locked) and `hidden` (off, a
+    /// lineweight), the linetypes Dashed and Dot, and lines with every
+    /// kind of property.
     fn styled() -> Drawing {
-        use cad_core::Point2;
-        use cad_document::{Layer, LayerId, LinetypeId};
-
         let (walls, hidden) = (LayerId::from_raw(1), LayerId::from_raw(2));
         let (dashed, dot) = (LinetypeId::from_raw(1), LinetypeId::from_raw(2));
         let layers = [
@@ -668,6 +1244,7 @@ mod tests {
                 Properties {
                     color: Color::ByBlock,
                     linetype: Linetype::ByBlock,
+                    lineweight: Lineweight::ByBlock,
                     ..Properties::default()
                 },
             ),
@@ -694,97 +1271,77 @@ mod tests {
     }
 
     #[test]
-    fn the_tables_are_written_with_patterns_switches_and_linetypes() {
+    fn the_tables_are_written_with_patterns_switches_lineweights_and_linetypes() {
         let dxf = export(&styled());
-        let tables = dxf
-            .split("TABLES\n")
-            .nth(1)
-            .and_then(|rest| rest.split("  0\nENDSEC").next())
-            .unwrap();
+        let dashed = named(&dxf, "LTYPE", "Dashed");
+        assert_eq!(value(&dashed, 3), Some("__ __ __ __ __ __ __"));
         assert_eq!(
-            tables,
-            "  0\nTABLE\n  2\nLTYPE\n 70\n3\n\
-             \x20 0\nLTYPE\n  2\nContinuous\n 70\n0\n  3\nSolid line\n 72\n65\n 73\n0\n 40\n0.0\n\
-             \x20 0\nLTYPE\n  2\nDashed\n 70\n0\n  3\n__ __ __ __ __ __ __\n 72\n65\n 73\n2\n 40\n0.75\n 49\n0.5\n 49\n-0.25\n\
-             \x20 0\nLTYPE\n  2\nDot\n 70\n0\n  3\n. . . . . . . . . . . .\n 72\n65\n 73\n2\n 40\n0.25\n 49\n0.0\n 49\n-0.25\n\
-             \x20 0\nENDTAB\n\
-             \x20 0\nTABLE\n  2\nSTYLE\n 70\n1\n\
-             \x20 0\nSTYLE\n  2\nStandard\n 70\n0\n 40\n0.0\n 41\n1.0\n 50\n0.0\n 71\n0\n 42\n2.5\n  3\ntxt\n\
-             \x20 0\nENDTAB\n\
-             \x20 0\nTABLE\n  2\nLAYER\n 70\n3\n\
-             \x20 0\nLAYER\n  2\n0\n 70\n0\n 62\n7\n  6\nContinuous\n\
-             \x20 0\nLAYER\n  2\nwalls\n 70\n4\n 62\n1\n  6\nDashed\n\
-             \x20 0\nLAYER\n  2\nhidden\n 70\n0\n 62\n-7\n  6\nContinuous\n\
-             \x20 0\nENDTAB\n"
+            (value(&dashed, 72), value(&dashed, 73)),
+            (Some("65"), Some("2"))
         );
+        assert_eq!(value(&dashed, 40), Some("0.75"));
+        assert_eq!(values(&dashed, 49), ["0.5", "-0.25"]);
+        assert_eq!(values(&dashed, 74), ["0", "0"], "a plain dash per element");
+        assert_eq!(values(&named(&dxf, "LTYPE", "Dot"), 49), ["0.0", "-0.25"]);
+        assert_eq!(value(&named(&dxf, "TABLE", "LTYPE"), 70), Some("5"));
+
+        let walls = named(&dxf, "LAYER", "walls");
+        assert_eq!(value(&walls, 70), Some("4"), "locked");
+        assert_eq!(value(&walls, 62), Some("1"));
+        assert_eq!(value(&walls, 6), Some("Dashed"));
+        assert_eq!(value(&walls, 370), Some("-3"), "the default width");
+        let hidden = named(&dxf, "LAYER", "hidden");
+        assert_eq!(value(&hidden, 62), Some("-7"), "off: a negative colour");
+        assert_eq!(value(&hidden, 370), Some("50"));
+        let zero = named(&dxf, "LAYER", "0");
+        assert_eq!(value(&zero, 6), Some("Continuous"));
+        // Every layer shares the one plot style.
+        let placeholder = &records(&dxf, "ACDBPLACEHOLDER")[0];
+        assert_eq!(value(&walls, 390), value(placeholder, 5));
     }
 
     #[test]
-    fn an_entity_carries_its_layer_and_its_own_colour_and_linetype_only() {
+    fn an_entity_carries_its_layer_and_its_own_colour_linetype_and_lineweight_only() {
         let dxf = export(&styled());
-        let entities: Vec<&str> = dxf
-            .split("ENTITIES\n")
-            .nth(1)
-            .unwrap()
-            .split("  0\nLINE\n")
-            .skip(1)
-            .map(|line| line.split(" 10\n").next().unwrap())
+        let own: Vec<Vec<(i32, &str)>> = records(section(&dxf, "ENTITIES"), "LINE")
+            .iter()
+            .map(|line| {
+                line.iter()
+                    .copied()
+                    .filter(|(code, _)| matches!(code, 8 | 6 | 62 | 370))
+                    .collect()
+            })
             .collect();
         assert_eq!(
-            entities,
+            own,
             vec![
-                "  8\n0\n",
-                "  8\nwalls\n",
-                "  8\nhidden\n  6\nDot\n 62\n5\n",
-                "  8\n0\n  6\nBYBLOCK\n 62\n0\n",
-                "  8\nwalls\n  6\nContinuous\n",
+                vec![(8, "0")],
+                vec![(8, "walls")],
+                vec![(8, "hidden"), (6, "Dot"), (62, "5"), (370, "35")],
+                vec![(8, "0"), (6, "BYBLOCK"), (62, "0"), (370, "-2")],
+                vec![(8, "walls"), (6, "Continuous"), (370, "-3")],
             ]
         );
     }
 
     #[test]
     fn the_header_carries_the_settings_that_are_not_a_new_drawings() {
-        let dxf = export(&styled());
-        let header = dxf.split("  0\nENDSEC").next().unwrap();
-        assert!(header.contains("  9\n$CLAYER\n  8\nwalls\n"), "{header}");
+        let header = section(&export(&styled()), "HEADER").to_owned();
+        assert!(header.contains("  9\n$CLAYER\n  8\nwalls\n"));
         assert!(header.contains("  9\n$CECOLOR\n 62\n3\n"));
         assert!(header.contains("  9\n$CELTYPE\n  6\nDot\n"));
+        assert!(header.contains("  9\n$CELWEIGHT\n370\n25\n"));
         assert!(header.contains("  9\n$LTSCALE\n 40\n20.0\n"));
-        assert!(!header.contains("$CELWEIGHT"), "R12 has no lineweights");
-        let plain = export(&Drawing::new());
-        for variable in ["$CLAYER", "$CECOLOR", "$CELTYPE", "$LTSCALE"] {
-            assert!(!plain.contains(variable), "{variable} is the default");
+        assert!(!header.contains("$INSUNITS"));
+
+        let header = section(&export(&Drawing::new()), "HEADER").to_owned();
+        for variable in ["$CLAYER", "$CECOLOR", "$CELTYPE", "$CELWEIGHT", "$LTSCALE"] {
+            assert!(!header.contains(variable), "{variable}");
         }
     }
 
     #[test]
-    fn lineweights_are_named_in_the_report_not_silently_dropped() {
-        let export = export_with_report(&styled());
-        assert!(!export.text.contains("\n370\n"), "no group 370 in R12");
-        assert_eq!(
-            export.report,
-            ExportReport {
-                lineweights_on_entities: 2,
-                lineweights_on_layers: 1,
-            }
-        );
-        assert!(export.report.is_lossy());
-        assert_eq!(
-            export.report.summary(),
-            vec!["Lineweights are not written in DXF R12: dropped from 2 objects and 1 layer."]
-        );
-        let only_layers = ExportReport {
-            lineweights_on_entities: 0,
-            lineweights_on_layers: 2,
-        };
-        assert_eq!(
-            only_layers.summary(),
-            vec!["Lineweights are not written in DXF R12: dropped from 2 layers."]
-        );
-    }
-
-    #[test]
-    fn everything_r12_holds_survives_export_import_export_byte_for_byte() {
+    fn everything_the_drawing_holds_survives_export_import_export_byte_for_byte() {
         let first = export(&styled());
         let back = crate::import(first.as_bytes()).unwrap();
         assert_eq!(back.report.layers, 2);
@@ -797,24 +1354,41 @@ mod tests {
         let drawing = &back.drawing;
         let walls = drawing.layers().find("walls").unwrap();
         let walls_row = drawing.layers().get(walls).unwrap();
-        assert!(walls_row.locked && walls_row.on);
-        assert_eq!(walls_row.color, Color::Index(1));
-        let hidden = drawing
-            .layers()
-            .get(drawing.layers().find("hidden").unwrap())
-            .unwrap();
-        assert!(!hidden.on);
-        assert_eq!(hidden.lineweight, Lineweight::Default, "lost, as reported");
-        assert_eq!(drawing.current_layer(), walls);
-        assert_eq!(drawing.ltscale(), 20.0);
+        assert!(walls_row.locked && walls_row.color == Color::Index(1));
+        let hidden = drawing.layers().find("hidden").unwrap();
+        assert_eq!(
+            drawing.layers().get(hidden).unwrap().lineweight,
+            Lineweight::Hundredths(50),
+            "a layer's lineweight is written now"
+        );
+        let settings = drawing.settings();
+        assert_eq!(settings.current_layer, walls);
+        assert_eq!(settings.current_color, Color::Index(3));
+        assert_eq!(settings.current_lineweight, Lineweight::Hundredths(25));
+        assert_eq!(settings.ltscale, 20.0);
+        let lineweights: Vec<Lineweight> = {
+            let mut records: Vec<_> = drawing.records().collect();
+            records.sort_by_key(|(id, _)| *id);
+            records
+                .iter()
+                .map(|(_, record)| record.properties.lineweight)
+                .collect()
+        };
+        assert_eq!(
+            lineweights,
+            [
+                Lineweight::ByLayer,
+                Lineweight::ByLayer,
+                Lineweight::Hundredths(35),
+                Lineweight::ByBlock,
+                Lineweight::Default
+            ]
+        );
         assert_eq!(export(drawing), first);
     }
 
-    // ── text (#143) ──
-
     #[test]
-    fn blocks_are_written_as_a_blocks_section_and_inserts_and_survive_a_round_trip() {
-        use cad_document::{Block, BlockReferenceEntity, EntityRecord, Properties};
+    fn blocks_are_written_as_records_definitions_and_inserts_and_survive_a_round_trip() {
         let mut drawing = Drawing::new();
         let mut tx = drawing.transaction();
         let chair = tx
@@ -872,29 +1446,52 @@ mod tests {
         .unwrap();
         tx.commit();
 
-        let first = export_with_report(&drawing);
-        assert!(!first.report.is_lossy());
-        let blocks = first
-            .text
-            .split("  2\nBLOCKS\n")
-            .nth(1)
-            .and_then(|rest| rest.split("  0\nENDSEC").next())
-            .expect("a BLOCKS section");
+        let first = export(&drawing);
+        let names: Vec<&str> = records(&first, "BLOCK_RECORD")
+            .iter()
+            .map(|row| value(row, 2).unwrap())
+            .collect();
+        assert_eq!(names, ["*Model_Space", "*Paper_Space", "Chair", "Pair"]);
+        let chair_record = named(&first, "BLOCK_RECORD", "Chair");
+        let chair_block = named(&first, "BLOCK", "Chair");
         assert_eq!(
-            blocks,
-            "  0\nBLOCK\n  8\n0\n  2\nChair\n 70\n0\n 10\n1.0\n 20\n2.0\n  3\nChair\n\
-             \x20 0\nLINE\n  8\n0\n 62\n0\n 10\n0.0\n 20\n0.0\n 11\n10.0\n 21\n0.0\n\
-             \x20 0\nENDBLK\n  8\n0\n\
-             \x20 0\nBLOCK\n  8\n0\n  2\nPair\n 70\n0\n 10\n0.0\n 20\n0.0\n  3\nPair\n\
-             \x20 0\nINSERT\n  8\n0\n  2\nChair\n 10\n0.0\n 20\n0.0\n\
-             \x20 0\nINSERT\n  8\n0\n  2\nChair\n 10\n20.0\n 20\n0.0\n\
-             \x20 0\nENDBLK\n  8\n0\n"
+            value(&chair_block, 330),
+            value(&chair_record, 5),
+            "the block names its record"
         );
-        assert!(first.text.contains(
-            "  0\nINSERT\n  8\n0\n 62\n1\n  2\nChair\n 10\n0.0\n 20\n50.0\n 41\n2.0\n 42\n-2.0\n 43\n2.0\n 50\n90.0\n"
-        ));
+        assert_eq!(
+            (value(&chair_block, 10), value(&chair_block, 20)),
+            (Some("1.0"), Some("2.0"))
+        );
+        // The chair's line is owned by the chair's record; the pair holds two inserts.
+        let blocks = section(&first, "BLOCKS");
+        let seat = &records(blocks, "LINE")[0];
+        assert_eq!(value(seat, 330), value(&chair_record, 5));
+        assert_eq!(value(seat, 62), Some("0"));
+        let inserts = records(blocks, "INSERT");
+        assert_eq!(inserts.len(), 2);
+        assert_eq!(value(&inserts[1], 10), Some("20.0"));
+        // The mirrored reference in the model: scales, angle, colour.
+        let placed = records(section(&first, "ENTITIES"), "INSERT");
+        assert_eq!(placed.len(), 2);
+        let mirrored = &placed[1];
+        assert_eq!(values(mirrored, 100), ["AcDbEntity", "AcDbBlockReference"]);
+        assert_eq!(
+            (
+                value(mirrored, 41),
+                value(mirrored, 42),
+                value(mirrored, 43),
+                value(mirrored, 50)
+            ),
+            (Some("2.0"), Some("-2.0"), Some("2.0"), Some("90.0"))
+        );
+        assert_eq!(value(mirrored, 62), Some("1"));
+        assert!(
+            value(&placed[0], 41).is_none(),
+            "a scale of one is not written"
+        );
 
-        let back = crate::import(first.text.as_bytes()).unwrap();
+        let back = crate::import(first.as_bytes()).unwrap();
         assert!(!back.report.has_unsupported_content());
         assert_eq!((back.report.blocks, back.report.block_references), (2, 2));
         let mirrored = back
@@ -908,17 +1505,11 @@ mod tests {
             .expect("the mirrored chair");
         assert_eq!(mirrored.scale, 2.0);
         assert!((mirrored.rotation - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
-        assert_eq!(export(&back.drawing), first.text, "byte-identical");
-
-        // A drawing with no blocks writes no BLOCKS section.
-        assert!(!export(&Drawing::new()).contains("BLOCKS"));
+        assert_eq!(export(&back.drawing), first, "byte-identical");
     }
 
     #[test]
     fn a_text_is_written_with_its_insertion_height_words_angle_and_justification() {
-        use cad_core::Point2;
-        use cad_document::{Justification, TextEntity};
-
         let plain = TextEntity::new(Point2::new(1.0, 2.0), 2.5, 0.0, "Hello world");
         let turned = TextEntity::new(
             Point2::new(10.0, 0.0),
@@ -935,31 +1526,158 @@ mod tests {
             Entity::Text(turned.clone()),
             Entity::Text(right),
         ]));
-        assert!(
-            dxf.contains(
-                "  0\nTEXT\n  8\n0\n 10\n1.0\n 20\n2.0\n 40\n2.5\n  1\nHello world\n  0\n"
-            ),
-            "{dxf}"
+        let texts = records(&dxf, "TEXT");
+        assert_eq!(texts.len(), 3);
+        assert_eq!(
+            values(&texts[0], 100),
+            ["AcDbEntity", "AcDbText", "AcDbText"]
         );
+        assert_eq!(
+            (
+                value(&texts[0], 10),
+                value(&texts[0], 20),
+                value(&texts[0], 40),
+                value(&texts[0], 1)
+            ),
+            (Some("1.0"), Some("2.0"), Some("2.5"), Some("Hello world"))
+        );
+        assert!(value(&texts[0], 72).is_none() && value(&texts[0], 7).is_none());
         // A centred text: the alignment point is the insertion, group 72 is 1,
         // and the first point is where the baseline starts.
         let centred_start = turned.start();
-        assert!(
-            dxf.contains(&format!(
-                " 10\n{}\n 20\n{}\n 40\n5.0\n  1\nUp\n 50\n90.0\n 72\n1\n 11\n10.0\n 21\n0.0\n",
-                format_real(centred_start.x),
-                format_real(centred_start.y)
-            )),
-            "{dxf}"
+        assert_eq!(
+            value(&texts[1], 10),
+            Some(format_real(centred_start.x).as_str())
         );
-        assert!(
-            dxf.contains(&format!(
-                " 10\n{}\n 20\n0.0\n 40\n5.0\n  1\nEnd\n 72\n2\n 11\n50.0\n 21\n0.0\n",
-                format_real(start.x)
-            )),
-            "{dxf}"
+        assert_eq!(
+            value(&texts[1], 20),
+            Some(format_real(centred_start.y).as_str())
         );
-        assert!(!dxf.contains("  7\n"), "the Standard style is the default");
+        assert_eq!(
+            (
+                value(&texts[1], 50),
+                value(&texts[1], 72),
+                value(&texts[1], 11),
+                value(&texts[1], 21)
+            ),
+            (Some("90.0"), Some("1"), Some("10.0"), Some("0.0"))
+        );
+        assert_eq!(value(&texts[2], 10), Some(format_real(start.x).as_str()));
+        assert_eq!(
+            (value(&texts[2], 72), value(&texts[2], 11)),
+            (Some("2"), Some("50.0"))
+        );
+    }
+
+    #[test]
+    fn a_paragraph_is_written_as_mtext_with_breaks_and_codes_escaped_and_survives() {
+        let long: String = (0..300)
+            .map(|i| char::from(b'a' + (i % 26) as u8))
+            .collect();
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.insert(MTextEntity::new(
+            Point2::new(0.0, 10.0),
+            40.0,
+            2.5,
+            0.3,
+            "Site plan\nscale 1:50 {a\\b}",
+        ))
+        .unwrap();
+        tx.insert(MTextEntity::new(
+            Point2::ORIGIN,
+            400.0,
+            2.5,
+            0.0,
+            long.clone(),
+        ))
+        .unwrap();
+        tx.commit();
+
+        let dxf = export(&drawing);
+        let texts = records(&dxf, "MTEXT");
+        assert_eq!(texts.len(), 2);
+        assert_eq!(values(&texts[0], 100), ["AcDbEntity", "AcDbMText"]);
+        assert_eq!(
+            (
+                value(&texts[0], 10),
+                value(&texts[0], 20),
+                value(&texts[0], 40),
+                value(&texts[0], 41),
+                value(&texts[0], 71)
+            ),
+            (
+                Some("0.0"),
+                Some("10.0"),
+                Some("2.5"),
+                Some("40.0"),
+                Some("1")
+            )
+        );
+        assert_eq!(
+            value(&texts[0], 1),
+            Some("Site plan\\Pscale 1:50 \\{a\\\\b\\}")
+        );
+        assert_eq!(
+            value(&texts[0], 50),
+            Some(format_real(0.3f64.to_degrees()).as_str())
+        );
+        // Three hundred characters: 250 in group 3, the rest in group 1.
+        assert_eq!(values(&texts[1], 3), [&long[..250]]);
+        assert_eq!(value(&texts[1], 1), Some(&long[250..]));
+        assert!(value(&texts[1], 50).is_none());
+
+        let back = crate::import(dxf.as_bytes()).unwrap();
+        assert!(!back.report.has_unsupported_content());
+        assert_eq!(back.report.formatting_dropped, 0);
+        let paragraphs: Vec<&MTextEntity> = back
+            .drawing
+            .entities()
+            .filter_map(|(_, entity)| match entity {
+                Entity::MText(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(paragraphs.len(), 2);
+        assert!(
+            paragraphs
+                .iter()
+                .any(|text| text.content == "Site plan\nscale 1:50 {a\\b}" && text.width == 40.0)
+        );
+        assert!(paragraphs.iter().any(|text| text.content == long));
+        assert_eq!(export(&back.drawing), dxf, "byte-identical");
+    }
+
+    #[test]
+    fn a_text_style_other_than_standard_is_named_on_its_texts() {
+        let roman = TextStyleId::from_raw(1);
+        let drawing = Drawing::from_tables(
+            [],
+            [],
+            [TextStyle::named("Roman")],
+            [],
+            [
+                (
+                    Entity::Text(TextEntity {
+                        style: roman,
+                        ..TextEntity::new(Point2::ORIGIN, 2.5, 0.0, "Hi")
+                    }),
+                    Properties::default(),
+                ),
+                (
+                    Entity::MText(MTextEntity {
+                        style: roman,
+                        ..MTextEntity::new(Point2::ORIGIN, 40.0, 2.5, 0.0, "Para")
+                    }),
+                    Properties::default(),
+                ),
+            ],
+        )
+        .unwrap();
+        let dxf = export(&drawing);
+        assert_eq!(value(&records(&dxf, "TEXT")[0], 7), Some("Roman"));
+        assert_eq!(value(&records(&dxf, "MTEXT")[0], 7), Some("Roman"));
+        assert_eq!(value(&named(&dxf, "STYLE", "Roman"), 3), Some("txt"));
     }
 
     proptest! {

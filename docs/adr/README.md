@@ -15,7 +15,7 @@ There are two kinds:
 | [0002](0002-wasm-boundary-api.md) | WASM boundary: events in, dirty flags out, pulled frames | Accepted | Bootstrap |
 | [0003](0003-view-ownership-and-viewport-independent-scene.md) | View ownership and viewport-independent committed geometry | Accepted | Bootstrap |
 | [0004](0004-wasm-toolchain-and-build.md) | WASM toolchain and build pipeline | Accepted | Bootstrap |
-| [0005](0005-dxf-baseline.md) | DXF baseline: hand-written ASCII reader, R12 writer | Accepted | Evidence |
+| [0005](0005-dxf-baseline.md) | DXF baseline: hand-written ASCII reader, R12 writer | Accepted; the release superseded by 0018 | Evidence |
 | [0006](0006-entity-store.md) | Entity store: dense vector with an ID-to-slot map | Accepted | Evidence |
 | [0007](0007-spatial-index.md) | Spatial index: rstar R*-tree, grown by insertion only | Accepted for M0–M1 | Evidence |
 | [0008](0008-render-buffer-transport.md) | Render buffer transport: views, instanced segments, reused buffers | Accepted | Evidence |
@@ -28,6 +28,7 @@ There are two kinds:
 | [0015](0015-linetype-rendering.md) | Linetype rendering: dashes drawn by the shader from a distance along the path | Accepted | Evidence |
 | [0016](0016-text-rendering.md) | Text rendering: a stroke font drawn through the line instances | Accepted | Evidence |
 | [0017](0017-blocks.md) | Blocks: definitions as table rows, references resolved through the table | Accepted | Bootstrap |
+| [0018](0018-dxf-release-r2000.md) | The DXF release is R2000: lineweights, MTEXT, LWPOLYLINE, and the structure they need | Accepted | Evidence |
 
 ## Expected evidence ADRs
 

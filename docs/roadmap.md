@@ -40,7 +40,7 @@ M4 left M5 these pieces: a drawing with layers, linetypes, text styles, blocks, 
 ### Needs a person
 
 - How M4 feels against classic CAD: `BLOCK`'s order of questions, `INSERT`'s prompts, `EXPLODE` one level at a time, the lineweight display rule, the stroke font ([M4 review](reviews/m4-exit-review.md)).
-- Whether interactive CAD programs read our `BLOCKS` section, `INSERT`s, and `$INSUNITS` in an R12 header; ezdxf does.
+- Whether interactive CAD programs (AutoCAD, BricsCAD, LibreCAD, QCAD) open our R2000 files — blocks, lineweights, paragraphs, `$INSUNITS`; ezdxf does, with no audit errors ([ADR-0018](adr/0018-dxf-release-r2000.md)).
 - How the M3 commands feel against classic CAD: round corners on polyline offsets, JOIN and gaps between arcs, the STRETCH window, BREAK on circles ([M3 review](reviews/m3-exit-review.md)).
 - The hands-on assessment of the M2 exit condition.
 - Confirming the arc grip behaviour against AutoCAD (ADR-0010).

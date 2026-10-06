@@ -1,7 +1,16 @@
 // MTEXT and the paragraph editor (#144): two corners, then the words in a
 // small editor whose result goes through the command line.
 import { expect, test, type Page } from "@playwright/test";
-import { clickWorld, downloadFrom, enter, logLines, openApp, prompt } from "./support";
+import {
+  clickWorld,
+  downloadFrom,
+  enter,
+  entities,
+  group,
+  logLines,
+  openApp,
+  prompt,
+} from "./support";
 
 const editor = (page: Page) => page.getByRole("dialog", { name: "Text editor" });
 const field = (page: Page) => page.getByRole("textbox", { name: "Paragraph" });
@@ -34,9 +43,11 @@ test.describe("MTEXT", () => {
     await expect(page.getByTestId("selection-headline")).toHaveText("1 multiline text");
     await page.keyboard.press("Escape");
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text.match(/^TEXT$/gm)).toHaveLength(2);
-    expect(file.text).toContain("  1\nSite plan\n");
-    expect(file.text).toContain("  1\nscale one to fifty\n");
+    // Written as one MTEXT, its break as a code (ADR-0018).
+    const paragraphs = entities(file.text, "MTEXT");
+    expect(paragraphs).toHaveLength(1);
+    expect(group(paragraphs[0], 1)).toBe("Site plan\\Pscale one to fifty");
+    expect(group(paragraphs[0], 40)).toBe("8.0");
   });
 
   test("TEXTEDIT reopens the editor with the words; Escape and Cancel keep them", async ({
@@ -64,8 +75,7 @@ test.describe("MTEXT", () => {
     await expect(editor(page)).toHaveCount(0);
 
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text).toContain("  1\none\n");
-    expect(file.text).toContain("  1\ntwo\n");
+    expect(group(entities(file.text, "MTEXT")[0], 1)).toBe("one\\Ptwo");
     expect(file.text).not.toContain("three");
     expect(file.text).not.toContain("changed");
   });

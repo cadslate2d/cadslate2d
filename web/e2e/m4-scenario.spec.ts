@@ -10,16 +10,22 @@
 // reopened after a reload and exports the same bytes.
 import { expect, test, type Page } from "@playwright/test";
 import {
+  blocks,
   chooseFile,
   clickWorld,
   downloadFrom,
   enter,
+  entities,
+  group,
   hoverWorld,
+  lines,
   litPixelsAround,
   logLines,
+  num,
   openApp,
   prompt,
   rendererStats,
+  tableRow,
 } from "./support";
 
 const exported = async (page: Page) => (await downloadFrom(page, () => enter(page, "DXFOUT"))).text;
@@ -88,20 +94,40 @@ test("the M4 drawing-organisation scenario", async ({ page }) => {
 
   // ── the file holds every table and entity ──
   let text = await exported(page);
-  expect(text).toContain("  0\nLTYPE\n  2\nDashed\n");
-  expect(text).toContain("  0\nLAYER\n  2\nwalls\n 70\n0\n 62\n4\n  6\nDashed\n");
-  expect(count(text, "BLOCK")).toBe(1);
+  expect(tableRow(text, "LTYPE", "Dashed")).toBeDefined();
+  const walls = tableRow(text, "LAYER", "walls");
+  expect([group(walls, 70), group(walls, 62), group(walls, 6)]).toEqual(["0", "4", "Dashed"]);
+  expect(blocks(text)).toEqual(["Chair"]);
   // The chair's two lines are in its definition, on walls; none in the model.
-  expect(count(text, "LINE")).toBe(2);
-  expect(text).toContain("  0\nLINE\n  8\nwalls\n 10\n0.0\n 20\n0.0\n 11\n40.0\n 21\n0.0\n");
-  expect(count(text, "INSERT")).toBe(3);
-  expect(text).toContain("  0\nINSERT\n  8\nwalls\n  2\nChair\n 10\n0.0\n 20\n0.0\n");
-  expect(text).toContain(
-    "  0\nINSERT\n  8\nwalls\n  2\nChair\n 10\n100.0\n 20\n100.0\n 41\n2.0\n 42\n2.0\n 43\n2.0\n",
-  );
-  expect(text).toContain(
-    "  0\nTEXT\n  8\n0\n 62\n2\n 10\n0.0\n 20\n-30.0\n 40\n10.0\n  1\nChairs\n",
-  );
+  expect(lines(text)).toEqual([]);
+  expect(lines(text, "BLOCKS")).toEqual([
+    [0, 0, 40, 0],
+    [0, 0, 0, 40],
+  ]);
+  expect(group(entities(text, "LINE", "BLOCKS")[0], 8)).toBe("walls");
+  const placed = entities(text, "INSERT");
+  expect(
+    placed.map((insert) => [
+      group(insert, 8),
+      group(insert, 2),
+      num(insert, 10),
+      num(insert, 20),
+      group(insert, 41),
+    ]),
+  ).toEqual([
+    ["walls", "Chair", 0, 0, undefined],
+    ["walls", "Chair", 100, 0, undefined],
+    ["walls", "Chair", 100, 100, "2.0"],
+  ]);
+  const label = entities(text, "TEXT")[0];
+  expect([
+    group(label, 8),
+    group(label, 62),
+    num(label, 10),
+    num(label, 20),
+    num(label, 40),
+    group(label, 1),
+  ]).toEqual(["0", "2", 0, -30, 10, "Chairs"]);
 
   // ── redefine the chair as a tall stool: every reference follows ──
   await enter(page, "L", "200,0", "200,60", "");
@@ -146,8 +172,8 @@ test("the M4 drawing-organisation scenario", async ({ page }) => {
   expect(steps).toBeGreaterThan(10);
   text = await exported(page);
   expect(count(text, "LINE") + count(text, "INSERT") + count(text, "TEXT")).toBe(0);
-  expect(text).not.toContain("walls");
-  expect(text).not.toContain("BLOCKS");
+  expect(tableRow(text, "LAYER", "walls")).toBeUndefined();
+  expect(blocks(text)).toEqual([]);
   for (let step = 0; step < steps; step += 1) await page.keyboard.press("Control+y");
   expect(await exported(page)).toBe(finished.text);
 

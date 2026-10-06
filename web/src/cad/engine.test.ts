@@ -467,7 +467,8 @@ describe("grips", () => {
     expect(cad.sceneRevision).toBe(revision);
 
     expect(enter(cad, "150,50") & Dirty.Scene).toBeTruthy();
-    expect(cad.exportDxf()).toContain(" 10\n0.0\n 20\n0.0\n 11\n150.0\n 21\n50.0\n");
+    // R2000: the end point's Z sits between the start and end groups (ADR-0018).
+    expect(cad.exportDxf()).toContain(" 10\n0.0\n 20\n0.0\n 30\n0.0\n 11\n150.0\n 21\n50.0\n");
     expect(cad.uiState().selectionCount).toBe(1);
 
     cad.key(KeyAction.Undo);

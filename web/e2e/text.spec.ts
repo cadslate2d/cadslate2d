@@ -6,6 +6,8 @@ import {
   clickWorld,
   downloadFrom,
   enter,
+  entities,
+  group,
   litPixelsAround,
   logLines,
   openApp,
@@ -82,9 +84,14 @@ test.describe("text", () => {
     await expect(prompt(page)).toHaveText("Command:");
 
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text).toContain(
-      "  0\nTEXT\n  8\n0\n 10\n0.0\n 20\n0.0\n 40\n16.0\n  1\nHello world\n",
-    );
+    const text = entities(file.text, "TEXT")[0];
+    expect([
+      group(text, 8),
+      group(text, 10),
+      group(text, 20),
+      group(text, 40),
+      group(text, 1),
+    ]).toEqual(["0", "0.0", "0.0", "16.0", "Hello world"]);
     await expect(logLines(page).last()).toHaveText("Drawing exported as DXF.");
   });
 });

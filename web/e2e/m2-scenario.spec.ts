@@ -9,11 +9,14 @@
 // redone, exported, and reopened.
 import { expect, test, type Page } from "@playwright/test";
 import {
+  arcs,
   chooseFile,
+  circles,
   clickWorld,
   downloadFrom,
   enter,
   hoverWorld,
+  lines,
   logLines,
   openApp,
   prompt,
@@ -22,17 +25,6 @@ import {
 const exported = async (page: Page) => (await downloadFrom(page, () => enter(page, "DXFOUT"))).text;
 const count = (text: string, record: string) =>
   (text.match(new RegExp(`^${record}$`, "gm")) ?? []).length;
-
-/** A number as the DXF writer prints it. */
-const number = (value: number) => (Number.isInteger(value) ? value.toFixed(1) : String(value));
-const line = (x0: number, y0: number, x1: number, y1: number) =>
-  `LINE\n  8\n0\n 10\n${number(x0)}\n 20\n${number(y0)}\n 11\n${number(x1)}\n 21\n${number(y1)}\n`;
-
-/** Every ARC in the file as [centre x, centre y, radius, start°, end°]. */
-function arcs(text: string): number[][] {
-  const pattern = /^ARC\n {2}8\n0\n 10\n(.+)\n 20\n(.+)\n 40\n(.+)\n 50\n(.+)\n 51\n(.+)\n/gm;
-  return [...text.matchAll(pattern)].map((match) => match.slice(1).map(Number));
-}
 
 function expectArc(text: string, expected: number[]): void {
   const matches = (arc: number[]) =>
@@ -66,8 +58,8 @@ test("the M2 drafting scenario", async ({ page }) => {
   await clickWorld(page, canvas, 120, 40);
   await expect(prompt(page)).toHaveText("Command:");
   let text = await exported(page);
-  expect(text).toContain(line(20, 0, 110, 0));
-  expect(text).toContain(line(120, 10, 120, 60));
+  expect(lines(text)).toContainEqual([20, 0, 110, 0]);
+  expect(lines(text)).toContainEqual([120, 10, 120, 60]);
   expectArc(text, [110, 10, 10, 270, 0]);
 
   // ── CHAMFER: right and top ──
@@ -75,17 +67,17 @@ test("the M2 drafting scenario", async ({ page }) => {
   await clickWorld(page, canvas, 120, 40);
   await clickWorld(page, canvas, 60, 80);
   text = await exported(page);
-  expect(text).toContain(line(120, 10, 120, 65));
-  expect(text).toContain(line(105, 80, 20, 80));
-  expect(text).toContain(line(120, 65, 105, 80));
+  expect(lines(text)).toContainEqual([120, 10, 120, 65]);
+  expect(lines(text)).toContainEqual([105, 80, 20, 80]);
+  expect(lines(text)).toContainEqual([120, 65, 105, 80]);
 
   // ── FILLET with radius zero: a sharp corner between top and left ──
   await enter(page, "F", "R", "0");
   await clickWorld(page, canvas, 60, 80);
   await clickWorld(page, canvas, 0, 40);
   text = await exported(page);
-  expect(text).toContain(line(105, 80, 0, 80));
-  expect(text).toContain(line(0, 80, 0, 20));
+  expect(lines(text)).toContainEqual([105, 80, 0, 80]);
+  expect(lines(text)).toContainEqual([0, 80, 0, 20]);
 
   // ── a grip: stretch the left edge down to the corner, by typed coordinates ──
   await clickWorld(page, canvas, 0, 65); // select it, away from its grips
@@ -94,7 +86,7 @@ test("the M2 drafting scenario", async ({ page }) => {
   await enter(page, "0,0");
   await page.keyboard.press("Escape"); // clear the selection
   text = await exported(page);
-  expect(text).toContain(line(0, 80, 0, 0));
+  expect(lines(text)).toContainEqual([0, 80, 0, 0]);
 
   // ── EXTEND the bottom edge to the left edge ──
   await enter(page, "EX");
@@ -103,7 +95,7 @@ test("the M2 drafting scenario", async ({ page }) => {
   await clickWorld(page, canvas, 25, 0);
   await enter(page, "");
   text = await exported(page);
-  expect(text).toContain(line(0, 0, 110, 0));
+  expect(lines(text)).toContainEqual([0, 0, 110, 0]);
 
   // ── object snap: a hole centred exactly on the midpoint of the left edge ──
   await enter(page, "C");
@@ -113,7 +105,7 @@ test("the M2 drafting scenario", async ({ page }) => {
   await clickWorld(page, canvas, 3, 42);
   await enter(page, "12");
   text = await exported(page);
-  expect(text).toContain("CIRCLE\n  8\n0\n 10\n0.0\n 20\n40.0\n 40\n12.0\n");
+  expect(circles(text)).toContainEqual([0, 40, 12]);
 
   // ── TRIM: the half of the hole outside the plate ──
   await enter(page, "TR");
@@ -138,17 +130,17 @@ test("the M2 drafting scenario", async ({ page }) => {
   await clickWorld(page, canvas, 60, 45);
   await enter(page, "");
   text = await exported(page);
-  expect(text).toContain(line(0, 25, 110, 25));
+  expect(lines(text)).toContainEqual([0, 25, 110, 25]);
 
   // ── SCALE, then ROTATE, that line about its start ──
   await clickWorld(page, canvas, 70, 25);
   await enter(page, "SC", "0,25", "0.5");
   text = await exported(page);
-  expect(text).toContain(line(0, 25, 55, 25));
+  expect(lines(text)).toContainEqual([0, 25, 55, 25]);
   await clickWorld(page, canvas, 40, 25);
   await enter(page, "RO", "0,25", "180");
   text = await exported(page);
-  expect(text).toContain(line(0, 25, -55, 25));
+  expect(lines(text)).toContainEqual([0, 25, -55, 25]);
 
   // ── ORTHO: a line straight down from the end of the bottom edge, found by snap ──
   await page.keyboard.press("F8");
@@ -163,7 +155,7 @@ test("the M2 drafting scenario", async ({ page }) => {
   await page.keyboard.press("F8");
 
   const finished = await downloadFrom(page, () => enter(page, "DXFOUT"));
-  expect(finished.text).toContain(line(110, 0, 110, -40));
+  expect(lines(finished.text)).toContainEqual([110, 0, 110, -40]);
   expect(count(finished.text, "LINE")).toBe(7);
   expect(count(finished.text, "ARC")).toBe(3);
   expect(count(finished.text, "CIRCLE")).toBe(0);

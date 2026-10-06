@@ -1,15 +1,20 @@
 import { expect, test } from "@playwright/test";
 import {
+  blocks,
   chooseFile,
   downloadFrom,
   enter,
+  entities,
   entitiesSection,
   fixturePath,
+  group,
+  lines,
   litPixels,
   logLines,
   openApp,
   recordRequests,
   settle,
+  tableRow,
 } from "./support";
 
 test.describe("export", () => {
@@ -21,8 +26,8 @@ test.describe("export", () => {
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
 
     expect(file.name).toBe("drawing.dxf");
-    expect(file.text).toContain("$ACADVER\n  1\nAC1009\n");
-    expect(file.text).toContain("LINE\n  8\n0\n 10\n0.0\n 20\n0.0\n 11\n100.0\n 21\n50.0\n");
+    expect(file.text).toContain("$ACADVER\n  1\nAC1015\n");
+    expect(lines(file.text)).toContainEqual([0, 0, 100, 50]);
     await expect(logLines(page).last()).toHaveText("Drawing exported as DXF.");
   });
 
@@ -61,7 +66,7 @@ test.describe("open", () => {
     await expect(logLines(page).last()).toHaveText("Drawing unit: metres.");
 
     const first = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(first.text.match(/^POLYLINE$/gm)).toHaveLength(3);
+    expect(first.text.match(/^LWPOLYLINE$/gm)).toHaveLength(3);
     // Two semicircles, one quarter arc, one clockwise arc.
     expect(entitiesSection(first.text).match(/^ 42$/gm)).toHaveLength(4);
     expect(first.text).toContain(" 42\n-0.5\n");
@@ -146,7 +151,7 @@ test.describe("unsupported content", () => {
     page.once("dialog", (dialog) => void dialog.accept());
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
     expect(file.name).toBe("ezdxf-r12-blocks.dxf");
-    expect(file.text.match(/^BLOCK$/gm)).toHaveLength(2);
+    expect(blocks(file.text)).toEqual(["CHAIR", "PAIR"]);
     expect(file.text.match(/^INSERT$/gm)).toHaveLength(8);
     expect(file.text).not.toContain("GHOST");
     // The two chairs of the pair are in its definition; the model holds one line.
@@ -183,16 +188,16 @@ test.describe("properties in DXF", () => {
     await enter(page, "C", "50,50", "10");
 
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text).toContain("  2\nLTYPE\n 70\n2\n");
-    expect(file.text).toContain("  0\nLTYPE\n  2\nDashed\n");
-    expect(file.text).toContain("  0\nLAYER\n  2\nwalls\n 70\n0\n 62\n1\n  6\nDashed\n");
+    expect(tableRow(file.text, "LTYPE", "Dashed")).toBeDefined();
+    const walls = tableRow(file.text, "LAYER", "walls");
+    expect([group(walls, 70), group(walls, 62), group(walls, 6)]).toEqual(["0", "1", "Dashed"]);
     expect(file.text).toContain("  9\n$CLAYER\n  8\nwalls\n");
     expect(file.text).toContain("  9\n$LTSCALE\n 40\n5.0\n");
-    expect(file.text).toContain("LINE\n  8\nwalls\n 62\n5\n");
-    expect(file.text).not.toContain("\n370\n");
-    await expect(logLines(page).last()).toHaveText(
-      "Lineweights are not written in DXF R12: dropped from 1 object.",
-    );
+    const line = entities(file.text, "LINE")[0];
+    expect([group(line, 8), group(line, 62), group(line, 370)]).toEqual(["walls", "5", undefined]);
+    // The circle was drawn after LWEIGHT 0.5: its lineweight is written (ADR-0018).
+    expect(group(entities(file.text, "CIRCLE")[0], 370)).toBe("50");
+    await expect(logLines(page).last()).toHaveText("Drawing exported as DXF.");
 
     await page.reload();
     await openApp(page);

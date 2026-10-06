@@ -1,9 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
+  circles,
   clickWorld,
   downloadFrom,
   enter,
   hoverWorld,
+  lines,
   litPixels,
   logLines,
   openApp,
@@ -12,12 +14,6 @@ import {
 } from "./support";
 
 const exported = async (page: Page) => (await downloadFrom(page, () => enter(page, "DXFOUT"))).text;
-
-/** Every LINE in a DXF export, as [x0, y0, x1, y1]. */
-function lines(text: string): number[][] {
-  const pattern = /LINE\n {2}8\n0\n 10\n(.+)\n 20\n(.+)\n 11\n(.+)\n 21\n(.+)\n/g;
-  return [...text.matchAll(pattern)].map((match) => match.slice(1).map(Number));
-}
 
 /** A 100 × 60 box drawn as four separate lines. */
 async function box(page: Page) {
@@ -93,8 +89,8 @@ test.describe("STRETCH", () => {
     await enter(page, "0,0", "50,0");
 
     const text = await exported(page);
-    expect(text).toContain("CIRCLE\n  8\n0\n 10\n150.0\n 20\n30.0\n 40\n15.0\n");
-    expect(text).toContain("CIRCLE\n  8\n0\n 10\n60.0\n 20\n30.0\n 40\n30.0\n");
+    expect(circles(text)).toContainEqual([150, 30, 15]);
+    expect(circles(text)).toContainEqual([60, 30, 30]);
   });
 
   test("says so when the window holds nothing", async ({ page }) => {

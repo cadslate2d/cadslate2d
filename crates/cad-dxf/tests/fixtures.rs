@@ -9,7 +9,7 @@ use cad_document::{
     Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity, Properties, TextEntity,
     TextStyleId,
 };
-use cad_dxf::{DxfError, Import, export, export_with_report, import};
+use cad_dxf::{DxfError, Import, export, import};
 
 fn fixtures(kind: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -89,21 +89,15 @@ fn every_valid_fixture_round_trips_stably() {
             polylines(&first.drawing),
             "{name}: polylines changed"
         );
-        // A paragraph is written as one TEXT per line (ADR-0005, amended):
-        // the count grows by its lines less itself, and nothing else changes.
-        let lines_of_paragraphs: usize = first
-            .drawing
-            .entities()
-            .filter_map(|(_, entity)| match entity {
-                Entity::MText(text) => Some(text.lines().len()),
-                _ => None,
-            })
-            .sum();
-        let paragraph_count = paragraphs(&first.drawing).len();
         assert_eq!(
             second.drawing.len(),
-            first.drawing.len() - paragraph_count + lines_of_paragraphs,
+            first.drawing.len(),
             "{name}: entity count changed"
+        );
+        assert_eq!(
+            paragraphs(&second.drawing),
+            paragraphs(&first.drawing),
+            "{name}: paragraphs changed"
         );
         assert_eq!(
             export(&second.drawing),
@@ -508,13 +502,12 @@ fn nested_blocks_from_another_writer() {
     );
 
     // Our export holds what the model holds, and reads back the same.
-    let exported = export_with_report(drawing);
-    assert!(!exported.report.is_lossy());
-    let again = import(exported.text.as_bytes()).unwrap();
+    let exported = export(drawing);
+    let again = import(exported.as_bytes()).unwrap();
     assert_eq!(references(&again.drawing), placed);
     assert_eq!(again.drawing.blocks().len(), 3);
     assert!(!again.report.has_unsupported_content());
-    assert_eq!(export(&again.drawing), exported.text, "byte-identical");
+    assert_eq!(export(&again.drawing), exported, "byte-identical");
 }
 
 /// A block with attributes, from a modern file: the geometry and the
@@ -705,19 +698,15 @@ fn lineweights_scales_and_undefined_names_from_another_writer() {
         ]
     );
 
-    // Written back as R12, the lineweights are what is lost — and said so.
-    let export = export_with_report(drawing);
+    // Written back, the lineweights travel too (ADR-0018).
+    let text = export(drawing);
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(properties(&back.drawing), properties(drawing));
     assert_eq!(
-        export.report.summary(),
-        vec!["Lineweights are not written in DXF R12: dropped from 2 objects and 1 layer."]
+        layer_named(&back.drawing, "HEAVY").1.lineweight,
+        layer_named(drawing, "HEAVY").1.lineweight
     );
-    let back = cad_dxf::import(export.text.as_bytes()).unwrap();
-    assert_eq!(properties(&back.drawing).len(), 5);
-    assert_eq!(
-        cad_dxf::export(&back.drawing),
-        export.text,
-        "export → import → export"
-    );
+    assert_eq!(export(&back.drawing), text, "export → import → export");
 }
 
 // ── text (#145) ──
@@ -820,7 +809,7 @@ fn text_and_styles_from_another_writer() {
     );
     // What came in goes out, and comes back the same.
     let text = export(drawing);
-    assert!(text.contains("  0\nSTYLE\n  2\nROMAN\n"));
+    assert!(text.contains("AcDbTextStyleTableRecord\n  2\nROMAN\n"));
     assert!(text.contains("  7\nROMAN\n"));
     let back = cad_dxf::import(text.as_bytes()).unwrap();
     assert_eq!(export(&back.drawing), text, "export → import → export");
@@ -880,10 +869,13 @@ fn paragraphs_from_another_writer() {
             "Drawing unit: metres.",
         ]
     );
-    // Written back as R12 a paragraph is one TEXT per line, and stays so.
+    // Written back, a paragraph is an MTEXT with its break as a code (ADR-0018).
     let text = export(drawing);
-    assert!(!text.contains("MTEXT"));
-    assert!(text.contains("  1\nFirst line\n") && text.contains("  1\nSecond line\n"));
+    assert!(text.contains("  1\nFirst line\\PSecond line\n"));
+    assert_eq!(
+        paragraphs(&cad_dxf::import(text.as_bytes()).unwrap().drawing),
+        notes
+    );
     let back = cad_dxf::import(text.as_bytes()).unwrap();
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }

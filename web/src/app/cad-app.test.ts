@@ -132,7 +132,8 @@ describe("export", () => {
     expect(host.saved).toHaveLength(1);
     const [file] = host.saved;
     expect(file).toMatchObject({ name: "drawing.dxf", mimeType: "application/dxf" });
-    expect(file?.text).toContain("LINE\n  8\n0\n 10\n0.0\n 20\n0.0\n 11\n100.0\n 21\n50.0\n");
+    expect(file?.text).toContain("$ACADVER\n  1\nAC1015\n");
+    expect(file?.text).toContain("AcDbLine\n 10\n0.0\n 20\n0.0\n 30\n0.0\n 11\n100.0\n 21\n50.0\n");
     expect(file?.text.endsWith("  0\nEOF\n")).toBe(true);
     expect(app.ui.getSnapshot().unsavedChanges).toBe(false);
     expect(app.ui.getSnapshot().log.at(-1)).toBe("Drawing exported as DXF.");

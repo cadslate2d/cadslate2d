@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { commandInput, downloadFrom, enter, logLines, openApp, prompt } from "./support";
+import { circles, commandInput, downloadFrom, enter, logLines, openApp, prompt } from "./support";
 
 test.describe("toolbar", () => {
   // DESIGN §5: toolbar actions invoke the same command machinery as typed commands.
@@ -14,7 +14,7 @@ test.describe("toolbar", () => {
     // The rest of the command is ordinary keyboard input.
     await enter(page, "0,0", "25");
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text).toContain("CIRCLE\n  8\n0\n 10\n0.0\n 20\n0.0\n 40\n25.0\n");
+    expect(circles(file.text)).toContainEqual([0, 0, 25]);
   });
 
   test("a button cancels the command in progress first", async ({ page }) => {

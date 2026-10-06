@@ -1,7 +1,7 @@
 // The Properties panel (#141): what is selected and what it shares, and a
 // change made there is CHPROP through the command line.
 import { expect, test, type Page } from "@playwright/test";
-import { clickWorld, downloadFrom, enter, logLines, openApp } from "./support";
+import { clickWorld, downloadFrom, enter, entities, group, logLines, openApp } from "./support";
 
 const panel = (page: Page) => page.getByRole("complementary", { name: "Properties" });
 const headline = (page: Page) => page.getByTestId("selection-headline");
@@ -42,8 +42,10 @@ test.describe("Properties panel", () => {
     await expect(logLines(page).filter({ hasText: "2 objects changed to red." })).toHaveCount(1);
 
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text).toContain("LINE\n  8\nwalls\n 62\n1\n");
-    expect(file.text).toContain("CIRCLE\n  8\nwalls\n 62\n1\n");
+    for (const kind of ["LINE", "CIRCLE"]) {
+      const entity = entities(file.text, kind)[0];
+      expect([group(entity, 8), group(entity, 62)]).toEqual(["walls", "1"]);
+    }
 
     // Give one of them another colour: the panel says they vary.
     await page.keyboard.press("Escape");

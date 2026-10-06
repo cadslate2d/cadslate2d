@@ -4,6 +4,7 @@ import {
   commandInput,
   downloadFrom,
   enter,
+  lines,
   litPixels,
   logLines,
   openApp,
@@ -174,7 +175,7 @@ test.describe("LINE options", () => {
     await enter(page, "200", "");
 
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text).toContain(" 10\n0.0\n 20\n0.0\n 11\n200.0\n 21\n0.0\n");
+    expect(lines(file.text)).toContainEqual([0, 0, 200, 0]);
   });
 
   test("Enter at the idle prompt repeats LINE", async ({ page }) => {

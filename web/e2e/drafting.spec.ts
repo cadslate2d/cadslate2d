@@ -8,9 +8,11 @@ import { expect, test } from "@playwright/test";
 import {
   centerOf,
   chooseFile,
+  circles,
   downloadFrom,
   enter,
   highlightPixels,
+  lines,
   litPixels,
   logLines,
   openApp,
@@ -37,11 +39,11 @@ test("the M1 drafting scenario", async ({ page }) => {
   await expect(prompt(page)).toHaveText("Command:");
 
   let file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-  expect(count(file.text, "POLYLINE")).toBe(2);
+  expect(count(file.text, "LWPOLYLINE")).toBe(2);
   expect(count(file.text, "CIRCLE")).toBe(2);
   expect(count(file.text, "ARC")).toBe(1);
   expect(count(file.text, "LINE")).toBe(1);
-  expect(file.text).toContain("CIRCLE\n  8\n0\n 10\n-70.0\n 20\n30.0\n 40\n8.0\n");
+  expect(circles(file.text)).toContainEqual([-70, 30, 8]);
 
   // ── edit: COPY the bolt hole to the other three corners ──
   await page.mouse.click(x - 70 + 8, y - 30); // on the hole's rightmost point
@@ -50,15 +52,19 @@ test("the M1 drafting scenario", async ({ page }) => {
   await enter(page, "CO", "-70,30", "70,30", "70,-30", "-70,-30", "");
   file = await downloadFrom(page, () => enter(page, "DXFOUT"));
   expect(count(file.text, "CIRCLE")).toBe(5);
-  for (const centre of ["70.0\n 20\n30.0", "70.0\n 20\n-30.0", "-70.0\n 20\n-30.0"]) {
-    expect(file.text).toContain(`CIRCLE\n  8\n0\n 10\n${centre}\n 40\n8.0\n`);
+  for (const [x, y] of [
+    [70, 30],
+    [70, -30],
+    [-70, -30],
+  ]) {
+    expect(circles(file.text)).toContainEqual([x, y, 8]);
   }
 
   // ── edit: MOVE the centre line up by an exact distance ──
   await page.mouse.click(x + 10, y); // the centre line (the bore's curve is 25 away)
   await enter(page, "M", "0,0", "@0,10");
   file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-  expect(file.text).toContain("LINE\n  8\n0\n 10\n-25.0\n 20\n10.0\n 11\n25.0\n 21\n10.0\n");
+  expect(lines(file.text)).toContainEqual([-25, 10, 25, 10]);
 
   // ── edit: ERASE the arc with a crossing box, verb first ──
   await enter(page, "E");
@@ -80,7 +86,7 @@ test("the M1 drafting scenario", async ({ page }) => {
   file = await downloadFrom(page, () => enter(page, "DXFOUT"));
   expect(count(file.text, "CIRCLE")).toBe(2);
   expect(count(file.text, "ARC")).toBe(1);
-  expect(file.text).toContain("LINE\n  8\n0\n 10\n-25.0\n 20\n0.0\n 11\n25.0\n 21\n0.0\n");
+  expect(lines(file.text)).toContainEqual([-25, 0, 25, 0]);
 
   for (let step = 0; step < 3; step += 1) await page.keyboard.press("Control+y");
   const finished = await downloadFrom(page, () => enter(page, "DXFOUT"));

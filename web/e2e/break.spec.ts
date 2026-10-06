@@ -1,13 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
-import { clickWorld, downloadFrom, enter, logLines, openApp, prompt } from "./support";
+import { arcs, clickWorld, downloadFrom, enter, lines, logLines, openApp, prompt } from "./support";
 
 const exported = async (page: Page) => (await downloadFrom(page, () => enter(page, "DXFOUT"))).text;
-
-/** Every LINE in a DXF export, as [x0, y0, x1, y1]. */
-function lines(text: string): number[][] {
-  const pattern = /LINE\n {2}8\n0\n 10\n(.+)\n 20\n(.+)\n 11\n(.+)\n 21\n(.+)\n/g;
-  return [...text.matchAll(pattern)].map((match) => match.slice(1).map(Number));
-}
 
 test.describe("BREAK", () => {
   test("removes the part of a line between two points, in one undo step", async ({ page }) => {
@@ -62,9 +56,8 @@ test.describe("BREAK", () => {
 
     const text = await exported(page);
     expect(text.match(/^CIRCLE$/gm)).toBeNull();
-    const arc = /ARC\n {2}8\n0\n 10\n(.+)\n 20\n(.+)\n 40\n(.+)\n 50\n(.+)\n 51\n(.+)\n/.exec(text);
     // What is left runs counter-clockwise from 90° round to 0°.
-    const [x, y, radius, start, end] = arc?.slice(1).map(Number) ?? [];
+    const [x, y, radius, start, end] = arcs(text)[0] ?? [];
     expect([x, y, radius]).toEqual([0, 0, 50]);
     expect(start).toBeCloseTo(90, 9);
     expect(Math.cos(((end ?? NaN) * Math.PI) / 180)).toBeCloseTo(1, 9);

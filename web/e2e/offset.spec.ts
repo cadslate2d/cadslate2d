@@ -1,13 +1,17 @@
 import { expect, test } from "@playwright/test";
 import {
+  arcs,
+  circles,
   clickWorld,
   downloadFrom,
   enter,
   entitiesSection,
   hoverWorld,
+  lines,
   litPixels,
   logLines,
   openApp,
+  polylines,
   prompt,
   rendererStats,
 } from "./support";
@@ -31,8 +35,8 @@ test.describe("OFFSET", () => {
     await expect(prompt(page)).toHaveText("Command:");
 
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text).toContain("LINE\n  8\n0\n 10\n0.0\n 20\n10.0\n 11\n100.0\n 21\n10.0\n");
-    expect(file.text).toContain("CIRCLE\n  8\n0\n 10\n0.0\n 20\n100.0\n 40\n50.0\n");
+    expect(lines(file.text)).toContainEqual([0, 10, 100, 10]);
+    expect(circles(file.text)).toContainEqual([0, 100, 50]);
   });
 
   test("previews the result on the side of the pointer without committed uploads", async ({
@@ -60,9 +64,7 @@ test.describe("OFFSET", () => {
     await enter(page, "0,25", "");
 
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    const radii = [...file.text.matchAll(/^ARC\n {2}8\n0\n 10\n.+\n 20\n.+\n 40\n(.+)$/gm)].map(
-      (match) => Number(match[1]),
-    );
+    const radii = arcs(file.text).map(([, , radius]) => radius ?? NaN);
     expect(radii.map((radius) => Math.round(radius * 1e6) / 1e6).sort((a, b) => a - b)).toEqual([
       25, 50, 60,
     ]);
@@ -78,9 +80,13 @@ test.describe("OFFSET", () => {
     await enter(page, "");
 
     const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-    expect(file.text.match(/^POLYLINE$/gm)).toHaveLength(3);
+    expect(file.text.match(/^LWPOLYLINE$/gm)).toHaveLength(3);
     // The inner one: four plain vertices, one of them the corner (10, 10).
-    expect(file.text).toContain("VERTEX\n  8\n0\n 10\n10.0\n 20\n10.0\n  0\n");
+    expect(
+      polylines(file.text).some((polyline) =>
+        polyline.vertices.some(([x, y, bulge]) => x === 10 && y === 10 && bulge === 0),
+      ),
+    ).toBe(true);
     // The outer one: four quarter-arc corners, each a bulge of tan(22.5°).
     const bulges = [...entitiesSection(file.text).matchAll(/^ 42\n(.+)$/gm)].map((match) =>
       Math.abs(Number(match[1])),

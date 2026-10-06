@@ -1495,6 +1495,8 @@ The exact initial DXF release target is PROVISIONAL.
 
 > **Resolved in M4 (properties and tables):** the writer writes the layer and linetype tables, every entity's layer, colour, and linetype, and the settings for new objects in the header; the reader takes them from any release, makes the rows a file names but never defines, and reports it. Lineweights are read but not written — R12 has no group for them — and the export report names what was lost; raising the release is M5's decision ([ADR-0005](adr/0005-dxf-baseline.md), amended).
 
+> **Resolved in M5 (release):** the writer writes R2000 — handles, the nine tables, the two spaces, the dictionary and layouts — so that lineweights, paragraphs (MTEXT), and polylines (LWPOLYLINE) are written as what they are and nothing the drawing holds is lost; the reader is unchanged ([ADR-0018](adr/0018-dxf-release-r2000.md)).
+
 > **Resolved in M4 (blocks):** the writer writes a `BLOCKS` section with every definition and an `INSERT` for every reference — a mirrored reference as a negative Y scale — and the reader takes them from any release, nested, a definition placing one the file defines after it; a reference with a non-uniform scale, an array, or attributes comes in as far as the model holds and the rest is reported, and a file whose blocks place each other in a cycle is refused ([ADR-0005](adr/0005-dxf-baseline.md), amended).
 
 The internal document must remain semantic rather than mirroring DXF group codes.

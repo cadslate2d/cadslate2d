@@ -56,7 +56,7 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `GRID` | | Sets the grid spacing (10 at start). |
 | `POLARANG` | | Sets the angle between polar tracking directions (90° at start). |
 | `OPEN` | `DXFIN`, Ctrl+O | Opens an ASCII DXF file. Lines, circles, arcs, polylines — including their arc segments — text (TEXT and MTEXT, with their styles), and blocks (the BLOCKS section and INSERT, nested) are imported with their layers, colours, linetypes, and lineweights, and the tables with them; a paragraph's formatting codes are dropped and reported, its words and line breaks kept; a reference with a non-uniform scale, an array, or attributes comes in as far as the model holds and the rest is reported. Everything else is counted and reported. |
-| `DXFOUT` | `SAVE`, `SAVEAS`, `EXPORT`, Ctrl+S | Downloads the drawing as ASCII DXF (R12), with its layers, linetypes, text styles, and blocks. Polyline arc segments are written as bulges; a paragraph is written as one TEXT per line, since R12 has no MTEXT; a mirrored block reference is written with a negative Y scale. R12 has no lineweights: the command log says how many were dropped. |
+| `DXFOUT` | `SAVE`, `SAVEAS`, `EXPORT`, Ctrl+S | Downloads the drawing as ASCII DXF R2000 ([ADR-0018](docs/adr/0018-dxf-release-r2000.md)), with its layers, linetypes, lineweights, text styles, and blocks. Polylines are LWPOLYLINEs with their arc segments as bulges; a paragraph is an MTEXT; a mirrored block reference has a negative Y scale. Nothing the drawing holds is left out. |
 
 Whenever a command asks you to pick one object — OFFSET, TRIM, EXTEND, FILLET, CHAMFER, BREAK — the object under the pointer is highlighted before you click.
 
@@ -125,7 +125,7 @@ A layer also has a lineweight (`LAYER`, `LWeight`), and an object can have one o
 
 And a layer has a linetype (`LAYER`, `LType`), as an object can (`LINETYPE`). A linetype is a pattern of dashes and gaps in drawing units, multiplied by `LTSCALE`; it runs along an object from its start — through the vertices of a polyline, round its arcs — and stays put as the view zooms. A pattern too fine to see at the current zoom is drawn solid. Dashes are drawn by the shader from where along the object each piece begins, so loading a linetype or changing `LTSCALE` touches no geometry ([ADR-0015](docs/adr/0015-linetype-rendering.md)). Picking and snapping see the whole object, gaps included.
 
-Layers, colours, linetypes, and the settings for new objects are written to DXF and read back from it, from any release. Lineweights are read from newer files but not written — R12 has no place for them — and the export says how many were lost ([ADR-0005](docs/adr/0005-dxf-r12-ascii-baseline.md), amended).
+Layers, colours, linetypes, lineweights, text styles, blocks, and the settings for new objects are written to DXF (release 2000) and read back from any release.
 
 ### ORTHO and POLAR
 

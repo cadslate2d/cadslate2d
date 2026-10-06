@@ -1,6 +1,6 @@
 # ADR-0005: DXF baseline — hand-written ASCII reader, R12 writer
 
-**Status:** Accepted (2026-10-04)  
+**Status:** Accepted (2026-10-04); the release decision superseded by [ADR-0018](0018-dxf-release-r2000.md) (2026-10-06) — the reader and the amendments below stand  
 **Date:** 2026-10-04  
 **Kind:** Evidence (resolves a PROVISIONAL item)  
 **Design refs:** §10.1, §24.1, §24.2, §43

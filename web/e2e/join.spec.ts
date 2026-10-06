@@ -1,5 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
-import { clickWorld, downloadFrom, enter, logLines, openApp, prompt } from "./support";
+import {
+  clickWorld,
+  downloadFrom,
+  enter,
+  lines,
+  logLines,
+  openApp,
+  polylines,
+  prompt,
+} from "./support";
 
 const exported = async (page: Page) => (await downloadFrom(page, () => enter(page, "DXFOUT"))).text;
 
@@ -25,7 +34,7 @@ test.describe("JOIN", () => {
 
     const text = await exported(page);
     expect(count(text, "LINE")).toBe(1);
-    expect(text).toContain("LINE\n  8\n0\n 10\n0.0\n 20\n0.0\n 11\n100.0\n 21\n0.0\n");
+    expect(lines(text)).toEqual([[0, 0, 100, 0]]);
 
     await page.keyboard.press("Control+z");
     expect(count(await exported(page), "LINE")).toBe(2);
@@ -48,12 +57,11 @@ test.describe("JOIN", () => {
     const text = await exported(page);
     expect(count(text, "LINE")).toBe(0);
     expect(count(text, "ARC")).toBe(0);
-    expect(count(text, "POLYLINE")).toBe(1);
-    expect(count(text, "VERTEX")).toBe(4);
+    expect(count(text, "LWPOLYLINE")).toBe(1);
+    expect(polylines(text)[0]?.vertices).toHaveLength(4);
     // The half circle is the polyline's one arc segment: a bulge of 1,
     // starting at (60, 0).
-    const arc = /VERTEX\n {2}8\n0\n 10\n(.+)\n 20\n(.+)\n 42\n(.+)\n/.exec(text);
-    const [x, y, bulge] = arc?.slice(1).map(Number) ?? [];
+    const [x, y, bulge] = polylines(text)[0]?.vertices.find(([, , b]) => b !== 0) ?? [];
     expect(x).toBeCloseTo(60, 9);
     expect(y).toBeCloseTo(0, 9);
     expect(bulge).toBeCloseTo(1, 9);

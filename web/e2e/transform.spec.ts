@@ -4,6 +4,7 @@ import {
   downloadFrom,
   enter,
   hoverWorld,
+  lines,
   litPixels,
   openApp,
   prompt,
@@ -29,9 +30,7 @@ test.describe("ROTATE", () => {
     await expect(prompt(page)).toHaveText("Specify rotation angle:");
     await enter(page, "90");
     await expect(prompt(page)).toHaveText("Command:");
-    expect(await exported(page)).toContain(
-      "LINE\n  8\n0\n 10\n0.0\n 20\n0.0\n 11\n0.0\n 21\n100.0\n",
-    );
+    expect(lines(await exported(page))).toEqual([[0, 0, 0, 100]]);
   });
 
   test("previews with the pointer without uploading committed geometry, then commits", async ({
@@ -61,9 +60,7 @@ test.describe("ROTATE", () => {
     await selectedLine(page);
     await enter(page, "RO", "0,0", "45");
     await page.keyboard.press("Control+z");
-    expect(await exported(page)).toContain(
-      "LINE\n  8\n0\n 10\n0.0\n 20\n0.0\n 11\n100.0\n 21\n0.0\n",
-    );
+    expect(lines(await exported(page))).toEqual([[0, 0, 100, 0]]);
   });
 });
 
@@ -73,9 +70,7 @@ test.describe("SCALE", () => {
     await enter(page, "SC", "100,0");
     await expect(prompt(page)).toHaveText("Specify scale factor:");
     await enter(page, "0.5");
-    expect(await exported(page)).toContain(
-      "LINE\n  8\n0\n 10\n50.0\n 20\n0.0\n 11\n100.0\n 21\n0.0\n",
-    );
+    expect(lines(await exported(page))).toEqual([[50, 0, 100, 0]]);
   });
 
   test("refuses zero and negative factors and keeps asking", async ({ page }) => {
