@@ -3,6 +3,8 @@ import {
   CadEngine,
   coreVersion,
   Dirty,
+  DirtyKind,
+  dirtyRanges,
   KeyAction,
   STYLE_FOREGROUND,
   STYLE_RGB,
@@ -127,6 +129,28 @@ describe("commands", () => {
       segments: [-50, 0, 50, 0],
       batches: [StyleRole.Entity, 0, 1],
     });
+  });
+
+  test("a scene read says which instances changed, once, and an edit names few (ADR-0022)", () => {
+    const cad = engine();
+    enter(cad, "L", "0,0", "100,0", "100,50", "");
+    const first = cad.readScene((frame) => Array.from(frame.dirty ?? []));
+    expect(first).toEqual(
+      [
+        [DirtyKind.Segments, 0, 2],
+        [DirtyKind.Arcs, 0, 0],
+        [DirtyKind.Triangles, 0, 0],
+      ].flat(),
+    );
+    expect(cad.readScene((frame) => Array.from(frame.dirty ?? []))).toEqual([]);
+
+    // The new line is in the same chunk as the first two, and the chunk
+    // grew: the range runs from its start to the end of the buffer.
+    enter(cad, "L", "0,-20", "100,-20", "");
+    const after = cad.readScene(
+      (frame) => frame.dirty && dirtyRanges(frame.dirty, DirtyKind.Segments),
+    );
+    expect(after).toEqual([[0, 3]]);
   });
 
   test("ui state follows the command", () => {

@@ -238,6 +238,43 @@ impl PackedFrame {
         &self.arc_distances
     }
 
+    // ── what a chunked scene writes directly (ADR-0022) ──
+
+    pub(crate) fn segments_mut(&mut self) -> &mut Vec<f32> {
+        &mut self.segments
+    }
+
+    pub(crate) fn segment_distances_mut(&mut self) -> &mut Vec<f32> {
+        &mut self.segment_distances
+    }
+
+    pub(crate) fn arcs_mut(&mut self) -> &mut Vec<f32> {
+        &mut self.arcs
+    }
+
+    pub(crate) fn arc_distances_mut(&mut self) -> &mut Vec<f32> {
+        &mut self.arc_distances
+    }
+
+    pub(crate) fn triangles_mut(&mut self) -> &mut Vec<f32> {
+        &mut self.triangles
+    }
+
+    /// Replaces every batch with one of `style` over all the instances of
+    /// each kind there are.
+    pub(crate) fn batch_everything(&mut self, style: StyleRole) {
+        let one = |count: u32| {
+            if count == 0 {
+                Vec::new()
+            } else {
+                vec![style as u32, 0, count]
+            }
+        };
+        self.batch_words = one(self.segment_count());
+        self.arc_batch_words = one(self.arc_count());
+        self.triangle_batch_words = one(self.triangle_count());
+    }
+
     /// Appends one segment at the start of its path. Consecutive segments
     /// of the same style share a batch.
     pub fn push_segment(&mut self, style: StyleRole, start: Point2, end: Point2) {

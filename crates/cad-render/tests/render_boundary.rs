@@ -9,7 +9,7 @@
 use cad_commands::testing::Harness;
 use cad_commands::{Dirty, Modifiers, PointerButton, Toggle};
 use cad_core::ScreenPoint;
-use cad_render::{OverlayFrame, PackedFrame, RenderScene, SceneCache, StyleRole};
+use cad_render::{InstanceKind, OverlayFrame, PackedFrame, RenderScene, SceneCache, StyleRole};
 
 /// A small drawing made the way a user would make it.
 fn drawing() -> Harness {
@@ -262,6 +262,72 @@ fn buffer_lengths_and_batch_ranges_are_consistent() {
         );
         assert_frame_is_consistent(overlay_of(&h).frame(), &format!("{name} overlay"));
     }
+}
+
+/// ADR-0022: an edit re-packs the chunk holding what it changed and
+/// reports the instances to upload as ranges; pointer activity reports
+/// nothing; a layer switched off rebuilds everything.
+#[test]
+fn an_edit_repacks_one_chunk_and_reports_the_ranges_it_changed() {
+    let mut h = drawing();
+    let mut cache = SceneCache::new();
+    let before = cache.scene(h.session.drawing()).frame().clone();
+    let whole = cache.take_dirty();
+    assert_eq!(
+        whole
+            .iter()
+            .map(|range| (range.kind, range.first, range.count))
+            .collect::<Vec<_>>(),
+        vec![
+            (InstanceKind::Segments, 0, before.segment_count()),
+            (InstanceKind::Arcs, 0, 0),
+            (InstanceKind::Triangles, 0, 0),
+        ],
+        "the first build is everything"
+    );
+    assert!(cache.take_dirty().is_empty(), "taken once");
+
+    h.move_to(300.0, 300.0);
+    cache.scene(h.session.drawing());
+    assert!(
+        cache.take_dirty().is_empty(),
+        "pointer movement changes nothing"
+    );
+    assert_eq!(cache.build_count(), 1);
+
+    // One more line: its chunk is re-packed, and since it is the last
+    // chunk, the range is the new segment alone.
+    h.enter_all(&["L", "0,-20", "100,-20", ""]);
+    let scene = cache.scene(h.session.drawing()).clone();
+    assert_frame_is_consistent(scene.frame(), "after an edit");
+    assert_eq!(scene.frame().segment_count(), before.segment_count() + 1);
+    assert_eq!(
+        &scene.frame().segments()[..before.segments().len()],
+        before.segments(),
+        "what was there is where it was, from the same origin"
+    );
+    assert_eq!(cache.partial_build_count(), 1);
+    let ranges = cache.take_dirty();
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].kind, InstanceKind::Segments);
+    assert!(
+        ranges[0].first <= before.segment_count() && ranges[0].count <= before.segment_count() + 1,
+        "{ranges:?}: within the chunk"
+    );
+    let full = SceneCache::new().scene(h.session.drawing()).frame().clone();
+    assert_eq!(
+        scene.frame().segments().len(),
+        full.segments().len(),
+        "the repacked scene is as long as one built afresh"
+    );
+
+    // A layer switched off: the drawing cannot say what changed, so all of it.
+    h.enter_all(&["LAYER", "N", "other", ""]);
+    h.enter_all(&["LAYER", "OFF", "other", ""]);
+    let count = cache.scene(h.session.drawing()).frame().segment_count();
+    let ranges = cache.take_dirty();
+    assert_eq!(ranges.len(), 3);
+    assert_eq!((ranges[0].first, ranges[0].count), (0, count), "everything");
 }
 
 /// "renderer does not mutate CAD state"
@@ -717,6 +783,11 @@ fn a_dimension_is_drawn_by_its_style_and_redrawn_when_the_style_changes() {
         "the text is drawn taller"
     );
     assert_eq!(scene.frame().arc_count(), 1);
+    assert_eq!(
+        cache.partial_build_count(),
+        1,
+        "the style change re-packed the chunk holding its dimension, not the scene (ADR-0022)"
+    );
 }
 
 /// ADR-0021: a hatch is committed triangles — a style index each, batches

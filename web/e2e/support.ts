@@ -7,6 +7,7 @@ export interface RendererStats {
   frames: number;
   drawCalls: number;
   sceneUploads: number;
+  scenePartialUploads: number;
   styleUploads: number;
   overlayUploads: number;
   bufferReallocations: number;

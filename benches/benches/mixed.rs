@@ -1,16 +1,16 @@
 //! A mixed drawing at the sizes of DESIGN §42 (#171): every kind of entity
 //! in a drafter's proportions. Opening it (the DXF read, which builds the
-//! drawing and its index), building its scene, and the scene build after
-//! one edit — the costs a person feels, measured natively; the browser's
-//! are in `web/bench/mixed.bench.ts`.
+//! drawing and its index), building its scene, and the scene re-pack after
+//! one edit (ADR-0022) — the costs a person feels, measured natively; the
+//! browser's are in `web/bench/mixed.bench.ts`.
 //!
 //! Run with `cargo bench -p cad-benchmarks --bench mixed`.
 
 use std::time::Duration;
 
 use cad_benchmarks::{SIZES, mixed};
-use cad_core::Point2;
-use cad_document::LineEntity;
+use cad_core::{EntityId, Point2};
+use cad_document::{Entity, LineEntity};
 use cad_render::SceneCache;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
@@ -41,11 +41,37 @@ fn mixed_drawing(c: &mut Criterion) {
         });
         group.finish();
 
-        // One line drawn; the whole scene is rebuilt (ADR-0003, #172).
+        // A line in the middle of the drawing moved: the chunk holding it is
+        // re-packed, and nothing else (ADR-0022). What an edit costs.
         let mut drawing = mixed(size, SEED);
         let mut cache = SceneCache::new();
         cache.scene(&drawing);
-        let mut group = c.benchmark_group("mixed/edit_and_rebuild");
+        let lines: Vec<EntityId> = drawing
+            .records()
+            .filter(|(_, record)| matches!(*record.entity, Entity::Line(_)))
+            .map(|(id, _)| id)
+            .collect();
+        let moved = lines[lines.len() / 2];
+        let mut group = c.benchmark_group("mixed/edit_and_repack");
+        group.bench_function(BenchmarkId::from_parameter(size), |b| {
+            let mut step = 0.0;
+            b.iter(|| {
+                step += 1.0;
+                let mut tx = drawing.transaction();
+                tx.replace(
+                    moved,
+                    LineEntity::new(Point2::new(step, 0.0), Point2::new(step, 1.0)),
+                )
+                .unwrap();
+                tx.commit();
+                cache.scene(&drawing).frame().segment_count()
+            })
+        });
+        group.finish();
+
+        // One line drawn: the last chunk, which holds the new line and
+        // little else, is re-packed.
+        let mut group = c.benchmark_group("mixed/insert_and_repack");
         group.bench_function(BenchmarkId::from_parameter(size), |b| {
             let mut step = 0.0;
             b.iter(|| {
@@ -58,6 +84,27 @@ fn mixed_drawing(c: &mut Criterion) {
                 .unwrap();
                 tx.commit();
                 cache.scene(&drawing).frame().segment_count()
+            })
+        });
+        group.finish();
+
+        // The same edit with the scene rebuilt whole, for the comparison
+        // ADR-0022 rests on — on a fresh drawing, as the inserts above grew
+        // this one.
+        let mut drawing = mixed(size, SEED);
+        let mut group = c.benchmark_group("mixed/edit_and_rebuild_whole");
+        group.bench_function(BenchmarkId::from_parameter(size), |b| {
+            let mut step = 0.0;
+            b.iter(|| {
+                step += 1.0;
+                let mut tx = drawing.transaction();
+                tx.replace(
+                    moved,
+                    LineEntity::new(Point2::new(step, 0.0), Point2::new(step, 1.0)),
+                )
+                .unwrap();
+                tx.commit();
+                SceneCache::new().scene(&drawing).frame().segment_count()
             })
         });
         group.finish();

@@ -545,6 +545,23 @@ impl CadSession {
         u16_view(self.scene.scene(self.session.drawing()).triangle_styles())
     }
 
+    /// Which committed instances changed since this was last called
+    /// (ADR-0022): `kind, first, count` per range, kind 0 segments, 1 arcs,
+    /// 2 triangles, in instance units. After a whole rebuild, one range
+    /// per kind over everything. Read it before the scene buffers of the
+    /// same frame and upload those ranges with `bufferSubData`; or the
+    /// whole buffers, when the GPU holds no scene yet. Owned: safe to keep.
+    pub fn scene_dirty_ranges(&mut self) -> Uint32Array {
+        self.scene.scene(self.session.drawing());
+        let words: Vec<u32> = self
+            .scene
+            .take_dirty()
+            .into_iter()
+            .flat_map(|range| [range.kind as u32, range.first, range.count])
+            .collect();
+        Uint32Array::from(words.as_slice())
+    }
+
     /// Transient triangle instances: the fill of a hatch being previewed or
     /// highlighted. A view into WASM memory — consume before the next call.
     pub fn overlay_triangles(&mut self) -> Float32Array {

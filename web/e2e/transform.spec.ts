@@ -52,7 +52,11 @@ test.describe("ROTATE", () => {
     expect(await litPixels(canvas)).toBeGreaterThan(idle + 100);
 
     await clickWorld(page, canvas, 0, 90);
-    expect((await rendererStats(page)).sceneUploads).toBe(before.sceneUploads + 1);
+    const after = await rendererStats(page);
+    expect(after.sceneUploads).toBe(before.sceneUploads + 1);
+    expect(after.scenePartialUploads, "only the changed ranges went up (ADR-0022)").toBe(
+      before.scenePartialUploads + 1,
+    );
     expect(await exported(page)).toContain(" 11\n0.0\n 21\n100.0\n");
   });
 

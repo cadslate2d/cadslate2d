@@ -1,4 +1,9 @@
-import { WORDS_PER_BATCH, type ClipTransform, type StyleRole } from "../../cad/engine";
+import {
+  WORDS_PER_BATCH,
+  type ClipTransform,
+  type InstanceRange,
+  type StyleRole,
+} from "../../cad/engine";
 import type { CanvasPalette } from "../palette";
 import { nextCapacity } from "./buffer-capacity";
 import { DISTANCE_ATTRIBUTE_LOCATION } from "./linetypes";
@@ -70,6 +75,8 @@ export class InstanceLayer {
   readonly #distances: WebGLBuffer | undefined;
   readonly #usage: number;
   #capacityBytes: number;
+  #styleCapacityBytes = 0;
+  #distanceCapacityBytes = 0;
   // Batches are copied out of WASM memory; views must not outlive the upload.
   #batches = new Uint32Array(0);
 
@@ -110,33 +117,62 @@ export class InstanceLayer {
 
   /**
    * Copies instances and batches — and, for a styled layer, the style index
-   * and path distance of each instance — to the GPU. Returns true when the
-   * instance buffer was reallocated.
+   * and path distance of each instance — to the GPU. With `ranges`, only
+   * those runs of instances are copied (ADR-0022), unless a buffer had to
+   * grow, when everything is. Returns how many buffers were reallocated.
    */
   upload(
     instances: Float32Array,
     batches: Uint32Array,
     styles?: Uint16Array,
     distances?: Float32Array,
-  ): boolean {
+    ranges?: readonly InstanceRange[],
+  ): number {
     const gl = this.#gl;
-    const capacity = nextCapacity(this.#capacityBytes, instances.byteLength);
-    const reallocated = capacity !== this.#capacityBytes;
+    const floats = this.#layout.floatsPerInstance;
+    let reallocated = 0;
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.#buffer);
-    if (reallocated) {
-      gl.bufferData(gl.ARRAY_BUFFER, capacity, this.#usage);
-      this.#capacityBytes = capacity;
-    }
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, instances);
-
+    const fit = (buffer: WebGLBuffer, capacity: number, bytes: number): number => {
+      const next = nextCapacity(capacity, bytes);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      if (next !== capacity) {
+        gl.bufferData(gl.ARRAY_BUFFER, next, this.#usage);
+        reallocated += 1;
+      }
+      return next;
+    };
+    this.#capacityBytes = fit(this.#buffer, this.#capacityBytes, instances.byteLength);
     if (this.#styles && styles) {
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.#styles);
-      gl.bufferData(gl.ARRAY_BUFFER, styles, this.#usage);
+      this.#styleCapacityBytes = fit(this.#styles, this.#styleCapacityBytes, styles.byteLength);
     }
     if (this.#distances && distances) {
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.#distances);
-      gl.bufferData(gl.ARRAY_BUFFER, distances, this.#usage);
+      this.#distanceCapacityBytes = fit(
+        this.#distances,
+        this.#distanceCapacityBytes,
+        distances.byteLength,
+      );
+    }
+
+    // A grown buffer holds nothing yet: everything goes up.
+    const runs: readonly InstanceRange[] =
+      ranges === undefined || reallocated > 0 ? [[0, instances.length / floats]] : ranges;
+    const copy = <T extends Float32Array | Uint16Array>(
+      buffer: WebGLBuffer,
+      data: T,
+      perInstance: number,
+    ): void => {
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      for (const [first, count] of runs) {
+        if (count === 0) continue;
+        const start = first * perInstance;
+        const piece = data.subarray(start, start + count * perInstance);
+        gl.bufferSubData(gl.ARRAY_BUFFER, start * data.BYTES_PER_ELEMENT, piece);
+      }
+    };
+    copy(this.#buffer, instances, floats);
+    if (this.#styles && styles) copy(this.#styles, styles, 1);
+    if (this.#distances && distances) {
+      copy(this.#distances, distances, this.#layout.floatsPerDistance);
     }
 
     if (this.#batches.length === batches.length) {

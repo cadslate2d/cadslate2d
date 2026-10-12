@@ -225,6 +225,35 @@ export interface FrameBuffers {
   readonly segmentDistances?: Float32Array;
   /** Per arc instance, that distance at its counter-clockwise start and `±1` for the path's direction. */
   readonly arcDistances?: Float32Array;
+  /**
+   * Which instances changed since the last frame (ADR-0022): `kind, first,
+   * count` per range — `DirtyKind` — in instances of that kind. Only the
+   * committed scene has them; absent, everything is new. An owned copy.
+   */
+  readonly dirty?: Uint32Array;
+}
+
+/** The instance kind a dirty range names. */
+export const DirtyKind = {
+  Segments: 0,
+  Arcs: 1,
+  Triangles: 2,
+} as const;
+export type DirtyKind = (typeof DirtyKind)[keyof typeof DirtyKind];
+
+/** Words per dirty range: `kind, first, count`. */
+export const WORDS_PER_DIRTY_RANGE = 3;
+
+/** A run of instances to upload: `[first, count]`. */
+export type InstanceRange = readonly [first: number, count: number];
+
+/** The ranges of one kind in a scene's dirty list, as `[first, count]` pairs. */
+export function dirtyRanges(dirty: Uint32Array, kind: DirtyKind): InstanceRange[] {
+  const ranges: InstanceRange[] = [];
+  for (let offset = 0; offset < dirty.length; offset += WORDS_PER_DIRTY_RANGE) {
+    if (dirty[offset] === kind) ranges.push([dirty[offset + 1] ?? 0, dirty[offset + 2] ?? 0]);
+  }
+  return ranges;
 }
 
 /** `[scaleX, scaleY, translateX, translateY]`: `clip = position * scale + translate`. */
@@ -375,8 +404,11 @@ export class CadEngine {
 
   /** Lends the committed scene's buffers to `consume` for the duration of the call. */
   readScene<T>(consume: (frame: FrameBuffers) => T): T {
+    // The ranges first: taking them builds the scene the views are of.
+    const dirty = this.#session.scene_dirty_ranges();
     // Views are created inside this call and never escape it.
     return consume({
+      dirty,
       segments: this.#session.scene_segments(),
       batches: this.#session.scene_batches(),
       arcs: this.#session.scene_arcs(),

@@ -154,7 +154,11 @@ fn bridge(outer: &mut Vec<Point2>, hole: &[Point2]) {
     };
     let from = hole[start];
     // The nearest edge of the outer ring crossed by a ray to the left of
-    // the hole's leftmost vertex; its right-hand endpoint is a candidate.
+    // the hole's leftmost vertex; its left-hand endpoint is a candidate:
+    // the triangle between the hole vertex, the hit, and that endpoint
+    // then lies wholly to the left of the hole, so nothing of the hole can
+    // be in it, and the bridge cannot cross the hole (the right-hand
+    // endpoint would reach back under it).
     let n = outer.len();
     let mut best: Option<(f64, usize)> = None;
     for i in 0..n {
@@ -162,7 +166,7 @@ fn bridge(outer: &mut Vec<Point2>, hole: &[Point2]) {
         if (a.y > from.y) != (b.y > from.y) {
             let x = a.x + (from.y - a.y) / (b.y - a.y) * (b.x - a.x);
             if x <= from.x && best.is_none_or(|(bx, _)| x > bx) {
-                let endpoint = if a.x > b.x { i } else { (i + 1) % n };
+                let endpoint = if a.x < b.x { i } else { (i + 1) % n };
                 best = Some((x, endpoint));
             }
         }
@@ -327,6 +331,26 @@ mod tests {
 
     fn centroid([a, b, c]: &[Point2; 3]) -> Point2 {
         p((a.x + b.x + c.x) / 3.0, (a.y + b.y + c.y) / 3.0)
+    }
+
+    /// A diamond with a star hole whose leftmost vertex sits just left of
+    /// the diamond's lower edge's upper end: a bridge to the edge's
+    /// right-hand endpoint ran under the star and cut through it, and the
+    /// fill came up short of the region (#172's workspace run found it).
+    #[test]
+    fn a_bridge_never_crosses_the_hole_it_is_for() {
+        let outer = star(p(0.0, 0.0), 4, &[40.0]);
+        let hole = star(p(3.0, -2.0), 8, &[8.035699601431164, 10.933490638889914]);
+        let triangles = tessellate(&outer, std::slice::from_ref(&hole));
+        let expected = signed_area(&outer).abs() - signed_area(&hole).abs();
+        assert!((area_of(&triangles) - expected).abs() < 1e-6 * expected);
+        for triangle in &triangles {
+            let middle = centroid(triangle);
+            assert!(
+                contains(&outer, middle) && !contains(&hole, middle),
+                "{triangle:?}"
+            );
+        }
     }
 
     #[test]

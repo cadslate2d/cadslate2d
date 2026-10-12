@@ -18,4 +18,4 @@ mod scene;
 
 pub use frame::{DrawBatch, PackedFrame, StyleRole};
 pub use overlay::OverlayFrame;
-pub use scene::{RenderScene, SceneCache};
+pub use scene::{CHUNK_IDS, DirtyRange, InstanceKind, RenderScene, SceneCache};

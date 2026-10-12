@@ -32,6 +32,7 @@ There are two kinds:
 | [0019](0019-local-persistence.md) | Local persistence: the autosave is one IndexedDB record, written when the revision changes | Accepted | Evidence |
 | [0020](0020-dimensions.md) | Dimensions: definition points and a style, laid out by pure functions whenever asked | Accepted | Bootstrap |
 | [0021](0021-filled-regions.md) | Filled regions: triangles as a third committed instance kind, cut from the boundary when asked | Accepted | Evidence |
+| [0022](0022-scene-chunks.md) | Scene chunks: an edit re-packs the chunk that holds what changed, and the frame uploads the ranges that moved | Accepted | Evidence |
 
 ## Expected evidence ADRs
 

@@ -53,6 +53,8 @@ describe("WASM API surface", () => {
       "scene_arc_styles",
       "scene_arcs",
       "scene_batches",
+      // ADR-0022: which instances changed since the last frame, as one buffer of ranges.
+      "scene_dirty_ranges",
       // ADR-0015: the linetype patterns the style table names, as one buffer.
       "scene_patterns",
       "scene_revision",

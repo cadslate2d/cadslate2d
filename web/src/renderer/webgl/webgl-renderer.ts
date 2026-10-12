@@ -1,11 +1,13 @@
 // The WebGL2 adapter (DESIGN §12.1). TypeScript owns the context, the GPU
 // buffers, and the draw calls; it never reads or writes CAD state.
 import {
+  DirtyKind,
   FLOATS_PER_ARC,
   FLOATS_PER_ARC_DISTANCE,
   FLOATS_PER_SEGMENT,
   FLOATS_PER_TRIANGLE,
   StyleRole,
+  dirtyRanges,
   type ClipTransform,
   type FrameBuffers,
   type StyleTables,
@@ -35,6 +37,8 @@ export interface RendererStats {
   drawCalls: number;
   /** Uploads of committed geometry. Must not grow with pointer activity. */
   sceneUploads: number;
+  /** Of those, the uploads of only the ranges that changed (ADR-0022). */
+  scenePartialUploads: number;
   /** Uploads of the style table: a few bytes per style, never geometry. */
   styleUploads: number;
   /** Uploads of transient geometry. */
@@ -64,22 +68,36 @@ class FrameLayers {
     this.arcs = new InstanceLayer(gl, pipelines.arcs.layout, usage, styled);
   }
 
-  /** Returns how many of the buffers had to be reallocated. */
-  upload(frame: FrameBuffers): number {
-    const fills = this.fills.upload(frame.triangles, frame.triangleBatches, frame.triangleStyles);
+  /**
+   * Uploads the frame — only the ranges it says changed, when it says and
+   * the GPU already holds the rest (ADR-0022). Returns how many of the
+   * buffers had to be reallocated.
+   */
+  upload(frame: FrameBuffers, partial: boolean): number {
+    const ranges = (kind: DirtyKind) =>
+      partial && frame.dirty ? dirtyRanges(frame.dirty, kind) : undefined;
+    const fills = this.fills.upload(
+      frame.triangles,
+      frame.triangleBatches,
+      frame.triangleStyles,
+      undefined,
+      ranges(DirtyKind.Triangles),
+    );
     const segments = this.segments.upload(
       frame.segments,
       frame.batches,
       frame.segmentStyles,
       frame.segmentDistances,
+      ranges(DirtyKind.Segments),
     );
     const arcs = this.arcs.upload(
       frame.arcs,
       frame.arcBatches,
       frame.arcStyles,
       frame.arcDistances,
+      ranges(DirtyKind.Arcs),
     );
-    return Number(fills) + Number(segments) + Number(arcs);
+    return fills + segments + arcs;
   }
 
   dispose(): void {
@@ -113,6 +131,7 @@ export class WebGlRenderer implements FrameSink {
     frames: 0,
     drawCalls: 0,
     sceneUploads: 0,
+    scenePartialUploads: 0,
     styleUploads: 0,
     overlayUploads: 0,
     bufferReallocations: 0,
@@ -165,9 +184,12 @@ export class WebGlRenderer implements FrameSink {
   }
 
   updateScene(revision: number, frame: FrameBuffers): void {
-    this.stats.bufferReallocations += this.#resources.scene.upload(frame);
+    // The GPU holds the previous scene: the ranges that changed suffice.
+    const partial = this.#sceneRevision !== undefined && frame.dirty !== undefined;
+    this.stats.bufferReallocations += this.#resources.scene.upload(frame, partial);
     this.#sceneRevision = revision;
     this.stats.sceneUploads += 1;
+    if (partial) this.stats.scenePartialUploads += 1;
   }
 
   get styleRevision(): number | undefined {
@@ -242,7 +264,7 @@ export class WebGlRenderer implements FrameSink {
   }
 
   updateOverlay(frame: FrameBuffers): void {
-    this.stats.bufferReallocations += this.#resources.overlay.upload(frame);
+    this.stats.bufferReallocations += this.#resources.overlay.upload(frame, false);
     this.stats.overlayUploads += 1;
   }
 

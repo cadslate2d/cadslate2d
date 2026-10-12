@@ -16,19 +16,50 @@
 //! So recolouring a layer, or changing `LTSCALE`, changes a few bytes of
 //! the tables and none of the geometry, however large the drawing is.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
-use cad_core::Point2;
+use cad_core::{EntityId, Point2};
 use cad_document::{
     Drawing, Entity, Linetype, LinetypeDef, LinetypeId, Paint, Properties, Revision, Weight,
 };
 
 use crate::{PackedFrame, StyleRole};
 
+/// Entity IDs per chunk of the scene (ADR-0022): an edit re-packs the
+/// chunks holding the entities it touched, and no other.
+pub const CHUNK_IDS: u64 = 512;
+
+/// A kind of committed instance, as the dirty ranges name it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum InstanceKind {
+    Segments = 0,
+    Arcs = 1,
+    Triangles = 2,
+}
+
+/// A run of instances of one kind that changed since the last take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DirtyRange {
+    pub kind: InstanceKind,
+    pub first: u32,
+    pub count: u32,
+}
+
+/// How many instances of each kind one chunk packed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ChunkCounts {
+    segments: u32,
+    arcs: u32,
+    triangles: u32,
+}
+
 /// Stable geometry derived from the canonical document.
 ///
 /// A scene is a function of the drawing alone — there is no view parameter —
 /// so pan, zoom, and pointer movement can never invalidate it (ADR-0003).
+/// Its instances lie in chunk order: every entity's instances in the chunk
+/// of its ID, chunks in ID order, with nothing between (ADR-0022).
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderScene {
     revision: Revision,
@@ -39,14 +70,25 @@ pub struct RenderScene {
     arc_styles: Vec<u16>,
     /// The style index of each triangle instance, in instance order.
     triangle_styles: Vec<u16>,
-    /// The properties each style index stands for.
+    /// The properties each style index stands for; appended to, never
+    /// reordered, so an index stays what it was across repacks.
     properties: Vec<Properties>,
+    style_indices: HashMap<Properties, u16>,
     style_revision: Revision,
     /// The style table as it crosses the boundary: see [`Self::styles`].
     styles: Vec<u8>,
     /// The pattern table: see [`Self::patterns`].
     patterns: Vec<f32>,
+    /// What each chunk of [`CHUNK_IDS`] entity IDs packed, in chunk order.
+    chunks: Vec<ChunkCounts>,
+    /// What changed since the last [`Self::take_dirty`], or everything.
+    dirty: Vec<DirtyRange>,
+    dirty_all: bool,
 }
+
+/// More dirty ranges than this are reported as everything: a frame that
+/// uploads piece by piece past this point gains nothing.
+const MAX_DIRTY_RANGES: usize = 64;
 
 impl RenderScene {
     /// Bytes per row of the style table.
@@ -68,6 +110,24 @@ impl RenderScene {
     /// drawing with more distinct patterns in use than a byte can index
     /// draws the surplus continuous.
     pub const PATTERN_CONTINUOUS: u8 = 0;
+
+    fn empty(drawing: &Drawing) -> Self {
+        Self {
+            revision: drawing.shown_revision(),
+            frame: PackedFrame::default(),
+            segment_styles: Vec::new(),
+            arc_styles: Vec::new(),
+            triangle_styles: Vec::new(),
+            properties: Vec::new(),
+            style_indices: HashMap::new(),
+            style_revision: drawing.revision(),
+            styles: Vec::new(),
+            patterns: Vec::new(),
+            chunks: Vec::new(),
+            dirty: Vec::new(),
+            dirty_all: true,
+        }
+    }
 
     /// Identifies the geometry: the drawing's shown revision it was built
     /// from. TypeScript re-uploads committed instance buffers only when
@@ -129,7 +189,33 @@ impl RenderScene {
         self.patterns.len() / Self::FLOATS_PER_PATTERN
     }
 
-    fn build_geometry(&mut self, drawing: &Drawing) {
+    /// The instances that changed since the last take, as ranges per kind
+    /// — or, after a whole rebuild, one range per kind over everything —
+    /// and clears them (ADR-0022). What a frame uploads: the ranges, with
+    /// `bufferSubData`, or the whole buffers.
+    pub fn take_dirty(&mut self) -> Vec<DirtyRange> {
+        let ranges = if self.dirty_all || self.dirty.len() > MAX_DIRTY_RANGES {
+            let whole = |kind, count| DirtyRange {
+                kind,
+                first: 0,
+                count,
+            };
+            vec![
+                whole(InstanceKind::Segments, self.frame.segment_count()),
+                whole(InstanceKind::Arcs, self.frame.arc_count()),
+                whole(InstanceKind::Triangles, self.frame.triangle_count()),
+            ]
+        } else {
+            self.dirty.clone()
+        };
+        self.dirty.clear();
+        self.dirty_all = false;
+        ranges
+    }
+
+    /// The whole scene, afresh: the origin at the centre of the extents,
+    /// every chunk packed in order.
+    fn rebuild_all(&mut self, drawing: &Drawing) {
         // Centre the origin on the drawing so f32 offsets keep the most
         // precision where the geometry actually is.
         let origin = drawing
@@ -140,10 +226,190 @@ impl RenderScene {
         self.arc_styles.clear();
         self.triangle_styles.clear();
         self.properties.clear();
+        self.style_indices.clear();
+        self.chunks.clear();
+        let chunk_count = drawing.id_bound().div_ceil(CHUNK_IDS) as usize;
+        for chunk in 0..chunk_count {
+            let before = self.counts();
+            self.pack_chunk_into_frame(drawing, chunk);
+            let after = self.counts();
+            self.chunks.push(ChunkCounts {
+                segments: after.segments - before.segments,
+                arcs: after.arcs - before.arcs,
+                triangles: after.triangles - before.triangles,
+            });
+        }
+        self.frame.batch_everything(StyleRole::Entity);
+        self.dirty.clear();
+        self.dirty_all = true;
+    }
 
-        let mut indices: HashMap<Properties, u16> = HashMap::new();
-        // Objects on a layer that is off are not drawn: no instances.
-        for (id, entity) in drawing.shown() {
+    /// Repacks only `chunks`, each in its place, moving what follows.
+    fn repack(&mut self, drawing: &Drawing, chunks: &BTreeSet<usize>) {
+        let needed = drawing.id_bound().div_ceil(CHUNK_IDS) as usize;
+        if self.chunks.len() < needed {
+            self.chunks.resize(needed, ChunkCounts::default());
+        }
+        for &chunk in chunks {
+            if chunk >= self.chunks.len() {
+                continue;
+            }
+            // Pack the chunk on its own, then splice it over the old one.
+            let origin = self.frame.origin();
+            let mut scratch = RenderScene::scratch(self, origin);
+            scratch.pack_chunk_into_frame(drawing, chunk);
+            self.properties = std::mem::take(&mut scratch.properties);
+            self.style_indices = std::mem::take(&mut scratch.style_indices);
+            let new = scratch.counts();
+            let old = self.chunks[chunk];
+            let offset = self.chunks[..chunk]
+                .iter()
+                .fold(ChunkCounts::default(), |sum, counts| ChunkCounts {
+                    segments: sum.segments + counts.segments,
+                    arcs: sum.arcs + counts.arcs,
+                    triangles: sum.triangles + counts.triangles,
+                });
+            let splice = |into: &mut Vec<f32>, from: &[f32], per: usize, at: u32, old: u32| {
+                let start = at as usize * per;
+                into.splice(start..start + old as usize * per, from.iter().copied());
+            };
+            let splice_styles = |into: &mut Vec<u16>, from: &[u16], at: u32, old: u32| {
+                into.splice(at as usize..(at + old) as usize, from.iter().copied());
+            };
+            let seg = PackedFrame::FLOATS_PER_SEGMENT;
+            let arc = PackedFrame::FLOATS_PER_ARC;
+            let tri = PackedFrame::FLOATS_PER_TRIANGLE;
+            let dist = PackedFrame::FLOATS_PER_ARC_DISTANCE;
+            splice(
+                self.frame.segments_mut(),
+                scratch.frame.segments(),
+                seg,
+                offset.segments,
+                old.segments,
+            );
+            splice(
+                self.frame.segment_distances_mut(),
+                scratch.frame.segment_distances(),
+                1,
+                offset.segments,
+                old.segments,
+            );
+            splice_styles(
+                &mut self.segment_styles,
+                &scratch.segment_styles,
+                offset.segments,
+                old.segments,
+            );
+            splice(
+                self.frame.arcs_mut(),
+                scratch.frame.arcs(),
+                arc,
+                offset.arcs,
+                old.arcs,
+            );
+            splice(
+                self.frame.arc_distances_mut(),
+                scratch.frame.arc_distances(),
+                dist,
+                offset.arcs,
+                old.arcs,
+            );
+            splice_styles(
+                &mut self.arc_styles,
+                &scratch.arc_styles,
+                offset.arcs,
+                old.arcs,
+            );
+            splice(
+                self.frame.triangles_mut(),
+                scratch.frame.triangles(),
+                tri,
+                offset.triangles,
+                old.triangles,
+            );
+            splice_styles(
+                &mut self.triangle_styles,
+                &scratch.triangle_styles,
+                offset.triangles,
+                old.triangles,
+            );
+            self.chunks[chunk] = new;
+            // What to upload: the chunk's run when its size held; from the
+            // chunk to the end when what follows moved.
+            let totals = self.counts();
+            let mut note = |kind, first: u32, old: u32, new: u32, total: u32| {
+                if old == new && new == 0 {
+                    return;
+                }
+                let count = if old == new { new } else { total - first };
+                self.dirty.push(DirtyRange { kind, first, count });
+            };
+            note(
+                InstanceKind::Segments,
+                offset.segments,
+                old.segments,
+                new.segments,
+                totals.segments,
+            );
+            note(
+                InstanceKind::Arcs,
+                offset.arcs,
+                old.arcs,
+                new.arcs,
+                totals.arcs,
+            );
+            note(
+                InstanceKind::Triangles,
+                offset.triangles,
+                old.triangles,
+                new.triangles,
+                totals.triangles,
+            );
+        }
+        self.frame.batch_everything(StyleRole::Entity);
+    }
+
+    /// An empty scene sharing this one's style table, to pack one chunk in.
+    fn scratch(&mut self, origin: Point2) -> Self {
+        let mut frame = PackedFrame::default();
+        frame.reset(origin);
+        Self {
+            revision: self.revision,
+            frame,
+            segment_styles: Vec::new(),
+            arc_styles: Vec::new(),
+            triangle_styles: Vec::new(),
+            properties: std::mem::take(&mut self.properties),
+            style_indices: std::mem::take(&mut self.style_indices),
+            style_revision: self.style_revision,
+            styles: Vec::new(),
+            patterns: Vec::new(),
+            chunks: Vec::new(),
+            dirty: Vec::new(),
+            dirty_all: false,
+        }
+    }
+
+    fn counts(&self) -> ChunkCounts {
+        ChunkCounts {
+            segments: self.frame.segment_count(),
+            arcs: self.frame.arc_count(),
+            triangles: self.frame.triangle_count(),
+        }
+    }
+
+    /// Appends the shown entities of `chunk`, in ID order.
+    fn pack_chunk_into_frame(&mut self, drawing: &Drawing, chunk: usize) {
+        let first = chunk as u64 * CHUNK_IDS;
+        for raw in first..first + CHUNK_IDS {
+            let id = EntityId::from_raw(raw);
+            let Some(entity) = drawing.entity(id) else {
+                continue;
+            };
+            // Objects on a layer that is off are not drawn: no instances.
+            if !drawing.is_shown(id) {
+                continue;
+            }
             let properties = drawing.properties(id).unwrap_or_default();
             // A block reference is its definition's entities, each drawn
             // with its own properties resolved against the reference's
@@ -153,60 +419,46 @@ impl RenderScene {
                 other => vec![(other.clone(), properties)],
             };
             for (entity, properties) in parts {
-                self.push_part(drawing, &entity, properties, &mut indices);
+                self.push_part(drawing, &entity, properties);
             }
         }
-        self.revision = drawing.shown_revision();
     }
 
     /// One drawn entity with the properties it is drawn with.
-    fn push_part(
-        &mut self,
-        drawing: &Drawing,
-        entity: &Entity,
-        mut properties: Properties,
-        indices: &mut HashMap<Properties, u16>,
-    ) {
-        {
-            // A linetype is for curves: a text is drawn continuous, or its
-            // glyphs would fall apart into dashes.
-            // Nor a hatch: its pattern carries its own dashes.
-            if matches!(
-                entity,
-                Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_) | Entity::Hatch(_)
-            ) {
-                properties.linetype = Linetype::CONTINUOUS;
-            }
-            let style = *indices.entry(properties).or_insert_with(|| {
-                // More distinct styles than indices: the surplus share the
-                // last one rather than wrapping round onto the first.
-                let index = self.properties.len().min(usize::from(u16::MAX));
-                if index == self.properties.len() {
-                    self.properties.push(properties);
-                }
-                index as u16
-            });
-            let (segments, arcs, triangles) = (
-                self.frame.segment_count(),
-                self.frame.arc_count(),
-                self.frame.triangle_count(),
-            );
-            self.frame
-                .push_entity(StyleRole::Entity, entity, drawing.tables());
-            let added = |before: u32, after: u32| (after - before) as usize;
-            self.segment_styles.extend(std::iter::repeat_n(
-                style,
-                added(segments, self.frame.segment_count()),
-            ));
-            self.arc_styles.extend(std::iter::repeat_n(
-                style,
-                added(arcs, self.frame.arc_count()),
-            ));
-            self.triangle_styles.extend(std::iter::repeat_n(
-                style,
-                added(triangles, self.frame.triangle_count()),
-            ));
+    fn push_part(&mut self, drawing: &Drawing, entity: &Entity, mut properties: Properties) {
+        // A linetype is for curves: a text is drawn continuous, or its
+        // glyphs would fall apart into dashes. Nor a dimension's text, nor
+        // a hatch, whose pattern carries its own dashes.
+        if matches!(
+            entity,
+            Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_) | Entity::Hatch(_)
+        ) {
+            properties.linetype = Linetype::CONTINUOUS;
         }
+        let style = *self.style_indices.entry(properties).or_insert_with(|| {
+            // More distinct styles than indices: the surplus share the
+            // last one rather than wrapping round onto the first.
+            let index = self.properties.len().min(usize::from(u16::MAX));
+            if index == self.properties.len() {
+                self.properties.push(properties);
+            }
+            index as u16
+        });
+        let before = self.counts();
+        self.frame
+            .push_entity(StyleRole::Entity, entity, drawing.tables());
+        let after = self.counts();
+        let added = |before: u32, after: u32| (after - before) as usize;
+        self.segment_styles.extend(std::iter::repeat_n(
+            style,
+            added(before.segments, after.segments),
+        ));
+        self.arc_styles
+            .extend(std::iter::repeat_n(style, added(before.arcs, after.arcs)));
+        self.triangle_styles.extend(std::iter::repeat_n(
+            style,
+            added(before.triangles, after.triangles),
+        ));
     }
 
     /// Resolves every style in use against the layers, linetypes, and
@@ -266,11 +518,14 @@ impl RenderScene {
 }
 
 /// Holds the current scene and rebuilds each part of it only when what that
-/// part depends on has changed since the last request.
+/// part depends on has changed since the last request — and of the
+/// geometry, only the chunks holding what changed (ADR-0022).
 #[derive(Debug, Default)]
 pub struct SceneCache {
     scene: Option<RenderScene>,
     builds: u64,
+    /// Of the builds, those that repacked chunks rather than everything.
+    partial_builds: u64,
     style_builds: u64,
 }
 
@@ -280,30 +535,46 @@ impl SceneCache {
     }
 
     /// The scene for `drawing`. The geometry is rebuilt if and only if what
-    /// is shown changed; the style table is re-resolved if and only if the
-    /// drawing changed at all.
+    /// is shown changed — the chunks that hold the changed entities, when
+    /// the drawing can say which, else all of it; the style table is
+    /// re-resolved if and only if the drawing changed at all.
     pub fn scene(&mut self, drawing: &Drawing) -> &RenderScene {
-        let stale = |scene: &RenderScene| scene.revision != drawing.shown_revision();
-        if self.scene.as_ref().is_none_or(stale) {
-            // The previous scene's buffers are reused, to avoid reallocating.
-            let mut scene = self.scene.take().unwrap_or_else(|| RenderScene {
-                revision: drawing.shown_revision(),
-                frame: PackedFrame::default(),
-                segment_styles: Vec::new(),
-                arc_styles: Vec::new(),
-                triangle_styles: Vec::new(),
-                properties: Vec::new(),
-                style_revision: drawing.revision(),
-                styles: Vec::new(),
-                patterns: Vec::new(),
-            });
-            scene.build_geometry(drawing);
+        let stale = self
+            .scene
+            .as_ref()
+            .is_none_or(|scene| scene.revision != drawing.shown_revision());
+        if stale {
+            let changed = self
+                .scene
+                .as_ref()
+                .and_then(|scene| drawing.shown_changes_since(scene.revision));
+            match (self.scene.as_mut(), changed) {
+                (Some(scene), Some(ids)) => {
+                    let chunks: BTreeSet<usize> = ids
+                        .iter()
+                        .map(|id| (id.raw() / CHUNK_IDS) as usize)
+                        .collect();
+                    scene.repack(drawing, &chunks);
+                    scene.revision = drawing.shown_revision();
+                    self.partial_builds += 1;
+                }
+                _ => {
+                    // The previous scene's buffers are reused, to avoid reallocating.
+                    let mut scene = self
+                        .scene
+                        .take()
+                        .unwrap_or_else(|| RenderScene::empty(drawing));
+                    scene.rebuild_all(drawing);
+                    scene.revision = drawing.shown_revision();
+                    self.scene = Some(scene);
+                }
+            }
             self.builds += 1;
             // New geometry may have new styles: resolve them whatever the
             // drawing's revision says.
+            let scene = self.scene.as_mut().expect("the scene was just built");
             scene.resolve_styles(drawing);
             self.style_builds += 1;
-            self.scene = Some(scene);
         }
         let scene = self.scene.as_mut().expect("the scene was just built");
         if scene.style_revision != drawing.revision() {
@@ -313,11 +584,24 @@ impl SceneCache {
         scene
     }
 
-    /// How many times the geometry has been built. Tests use this to prove
-    /// that pointer activity — and a change to how a layer looks — does not
-    /// regenerate committed geometry.
+    /// The changed instance ranges since the last take (see
+    /// [`RenderScene::take_dirty`]); everything, before the first scene.
+    pub fn take_dirty(&mut self) -> Vec<DirtyRange> {
+        self.scene
+            .as_mut()
+            .map_or_else(Vec::new, RenderScene::take_dirty)
+    }
+
+    /// How many times the geometry has been built, whole or in part. Tests
+    /// use this to prove that pointer activity — and a change to how a
+    /// layer looks — does not regenerate committed geometry.
     pub fn build_count(&self) -> u64 {
         self.builds
+    }
+
+    /// Of the builds, how many repacked only the chunks that changed.
+    pub fn partial_build_count(&self) -> u64 {
+        self.partial_builds
     }
 
     /// How many times the style table has been resolved.
@@ -677,8 +961,12 @@ mod tests {
         tx.set_properties(plain, on(2)).unwrap();
         tx.commit();
         let scene = cache.scene(&drawing);
-        assert_eq!(rows(scene), vec![RED, BLUE, BLUE]);
-        assert_eq!(scene.segment_styles(), &[0, 1, 0, 0, 2]);
+        // The row nobody uses any more stays, so every other instance's
+        // index still means what it did (ADR-0022); the new style is a
+        // new row.
+        assert_eq!(rows(scene), vec![RED, FOREGROUND, BLUE, BLUE]);
+        assert_eq!(scene.segment_styles(), &[0, 2, 0, 0, 3]);
+        assert_eq!(cache.partial_build_count(), 1);
     }
 
     #[test]

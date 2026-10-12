@@ -646,6 +646,8 @@ TS refreshes small overlay GPU buffers
 
 This is required for large-drawing interaction performance.
 
+> **Refined in M7:** a new `RenderScene` is not a whole one. The scene is packed in chunks of entity IDs; the drawing journals what each change touched, the chunks holding it are re-packed in place, and TypeScript uploads only the instance ranges that moved — [ADR-0022](adr/0022-scene-chunks.md). The rule stands: nothing committed changes without a change to the drawing.
+
 ## 12.4 WASM transfer rule
 
 The important invariant is:

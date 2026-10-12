@@ -1,6 +1,6 @@
 //! The drawing: the authoritative CAD state.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::sync::Arc;
 
@@ -47,7 +47,17 @@ pub struct Drawing {
     history: History,
     revision: Revision,
     shown_revision: Revision,
+    /// What each change to what is shown touched, newest last: the shown
+    /// revision before it, the one after, and the entities — or `None`
+    /// when everything did, as when a layer is switched off. Derived state
+    /// such as the render scene asks [`Drawing::shown_changes_since`] what
+    /// to redo instead of redoing all of it (ADR-0022).
+    journal: VecDeque<(Revision, Revision, Option<Vec<EntityId>>)>,
 }
+
+/// How many changes the journal remembers; a scene further behind than
+/// this is rebuilt whole.
+const JOURNAL_LENGTH: usize = 64;
 
 /// What a commit, undo, or redo did, so interaction state such as the
 /// selection can follow along without being stored in history (DESIGN §19.7).
@@ -237,6 +247,7 @@ impl Drawing {
             history: History::default(),
             revision: Revision::next(),
             shown_revision: Revision::next(),
+            journal: VecDeque::new(),
         }
     }
 
@@ -458,6 +469,32 @@ impl Drawing {
     /// layers look like can tell by this that it is still good.
     pub fn shown_revision(&self) -> Revision {
         self.shown_revision
+    }
+
+    /// The entities whose presence, geometry, or properties changed since
+    /// the shown revision `since` — `Some(empty)` when nothing did — or
+    /// `None` when everything may have: a layer switched on or off, a
+    /// drawing this journal does not know, or more changes than it
+    /// remembers (ADR-0022).
+    pub fn shown_changes_since(&self, since: Revision) -> Option<Vec<EntityId>> {
+        if since == self.shown_revision {
+            return Some(Vec::new());
+        }
+        let mut ids = Vec::new();
+        for (before, after, changed) in self.journal.iter().rev() {
+            ids.extend(changed.as_ref()?.iter().copied());
+            if *before == since {
+                return Some(ids);
+            }
+            let _ = after;
+        }
+        None
+    }
+
+    /// One more than the largest entity ID ever allocated: every entity's
+    /// ID is below it.
+    pub fn id_bound(&self) -> u64 {
+        self.ids.peek()
     }
 
     pub fn len(&self) -> usize {
@@ -716,10 +753,16 @@ impl Drawing {
     fn apply(&mut self, transaction: &Transaction) -> ApplyReport {
         let mut report = ApplyReport::default();
         let mut shown_changed = false;
+        // A layer switched on or off changes what is shown without naming
+        // an entity: everything may have changed.
+        let mut everything = false;
         for change in transaction.changes() {
             shown_changed |= match change {
                 Change::Entity(_) => true,
-                Change::Layer(TableChange::Replace { before, after, .. }) => before.on != after.on,
+                Change::Layer(TableChange::Replace { before, after, .. }) => {
+                    everything |= before.on != after.on;
+                    before.on != after.on
+                }
                 // A layer that is made or removed has nothing on it.
                 // A block redefined changes the geometry of every reference;
                 // a dimension style changed, of every dimension drawn by it.
@@ -830,7 +873,22 @@ impl Drawing {
         }
         self.revision = Revision::next();
         if shown_changed {
+            let before = self.shown_revision;
             self.shown_revision = Revision::next();
+            let changed = (!everything).then(|| {
+                let mut ids: Vec<EntityId> = Vec::with_capacity(
+                    report.inserted.len() + report.removed.len() + report.replaced.len(),
+                );
+                ids.extend(&report.inserted);
+                ids.extend(&report.removed);
+                ids.extend(&report.replaced);
+                ids
+            });
+            self.journal
+                .push_back((before, self.shown_revision, changed));
+            if self.journal.len() > JOURNAL_LENGTH {
+                self.journal.pop_front();
+            }
         }
         report
     }

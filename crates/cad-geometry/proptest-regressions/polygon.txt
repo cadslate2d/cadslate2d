@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc f5c4fd3877ca11478eef9fd0c6feab93092db9f429cf3faaeea27134ec4a3ce1 # shrinks to count = 3, radii = [50.0, 50.0, 50.0], hole_count = 5, hole_radii = [19.109401455049067], with_hole = true
+cc d29b95b18b542085e05de25a878573a750bdf485808e15f64c7b82e5cfb16c47 # shrinks to count = 4, radii = [40.0], hole_count = 8, hole_radii = [8.035699601431164, 10.933490638889914], with_hole = true
