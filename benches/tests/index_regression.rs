@@ -3,9 +3,10 @@
 //! Found by the M0 benchmarks. With rstar 0.13.0, `RTree::bulk_load` of the
 //! 100,000-line benchmark drawing produced a tree on which the next insert
 //! panicked inside rstar ("This is a bug in rstar"). In the browser that is a
-//! crash: open a large file, draw one line. `RTreeIndex::rebuild` now grows
-//! the tree by insertion instead (ADR-0007). This test fails if bulk loading
-//! is reintroduced without the upstream bug being fixed.
+//! crash: open a large file, draw one line. `RTreeIndex::rebuild` packs a
+//! static tree of its own and inserts later entries beside it (ADR-0007,
+//! amended at #108). This test fails if `RTree::bulk_load` is reintroduced
+//! without the upstream bug being fixed.
 
 use cad_benchmarks::{Rng, lines, pick_box};
 use cad_core::EntityId;

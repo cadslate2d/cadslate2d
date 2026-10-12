@@ -96,3 +96,25 @@ Reading the numbers:
 - **Updates** — what MOVE, ROTATE, SCALE, and grip edits do — stay within a few microseconds per entry.
 
 Nothing here argues for a different structure. The two follow-ups stand: a safe bulk loader for opening large files, and the upstream report.
+
+## Amended at the start of M7 (2026-10-12): a bulk loader of our own
+
+The follow-up (#108) is done, and the decision's second point — never call `RTree::bulk_load` — stands with the slow path gone. `RTreeIndex::rebuild` now packs the entries into a static R-tree of its own by sort-tile-recursion: sorted by the centre's x into vertical slices, each slice by y, then levels of bounds over runs of sixteen. Nothing is ever inserted into the packed tree: what a later edit adds goes into the rstar tree beside it, what it removes from the packed tree is marked, and when more than half of the packed entries are marked the tree is repacked from the rest. A query is the union of both trees less the marks. The regression test, the Liskov property test (which now starts from a packed tree before its edits), and a unit test of the repacking pin the behaviour.
+
+`cargo bench -p cad-benchmarks --bench document -- index/`, the same machine as above (the machine was busy; take differences under about 30% as noise):
+
+| Operation | 10k | 50k | 100k | 100k before |
+| --- | --- | --- | --- | --- |
+| Rebuild (open a file) | 0.82 ms | 4.8 ms | 10.8 ms | 94 ms |
+| 1000 pick-sized queries | 0.34 ms | 0.42 ms | 0.56 ms | 0.62 ms |
+| Window query over 1% of the drawing | 0.74 µs | 2.1 µs | 4.3 µs | 9.3 µs |
+| Window query over 25% of the drawing | 8.3 µs | 38 µs | 79 µs | 327 µs |
+| Insert 1000 entries | 0.44 ms | 0.55 ms | 0.51 ms | 0.91 ms |
+| Update 1000 entries | 0.53 ms | 0.65 ms | 0.63 ms | 2.1–3.6 ms |
+
+Reading the numbers:
+
+- **Opening is 8–9× faster**, which is what the unsafe `bulk_load` promised and the acceptance criterion asked (4×). The index is no longer most of an import.
+- **Queries are faster, not slower.** A packed tree is tight — every node full, the entries in a coherent order — where a tree grown by a hundred thousand insertions is not.
+- **Updates of packed entries are cheap**: a mark and an insert into a small tree, instead of a removal from a large one. Repacking costs one rebuild of what is left, once per halving.
+- The dependency on rstar remains for the dynamic tree; its `bulk_load` is still never called.
