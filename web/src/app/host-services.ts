@@ -63,6 +63,8 @@ export interface HostServices {
   confirm(message: string): boolean;
   /** Where the autosave is kept. */
   readonly autosave: AutosaveStore;
+  /** Loads the page afresh: a new engine, and the kept drawing offered back. */
+  reload(): void;
 }
 
 // ── files: the universal path ──
@@ -254,4 +256,5 @@ export const browserHost: HostServices = {
   },
 
   autosave: indexedDbAutosave,
+  reload: () => window.location.reload(),
 };

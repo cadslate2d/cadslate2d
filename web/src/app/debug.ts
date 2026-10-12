@@ -11,6 +11,8 @@ import type { RendererStats } from "../renderer/webgl/webgl-renderer";
 
 export interface DebugHandle {
   readonly renderer: Readonly<RendererStats>;
+  /** Makes the engine panic (#176), so the recovery path can be tested end to end. */
+  readonly crash: () => void;
   /** Runs the render-transport measurement (DESIGN §12.6) on the open drawing. */
   readonly probeTransport: () => Promise<TransportReport>;
   /** Milliseconds to import `text` as DXF into a throwaway session. */

@@ -9,6 +9,12 @@ export interface Recovery {
   readonly savedAt: number;
 }
 
+/** What the failure dialog says (#176): the panic, and when the drawing was last kept. */
+export interface Failure {
+  readonly message: string;
+  readonly keptAt: number | undefined;
+}
+
 /** Log lines kept for display. Older lines scroll out. */
 export const LOG_LINES_KEPT = 200;
 
@@ -37,6 +43,8 @@ export interface UiSnapshot {
   readonly exportWarning: readonly string[] | undefined;
   /** A drawing kept in the browser that no file holds, offered on start. */
   readonly recovery: Recovery | undefined;
+  /** The engine has stopped; the dialog says so and offers a reload. */
+  readonly failure: Failure | undefined;
   /** The layers as the Layers panel shows them: presentation data, not the table. */
   readonly layers: readonly LayerRow[];
   readonly linetypes: readonly string[];
@@ -77,6 +85,7 @@ const INITIAL: UiSnapshot = {
   importReport: undefined,
   exportWarning: undefined,
   recovery: undefined,
+  failure: undefined,
   layers: [],
   linetypes: [],
   selection: NO_SELECTION,
@@ -88,6 +97,7 @@ export class UiStore {
   #logSeen = 0;
   #exportWarning: readonly string[] | undefined;
   #recovery: Recovery | undefined;
+  #failure: Failure | undefined;
   readonly #listeners = new Set<() => void>();
 
   // Arrow properties: React calls these detached from the instance.
@@ -107,6 +117,13 @@ export class UiStore {
   setExportWarning(losses: readonly string[] | undefined): void {
     this.#exportWarning = losses;
     this.#snapshot = { ...this.#snapshot, exportWarning: losses };
+    this.#listeners.forEach((listener) => listener());
+  }
+
+  /** The engine has stopped: the dialog says so, from now on. */
+  setFailure(failure: Failure): void {
+    this.#failure = failure;
+    this.#snapshot = { ...this.#snapshot, failure };
     this.#listeners.forEach((listener) => listener());
   }
 
@@ -143,6 +160,7 @@ export class UiStore {
       importReport: state.importReport,
       exportWarning: this.#exportWarning,
       recovery: this.#recovery,
+      failure: this.#failure,
       layers: state.layers,
       linetypes: state.linetypes,
       selection: state.selection,

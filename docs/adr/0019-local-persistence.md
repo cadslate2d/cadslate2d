@@ -74,3 +74,7 @@ IndexedDB is the page's own storage; the end-to-end test records every request t
 
 - A drawing of 100,000 entities autosaves and the export's main-thread time is felt: that is the Worker's case (§37), and the store does not change.
 - Safari gains the OPFS writable stream on the main thread, or a reason appears to keep more than one slot: the interface is one object with three methods, and a second implementation slots behind it.
+
+## Extended in M7 (2026-10-12): after a panic in the engine (#176)
+
+A Rust panic aborts the WASM call it happens in and leaves the session unusable. The engine's panic hook keeps the message; the TypeScript engine wraps every call into the session, and on the first trap reads the message (`panic_message`, one static and nothing of the session), tells the app once, and declines every call after. The app stops the frame loop, cancels the pending autosave and never writes the slot again, and shows what happened and when the drawing was last kept; the only way on is a reload, which this ADR's recovery then offers the kept drawing, as of the last pause before the failure. The slot is never overwritten by a failed engine, so what it holds is a drawing that was whole. `panic_for_test` is the one call that fails on purpose, reached only from the debug handle, so the path is exercised end to end.

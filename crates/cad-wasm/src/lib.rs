@@ -8,14 +8,47 @@
 mod session;
 mod views;
 
+use std::cell::RefCell;
+
 use wasm_bindgen::prelude::*;
 
 pub use session::CadSession;
 
+thread_local! {
+    /// What stopped the engine: the first panic's message (#176).
+    static PANIC: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
 /// Runs once when the module is instantiated.
 #[wasm_bindgen(start)]
 fn start() {
-    console_error_panic_hook::set_once();
+    // A panic aborts the call it happens in and leaves the session
+    // unusable. The hook keeps the message for the host to read on its
+    // next call — the one call it then makes — and prints it as before.
+    std::panic::set_hook(Box::new(|info| {
+        PANIC.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(info.to_string());
+            }
+        });
+        console_error_panic_hook::hook(info);
+    }));
+}
+
+/// The message of the panic that stopped the engine, if one has (#176).
+/// Reads one static and nothing of the session, so it is safe to call
+/// after the session is not.
+#[wasm_bindgen]
+pub fn panic_message() -> Option<String> {
+    PANIC.with(|slot| slot.borrow().clone())
+}
+
+/// Panics, so the recovery path can be exercised end to end (#176). The
+/// shell reaches it only through the debug handle.
+#[wasm_bindgen]
+pub fn panic_for_test() {
+    panic!("asked to fail, for the test");
 }
 
 /// Version of the CAD core.

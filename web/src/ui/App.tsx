@@ -4,6 +4,7 @@ import { CadEngine, coreVersion, loadEngine } from "../cad/engine";
 import { CanvasView } from "./CanvasView";
 import { CommandLine } from "./CommandLine";
 import { ExportWarning } from "./ExportWarning";
+import { Failure } from "./Failure";
 import { Header } from "./Header";
 import { ImportReport } from "./ImportReport";
 import { Recovery } from "./Recovery";
@@ -74,7 +75,10 @@ export function App() {
   useEffect(() => {
     if (!app) return;
     const guard = (event: BeforeUnloadEvent) => {
-      if (app.ui.getSnapshot().unsavedChanges) event.preventDefault();
+      // After the engine has stopped, leaving loses nothing more: the
+      // reload is the way back.
+      const { unsavedChanges, failure } = app.ui.getSnapshot();
+      if (unsavedChanges && !failure) event.preventDefault();
     };
     window.addEventListener("beforeunload", guard);
     return () => window.removeEventListener("beforeunload", guard);
@@ -114,6 +118,7 @@ export function App() {
       <ImportReport app={core.app} />
       <ExportWarning app={core.app} />
       <Recovery app={core.app} />
+      <Failure app={core.app} />
       <TextEditor app={core.app} />
       <CommandLine app={core.app} />
       {panels && (

@@ -4,7 +4,13 @@
 // The boundary is coarse on purpose: one call per browser event, each
 // returning dirty flags; frame data is then pulled in bulk. Nothing here
 // exposes entities, and nothing here interprets CAD state.
-import init, { CadSession, core_version, type InitInput } from "./pkg/cad_wasm";
+import init, {
+  CadSession,
+  core_version,
+  panic_for_test,
+  panic_message,
+  type InitInput,
+} from "./pkg/cad_wasm";
 
 /** Bits of the mask returned by every input call. Pull only what is flagged. */
 export const Dirty = {
@@ -285,12 +291,71 @@ export function coreVersion(): string {
 }
 
 /** One open drawing. Create only after `loadEngine()` resolves. */
+/**
+ * The engine has panicked (#176): the call that raised this is the one it
+ * happened in, or any call after. The message is the panic's.
+ */
+export class EngineFailure extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EngineFailure";
+  }
+}
+
 export class CadEngine {
-  readonly #session = new CadSession();
+  readonly #session: CadSession;
+  /** The panic that stopped the engine, once one has. */
+  #failure: string | undefined;
+  /** Told once, when the engine first fails. */
+  onFailure: ((message: string) => void) | undefined;
+
+  constructor() {
+    const session = new CadSession();
+    // Every call into the session passes through the guard: after a panic
+    // none reaches it.
+    this.#session = new Proxy(session, {
+      get: (target, property) => {
+        const value = Reflect.get(target, property, target) as unknown;
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) =>
+          this.#call(() => (value as (...a: unknown[]) => unknown).apply(target, args));
+      },
+    });
+  }
+
+  /** What stopped the engine, once something has. */
+  get failure(): string | undefined {
+    return this.#failure;
+  }
+
+  /** Makes the engine panic, for tests of what happens then. */
+  panicForTest(): void {
+    this.#call(() => panic_for_test());
+  }
+
+  #call<T>(invoke: () => T): T {
+    if (this.#failure !== undefined) throw new EngineFailure(this.#failure);
+    try {
+      return invoke();
+    } catch (cause) {
+      // A trap is a panic (the engine aborts on one); anything else is an
+      // ordinary error the call reports.
+      if (!(cause instanceof WebAssembly.RuntimeError)) throw cause;
+      let message: string | undefined;
+      try {
+        message = panic_message();
+      } catch {
+        // The message is not to be had: the trap's own text will do.
+      }
+      this.#failure = message ?? String(cause);
+      this.onFailure?.(this.#failure);
+      throw new EngineFailure(this.#failure);
+    }
+  }
 
   /** Releases the WASM-side session. The engine must not be used afterwards. */
   dispose(): void {
-    this.#session.free();
+    if (this.#failure === undefined) this.#session.free();
   }
 
   // ── input: each call returns a Dirty bitmask ──

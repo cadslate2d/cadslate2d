@@ -57,6 +57,13 @@ export class CanvasController {
     this.#renderer.onContextRestored = () => app.loop.invalidate(Dirty.Scene);
     publishDebugHandle({
       renderer: this.#renderer.stats,
+      crash: () => {
+        try {
+          app.engine.panicForTest();
+        } catch {
+          // The failure reaches the shell through the app, like any other.
+        }
+      },
       // Loaded on demand so the probe is not part of the normal startup path.
       probeTransport: async () => {
         const { probeTransport } = await import("../renderer/webgl/transport-probe");
@@ -129,6 +136,7 @@ export class CanvasController {
   }
 
   readonly #syncSize = (): void => {
+    if (this.#app.failed) return;
     const { width, height } = this.#canvas.getBoundingClientRect();
     this.#renderer.resize(width, height, window.devicePixelRatio);
     this.#app.loop.invalidate(this.#app.engine.resize(width, height));
@@ -140,10 +148,12 @@ export class CanvasController {
   }
 
   readonly #onPointerMove = (event: PointerEvent): void => {
+    if (this.#app.failed) return;
     this.#app.loop.queuePointerMove({ ...this.#position(event), modifiers: modifierBits(event) });
   };
 
   readonly #onPointerLeave = (): void => {
+    if (this.#app.failed) return;
     this.#app.loop.flushPointerMove();
     this.#app.loop.invalidate(this.#app.engine.pointerLeave());
   };
@@ -153,6 +163,7 @@ export class CanvasController {
     // and keep keyboard focus on the command line.
     this.#canvas.setPointerCapture(event.pointerId);
     event.preventDefault();
+    if (this.#app.failed) return;
     this.#app.loop.flushPointerMove();
     const { x, y } = this.#position(event);
     this.#app.loop.invalidate(
@@ -161,6 +172,7 @@ export class CanvasController {
   };
 
   readonly #onPointerUp = (event: PointerEvent): void => {
+    if (this.#app.failed) return;
     this.#app.loop.flushPointerMove();
     const { x, y } = this.#position(event);
     this.#app.loop.invalidate(this.#app.engine.pointerUp(x, y, event.button, modifierBits(event)));
@@ -168,6 +180,7 @@ export class CanvasController {
 
   readonly #onWheel = (event: WheelEvent): void => {
     event.preventDefault(); // the canvas zooms; the page must not scroll
+    if (this.#app.failed) return;
     this.#app.loop.flushPointerMove();
     const { x, y } = this.#position(event);
     const delta = wheelPixels(event, this.#canvas.clientHeight);

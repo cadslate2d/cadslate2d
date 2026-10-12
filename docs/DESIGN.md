@@ -2017,7 +2017,7 @@ Possible work:
 - crash recovery;
 - worker experiments.
 
-> **M7:** committed GPU-buffer reuse is [ADR-0022](adr/0022-scene-chunks.md) — an edit re-packs one chunk and the frame uploads the ranges that moved. Viewport culling is not taken up: zoomed in, the frames are the cheaper ones, and what remains is the rasteriser's per-instance work, which chunk culling cannot cut on a drawing whose ID order does not follow its layout — [ADR-0023](adr/0023-viewport-culling.md), with the figures that would reopen it.
+> **M7:** crash recovery is in [ADR-0019](adr/0019-local-persistence.md), extended: a panic in the engine is kept by its hook, every call after it is declined in TypeScript, the autosave is never written again, and a reload offers the drawing as last kept (#176). Committed GPU-buffer reuse is [ADR-0022](adr/0022-scene-chunks.md) — an edit re-packs one chunk and the frame uploads the ranges that moved. Viewport culling is not taken up: zoomed in, the frames are the cheaper ones, and what remains is the rasteriser's per-instance work, which chunk culling cannot cut on a drawing whose ID order does not follow its layout — [ADR-0023](adr/0023-viewport-culling.md), with the figures that would reopen it.
 
 Worker architecture must be justified by profiling, not assumed.
 

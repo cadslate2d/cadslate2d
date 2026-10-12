@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { CadEngine, KeyAction } from "../cad/engine";
+import { CadEngine, Dirty, EngineFailure, KeyAction } from "../cad/engine";
 import { loadEngineForTests } from "../cad/test-support";
 import { AUTOSAVE_DELAY_MS, CadApp, DISCARD_CHANGES_MESSAGE } from "./cad-app";
 import type { AutosaveRecord, AutosaveStore, FileAccess, FileTarget } from "./host-services";
@@ -83,6 +83,11 @@ class FakeHost implements HostServices {
   readonly files = new FakeFiles();
   confirmAnswer = true;
   confirmations: string[] = [];
+  reloads = 0;
+
+  reload(): void {
+    this.reloads += 1;
+  }
 
   confirm(message: string): boolean {
     this.confirmations.push(message);
@@ -584,5 +589,45 @@ describe("properties for the panel", () => {
     app.key(KeyAction.Escape);
     await tick();
     expect(app.ui.getSnapshot().selection.count).toBe(0);
+  });
+});
+
+// #176: a panic in the engine leaves the drawing recoverable.
+describe("a panic in the engine", () => {
+  test("is told, keeps the autosave as it was, declines everything, and reloads on request", async () => {
+    const { app, engine, host, tick, elapse, timers, scheduled, enter } = harness();
+    await tick();
+    enter("L", "0,0", "100,50", "");
+    await tick();
+    await elapse();
+    expect(host.autosave.saves).toBe(1);
+    const kept = host.autosave.record;
+    // A change the pause has not kept yet, then the panic.
+    enter("C", "10,10", "5");
+    await tick();
+    expect(timers).toHaveLength(1);
+    expect(() => engine.panicForTest()).toThrow(EngineFailure);
+
+    expect(app.failed).toBe(true);
+    const failure = app.ui.getSnapshot().failure;
+    expect(failure?.message).toContain("asked to fail");
+    expect(failure?.keptAt).toBe(kept?.savedAt);
+    expect(timers, "the pending autosave is cancelled").toHaveLength(0);
+
+    // Nothing reaches the engine: no throw, no frame, no write.
+    scheduled.length = 0;
+    expect(() => enter("L", "0,0", "1,1", "")).not.toThrow();
+    app.key(KeyAction.Escape);
+    app.loop.invalidate(Dirty.Scene);
+    app.loop.queuePointerMove({ x: 1, y: 1, modifiers: 0 });
+    expect(app.historyPrevious()).toBeUndefined();
+    expect(scheduled).toHaveLength(0);
+    await elapse();
+    expect(host.autosave.saves).toBe(1);
+    expect(host.autosave.record).toBe(kept);
+
+    app.reload();
+    expect(host.reloads).toBe(1);
+    expect(() => app.dispose()).not.toThrow();
   });
 });

@@ -247,6 +247,10 @@ body {
   border-color: var(--color-accent);
 }
 
+.warning--failure {
+  z-index: 3;
+}
+
 .status__document {
   color: var(--color-text);
 }

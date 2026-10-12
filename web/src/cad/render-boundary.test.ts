@@ -79,6 +79,27 @@ describe("WASM API surface", () => {
     ]);
   });
 
+  test("the free functions are the module's version and the panic path", async () => {
+    const typings = await readFile(new URL("./pkg/cad_wasm.d.ts", import.meta.url), "utf8");
+    const exported = [...typings.matchAll(/^export function (\w+)\(/gm)]
+      .map((match) => match[1] ?? "")
+      .filter((name) => !name.startsWith("__"))
+      .sort();
+    expect(exported).toEqual([
+      "core_version",
+      // wasm-bindgen's own: the module's synchronous loader.
+      "initSync",
+      // #176: the one call that makes the engine fail on purpose, reached only
+      // from the debug handle, so the recovery path is exercised end to end.
+      "panic_for_test",
+      // #176: the panic's message, read once after it, from a static and
+      // nothing of the session.
+      "panic_message",
+      // wasm-bindgen's own: runs when the module is instantiated.
+      "start",
+    ]);
+  });
+
   test("nothing in it names an entity, a vertex, or an index", async () => {
     for (const name of await exportedSessionApi()) {
       expect(name).not.toMatch(/entity|entities|vertex|vertices|get_|_at$|_count$/);

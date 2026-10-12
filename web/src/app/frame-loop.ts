@@ -16,6 +16,7 @@ export class FrameLoop {
   #dirty = 0;
   #pendingMove: PointerSample | undefined;
   #scheduled = false;
+  #stopped = false;
 
   /**
    * @param movePointer forwards a pointer move to the engine and returns its dirty flags
@@ -32,15 +33,23 @@ export class FrameLoop {
     this.#schedule = schedule;
   }
 
+  /** Stops for good: nothing queued or invalidated afterwards reaches the engine or a frame. */
+  stop(): void {
+    this.#stopped = true;
+    this.#pendingMove = undefined;
+    this.#dirty = 0;
+  }
+
   /** Records that something changed. No flags, no frame. */
   invalidate(dirty: number): void {
-    if (dirty === 0) return;
+    if (dirty === 0 || this.#stopped) return;
     this.#dirty |= dirty;
     this.#request();
   }
 
   /** Remembers the latest pointer position; it reaches the engine once per frame. */
   queuePointerMove(sample: PointerSample): void {
+    if (this.#stopped) return;
     this.#pendingMove = sample;
     this.#request();
   }
@@ -61,6 +70,7 @@ export class FrameLoop {
     this.#scheduled = true;
     this.#schedule(() => {
       this.#scheduled = false;
+      if (this.#stopped) return;
       this.flushPointerMove();
       const dirty = this.#dirty;
       this.#dirty = 0;

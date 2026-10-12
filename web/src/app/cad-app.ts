@@ -54,6 +54,10 @@ export class CadApp {
   #target: FileTarget | undefined;
   /** Whether the save the export warning asked about must ask where. */
   #pendingSaveAsks = false;
+  /** When the drawing was last kept, for the failure dialog. */
+  #keptAt: number | undefined;
+  /** The engine has panicked (#176): nothing reaches it any more. */
+  #failed = false;
 
   constructor(engine: CadEngine, options: CadAppOptions = {}) {
     this.engine = engine;
@@ -65,7 +69,32 @@ export class CadApp {
       (dirty) => this.#onFrame(dirty),
       options.schedule ?? ((callback) => requestAnimationFrame(callback)),
     );
+    engine.onFailure = (message) => this.#fail(message);
     this.ui.refresh(engine);
+  }
+
+  /** Whether the engine has stopped. Everything the app is asked afterwards is declined. */
+  get failed(): boolean {
+    return this.#failed;
+  }
+
+  /** Loads the page afresh: a new engine, and the kept drawing offered back (ADR-0019). */
+  reload(): void {
+    this.#host.reload();
+  }
+
+  /**
+   * The engine panicked in some call. The frame loop stops, the autosave is
+   * never written again — what it holds is the drawing as last kept, and
+   * the dialog says so — and every entry point declines from now on.
+   */
+  #fail(message: string): void {
+    if (this.#failed) return;
+    this.#failed = true;
+    this.#cancelAutosave?.();
+    this.#cancelAutosave = undefined;
+    this.loop.stop();
+    this.ui.setFailure({ message, keptAt: this.#keptAt });
   }
 
   /** Registers the function that draws a frame; returns a function that removes it. */
@@ -79,12 +108,14 @@ export class CadApp {
 
   /** One completed command-line entry. Rust interprets it. */
   submitText(text: string): void {
+    if (this.#failed) return;
     this.loop.flushPointerMove();
     this.#afterInput(this.engine.submitText(text));
   }
 
   /** Starts a command from the UI. It is not a shortcut around the command line: Rust echoes and runs it. */
   invoke(name: string): void {
+    if (this.#failed) return;
     this.loop.flushPointerMove();
     this.#afterInput(this.engine.invoke(name));
   }
@@ -100,15 +131,18 @@ export class CadApp {
   }
 
   key(action: KeyAction): void {
+    if (this.#failed) return;
     this.loop.flushPointerMove();
     this.#afterInput(this.engine.key(action));
   }
 
   historyPrevious(): string | undefined {
+    if (this.#failed) return undefined;
     return this.engine.historyPrevious();
   }
 
   historyNext(): string | undefined {
+    if (this.#failed) return undefined;
     return this.engine.historyNext();
   }
 
@@ -136,7 +170,7 @@ export class CadApp {
     const record = this.#recoverable;
     this.#recoverable = undefined;
     this.ui.setRecovery(undefined);
-    if (!record) return;
+    if (!record || this.#failed) return;
     const dirty = this.engine.loadDxf(
       new TextEncoder().encode(record.text),
       record.name ?? RECOVERED_FILE_NAME,
@@ -176,6 +210,7 @@ export class CadApp {
 
   /** Writes the drawing to the autosave slot; `exported` says a file holds it too. */
   async #keep(exported: boolean): Promise<void> {
+    if (this.#failed) return;
     const state = this.engine.uiState();
     if (!exported && !state.unsavedChanges) return;
     this.#keptRevision = state.revision;
@@ -184,13 +219,15 @@ export class CadApp {
       const handle = this.#target?.handle;
       const storable =
         typeof FileSystemFileHandle !== "undefined" && handle instanceof FileSystemFileHandle;
+      const savedAt = Date.now();
       await this.#host.autosave.save({
         name: state.documentName,
         handle: storable ? handle : undefined,
         text: this.engine.snapshotDxf(),
-        savedAt: Date.now(),
+        savedAt,
         exported,
       });
+      this.#keptAt = savedAt;
     } catch {
       // Storage refused: the drawing is still on screen; the next change tries again.
       this.#keptRevision = undefined;
@@ -249,6 +286,7 @@ export class CadApp {
   /** The save the warning asked about: the user chose to go ahead. */
   exportAnyway(): void {
     this.ui.setExportWarning(undefined);
+    if (this.#failed) return;
     void this.#performSave(this.#pendingSaveAsks);
   }
 
@@ -259,6 +297,7 @@ export class CadApp {
 
   /** Takes the import report off the screen. */
   dismissImportReport(): void {
+    if (this.#failed) return;
     this.loop.invalidate(this.engine.dismissImportReport());
   }
 
