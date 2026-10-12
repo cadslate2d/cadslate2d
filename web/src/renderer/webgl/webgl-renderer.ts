@@ -279,6 +279,16 @@ export class WebGlRenderer implements FrameSink {
     this.stats.frames += 1;
   }
 
+  /**
+   * Waits for the GPU to finish what has been drawn, for measurements:
+   * reading a pixel back is what actually waits (`gl.finish` returns before
+   * a queued command runs in another process).
+   */
+  waitForGpu(): void {
+    const pixel = new Uint8Array(4);
+    this.#gl.readPixels(0, 0, 1, 1, this.#gl.RGBA, this.#gl.UNSIGNED_BYTE, pixel);
+  }
+
   dispose(): void {
     this.#canvas.removeEventListener("webglcontextlost", this.#onContextLost);
     this.#canvas.removeEventListener("webglcontextrestored", this.#onContextRestored);

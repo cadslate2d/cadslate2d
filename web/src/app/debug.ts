@@ -1,6 +1,7 @@
 // Counters and measurements exposed for end-to-end tests and benchmarks.
 // Nothing here can reach CAD state: no entities, no selection, no geometry.
 import type { CurveReport } from "../renderer/webgl/curve-probe";
+import type { FramesReport } from "../renderer/webgl/frames-probe";
 import type { LinetypeReport } from "../renderer/webgl/linetype-probe";
 import type { StyleReport } from "../renderer/webgl/style-probe";
 import type { TextCandidate, TextReport } from "../renderer/webgl/text-probe";
@@ -14,6 +15,8 @@ export interface DebugHandle {
   readonly probeTransport: () => Promise<TransportReport>;
   /** Milliseconds to import `text` as DXF into a throwaway session. */
   readonly probeOpen: (text: string) => Promise<number>;
+  /** Opens `text` in the application and measures its frames (#171). The drawing on screen is replaced. */
+  readonly probeFrames: (text: string, frames?: number) => Promise<FramesReport>;
   /** Runs the curve-rendering experiment (ADR-0009) on `arcCount` generated arcs. */
   readonly probeCurves: (arcCount: number) => Promise<CurveReport>;
   /** Runs the linetype experiment (ADR-0015) on generated dashed paths. */

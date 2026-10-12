@@ -197,7 +197,7 @@ pnpm --dir web dev
 | Web typecheck, lint, unit tests | `pnpm --dir web typecheck` / `lint` / `test` |
 | Production bundle | `pnpm --dir web build` → `web/dist/` |
 | End-to-end tests (needs a production bundle) | `pnpm --dir web e2e` |
-| Rust benchmarks (store, index, scene, snapping, grips, offset, blocks, annotation) | `cargo bench -p cad-benchmarks` |
+| Rust benchmarks (store, index, scene, snapping, grips, offset, blocks, annotation, the mixed drawing) | `cargo bench -p cad-benchmarks` |
 | Re-record visual baselines (Chromium) | `E2E_BROWSERS=chromium pnpm --dir web exec playwright test --update-snapshots` |
 | Generate a benchmark drawing | `cargo run --release -p cad-benchmarks --bin generate-drawing -- 100000 benches/generated-drawings/lines-100k.dxf` |
 | Render-transport measurement in the browser | `pnpm --dir web bench:transport` (after `build` and generating `lines-1k`, `-10k`, `-100k`) |
@@ -206,6 +206,7 @@ pnpm --dir web dev
 | Linetype experiment in the browser; rewrites the pictures in ADR-0015 | `pnpm --dir web bench:linetypes` (after `build`) |
 | Text-rendering experiment in the browser; rewrites the pictures in ADR-0016 | `pnpm --dir web bench:text` (after `build`) |
 | Local-persistence experiment: IndexedDB against OPFS, in Chromium and Firefox (ADR-0019) | `pnpm --dir web bench:persistence` (after `build`, with the generated drawings) |
+| The §42 targets on the mixed drawings, in Chromium and Firefox; the figures are in [`docs/performance.md`](docs/performance.md) | `pnpm --dir web bench:mixed` (after `build`, with the mixed drawings generated) |
 
 First-time Playwright setup: `pnpm --dir web exec playwright install chromium firefox`. The suite runs in Chromium and Firefox by default; choose browsers with `E2E_BROWSERS=chromium,firefox,webkit` (WebKit needs `playwright install --with-deps webkit`). CI runs Chromium only, because headless Firefox on the hosted runner provides no WebGL2.
 

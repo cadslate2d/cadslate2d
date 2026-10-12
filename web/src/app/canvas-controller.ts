@@ -66,6 +66,10 @@ export class CanvasController {
         const { probeOpen } = await import("../renderer/webgl/transport-probe");
         return probeOpen(() => new CadEngine(), text);
       },
+      probeFrames: async (text, frames) => {
+        const { probeFrames } = await import("../renderer/webgl/frames-probe");
+        return probeFrames(app.engine, this.#renderer, text, frames);
+      },
       probePersistence: async (text) => {
         const { probePersistence } = await import("./persistence-probe");
         return probePersistence(text);

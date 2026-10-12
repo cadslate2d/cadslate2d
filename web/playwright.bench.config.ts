@@ -10,7 +10,7 @@ export default defineConfig({
   testMatch: "**/*.bench.ts",
   fullyParallel: false,
   workers: 1,
-  timeout: 300_000,
+  timeout: 900_000,
   reporter: "list",
   // Rendering probes run in Chromium; `bench:persistence` runs in both.
   projects: [

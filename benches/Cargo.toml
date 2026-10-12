@@ -47,3 +47,7 @@ workspace = true
 [[bench]]
 name = "annotation"
 harness = false
+
+[[bench]]
+name = "mixed"
+harness = false
