@@ -2017,6 +2017,8 @@ Possible work:
 - crash recovery;
 - worker experiments.
 
+> **M7:** committed GPU-buffer reuse is [ADR-0022](adr/0022-scene-chunks.md) — an edit re-packs one chunk and the frame uploads the ranges that moved. Viewport culling is not taken up: zoomed in, the frames are the cheaper ones, and what remains is the rasteriser's per-instance work, which chunk culling cannot cut on a drawing whose ID order does not follow its layout — [ADR-0023](adr/0023-viewport-culling.md), with the figures that would reopen it.
+
 Worker architecture must be justified by profiling, not assumed.
 
 > **Broken down at the M6 exit:** the order of work and the issues are in the [roadmap](roadmap.md) and the [M6 review](reviews/m6-exit-review.md). Every item above is decided by measurement, starting from a mixed drawing at 10k, 50k, and 100k entities against the §42 targets (#171).

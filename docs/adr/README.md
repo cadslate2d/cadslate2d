@@ -33,6 +33,7 @@ There are two kinds:
 | [0020](0020-dimensions.md) | Dimensions: definition points and a style, laid out by pure functions whenever asked | Accepted | Bootstrap |
 | [0021](0021-filled-regions.md) | Filled regions: triangles as a third committed instance kind, cut from the boundary when asked | Accepted | Evidence |
 | [0022](0022-scene-chunks.md) | Scene chunks: an edit re-packs the chunk that holds what changed, and the frame uploads the ranges that moved | Accepted | Evidence |
+| [0023](0023-viewport-culling.md) | Viewport culling: not taken up — zoomed-in frames are the cheaper ones, and the floor is the rasteriser's per-instance work | Accepted | Evidence |
 
 ## Expected evidence ADRs
 

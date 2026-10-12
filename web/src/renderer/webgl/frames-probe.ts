@@ -36,8 +36,14 @@ export interface FramesReport {
   zoom: FrameTimes;
   /** Frames while the pointer moves with nothing pressed: hover and snapping. */
   pointer: FrameTimes;
-  /** The frame after one committed edit — a line drawn — which rebuilds the scene. */
+  /** The frame after one committed edit — a line drawn — which re-packs its chunk (ADR-0022). */
   edit: FrameTimes;
+  /**
+   * Pan and pointer frames zoomed in twenty times about the middle of the
+   * view, a four-hundredth of the drawing's area on screen (#173): what a
+   * frame costs when almost everything drawn is off screen.
+   */
+  zoomedIn: { pan: FrameTimes; pointer: FrameTimes };
 }
 
 const MIDDLE_BUTTON = 1;
@@ -106,5 +112,25 @@ export function probeFrames(
     engine.submitText(`${i},1`);
     engine.submitText("");
   });
-  return { imported, instances, openMs, firstFrameMs, pan, zoom, pointer, edit };
+  // Three full wheel steps are e³ ≈ 20 times.
+  for (let i = 0; i < 3; i += 1) engine.wheel(400, 300, -500, 0);
+  engine.pointerDown(400, 300, MIDDLE_BUTTON, 0);
+  const panIn = timed(renderer, engine, FRAMES, (i) => {
+    engine.pointerMove(400 + i * 3, 300 + (i % 7), 0);
+  });
+  engine.pointerUp(400 + FRAMES * 3, 300, MIDDLE_BUTTON, 0);
+  const pointerIn = timed(renderer, engine, FRAMES, (i) => {
+    engine.pointerMove(100 + ((i * 13) % 600), 100 + ((i * 7) % 400), 0);
+  });
+  return {
+    imported,
+    instances,
+    openMs,
+    firstFrameMs,
+    pan,
+    zoom,
+    pointer,
+    edit,
+    zoomedIn: { pan: panIn, pointer: pointerIn },
+  };
 }

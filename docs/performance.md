@@ -38,7 +38,7 @@ An edit now costs a chunk of 512 entities, whatever the drawing's size; the whol
 
 ## In the browser (2026-10-12, #171)
 
-`pnpm --dir web bench:mixed`: the drawing opened in the application's own engine and drawn by its own renderer, each frame timed from the input to the GPU finishing (`probeFrames`). *Pan* is a middle-button drag, *zoom* the wheel, *pointer* a move with nothing pressed (hover and snapping), *edit* the frame after one line is drawn, which rebuilds the scene. Mean and worst of sixty frames (ten for edits).
+`pnpm --dir web bench:mixed`: the drawing opened in the application's own engine and drawn by its own renderer, each frame timed from the input to the GPU finishing (`probeFrames`). *Pan* is a middle-button drag, *zoom* the wheel, *pointer* a move with nothing pressed (hover and snapping), *edit* the frame after one line is drawn, which re-packs its chunk; *zoomed in* repeats pan and pointer twenty times zoomed in. Mean and worst of sixty frames (ten for edits).
 
 ### Firefox, software WebRender
 
@@ -51,6 +51,10 @@ An edit now costs a chunk of 512 entities, whatever the drawing's size; the whol
 | Pointer, mean / worst | 7.7 / 9 ms | 30 / 33 ms | 61 / 64 ms |
 | Edit, mean / worst (#171, the scene rebuilt whole) | 24 / 33 ms | 123 / 145 ms | 218 / 286 ms |
 | Edit, mean / worst (#172, one chunk re-packed and its ranges uploaded) | 11 / 24 ms | 42 / 86 ms | 79 / 152 ms |
+| Pan, zoomed in twenty times (#173) | 4.6 / 7 ms | 20 / 21 ms | 38 / 40 ms |
+| Pointer, zoomed in twenty times (#173) | 4.9 / 7 ms | 20 / 21 ms | 38 / 40 ms |
+
+Zoomed in, with a four-hundredth of the drawing on screen, a frame is a third cheaper and no cheaper than that: the rest is the software rasteriser's per-instance work, 23 ns an instance, which is why culling is not taken up ([ADR-0023](adr/0023-viewport-culling.md)).
 
 ### Chromium, SwiftShader
 
@@ -77,4 +81,4 @@ Three seconds a frame is SwiftShader rasterising 143,000 segments, 4,000 arcs, a
 | Edit | Met: 11 ms | 42 ms: the pointer frame, which is the draw — met as far as editing is concerned (#172) | 79 ms: the same; what is left is the draw, the rasteriser's (#110) |
 | On SwiftShader | A frame is seconds at every size: the rasteriser, not the renderer (10k plain lines take 260 ms there, ADR-0009 measured 10k arcs at 175 ms). Not a target this environment can judge | | |
 
-What the figures asked for, in order: an edit that re-packs and re-uploads what changed (#172, done: the edit frame is now the pointer frame); then the share of text in the segment count (#175); culling only if a GPU's frames say so (#173, #110).
+What the figures asked for, in order: an edit that re-packs and re-uploads what changed (#172, done: the edit frame is now the pointer frame); then the share of text in the segment count (#175); culling only if a GPU's frames say so (#173 measured zoomed-in frames and declined, ADR-0023; #110).
