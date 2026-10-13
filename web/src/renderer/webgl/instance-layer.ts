@@ -26,6 +26,8 @@ export interface StrokeUniforms {
   readonly styles: WebGLUniformLocation;
   /** The sampler the pattern table is bound to. */
   readonly patterns: WebGLUniformLocation | null;
+  /** Arcs only: the on-screen radius, in device pixels, past which an instance draws nothing (#112). */
+  readonly maxRadius: WebGLUniformLocation | null;
 }
 
 /** One per-instance vertex attribute: where it is bound and where it sits in an instance. */

@@ -5,10 +5,12 @@
 //! uploaded to its own small GPU buffers, entirely separately from the
 //! committed scene.
 
+use std::f64::consts::{PI, TAU};
+
 use cad_commands::{OverlayItem, SnapMode};
 use cad_core::{Aabb, Point2, Vec2, View};
 use cad_document::Drawing;
-use cad_geometry::Arc;
+use cad_geometry::{Arc, Primitive};
 
 use crate::{PackedFrame, StyleRole};
 
@@ -94,6 +96,37 @@ pub struct OverlayFrame {
     frame: PackedFrame,
 }
 
+/// On-screen radius, in CSS pixels, past which a committed circle or arc
+/// is drawn as the visible span of its curve rather than by the analytic
+/// shader (#112): `f32` coarsens the stroke from 10⁵ pixels and loses it
+/// near 10⁷ (ADR-0009). The adapter collapses such instances at a radius
+/// one per cent larger, so the band between is drawn twice, never not at all.
+pub const FAR_CURVE_RADIUS_PIXELS: f64 = 50_000.0;
+/// Chord error of a far curve's segments, in CSS pixels.
+const FAR_CURVE_CHORD_PIXELS: f64 = 0.25;
+/// How far outside the view a far curve is still drawn, in CSS pixels.
+const FAR_CURVE_MARGIN_PIXELS: f64 = 16.0;
+
+/// The pieces of the angular interval `[a, b]` (b − a ≤ 2π) that lie on
+/// the arc from `start` over `sweep`, as angle intervals on that arc: two
+/// when the interval wraps past the arc's end and back in at its start.
+fn arc_pieces(a: f64, b: f64, start: f64, sweep: f64) -> Vec<(f64, f64)> {
+    // A full circle has no ends to clip at.
+    if sweep >= TAU {
+        return vec![(a, b)];
+    }
+    let from = (a - start).rem_euclid(TAU);
+    let to = from + (b - a);
+    let mut pieces = Vec::new();
+    for offset in [0.0, -TAU] {
+        let (lo, hi) = ((from + offset).max(0.0), (to + offset).min(sweep));
+        if hi > lo {
+            pieces.push((start + lo, start + hi));
+        }
+    }
+    pieces
+}
+
 impl OverlayFrame {
     pub fn new() -> Self {
         Self::default()
@@ -110,6 +143,7 @@ impl OverlayFrame {
     pub fn rebuild(&mut self, items: &[OverlayItem], drawing: &Drawing, view: &View) {
         // The overlay is rebuilt freely, so it can always sit on the view centre.
         self.frame.reset(view.center());
+        self.push_far_curves(drawing, view);
         for item in items {
             match item {
                 OverlayItem::Grid { spacing } => self.push_grid(*spacing, view),
@@ -182,6 +216,72 @@ impl OverlayFrame {
                 }
                 OverlayItem::SnapMarker { mode, at } => self.push_snap_marker(*mode, *at, view),
                 OverlayItem::Crosshair { at } => self.push_crosshair(*at, view),
+            }
+        }
+    }
+
+    /// The committed curves too large on screen for the analytic shader
+    /// (#112; ADR-0009): every circle and arc in view whose on-screen radius
+    /// is past [`FAR_CURVE_RADIUS_PIXELS`] has the part of it that crosses
+    /// the view tessellated here, in `f64` from the view centre, as
+    /// segments; the shader draws nothing for such an instance. The
+    /// committed scene is untouched, so pan and zoom upload nothing.
+    fn push_far_curves(&mut self, drawing: &Drawing, view: &View) {
+        let scale = view.scale();
+        // A margin, so a stroke whose curve passes just outside is drawn.
+        let bounds = view
+            .visible_bounds()
+            .expanded(view.pixels_to_world(FAR_CURVE_MARGIN_PIXELS));
+        for id in drawing.query_shown(&bounds) {
+            let Some(entity) = drawing.entity(id) else {
+                continue;
+            };
+            for primitive in entity.primitives(drawing.tables()) {
+                let arc = match primitive {
+                    Primitive::Circle(circle) => Arc {
+                        center: circle.center,
+                        radius: circle.radius,
+                        start: 0.0,
+                        sweep: TAU,
+                    },
+                    Primitive::Arc(arc) => arc,
+                    Primitive::Segment(_) => continue,
+                };
+                if arc.radius * scale > FAR_CURVE_RADIUS_PIXELS {
+                    self.push_far_arc(&arc, view, &bounds);
+                }
+            }
+        }
+    }
+
+    /// The part of `arc` within reach of the view, as segments with a chord
+    /// error under [`FAR_CURVE_CHORD_PIXELS`].
+    fn push_far_arc(&mut self, arc: &Arc, view: &View, bounds: &Aabb) {
+        let to_view = bounds.center() - arc.center;
+        let distance = to_view.length();
+        let reach = bounds.min().distance_to(bounds.max()) / 2.0;
+        if distance - reach > arc.radius || distance + reach < arc.radius {
+            return; // the curve passes nowhere near the view
+        }
+        // The curve within the view lies within this angle of the direction
+        // of the view from the centre: the chord's angle, with room.
+        let half = if reach >= arc.radius {
+            PI
+        } else {
+            ((reach / arc.radius).asin() * 1.5).min(PI)
+        };
+        let mid = to_view.y.atan2(to_view.x);
+        let step = (8.0 * FAR_CURVE_CHORD_PIXELS / view.scale() / arc.radius)
+            .sqrt()
+            .max(1e-9);
+        for (from, to) in arc_pieces(mid - half, mid + half, arc.start, arc.sweep) {
+            let count = ((to - from) / step).ceil().clamp(1.0, 100_000.0) as usize;
+            let at = |i: usize| {
+                let angle = from + (to - from) * (i as f64 / count as f64);
+                arc.center + Vec2::from_polar(arc.radius, angle)
+            };
+            for i in 0..count {
+                self.frame.push_segment(StyleRole::Entity, at(i), at(i + 1));
             }
         }
     }
@@ -440,6 +540,118 @@ mod tests {
         let ghost = OverlayItem::Highlight(cad_core::EntityId::from_raw(999));
         overlay.rebuild(&[ghost], h.session.drawing(), h.session.view());
         assert_eq!(overlay.frame().segment_count(), 0);
+    }
+
+    // ── far curves (#112) ──
+
+    /// A view of `scale` pixels per unit centred on `at`.
+    fn view_at(at: Point2, scale: f64) -> View {
+        let mut view = View::new(800.0, 600.0);
+        view.zoom_about(ScreenPoint::new(400.0, 300.0), scale);
+        let delta = at - view.center();
+        view.pan_by_pixels(-delta.x * scale, delta.y * scale);
+        view
+    }
+
+    fn far_segments(drawing: &Drawing, view: &View) -> Vec<(Point2, Point2)> {
+        let mut overlay = OverlayFrame::new();
+        overlay.rebuild(&[], drawing, view);
+        let origin = overlay.frame().origin();
+        overlay
+            .frame()
+            .segments()
+            .chunks(PackedFrame::FLOATS_PER_SEGMENT)
+            .map(|s| {
+                (
+                    origin + Vec2::new(f64::from(s[0]), f64::from(s[1])),
+                    origin + Vec2::new(f64::from(s[2]), f64::from(s[3])),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_circle_past_the_shader_radius_is_drawn_as_its_visible_span() {
+        let mut h = Harness::new();
+        h.enter_all(&["C", "0,0", "100"]);
+        let drawing = h.session.drawing();
+        // Radius 100 at 10,000 px per unit: a million pixels, looking at the
+        // rightmost point.
+        let view = view_at(Point2::new(100.0, 0.0), 10_000.0);
+        let segments = far_segments(drawing, &view);
+        assert!(!segments.is_empty());
+        let visible = view.visible_bounds();
+        let (mut lowest, mut highest) = (f64::INFINITY, f64::NEG_INFINITY);
+        for (a, b) in &segments {
+            for point in [a, b] {
+                let off = (point.distance_to(Point2::ORIGIN) - 100.0).abs();
+                assert!(off < 1e-9, "{point:?} is {off} off the circle");
+                lowest = lowest.min(point.y);
+                highest = highest.max(point.y);
+            }
+        }
+        assert!(
+            lowest <= visible.min().y && highest >= visible.max().y,
+            "the span crosses the view"
+        );
+        // The chords are too short to see: under a quarter pixel from the curve.
+        for (a, b) in &segments {
+            let mid = Point2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+            let sagitta = 100.0 - mid.distance_to(Point2::ORIGIN);
+            assert!(sagitta * 10_000.0 < 0.3, "sagitta {sagitta}");
+        }
+
+        // Below the threshold, the shader draws it: nothing here.
+        let near = view_at(Point2::new(100.0, 0.0), 100.0);
+        assert!(far_segments(drawing, &near).is_empty());
+        // Looking elsewhere, at the same zoom: the curve passes nowhere near.
+        let away = view_at(Point2::new(0.0, 0.0), 10_000.0);
+        assert!(far_segments(drawing, &away).is_empty());
+    }
+
+    #[test]
+    fn an_arc_and_a_polyline_bulge_are_drawn_only_where_they_run() {
+        let mut h = Harness::new();
+        // A quarter arc on the right, from 0° to 90°.
+        h.enter_all(&["A", "100,0", "70.71,70.71", "0,100"]);
+        // A polyline with a semicircular bulge about (300, 0), to one side.
+        h.enter_all(&["PL", "300,-100", "A", "300,100", "L", "", ""]);
+        let drawing = h.session.drawing();
+        let scale = 10_000.0;
+        // At the arc's start: drawn.
+        assert!(!far_segments(drawing, &view_at(Point2::new(100.0, 0.0), scale)).is_empty());
+        // Where the circle would continue past the arc's end: not drawn.
+        assert!(far_segments(drawing, &view_at(Point2::new(70.71, -70.71), scale)).is_empty());
+        // The bulge: drawn on whichever side it bulges, on the circle of radius 100.
+        let sides = [Point2::new(200.0, 0.0), Point2::new(400.0, 0.0)];
+        let drawn: Vec<Vec<(Point2, Point2)>> = sides
+            .iter()
+            .map(|at| far_segments(drawing, &view_at(*at, scale)))
+            .collect();
+        assert_eq!(
+            drawn.iter().filter(|segments| !segments.is_empty()).count(),
+            1
+        );
+        for (a, _) in drawn.iter().flatten() {
+            assert!((a.distance_to(Point2::new(300.0, 0.0)) - 100.0).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn arc_pieces_follow_the_arc_and_wrap() {
+        // A full circle takes the interval as it is.
+        assert_eq!(arc_pieces(-0.5, 0.5, 0.0, TAU), vec![(-0.5, 0.5)]);
+        // An interval inside the arc.
+        assert_eq!(arc_pieces(1.0, 2.0, 0.5, 3.0), vec![(1.0, 2.0)]);
+        // An interval crossing the arc's start is clipped to it.
+        assert_eq!(arc_pieces(0.0, 1.0, 0.5, 3.0), vec![(0.5, 1.0)]);
+        // An interval wholly off the arc.
+        assert_eq!(arc_pieces(4.0, 5.0, 0.5, 3.0), vec![]);
+        // An interval wrapping round: past the arc's end and back in at its start.
+        let pieces = arc_pieces(3.0, 7.0, 0.5, 3.0);
+        assert_eq!(pieces.len(), 2);
+        assert!((pieces[0].0 - 3.0).abs() < 1e-12 && (pieces[0].1 - 3.5).abs() < 1e-12);
+        assert!((pieces[1].0 - 0.5).abs() < 1e-12 && (pieces[1].1 - (7.0 - TAU)).abs() < 1e-12);
     }
 
     // ── snap markers ──

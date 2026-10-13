@@ -14,7 +14,13 @@ import {
 } from "../../cad/engine";
 import type { CanvasPalette } from "../palette";
 import type { FrameSink } from "../render-frame";
-import { ARC_FRAGMENT_SHADER, ARC_STRIP_VERTICES, ARC_VERTEX_SHADER } from "./arc-shaders";
+import {
+  ARC_FRAGMENT_SHADER,
+  ARC_STRIP_VERTICES,
+  ARC_VERTEX_SHADER,
+  FAR_CURVE_RADIUS_CSS_PIXELS,
+  FAR_CURVE_SHADER_FACTOR,
+} from "./arc-shaders";
 import { FILL_FRAGMENT_SHADER, FILL_VERTEX_SHADER } from "./fill-shaders";
 import { InstanceLayer, type InstanceLayout, type StrokeUniforms } from "./instance-layer";
 import { patternTexels } from "./linetypes";
@@ -336,6 +342,10 @@ export class WebGlRenderer implements FrameSink {
     gl.uniform2f(pipeline.uniforms.viewport, this.#canvas.width, this.#canvas.height);
     gl.uniform1i(pipeline.uniforms.styles, 0); // texture unit 0: the style table
     gl.uniform1i(pipeline.uniforms.patterns, 1); // texture unit 1: the pattern table
+    gl.uniform1f(
+      pipeline.uniforms.maxRadius,
+      FAR_CURVE_RADIUS_CSS_PIXELS * FAR_CURVE_SHADER_FACTOR * this.#devicePixelRatio,
+    );
     return layer.draw(pipeline.uniforms, transform, this.#palette, this.#devicePixelRatio, include);
   }
 
@@ -379,6 +389,7 @@ function createPipeline(
       styled: uniform("u_styled"),
       styles: uniform("u_styles"),
       patterns: gl.getUniformLocation(program, "u_patterns"),
+      maxRadius: gl.getUniformLocation(program, "u_max_radius"),
     },
   };
 }

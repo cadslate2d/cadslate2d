@@ -1461,6 +1461,8 @@ Document coordinates remain `f64`.
 
 GPU geometry may use camera-relative `f32` coordinates.
 
+> **M7:** a curve whose on-screen radius is past 5×10⁴ pixels — where `f32` coarsens the analytic stroke — is drawn as the visible span of its curve, tessellated in `f64` from the view centre into the overlay, and the shader draws nothing for it; the committed scene is untouched — [ADR-0009](adr/0009-curve-rendering.md), extended (#112). The limit lines meet from the single scene origin is #151's.
+
 ## 23.5 Text rendering
 
 Text is a separate rendering subsystem.

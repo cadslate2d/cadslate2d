@@ -128,6 +128,35 @@ test.describe("CIRCLE", () => {
     expect(lit).toBeLessThan((box?.height ?? 0) * 4);
   });
 
+  // #112: the zoom sweep that measured ADR-0009's limit, as a test. Each
+  // wheel step is e times closer; from a radius of 100 px, seventeen steps
+  // pass 10⁹ px. The analytic shader stops at 5×10⁴ px and the engine draws
+  // the visible span instead, in the overlay; nothing committed moves.
+  test("keeps a crisp stroke up to an on-screen radius past 10⁹ px", async ({ page }) => {
+    const canvas = await openApp(page);
+    const { x, y } = await centerOf(canvas);
+    await enter(page, "C", "0,0", "100");
+    const box = await canvas.boundingBox();
+    const height = box?.height ?? 0;
+    const before = await rendererStats(page);
+    await page.mouse.move(x + 100, y);
+    for (let step = 1; step <= 17; step += 1) {
+      await page.mouse.wheel(0, -500);
+      await settle(page);
+      if (step % 3 === 0 || step === 17) {
+        await page.mouse.move(0, 0);
+        await settle(page);
+        const lit = await litPixels(canvas);
+        const radius = 100 * Math.exp(step);
+        expect(lit, `radius ${radius.toExponential(1)} px`).toBeGreaterThan(height * 0.8);
+        expect(lit, `radius ${radius.toExponential(1)} px`).toBeLessThan(height * 4);
+        await page.mouse.move(x + 100, y);
+        await settle(page);
+      }
+    }
+    expect((await rendererStats(page)).sceneUploads).toBe(before.sceneUploads);
+  });
+
   test("is selected by its curve and highlighted", async ({ page }) => {
     const canvas = await openApp(page);
     const { x, y } = await centerOf(canvas);

@@ -330,6 +330,37 @@ fn an_edit_repacks_one_chunk_and_reports_the_ranges_it_changed() {
     assert_eq!((ranges[0].first, ranges[0].count), (0, count), "everything");
 }
 
+/// #112: zooming far in on a curve draws its visible span in the overlay
+/// and touches nothing committed.
+#[test]
+fn zooming_far_in_on_a_curve_uploads_nothing_committed() {
+    let mut h = Harness::new();
+    h.enter_all(&["C", "0,0", "100"]);
+    let mut cache = SceneCache::new();
+    let revision = cache.scene(h.session.drawing()).revision();
+    assert_eq!(cache.scene(h.session.drawing()).frame().arc_count(), 1);
+    // The rightmost point of the circle is at (500, 300) on screen; wheel
+    // in there, e-fold a step, to a radius past a million pixels.
+    let at = ScreenPoint::new(500.0, 300.0);
+    for _ in 0..10 {
+        let dirty = h.session.wheel(at, -500.0, Modifiers::NONE);
+        assert!(!dirty.contains(Dirty::SCENE));
+    }
+    assert!(h.session.view().scale() * 100.0 > 1e6);
+    let overlay = overlay_of(&h);
+    assert!(
+        overlay.frame().segment_count() > 0,
+        "the span is in the overlay"
+    );
+    assert_frame_is_consistent(overlay.frame(), "far curve overlay");
+    assert_eq!(cache.scene(h.session.drawing()).revision(), revision);
+    assert_eq!(cache.build_count(), 1);
+    assert!(
+        cache.take_dirty().len() <= 3,
+        "the first build's ranges, and no more"
+    );
+}
+
 /// "renderer does not mutate CAD state"
 #[test]
 fn render_preparation_does_not_mutate_cad_state() {

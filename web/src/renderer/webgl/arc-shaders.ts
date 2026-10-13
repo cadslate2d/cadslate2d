@@ -16,6 +16,15 @@ import {
 } from "./linetypes";
 import { STYLE_VERTEX_DECLARATIONS, STYLE_VERTEX_RESOLVE } from "./style-table";
 
+/**
+ * On-screen radius, in CSS pixels, past which the engine draws a committed
+ * curve's visible span in the overlay instead (#112): `cad_render`'s
+ * `FAR_CURVE_RADIUS_PIXELS`. The shader collapses its instance one per cent
+ * later, so the band between is drawn twice rather than not at all.
+ */
+export const FAR_CURVE_RADIUS_CSS_PIXELS = 50_000;
+export const FAR_CURVE_SHADER_FACTOR = 1.01;
+
 /** Quads in the covering strip. More means less overdraw on large circles. */
 export const ARC_STRIP_SEGMENTS = 32;
 export const ARC_STRIP_VERTICES = 2 * (ARC_STRIP_SEGMENTS + 1);
@@ -31,6 +40,9 @@ layout(location = ${DISTANCE_ATTRIBUTE_LOCATION}) in vec2 a_distance;
 uniform vec2 u_scale;       // frame units → clip space
 uniform vec2 u_translate;
 uniform vec2 u_viewport;    // device pixels
+// Past this radius, in device pixels, the instance draws nothing: single
+// precision cannot place the curve, and the engine draws its span instead (#112).
+uniform float u_max_radius;
 ${STYLE_VERTEX_DECLARATIONS}
 flat out vec2 v_center;     // device pixels from the viewport centre
 flat out float v_radius;    // device pixels
@@ -46,6 +58,10 @@ void main() {
   vec2 half_viewport = u_viewport * 0.5;
   vec2 center = (a_arc.xy * u_scale + u_translate) * half_viewport;
   float radius = a_arc.z * u_scale.x * half_viewport.x;
+  if (radius > u_max_radius) {
+    gl_Position = vec4(2.0, 2.0, 0.0, 1.0); // outside clip space: no fragments
+    return;
+  }
   float extent = v_half_width + 1.0;
 
   // Cover the round caps by widening the angular range by the cap's angle.
