@@ -59,6 +59,7 @@ mod stretch;
 mod text;
 mod transform;
 mod units;
+mod zoom;
 
 /// Option keywords shared by more than one command.
 mod keywords {
@@ -102,3 +103,4 @@ pub(crate) use stretch::StretchCommand;
 pub(crate) use text::{TextCommand, TextEditCommand};
 pub(crate) use transform::TransformCommand;
 pub(crate) use units::UnitsCommand;
+pub(crate) use zoom::{PanCommand, ZoomCommand};

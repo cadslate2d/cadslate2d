@@ -197,7 +197,12 @@ pub fn resolve(
             }
         }),
         // A number, or a point for the caller to measure from its base point.
+        // A factor may be written `2x`, as a zoom factor classically is.
         InputKind::Distance if expected.plain_number => number()
+            .or_else(|error| match trimmed.strip_suffix(['x', 'X']) {
+                Some(bare) => parse_number(Span::new(bare, 0)).map_err(|_| error),
+                None => Err(error),
+            })
             .map(Input::Distance)
             .or_else(|_| point().map(Input::Point)),
         InputKind::Distance => length().map(Input::Distance).or_else(|error| {
@@ -690,6 +695,14 @@ mod tests {
     fn a_factor_is_a_plain_number_and_takes_no_unit() {
         let factor = ExpectedInput::factor();
         assert_eq!(resolved_in(Metres, "2", &factor), Ok(Input::Distance(2.0)));
+        // A zoom factor is classically written with an x (#180).
+        assert_eq!(resolved_in(Metres, "2x", &factor), Ok(Input::Distance(2.0)));
+        assert_eq!(
+            resolved_in(Metres, "0.5X", &factor),
+            Ok(Input::Distance(0.5))
+        );
+        assert!(resolved_in(Metres, "x", &factor).is_err());
+        assert!(resolved_in(Metres, "2xx", &factor).is_err());
         assert_eq!(
             resolved_in(Metres, "0.5", &factor),
             Ok(Input::Distance(0.5))

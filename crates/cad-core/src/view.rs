@@ -134,6 +134,35 @@ impl View {
         self.center = bounds.center();
     }
 
+    /// Moves the view so that `center` is in the middle of the canvas, at
+    /// the same scale.
+    pub fn look_at(&mut self, center: Point2) {
+        if center.is_finite() {
+            self.center = center;
+        }
+    }
+
+    /// Moves the view so the drawing appears to move by `displacement`:
+    /// what PAN does with two points.
+    pub fn pan_by_world(&mut self, displacement: Vec2) {
+        if displacement.x.is_finite() && displacement.y.is_finite() {
+            self.center = self.center - displacement;
+        }
+    }
+
+    /// Sets the scale so that `height` drawing units fill the canvas's
+    /// height; the centre stays. Ignores what is not a positive length.
+    pub fn set_height(&mut self, height: f64) {
+        if height.is_finite() && height > 0.0 {
+            self.scale = (self.height / height).clamp(Self::MIN_SCALE, Self::MAX_SCALE);
+        }
+    }
+
+    /// The height of the canvas in drawing units.
+    pub fn height_in_world(&self) -> f64 {
+        self.height / self.scale
+    }
+
     /// The world-space length of `pixels` on screen.
     pub fn pixels_to_world(&self, pixels: f64) -> f64 {
         pixels / self.scale
@@ -264,6 +293,28 @@ mod tests {
                 view.scale()
             );
         }
+    }
+
+    #[test]
+    fn look_at_pan_and_set_height_move_the_view_as_a_command_would() {
+        let mut view = View::new(800.0, 600.0);
+        view.look_at(Point2::new(1000.0, 500.0));
+        assert_eq!(view.center(), Point2::new(1000.0, 500.0));
+        assert_eq!(view.scale(), 1.0);
+        // The drawing appears to move right by 100: the centre moves left.
+        view.pan_by_world(Vec2::new(100.0, 0.0));
+        assert_eq!(view.center(), Point2::new(900.0, 500.0));
+        view.set_height(300.0);
+        assert_eq!(view.scale(), 2.0);
+        assert_eq!(view.height_in_world(), 300.0);
+        // Nonsense leaves the view alone.
+        view.set_height(0.0);
+        view.set_height(f64::NAN);
+        view.look_at(Point2::new(f64::INFINITY, 0.0));
+        assert_eq!(
+            (view.center(), view.scale()),
+            (Point2::new(900.0, 500.0), 2.0)
+        );
     }
 
     #[test]

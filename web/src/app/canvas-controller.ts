@@ -41,6 +41,14 @@ export function wheelPixels(
   }
 }
 
+/**
+ * The second click of a middle-button double-click, as `auxclick` reports
+ * it: a pointer event's `detail` is always 0, a click's is the count.
+ */
+export function isMiddleDoubleClick(event: Pick<MouseEvent, "button" | "detail">): boolean {
+  return event.button === 1 && event.detail === 2;
+}
+
 export class CanvasController {
   readonly #canvas: HTMLCanvasElement;
   readonly #app: CadApp;
@@ -116,6 +124,7 @@ export class CanvasController {
     canvas.addEventListener("pointerdown", this.#onPointerDown, options);
     canvas.addEventListener("pointerup", this.#onPointerUp, options);
     canvas.addEventListener("pointerleave", this.#onPointerLeave, options);
+    canvas.addEventListener("auxclick", this.#onAuxClick, options);
     canvas.addEventListener("wheel", this.#onWheel, { ...options, passive: false });
     canvas.addEventListener("contextmenu", (event) => event.preventDefault(), options);
     // Device pixel ratio changes (browser zoom, moving between monitors) arrive as window resizes.
@@ -180,6 +189,13 @@ export class CanvasController {
     this.#app.loop.flushPointerMove();
     const { x, y } = this.#position(event);
     this.#app.loop.invalidate(this.#app.engine.pointerUp(x, y, event.button, modifierBits(event)));
+  };
+
+  readonly #onAuxClick = (event: MouseEvent): void => {
+    event.preventDefault();
+    if (this.#app.failed || !isMiddleDoubleClick(event)) return;
+    // The classic gesture for zoom extents: the same command as typed (#180).
+    this.#app.run("ZOOM", "E");
   };
 
   readonly #onWheel = (event: WheelEvent): void => {

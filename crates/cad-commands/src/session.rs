@@ -53,6 +53,8 @@ struct ActiveCommand {
 pub struct Session {
     drawing: Drawing,
     view: View,
+    /// The views ZOOM and PAN moved away from, newest last (#180).
+    previous_views: Vec<View>,
     registry: CommandRegistry,
     active: Option<ActiveCommand>,
     selection: Selection,
@@ -115,6 +117,7 @@ impl Session {
             saved_revision: drawing.revision(),
             drawing,
             view: View::new(1.0, 1.0),
+            previous_views: Vec::new(),
             registry,
             active: None,
             selection: Selection::default(),
@@ -1014,11 +1017,14 @@ impl Session {
         run: impl FnOnce(&mut dyn Command, &mut CommandContext<'_>) -> Step,
     ) -> Dirty {
         let revision = self.drawing.revision();
+        let view_before = self.view.clone();
         let mut ctx = CommandContext {
             drawing: &mut self.drawing,
             selection: &mut self.selection,
             settings: &mut self.settings,
             toggles: self.toggles,
+            view: &mut self.view,
+            previous_views: &mut self.previous_views,
             log: &mut self.log,
             host_request: &mut self.host_request,
         };
@@ -1037,6 +1043,9 @@ impl Session {
         let mut dirty = Dirty::OVERLAY | Dirty::UI;
         if self.drawing.revision() != revision {
             dirty |= Dirty::SCENE;
+        }
+        if self.view != view_before {
+            dirty |= Dirty::VIEW;
         }
         if self.host_request.is_some() {
             dirty |= Dirty::HOST;

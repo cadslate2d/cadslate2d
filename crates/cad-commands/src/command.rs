@@ -7,7 +7,7 @@
 
 use std::fmt::Debug;
 
-use cad_core::{EntityId, Point2, Vec2};
+use cad_core::{EntityId, Point2, Vec2, View};
 use cad_document::{Drawing, Entity};
 use cad_input::{ExpectedInput, Keyword};
 
@@ -108,6 +108,11 @@ pub struct CommandContext<'a> {
     pub settings: &'a mut DraftingSettings,
     /// Which status-bar toggles are on, as the command finds them.
     pub toggles: Toggles,
+    /// The view: session state, never undoable. ZOOM and PAN move it
+    /// (#180); the session reports the change as `Dirty::VIEW`.
+    pub view: &'a mut View,
+    /// The views ZOOM and PAN moved away from, for ZOOM Previous.
+    pub previous_views: &'a mut Vec<View>,
     pub(crate) log: &'a mut CommandLog,
     pub(crate) host_request: &'a mut Option<HostRequest>,
 }

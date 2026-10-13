@@ -4,6 +4,8 @@ import type { CadApp } from "../app/cad-app";
 interface Tool {
   /** The command name handed to the engine, exactly as if typed. */
   readonly command: string;
+  /** Answers typed after it, as a drafter would: `ZOOM` then `E`. */
+  readonly answers?: readonly string[];
   readonly label: string;
   readonly icon: ReactNode;
 }
@@ -154,20 +156,57 @@ const MODIFY: readonly Tool[] = [
   },
 ];
 
+/** The view moved by name (#180): session state, committing nothing. */
+const VIEW: readonly Tool[] = [
+  {
+    command: "ZOOM",
+    answers: ["E"],
+    label: "Extents",
+    icon: icon(
+      <>
+        <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
+        <rect x="9" y="9" width="6" height="6" />
+      </>,
+    ),
+  },
+  {
+    command: "ZOOM",
+    answers: ["W"],
+    label: "Zoom window",
+    icon: icon(
+      <>
+        <rect x="4" y="4" width="11" height="11" />
+        <path d="M15 15l5 5" />
+      </>,
+    ),
+  },
+  {
+    command: "ZOOM",
+    answers: ["P"],
+    label: "Previous",
+    icon: icon(<path d="M10 7 5 12l5 5M5 12h14" />),
+  },
+  {
+    command: "PAN",
+    label: "Pan",
+    icon: icon(<path d="M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3" />),
+  },
+];
+
 function ToolGroup({ app, name, tools }: { app: CadApp; name: string; tools: readonly Tool[] }) {
   return (
     <div className="toolbar__group" role="group" aria-label={name}>
       {tools.map((tool) => (
         <button
-          key={tool.command}
+          key={[tool.command, ...(tool.answers ?? [])].join(" ")}
           type="button"
           className="toolbar__button"
-          title={tool.command}
+          title={[tool.command, ...(tool.answers ?? [])].join(" ")}
           // Keep keyboard focus on the command line.
           onMouseDown={(event) => event.preventDefault()}
           // No command logic here: the button names a command and Rust runs it
           // through the same entry point as typed input (DESIGN §5, §15).
-          onClick={() => app.invoke(tool.command)}
+          onClick={() => app.run(tool.command, ...(tool.answers ?? []))}
         >
           {tool.icon}
           <span>{tool.label}</span>
@@ -182,6 +221,7 @@ export function Toolbar({ app }: { app: CadApp }) {
     <nav className="toolbar" aria-label="Tools">
       <ToolGroup app={app} name="Draw" tools={DRAW} />
       <ToolGroup app={app} name="Modify" tools={MODIFY} />
+      <ToolGroup app={app} name="View" tools={VIEW} />
     </nav>
   );
 }
