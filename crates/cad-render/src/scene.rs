@@ -969,6 +969,54 @@ mod tests {
         assert_eq!(cache.partial_build_count(), 1);
     }
 
+    /// #151 (ADR-0003, extended): the scene's one origin is the centre of
+    /// the extents, and `f32` offsets from it resolve to a unit at 10⁷. A
+    /// drawing spanning that far is placed to within a unit at its far end
+    /// — the bound the ADR records — and exactly where it lies near the
+    /// origin of the scene.
+    #[test]
+    fn a_drawing_spanning_ten_million_units_is_placed_to_a_unit_at_its_far_end() {
+        let far = 1e7;
+        let drawing = Drawing::from_entities([
+            Entity::from(LineEntity::new(
+                Point2::new(0.0, 0.0),
+                Point2::new(100.0, 0.0),
+            )),
+            Entity::from(LineEntity::new(
+                Point2::new(far, far),
+                Point2::new(far + 100.0, far),
+            )),
+        ]);
+        let mut cache = SceneCache::new();
+        let scene = cache.scene(&drawing);
+        let origin = scene.frame().origin();
+        let placed: Vec<Point2> = scene
+            .frame()
+            .segments()
+            .chunks(PackedFrame::FLOATS_PER_SEGMENT)
+            .flat_map(|s| {
+                [
+                    origin + cad_core::Vec2::new(f64::from(s[0]), f64::from(s[1])),
+                    origin + cad_core::Vec2::new(f64::from(s[2]), f64::from(s[3])),
+                ]
+            })
+            .collect();
+        let truth = [
+            Point2::new(0.0, 0.0),
+            Point2::new(100.0, 0.0),
+            Point2::new(far, far),
+            Point2::new(far + 100.0, far),
+        ];
+        for (point, exact) in placed.iter().zip(truth) {
+            let off = point.distance_to(exact);
+            assert!(off <= 1.0, "{exact:?} placed {off} off");
+        }
+        // The origin is the centre of the extents: both ends are half the
+        // span from it, at the same resolution.
+        assert!((origin.x - (far + 100.0) / 2.0).abs() < 1e-6);
+        assert!((origin.y - far / 2.0).abs() < 1e-6);
+    }
+
     #[test]
     fn pointer_free_requests_resolve_nothing() {
         let drawing = coloured();

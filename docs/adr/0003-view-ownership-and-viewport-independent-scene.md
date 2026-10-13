@@ -86,3 +86,8 @@ Circle and arc representation stays open (§12.5). The curve-rendering ADR must 
 - The curve-rendering spike completes.
 - Precision artifacts are observed on real drawings with large coordinates.
 - The transport measurement shows instancing is a poor fit for batching or join geometry.
+
+## Extended in M7 (2026-10-12): the single scene origin, far from the origin (#151)
+
+The committed scene's one origin is the centre of the drawing's extents, and every instance is `f32` offsets from it. A drawing that lies wholly 10⁷ or 10¹⁰ units out is therefore drawn exactly: its offsets are small (the far-from-origin scenarios, in `cad-commands` and end to end). What is *not* exact is a drawing that spans such a distance — a title block at the origin and a site at 10⁷ — whose far end is 10⁷ from the scene origin, where an `f32` resolves to a unit: the site is placed to within a unit, which is a pixel at a pixel per unit and a hundred at a hundred (`web/e2e/far-from-origin.spec.ts` holds the first; `crates/cad-render/src/scene.rs` holds the bound). The rebase this ADR deferred is needed for that case and no other, and the shape it would take is now plain: the scene is already packed in chunks of entity IDs (ADR-0022), and a chunk can carry an origin of its own — its extents' centre — with the adapter drawing each chunk's run under its own translation. It is not taken up in M7: no drawing of the kind has been asked for, and the chunk origins are a day's work when one is.
+

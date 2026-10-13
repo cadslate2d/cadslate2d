@@ -89,3 +89,12 @@ The other modify operations — offset, trim, extend, fillet, chamfer, break, st
 
 - An operation other than intersection and JOIN is shown to fail far from the origin: move it to `around`, with the failing case as its regression test.
 - Drawings need coordinates beyond 10¹⁰, or polyline arcs flatter than radius 10⁷: evaluate arcs from chord and sagitta, or compute in a local frame.
+
+## Extended in M7 (2026-10-12): the whole program far out (#151)
+
+`crates/cad-commands/src/tests/far_from_origin.rs` drafts on a plot 10⁷ and 10¹⁰ units out, through the session as the browser drives it: lines by typed and relative coordinates; endpoint, midpoint, intersection, centre, and quadrant snaps returning the exact point and the click committing it; TRIM and EXTEND to an edge; FILLET with a radius; OFFSET; BREAK; JOIN; STRETCH; a circle and an arc. Every one holds its geometry to the tolerance around the points involved, with no operation moved to `around` beyond intersection and JOIN: the default tolerance governs the ends of the modify operations, and at 10¹⁰ the numbers themselves are coarser than it, which the invariants absorb. `web/e2e/far-from-origin.spec.ts` does the same in the browser, from a file opened so the view fits the plot, and saves the result exactly.
+
+Polyline arcs flatter than radius 10⁷ are not evaluated from chord and sagitta: geometrically they are still the arc through its centre, known to the spacing of numbers at that radius (above), and on screen they are the visible span of that arc tessellated in `f64` ([ADR-0009](0009-curve-rendering.md), extended by #112), since a radius of 10⁷ units is past the shader's limit at any zoom closer than two hundred units per pixel. Nothing asked for more.
+
+The render origin is answered in [ADR-0003](0003-view-ownership-and-viewport-independent-scene.md), extended.
+
