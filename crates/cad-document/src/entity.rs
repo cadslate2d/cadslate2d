@@ -150,6 +150,36 @@ impl From<Ellipse> for EllipseEntity {
     }
 }
 
+/// An attribute definition (#183): a block's variable text — its tag, the
+/// prompt a reference answers when placed, and its default — with the
+/// placement of a text, which the value takes. Outside a block it is drawn
+/// as its tag; inside one, a reference draws its value for the tag.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttributeDefinitionEntity {
+    pub tag: String,
+    pub prompt: String,
+    /// The placement, style, and default: `text.content` is the default.
+    pub text: TextEntity,
+    /// Not drawn by a reference (DXF flag 1).
+    pub invisible: bool,
+}
+
+impl AttributeDefinitionEntity {
+    pub fn new(tag: impl Into<String>, prompt: impl Into<String>, text: TextEntity) -> Self {
+        Self {
+            tag: tag.into(),
+            prompt: prompt.into(),
+            text,
+            invisible: false,
+        }
+    }
+
+    /// How it is drawn on its own: its tag, where its value would be.
+    pub fn as_text(&self) -> TextEntity {
+        self.text.saying(self.tag.clone())
+    }
+}
+
 /// A spline (#182): a B-spline by its degree, control points, knots, and
 /// weights — what DXF's `SPLINE` holds — and the fit points it was drawn
 /// through, when it was, which are then its grips. Its curve is read as
@@ -344,6 +374,9 @@ pub enum Entity {
     Ellipse(EllipseEntity),
     /// A spline (#182), read as chords.
     Spline(SplineEntity),
+    /// A block's variable text (#183): drawn as its tag on its own, as a
+    /// reference's value inside a definition.
+    AttributeDefinition(AttributeDefinitionEntity),
     Polyline(PolylineEntity),
     /// A single line of text (ADR-0016). Not a curve: it has no
     /// primitives, and is picked and selected by its box.
@@ -382,6 +415,7 @@ impl Entity {
                 .unwrap_or_else(|| Aabb::from_points(Point2::ORIGIN, Point2::ORIGIN)),
             Entity::Text(text) => text.bounds(),
             Entity::MText(text) => text.bounds(),
+            Entity::AttributeDefinition(definition) => definition.as_text().bounds(),
             Entity::BlockRef(reference) => tables.bounds_of(reference),
             Entity::Dimension(dimension) => {
                 dimension.layout(tables.dim_style(dimension.style)).bounds()
@@ -404,6 +438,7 @@ impl Entity {
                 .fold(f64::INFINITY, f64::min),
             Entity::Text(text) => text.distance_to(point),
             Entity::MText(text) => text.distance_to(point),
+            Entity::AttributeDefinition(definition) => definition.as_text().distance_to(point),
             Entity::BlockRef(reference) => tables
                 .blocks
                 .flatten(reference, crate::Properties::default())
@@ -446,9 +481,11 @@ impl Entity {
             // Nothing intersects, trims against, or snaps to the strokes
             // of a text, nor to the lines of a dimension: an annotation is
             // not geometry of the drawing.
-            Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_) | Entity::Hatch(_) => {
-                Vec::new()
-            }
+            Entity::Text(_)
+            | Entity::MText(_)
+            | Entity::AttributeDefinition(_)
+            | Entity::Dimension(_)
+            | Entity::Hatch(_) => Vec::new(),
             Entity::BlockRef(reference) => tables
                 .blocks
                 .flatten(reference, crate::Properties::default())
@@ -510,6 +547,7 @@ impl Entity {
                 .any(|primitive| primitive.intersects_aabb(bounds)),
             Entity::Text(text) => text.crosses(bounds),
             Entity::MText(text) => text.crosses(bounds),
+            Entity::AttributeDefinition(definition) => definition.as_text().crosses(bounds),
             Entity::BlockRef(reference) => tables
                 .blocks
                 .flatten(reference, crate::Properties::default())
@@ -594,6 +632,11 @@ impl Entity {
             }
             Entity::Text(text) => text.transformed(transform).into(),
             Entity::MText(text) => text.transformed(transform).into(),
+            Entity::AttributeDefinition(definition) => AttributeDefinitionEntity {
+                text: definition.text.transformed(transform),
+                ..definition.clone()
+            }
+            .into(),
             Entity::BlockRef(reference) => reference.transformed(transform).into(),
             Entity::Dimension(dimension) => dimension.transformed(transform).into(),
             Entity::Hatch(hatch) => hatch.transformed(transform).into(),
@@ -623,6 +666,12 @@ impl From<CircleEntity> for Entity {
 impl From<PolylineEntity> for Entity {
     fn from(polyline: PolylineEntity) -> Self {
         Entity::Polyline(polyline)
+    }
+}
+
+impl From<AttributeDefinitionEntity> for Entity {
+    fn from(definition: AttributeDefinitionEntity) -> Self {
+        Entity::AttributeDefinition(definition)
     }
 }
 
@@ -802,6 +851,9 @@ mod tests {
             Entity::Polyline(polyline) => polyline.vertices.clone(),
             Entity::Text(text) => text.frame().corners().to_vec(),
             Entity::MText(text) => text.frame().corners().to_vec(),
+            Entity::AttributeDefinition(definition) => {
+                definition.as_text().frame().corners().to_vec()
+            }
             Entity::BlockRef(reference) => vec![reference.insertion],
             Entity::Dimension(dimension) => dimension.points(),
             Entity::Hatch(hatch) => hatch.vertices(),

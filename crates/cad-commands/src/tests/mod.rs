@@ -1,6 +1,7 @@
 //! Cross-cutting session tests that do not belong to a single module.
 
 mod aids;
+mod attributes;
 mod block_commands;
 mod blocks;
 #[path = "break_.rs"]

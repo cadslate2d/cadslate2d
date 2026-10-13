@@ -15,6 +15,8 @@ pub struct ImportReport {
     pub arcs: usize,
     pub ellipses: usize,
     pub splines: usize,
+    /// Attribute definitions of the drawing itself: a block's are its own.
+    pub attribute_definitions: usize,
     /// POLYLINE and LWPOLYLINE entities imported.
     pub polylines: usize,
     /// TEXT and MTEXT entities imported.
@@ -89,6 +91,7 @@ impl ImportReport {
             + self.arcs
             + self.ellipses
             + self.splines
+            + self.attribute_definitions
             + self.polylines
             + self.texts
             + self.block_references
@@ -112,6 +115,11 @@ impl ImportReport {
             (self.arcs, "arc", "arcs"),
             (self.ellipses, "ellipse", "ellipses"),
             (self.splines, "spline", "splines"),
+            (
+                self.attribute_definitions,
+                "attribute definition",
+                "attribute definitions",
+            ),
             (self.polylines, "polyline", "polylines"),
             (self.texts, "text", "texts"),
             (self.block_references, "block reference", "block references"),

@@ -359,10 +359,9 @@ def attributes(release: str) -> None:
     save(doc, f"{release.lower()}-attributes", [
         "imported block_references 2",
         "tables blocks 1",
-        "block TAG 1",
-        "unsupported ATTDEF 1",
-        'unsupported "(INSERT attributes)" 1',
+        "block TAG 2",
         "reference 1 TAG 50 0 1 45 plain",
+        "attribute 0 ROOM 101",
     ])
 
 

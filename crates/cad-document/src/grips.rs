@@ -24,8 +24,8 @@ use cad_core::tolerance::LinearTolerance;
 use cad_geometry::Arc;
 
 use crate::{
-    ArcEntity, BlockReferenceEntity, CircleEntity, EllipseEntity, Entity, LineEntity, MTextEntity,
-    PolylineEntity, TextEntity,
+    ArcEntity, AttributeDefinitionEntity, BlockReferenceEntity, CircleEntity, EllipseEntity,
+    Entity, LineEntity, MTextEntity, PolylineEntity, TextEntity,
 };
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
@@ -123,6 +123,9 @@ impl Entity {
                 .collect(),
             Entity::Text(text) => vec![grip(GripKind::Insertion, text.insertion)],
             Entity::MText(text) => vec![grip(GripKind::Insertion, text.insertion)],
+            Entity::AttributeDefinition(definition) => {
+                vec![grip(GripKind::Insertion, definition.text.insertion)]
+            }
             Entity::BlockRef(reference) => vec![grip(GripKind::Insertion, reference.insertion)],
             Entity::Hatch(hatch) => hatch
                 .vertices()
@@ -300,6 +303,16 @@ impl Entity {
                 MTextEntity {
                     insertion: to,
                     ..text.clone()
+                }
+                .into()
+            }),
+            Entity::AttributeDefinition(definition) => (index == 0).then(|| {
+                AttributeDefinitionEntity {
+                    text: TextEntity {
+                        insertion: to,
+                        ..definition.text.clone()
+                    },
+                    ..definition.clone()
                 }
                 .into()
             }),

@@ -408,6 +408,10 @@ impl PackedFrame {
             // any other. The scene draws every text continuous, whatever
             // its linetype says, as drafting programs do.
             Entity::Text(text) => self.push_strokes(style, text.strokes()),
+            // On its own, an attribute definition shows its tag (#183).
+            Entity::AttributeDefinition(definition) => {
+                self.push_strokes(style, definition.as_text().strokes())
+            }
             Entity::MText(text) => self.push_strokes(style, text.strokes()),
             Entity::BlockRef(reference) => {
                 for (part, _) in tables.blocks.flatten(reference, Properties::default()) {

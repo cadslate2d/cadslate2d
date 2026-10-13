@@ -18,8 +18,8 @@ use cad_geometry::{
 };
 
 use crate::{
-    ArcEntity, BlockReferenceEntity, CircleEntity, EllipseEntity, Entity, LineEntity, MTextEntity,
-    PolylineEntity, TextEntity,
+    ArcEntity, AttributeDefinitionEntity, BlockReferenceEntity, CircleEntity, EllipseEntity,
+    Entity, LineEntity, MTextEntity, PolylineEntity, TextEntity,
 };
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
@@ -165,6 +165,7 @@ impl Entity {
             // A text goes with its insertion point, whole.
             Entity::Text(text) => held(&[text.insertion]),
             Entity::MText(text) => held(&[text.insertion]),
+            Entity::AttributeDefinition(definition) => held(&[definition.text.insertion]),
             Entity::BlockRef(reference) => held(&[reference.insertion]),
             // A dimension by the points it measures and where it is placed.
             Entity::Dimension(dimension) => held(&dimension.points()),
@@ -220,6 +221,16 @@ impl Entity {
                 MTextEntity {
                     insertion: moved(text.insertion),
                     ..text.clone()
+                }
+                .into(),
+            ),
+            Entity::AttributeDefinition(definition) => Some(
+                AttributeDefinitionEntity {
+                    text: TextEntity {
+                        insertion: moved(definition.text.insertion),
+                        ..definition.text.clone()
+                    },
+                    ..definition.clone()
                 }
                 .into(),
             ),
@@ -351,6 +362,7 @@ impl Entity {
             }
             Entity::Text(_)
             | Entity::MText(_)
+            | Entity::AttributeDefinition(_)
             | Entity::Spline(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
@@ -412,6 +424,7 @@ impl Entity {
         match self {
             Entity::Text(_)
             | Entity::MText(_)
+            | Entity::AttributeDefinition(_)
             | Entity::Spline(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
@@ -498,6 +511,7 @@ impl Entity {
             | Entity::Spline(_)
             | Entity::Text(_)
             | Entity::MText(_)
+            | Entity::AttributeDefinition(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
             | Entity::Hatch(_) => Err(ExtendError::Unsupported(self.kind_name())),
@@ -564,6 +578,7 @@ impl Entity {
             | Entity::Spline(_)
             | Entity::Text(_)
             | Entity::MText(_)
+            | Entity::AttributeDefinition(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
             | Entity::Hatch(_) => None,
@@ -627,6 +642,7 @@ impl Entity {
             | Entity::Spline(_)
             | Entity::Text(_)
             | Entity::MText(_)
+            | Entity::AttributeDefinition(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
             | Entity::Hatch(_) => Err(CornerError::Unsupported(entity.kind_name())),
@@ -733,6 +749,7 @@ impl Entity {
             Entity::Polyline(_) => "polyline",
             Entity::Text(_) => "text",
             Entity::MText(_) => "multiline text",
+            Entity::AttributeDefinition(_) => "attribute definition",
             Entity::BlockRef(_) => "block reference",
             Entity::Dimension(_) => "dimension",
             Entity::Hatch(_) => "hatch",
@@ -787,6 +804,7 @@ impl Entity {
             | Entity::Spline(_)
             | Entity::Text(_)
             | Entity::MText(_)
+            | Entity::AttributeDefinition(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
             | Entity::Hatch(_) => Err(OffsetError::Unsupported(self.kind_name())),
@@ -808,6 +826,7 @@ impl Entity {
             | Entity::Spline(_)
             | Entity::Text(_)
             | Entity::MText(_)
+            | Entity::AttributeDefinition(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
             | Entity::Hatch(_) => {

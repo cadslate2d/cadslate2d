@@ -16,11 +16,12 @@ use std::collections::HashMap;
 
 use cad_core::{LengthUnit, Point2, Vec2};
 use cad_document::{
-    ArcEntity, Block, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, DimStyle,
-    DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity, EntityRecord,
-    HatchEntity, HatchStyle, Justification, Layer, LayerId, LineEntity, Linetype, LinetypeDef,
-    LinetypeId, Lineweight, MTextEntity, Measure, PolylineEntity, Properties, TextEntity,
-    TextStyle, TextStyleId, check_name, nearest_index, same_name,
+    ArcEntity, AttributeDefinitionEntity, Block, BlockId, BlockReferenceEntity, BlockTable,
+    CircleEntity, Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings,
+    EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Justification, Layer, LayerId,
+    LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity, Measure,
+    PolylineEntity, Properties, TextEntity, TextStyle, TextStyleId, check_name, nearest_index,
+    same_name,
 };
 
 use crate::export::insunits_code;
@@ -35,7 +36,9 @@ use crate::{DxfError, ImportReport};
 const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF";
 /// Records that belong to the entity before them (POLYLINE vertices, INSERT
 /// attributes) and are not counted on their own.
-const SUBORDINATE_RECORDS: [&str; 1] = ["ATTRIB"];
+/// Records that follow another and are read with it: none, now that
+/// ATTRIB is read for its INSERT (#183).
+const SUBORDINATE_RECORDS: [&str; 0] = [];
 /// POLYLINE flag bits for 3D polylines, meshes, and polyface meshes.
 const POLYLINE_NOT_2D: i64 = 8 | 16 | 32 | 64;
 /// Polyline flag bit: closed.
@@ -67,7 +70,6 @@ const NESTING_TOO_DEEP: &str = "(blocks nested too deep)";
 /// the reference is imported as far as the model holds, the rest said.
 const INSERT_NON_UNIFORM: &str = "(INSERT with a non-uniform scale)";
 const INSERT_ARRAY: &str = "(INSERT array)";
-const INSERT_ATTRIBUTES: &str = "(INSERT attributes)";
 /// Report key for an INSERT of a block the file never defines: not imported.
 const INSERT_UNDEFINED: &str = "(INSERT of an undefined block)";
 /// Report key for the text and shapes of a complex linetype: the dashes
@@ -720,6 +722,27 @@ impl<'a> Reader<'a> {
                 pending.dropped |= dropped;
                 self.push(Entity::Text(text), pending)?;
             }
+            // An attribute definition (#183): a text with a tag (2), a
+            // prompt (3), and flags (70); its words are the default.
+            (_, "ATTDEF") if entities => {
+                let (text, dropped) = body.text(record.line)?;
+                let mut pending = body.pending();
+                pending.dropped |= dropped;
+                let mut definition = AttributeDefinitionEntity::new(
+                    body.name.clone().unwrap_or_default(),
+                    body.description.clone().unwrap_or_default(),
+                    text,
+                );
+                definition.invisible = body.flags & 1 != 0;
+                self.push(Entity::AttributeDefinition(definition), pending)?;
+            }
+            // An attribute (#183): the value (1) its tag (2) has on the
+            // INSERT just read, which it follows until SEQEND.
+            (_, "ATTRIB") if entities => {
+                let tag = body.name.clone().unwrap_or_default();
+                let (value, _) = plain_text(body.text.as_deref().unwrap_or(""));
+                self.attach_attribute(&tag, &value);
+            }
             (_, "MTEXT") if entities => {
                 let (text, formatting) = body.mtext(record.line)?;
                 if formatting {
@@ -857,9 +880,6 @@ impl<'a> Reader<'a> {
         if body.flags > 1 || body.attachment.unwrap_or(1) > 1 {
             self.report.count_unsupported(INSERT_ARRAY);
         }
-        if body.follow {
-            self.report.count_unsupported(INSERT_ATTRIBUTES);
-        }
         let mut rotation = body.start_degrees.unwrap_or(0.0).to_radians();
         if sx < 0.0 {
             rotation += std::f64::consts::PI;
@@ -870,6 +890,7 @@ impl<'a> Reader<'a> {
             scale: sx.abs(),
             rotation,
             mirrored: (sx < 0.0) != (sy < 0.0),
+            attributes: Vec::new(),
         };
         let mut pending = body.pending();
         pending.block = Some(name);
@@ -1192,6 +1213,20 @@ impl<'a> Reader<'a> {
         self.push(entity, body.pending())
     }
 
+    /// Gives the reference read last — in the drawing, or in the block
+    /// being read — the value of one of its attributes (#183). An ATTRIB
+    /// after anything else is dropped.
+    fn attach_attribute(&mut self, tag: &str, value: &str) {
+        let last = match &mut self.open_block {
+            Some(OpenBlock::User(block)) => block.entities.last_mut(),
+            Some(OpenBlock::Skipped) => None,
+            None => self.entities.last_mut(),
+        };
+        if let Some((Entity::BlockRef(reference), _)) = last {
+            *reference = reference.clone().with_attribute(tag, value);
+        }
+    }
+
     /// Keeps an entity for the drawing, or for the block definition being
     /// read. The limit counts both; the report counts what reaches the
     /// drawing itself — a definition's entities are part of their block.
@@ -1212,6 +1247,7 @@ impl<'a> Reader<'a> {
                     Entity::Arc(_) => self.report.arcs += 1,
                     Entity::Ellipse(_) => self.report.ellipses += 1,
                     Entity::Spline(_) => self.report.splines += 1,
+                    Entity::AttributeDefinition(_) => self.report.attribute_definitions += 1,
                     Entity::Polyline(_) => self.report.polylines += 1,
                     Entity::Text(_) | Entity::MText(_) => self.report.texts += 1,
                     // Counted once its block is found.

@@ -29,7 +29,7 @@ use crate::properties::{Color, Linetype, Lineweight};
 use crate::table::{Table, TableChange, TableId};
 #[cfg(test)]
 use crate::tables::Tables;
-use crate::{Entity, EntityRecord, Properties};
+use crate::{AttributeDefinitionEntity, Entity, EntityRecord, Properties};
 
 /// Nesting deeper than this is not followed. Cycles are refused when a
 /// block is defined, so this is a guard, not a rule.
@@ -57,6 +57,17 @@ impl Block {
             base,
             entities: Arc::new(entities),
         }
+    }
+
+    /// The attribute definitions of this block, in order: what a
+    /// reference is asked for when placed (#183).
+    pub fn attribute_definitions(&self) -> impl Iterator<Item = &AttributeDefinitionEntity> + '_ {
+        self.entities
+            .iter()
+            .filter_map(|record| match &*record.entity {
+                Entity::AttributeDefinition(definition) => Some(definition),
+                _ => None,
+            })
     }
 
     /// The blocks this definition references directly.
@@ -96,6 +107,15 @@ pub fn empty_blocks() -> &'static BlockTable {
     EMPTY.get_or_init(initial_blocks)
 }
 
+/// A value given to a block's attribute by one reference (#183): what the
+/// definition's `AttributeDefinition` of this tag shows there. Kept by tag,
+/// so a redefinition that keeps the tag keeps the value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Attribute {
+    pub tag: String,
+    pub value: String,
+}
+
 /// A placed block: an entity of the drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BlockReferenceEntity {
@@ -110,6 +130,9 @@ pub struct BlockReferenceEntity {
     /// and placed: a negative X scale, in DXF's terms. A mirrored
     /// reference stays a reference.
     pub mirrored: bool,
+    /// The values of the definition's attributes here, by tag (#183). A
+    /// tag the definition has and this list lacks shows the default.
+    pub attributes: Vec<Attribute>,
 }
 
 impl BlockReferenceEntity {
@@ -120,7 +143,29 @@ impl BlockReferenceEntity {
             scale,
             rotation,
             mirrored: false,
+            attributes: Vec::new(),
         }
+    }
+
+    /// The value this reference gives the attribute `tag`, if any.
+    pub fn attribute(&self, tag: &str) -> Option<&str> {
+        self.attributes
+            .iter()
+            .find(|attribute| attribute.tag == tag)
+            .map(|attribute| attribute.value.as_str())
+    }
+
+    /// This reference with `tag` set to `value`: replaced, or added.
+    #[must_use]
+    pub fn with_attribute(mut self, tag: &str, value: &str) -> Self {
+        match self.attributes.iter_mut().find(|a| a.tag == tag) {
+            Some(attribute) => attribute.value = value.to_owned(),
+            None => self.attributes.push(Attribute {
+                tag: tag.to_owned(),
+                value: value.to_owned(),
+            }),
+        }
+        self
     }
 
     /// Places `entity` of a definition about `base` where this reference
@@ -157,6 +202,7 @@ impl BlockReferenceEntity {
             scale: self.scale * transform.scale_factor(),
             rotation: transform.apply_angle(self.rotation),
             mirrored: self.mirrored != transform.reverses_orientation(),
+            attributes: self.attributes.clone(),
         }
     }
 
@@ -292,6 +338,17 @@ impl BlockTable {
             let properties = BlockReferenceEntity::resolve(outer, record.properties);
             match placed {
                 Entity::BlockRef(inner) => self.flatten_into(&inner, properties, depth + 1, out),
+                // An attribute definition shows this reference's value for
+                // its tag, or its default, as a text placed with the rest.
+                Entity::AttributeDefinition(definition) => {
+                    if definition.invisible {
+                        continue;
+                    }
+                    let value = reference
+                        .attribute(&definition.tag)
+                        .unwrap_or(&definition.text.content);
+                    out.push((Entity::Text(definition.text.saying(value)), properties));
+                }
                 entity => out.push((entity, properties)),
             }
         }

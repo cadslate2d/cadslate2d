@@ -70,6 +70,8 @@ A hatch is an area, not a curve ([ADR-0021](adr/0021-filled-regions.md)): it is 
 A dimension is not geometry of the drawing ([ADR-0020](adr/0020-dimensions.md)): nothing snaps to, intersects, trims against, or extends to its lines. It is picked by its lines, arrowheads, and text box; it offers the points it measures, its vertex or centre, and its text's insertion point to snap to. Tests: `cad-commands/src/tests/dimension.rs`, `cad-document/src/dimension.rs`.
 | [EXPLODE](#explode) | no | no | no | no | no | its lines and arcs | its lines and arcs | no | its definition's objects, placed; one level |
 
+An attribute definition (`ATTDEF`, #183) is treated as a text in every row too: moved, turned, scaled, and mirrored whole, one grip at its insertion point, and not a curve. Inside a block it is what a reference draws as the reference's value for its tag; a reference's values move with the reference and survive `BLOCK`'s redefinition where the tags match.
+
 A paragraph (`MTEXT`) is treated exactly as a text in every row: moved, turned, scaled, and mirrored whole (and readable), one grip at its top-left insertion point, refused by every curve command, stretched by its insertion point.
 
 A text is not a curve: it has no primitives, so nothing intersects it, trims against it, or snaps to the strokes of its glyphs — only to its insertion point (the Insertion snap). It is picked and selected by its box, so a click inside a letter's counter picks it. Commands that work on curves refuse it by name: "A text cannot be offset."

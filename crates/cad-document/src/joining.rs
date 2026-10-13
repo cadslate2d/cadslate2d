@@ -102,6 +102,7 @@ fn open_path(entity: &Entity) -> Option<Path> {
         | Entity::Ellipse(_)
         | Entity::Spline(_)
         | Entity::Text(_)
+        | Entity::AttributeDefinition(_)
         | Entity::MText(_)
         | Entity::BlockRef(_)
         | Entity::Dimension(_)

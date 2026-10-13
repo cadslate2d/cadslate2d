@@ -10,14 +10,14 @@ use cad_input::{CommandAliases, DuplicateCommandName};
 
 use crate::Command;
 use crate::commands::{
-    ArcCommand, BlockCommand, BreakCommand, ChpropCommand, CircleCommand, ColorCommand,
-    CornerCommand, DimAngularCommand, DimLinearCommand, DimRadialCommand, DimStyleCommand,
-    EdgeCommand, EllipseCommand, EraseCommand, ExplodeCommand, ExportCommand, GridCommand,
-    HatchCommand, HatchEditCommand, InsertCommand, JoinCommand, LayerCommand, LineCommand,
-    LinetypeCommand, LtscaleCommand, LweightCommand, MTextCommand, MirrorCommand, OffsetCommand,
-    OpenCommand, OsnapCommand, PanCommand, PlineCommand, PolarAngleCommand, RectangCommand,
-    RedoCommand, SaveCommand, SplineCommand, StretchCommand, TextCommand, TextEditCommand,
-    TransformCommand, UndoCommand, UnitsCommand, ZoomCommand,
+    ArcCommand, AttdefCommand, AtteditCommand, BlockCommand, BreakCommand, ChpropCommand,
+    CircleCommand, ColorCommand, CornerCommand, DimAngularCommand, DimLinearCommand,
+    DimRadialCommand, DimStyleCommand, EdgeCommand, EllipseCommand, EraseCommand, ExplodeCommand,
+    ExportCommand, GridCommand, HatchCommand, HatchEditCommand, InsertCommand, JoinCommand,
+    LayerCommand, LineCommand, LinetypeCommand, LtscaleCommand, LweightCommand, MTextCommand,
+    MirrorCommand, OffsetCommand, OpenCommand, OsnapCommand, PanCommand, PlineCommand,
+    PolarAngleCommand, RectangCommand, RedoCommand, SaveCommand, SplineCommand, StretchCommand,
+    TextCommand, TextEditCommand, TransformCommand, UndoCommand, UnitsCommand, ZoomCommand,
 };
 
 type CommandFactory = fn() -> Box<dyn Command>;
@@ -53,7 +53,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 52] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 54] = [
             ("ERASE", &["E"], || Box::new(EraseCommand)),
             ("MOVE", &["M"], || Box::new(TransformCommand::moving())),
             ("COPY", &["CO", "CP"], || {
@@ -69,6 +69,8 @@ impl CommandRegistry {
             ("JOIN", &["J"], || Box::new(JoinCommand)),
             ("BLOCK", &["B"], || Box::new(BlockCommand::new())),
             ("INSERT", &["I"], || Box::new(InsertCommand::new())),
+            ("ATTDEF", &["ATT"], || Box::new(AttdefCommand::new())),
+            ("ATTEDIT", &["ATE"], || Box::new(AtteditCommand::new())),
             ("EXPLODE", &["X"], || Box::new(ExplodeCommand)),
             ("STRETCH", &["S"], || Box::new(StretchCommand::new())),
             ("LAYER", &["LA"], || Box::new(LayerCommand::new())),

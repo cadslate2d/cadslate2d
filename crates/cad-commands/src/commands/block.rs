@@ -11,8 +11,8 @@
 
 use cad_core::{EntityId, Point2};
 use cad_document::{
-    Block, BlockId, BlockReferenceEntity, Entity, EntityRecord, ExplodeError, Properties,
-    TransactionError, check_name,
+    AttributeDefinitionEntity, Block, BlockId, BlockReferenceEntity, Entity, EntityRecord,
+    ExplodeError, Properties, TransactionError, check_name,
 };
 use cad_input::{ExpectedInput, InputKind, Keyword};
 
@@ -239,6 +239,13 @@ enum InsertState {
         insertion: Point2,
         scale: f64,
     },
+    /// The block has attributes (#183): each is asked for in turn, with
+    /// its definition's prompt and default.
+    Attributes {
+        reference: BlockReferenceEntity,
+        asked: Vec<AttributeDefinitionEntity>,
+        index: usize,
+    },
 }
 
 #[derive(Debug)]
@@ -270,24 +277,53 @@ impl InsertCommand {
     }
 
     fn insert(
+        &mut self,
         ctx: &mut CommandContext<'_>,
         block: BlockId,
         insertion: Point2,
         scale: f64,
         degrees: f64,
     ) -> Step {
+        let reference = BlockReferenceEntity::new(block, insertion, scale, degrees.to_radians());
+        let asked: Vec<AttributeDefinitionEntity> = ctx
+            .drawing
+            .blocks()
+            .get(block)
+            .map(|definition| definition.attribute_definitions().cloned().collect())
+            .unwrap_or_default();
+        if asked.is_empty() {
+            return Self::commit(ctx, reference);
+        }
+        self.state = InsertState::Attributes {
+            reference,
+            asked,
+            index: 0,
+        };
+        Step::Continue
+    }
+
+    fn commit(ctx: &mut CommandContext<'_>, reference: BlockReferenceEntity) -> Step {
         let mut transaction = ctx.drawing.transaction();
         transaction
-            .insert(BlockReferenceEntity::new(
-                block,
-                insertion,
-                scale,
-                degrees.to_radians(),
-            ))
+            .insert(reference)
             .expect("the block was found and the scale checked");
         transaction.commit();
         Step::Finished
     }
+}
+
+/// The prompt for one attribute: its definition's prompt, or "Enter TAG",
+/// with the value it has now as the default (#183).
+pub(crate) fn attribute_prompt(
+    definition: &AttributeDefinitionEntity,
+    current: Option<&str>,
+) -> Prompt {
+    let message = if definition.prompt.is_empty() {
+        format!("Enter {}", definition.tag)
+    } else {
+        definition.prompt.clone()
+    };
+    Prompt::new(message).with_default(current.unwrap_or(&definition.text.content))
 }
 
 fn is_scale(factor: f64) -> bool {
@@ -301,12 +337,13 @@ impl Command for InsertCommand {
             InsertState::Point { .. } => Prompt::new("Specify insertion point"),
             InsertState::Scale { .. } => Prompt::new("Specify scale factor").with_default("1"),
             InsertState::Rotation { .. } => Prompt::new("Specify rotation angle").with_default("0"),
+            InsertState::Attributes { asked, index, .. } => attribute_prompt(&asked[*index], None),
         }
     }
 
     fn expected(&self) -> ExpectedInput {
         match &self.state {
-            InsertState::Name => ExpectedInput::text(),
+            InsertState::Name | InsertState::Attributes { .. } => ExpectedInput::text(),
             InsertState::Point { .. } => ExpectedInput::point(),
             // A factor is a plain number: `2mm` is not a scale.
             InsertState::Scale { .. } => ExpectedInput::factor(),
@@ -354,7 +391,10 @@ impl Command for InsertCommand {
                     scale,
                 },
                 CommandInput::Angle(degrees),
-            ) => return Self::insert(ctx, *block, *insertion, *scale, degrees),
+            ) => {
+                let (block, insertion, scale) = (*block, *insertion, *scale);
+                return self.insert(ctx, block, insertion, scale, degrees);
+            }
             (
                 InsertState::Rotation {
                     block,
@@ -362,7 +402,42 @@ impl Command for InsertCommand {
                     scale,
                 },
                 CommandInput::Accept,
-            ) => return Self::insert(ctx, *block, *insertion, *scale, 0.0),
+            ) => {
+                let (block, insertion, scale) = (*block, *insertion, *scale);
+                return self.insert(ctx, block, insertion, scale, 0.0);
+            }
+            (InsertState::Attributes { .. }, input) => {
+                let InsertState::Attributes {
+                    reference,
+                    asked,
+                    index,
+                } = std::mem::replace(&mut self.state, InsertState::Name)
+                else {
+                    unreachable!()
+                };
+                let definition = &asked[index];
+                let value = match input {
+                    CommandInput::Text(value) => value,
+                    CommandInput::Accept => definition.text.content.clone(),
+                    _ => {
+                        self.state = InsertState::Attributes {
+                            reference,
+                            asked,
+                            index,
+                        };
+                        return Step::Continue;
+                    }
+                };
+                let reference = reference.with_attribute(&definition.tag, &value);
+                if index + 1 == asked.len() {
+                    return Self::commit(ctx, reference);
+                }
+                self.state = InsertState::Attributes {
+                    reference,
+                    asked,
+                    index: index + 1,
+                };
+            }
             _ => {}
         }
         Step::Continue
@@ -396,6 +471,7 @@ impl Command for InsertCommand {
                 let degrees = angle_degrees(cursor - *insertion);
                 BlockReferenceEntity::new(*block, *insertion, *scale, degrees.to_radians())
             }
+            InsertState::Attributes { reference, .. } => reference.clone(),
         };
         out.push(OverlayItem::PreviewEntity(Entity::BlockRef(reference)));
     }
@@ -405,7 +481,7 @@ impl Command for InsertCommand {
             InsertState::Scale { insertion, .. } | InsertState::Rotation { insertion, .. } => {
                 Some(*insertion)
             }
-            InsertState::Name | InsertState::Point { .. } => None,
+            InsertState::Name | InsertState::Point { .. } | InsertState::Attributes { .. } => None,
         }
     }
 }

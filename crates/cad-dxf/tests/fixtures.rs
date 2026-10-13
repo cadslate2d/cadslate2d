@@ -717,16 +717,40 @@ fn nested_blocks_from_another_writer() {
 /// A block with attributes, from a modern file: the geometry and the
 /// references come in, the attribute definitions and values are reported.
 #[test]
-fn block_attributes_are_reported() {
+fn attributes_from_another_writer() {
     let import = load("valid", "ezdxf-r2010-block-attributes.dxf").unwrap();
     let drawing = &import.drawing;
     let tag = drawing.blocks().find("TAG").expect("the tag");
     let records = &drawing.blocks().get(tag).unwrap().entities;
-    assert_eq!(records.len(), 1, "the frame; the ATTDEF is not an entity");
+    assert_eq!(records.len(), 2, "the frame and the ATTDEF (#183)");
     assert!(matches!(&*records[0].entity, Entity::Polyline(polyline) if polyline.closed));
+    let Entity::AttributeDefinition(definition) = &*records[1].entity else {
+        panic!("{:?}", records[1].entity);
+    };
+    assert_eq!(definition.tag, "ROOM");
     let placed = references(drawing);
     assert_eq!(placed.len(), 2);
+    assert_eq!(placed[0].attribute("ROOM"), Some("101"));
+    assert_eq!(
+        placed[1].attribute("ROOM"),
+        None,
+        "the second shows the default"
+    );
     assert!((placed[1].rotation.to_degrees() - 45.0).abs() < 1e-9);
+    // Placed, the first shows its value and the second the default, as texts.
+    let shown = |reference: &cad_document::BlockReferenceEntity| -> Vec<String> {
+        drawing
+            .blocks()
+            .flatten(reference, Properties::default())
+            .into_iter()
+            .filter_map(|(entity, _)| match entity {
+                Entity::Text(text) => Some(text.content),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(shown(&placed[0]), vec!["101"]);
+    assert_eq!(shown(&placed[1]), vec![""]);
 
     let report = &import.report;
     assert_eq!(
@@ -739,7 +763,14 @@ fn block_attributes_are_reported() {
         .iter()
         .map(|(kind, count)| (kind.as_str(), *count))
         .collect();
-    assert_eq!(counts, vec![("(INSERT attributes)", 1), ("ATTDEF", 1)]);
+    assert_eq!(counts, vec![]);
+    // Written back, the reference carries its ATTRIB and reads the same.
+    let text = export(drawing);
+    assert!(text.contains("\nATTRIB\n"));
+    assert!(text.contains("\nATTDEF\n"));
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(references(&back.drawing)[0].attribute("ROOM"), Some("101"));
+    assert_eq!(export(&back.drawing), text);
 }
 
 // ── layers, colours, linetypes, lineweights (#139) ──

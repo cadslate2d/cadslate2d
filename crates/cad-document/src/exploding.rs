@@ -310,6 +310,7 @@ mod tests {
                         insertion: p(x, y),
                         scale,
                         rotation,
+                        attributes: Vec::new(),
                         mirrored,
                     }
                 })

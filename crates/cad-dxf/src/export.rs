@@ -15,9 +15,9 @@ use std::fmt::Write;
 
 use cad_core::{EntityId, LengthUnit, Point2};
 use cad_document::{
-    ArcEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, DimStyle,
-    DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity, EntityRecord,
-    HatchEntity, HatchStyle, Justification, Layer, LineEntity, Linetype, LinetypeDef,
+    ArcEntity, AttributeDefinitionEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity,
+    Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity,
+    EntityRecord, HatchEntity, HatchStyle, Justification, Layer, LineEntity, Linetype, LinetypeDef,
     LinetypeTable, Lineweight, MTextEntity, Measure, PolylineEntity, Properties, Revision,
     SplineEntity, TextEntity, TextStyle, TextStyleTable,
 };
@@ -345,6 +345,9 @@ impl Writer {
         self.group(1, ACADVER_R2000);
         self.group(9, "$DWGCODEPAGE");
         self.group(3, CODEPAGE);
+        // Attributes are shown as their definitions say (#183).
+        self.group(9, "$ATTMODE");
+        self.int(70, 1);
         if let Some(unit) = drawing.unit() {
             self.group(9, "$INSUNITS");
             self.int(70, insunits_code(unit));
@@ -753,6 +756,7 @@ impl Writer {
             Entity::Arc(_) => "ARC",
             Entity::Ellipse(_) => "ELLIPSE",
             Entity::Spline(_) => "SPLINE",
+            Entity::AttributeDefinition(_) => "ATTDEF",
             Entity::Polyline(_) => "LWPOLYLINE",
             Entity::Text(_) => "TEXT",
             Entity::MText(_) => "MTEXT",
@@ -770,7 +774,13 @@ impl Writer {
             Entity::Polyline(polyline) => self.polyline(polyline),
             Entity::Text(text) => self.text(text, drawing.text_styles()),
             Entity::MText(text) => self.mtext(text, drawing.text_styles()),
-            Entity::BlockRef(reference) => self.insert(reference, drawing.blocks()),
+            Entity::BlockRef(reference) => {
+                self.insert(reference, drawing.blocks());
+                self.attributes(reference, owner, layer, &record.properties, drawing);
+            }
+            Entity::AttributeDefinition(definition) => {
+                self.attribute_definition(definition, drawing.text_styles());
+            }
             Entity::Dimension(dimension) => self.dimension(dimension, drawing),
             Entity::Hatch(hatch) => self.hatch(hatch),
         }
@@ -1044,6 +1054,13 @@ impl Writer {
         self.group(100, "AcDbText");
         // For a justified text the first point is the baseline start, as
         // DXF readers expect, and the alignment point is the insertion.
+        self.text_groups(text, styles);
+        self.group(100, "AcDbText");
+    }
+
+    /// The text groups shared by TEXT, ATTDEF, and ATTRIB: placement,
+    /// height, words, rotation, style, justification.
+    fn text_groups(&mut self, text: &TextEntity, styles: &TextStyleTable) {
         self.point(10, text.start());
         self.real(40, text.height);
         self.group(1, &text_codes(&text.content));
@@ -1065,7 +1082,59 @@ impl Writer {
             self.int(72, code);
             self.point(11, text.insertion);
         }
+    }
+
+    /// An ATTDEF (#183): a text whose words are the default, then its
+    /// prompt (3), tag (2), and flags (70).
+    fn attribute_definition(
+        &mut self,
+        definition: &AttributeDefinitionEntity,
+        styles: &TextStyleTable,
+    ) {
         self.group(100, "AcDbText");
+        self.text_groups(&definition.text, styles);
+        self.group(100, "AcDbAttributeDefinition");
+        self.group(3, &definition.prompt);
+        self.group(2, &definition.tag);
+        self.int(70, if definition.invisible { 1 } else { 0 });
+    }
+
+    /// The ATTRIBs of a reference whose block defines attributes (#183),
+    /// one per definition in definition order, each placed where the
+    /// reference puts it, then the SEQEND that ends them. The INSERT said
+    /// `66 1` before.
+    fn attributes(
+        &mut self,
+        reference: &BlockReferenceEntity,
+        owner: Handle,
+        layer: &str,
+        properties: &Properties,
+        drawing: &Drawing,
+    ) {
+        let Some(block) = drawing.blocks().get(reference.block) else {
+            return;
+        };
+        let definitions: Vec<AttributeDefinitionEntity> =
+            block.attribute_definitions().cloned().collect();
+        if definitions.is_empty() {
+            return;
+        }
+        for definition in &definitions {
+            let value = reference
+                .attribute(&definition.tag)
+                .unwrap_or(&definition.text.content);
+            let placed = match reference.place(&Entity::Text(definition.text.clone()), block.base) {
+                Entity::Text(text) => text.saying(value),
+                _ => unreachable!("a text placed is a text"),
+            };
+            self.entity("ATTRIB", owner, layer, properties, drawing.linetypes());
+            self.group(100, "AcDbText");
+            self.text_groups(&placed, drawing.text_styles());
+            self.group(100, "AcDbAttribute");
+            self.group(2, &definition.tag);
+            self.int(70, if definition.invisible { 1 } else { 0 });
+        }
+        self.entity("SEQEND", owner, layer, properties, drawing.linetypes());
     }
 
     /// An MTEXT: its top left, height, width, the top-left attachment, its
@@ -1115,6 +1184,12 @@ impl Writer {
             .get(reference.block)
             .map_or("", |block| block.name.as_str());
         self.group(2, name);
+        if blocks
+            .get(reference.block)
+            .is_some_and(|block| block.attribute_definitions().next().is_some())
+        {
+            self.int(66, 1);
+        }
         self.point(10, reference.insertion);
         // Exactly one is no scale at all.
         #[allow(clippy::float_cmp)]

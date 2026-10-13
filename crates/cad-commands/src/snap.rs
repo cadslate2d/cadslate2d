@@ -149,6 +149,7 @@ pub fn entity_snap_points(entity: &Entity, mode: SnapMode, tables: Tables<'_>) -
     let insertion = match entity {
         Entity::Text(text) => Some(text.insertion),
         Entity::MText(text) => Some(text.insertion),
+        Entity::AttributeDefinition(definition) => Some(definition.text.insertion),
         _ => None,
     };
     if let Some(insertion) = insertion {

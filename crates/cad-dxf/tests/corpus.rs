@@ -380,6 +380,14 @@ fn expectation(imported: &Import, line: &str) -> Result<(), String> {
             same("words", t.content.as_str(), w(2)?)?;
             numbers(3, &[t.width])
         }
+        // `attribute i TAG VALUE`: the i-th reference's value for TAG.
+        "attribute" => {
+            let refs = of_kind("block reference");
+            let Entity::BlockRef(r) = nth(&refs, w(1)?, "reference")? else {
+                unreachable!()
+            };
+            same("attribute", r.attribute(w(2)?).unwrap_or("?"), w(3)?)
+        }
         "reference" => {
             let refs = of_kind("block reference");
             let Entity::BlockRef(r) = nth(&refs, w(1)?, "reference")? else {
