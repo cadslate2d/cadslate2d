@@ -96,8 +96,23 @@ pub fn pattern_lines(
     }
     let first = (low / spacing).ceil();
     let last = (high / spacing).floor();
-    if last - first + 1.0 > budget as f64 {
+    // A spacing so small against the region that the counts are infinite,
+    // and their difference NaN, is a pattern too fine for it — not a loop
+    // that never ends (a fuzzer finding, #177).
+    let count = last - first + 1.0;
+    if count.is_nan() || count > budget as f64 {
         return None;
+    }
+    // Lines are told apart by their index: an origin so far from the
+    // region, against the spacing, that an index and the next are the same
+    // number cannot be drawn (a fuzzer finding: an origin at 1e20).
+    if !indexable(first) || !indexable(last) {
+        return None;
+    }
+    // A family of gaps alone draws nothing, and would walk its period
+    // across every line for nothing.
+    if !family.dashes.is_empty() && family.dashes.iter().all(|dash| *dash < 0.0) {
+        return Some(out);
     }
     let period: f64 = family.dashes.iter().map(|dash| dash.abs()).sum();
     let mut k = first;
@@ -131,6 +146,11 @@ pub fn pattern_lines(
     Some(out)
 }
 
+/// Whether `index + 1.0` is a different number: below 2⁵³ in magnitude.
+fn indexable(index: f64) -> bool {
+    index.abs() < 9_007_199_254_740_992.0
+}
+
 /// Calls `emit` with the stretches of `[from, to]` the dashes cover — the
 /// whole of it when there are none — and stops with `false` as soon as
 /// `emit` does.
@@ -144,9 +164,12 @@ fn dashes(
     if dashes.is_empty() || period <= 0.0 {
         return emit(from, to);
     }
-    let mut cell = (from / period).floor() * period;
-    while cell <= to {
-        let mut at = cell;
+    // Cells by index, so a period too small to move `cell` by addition
+    // still moves on; every cell emits, so the budget bounds the walk.
+    let first = (from / period).floor();
+    let mut n = first;
+    while n * period <= to {
+        let mut at = n * period;
         for dash in dashes {
             if *dash >= 0.0 {
                 let (start, end) = (at.max(from), (at + dash).min(to));
@@ -156,7 +179,12 @@ fn dashes(
             }
             at += dash.abs();
         }
-        cell += period;
+        if !indexable(n) {
+            // The index itself cannot move on: the period is below the
+            // resolution of the position, and nothing more can be drawn.
+            return true;
+        }
+        n += 1.0;
     }
     true
 }
@@ -176,6 +204,68 @@ mod tests {
 
     fn square(size: f64) -> Vec<Point2> {
         vec![p(0.0, 0.0), p(size, 0.0), p(size, size), p(0.0, size)]
+    }
+
+    /// A fuzzer finding (#177): a spacing of 1e-300 made the line counts
+    /// infinite, their difference NaN, and the loop over them endless.
+    #[test]
+    fn a_spacing_vanishingly_small_against_the_region_is_too_dense_not_endless() {
+        let family = LineFamily {
+            angle: 0.0,
+            origin: p(0.0, 0.0),
+            shift: 0.0,
+            spacing: 1e-300,
+            dashes: vec![],
+        };
+        assert_eq!(pattern_lines(&[square(100.0)], &family, 200_000), None);
+        let dashed = LineFamily {
+            dashes: vec![1e-300, -1e-300],
+            ..family
+        };
+        assert_eq!(pattern_lines(&[square(100.0)], &dashed, 200_000), None);
+    }
+
+    /// A fuzzer finding (#177): a pattern origin at 1e20 put the line
+    /// indices where one and the next are the same number, and the walk
+    /// over them never moved.
+    #[test]
+    fn an_origin_too_far_for_the_spacing_cannot_be_drawn() {
+        let family = LineFamily {
+            angle: 0.0,
+            origin: p(0.0, 1e20),
+            shift: 0.0,
+            spacing: 6.35,
+            dashes: vec![],
+        };
+        assert_eq!(pattern_lines(&[square(100.0)], &family, 200_000), None);
+    }
+
+    #[test]
+    fn a_family_of_gaps_alone_draws_nothing() {
+        let family = LineFamily {
+            angle: 0.0,
+            origin: p(0.0, 0.0),
+            shift: 0.0,
+            spacing: 10.0,
+            dashes: vec![-1.0, -2.0],
+        };
+        assert_eq!(
+            pattern_lines(&[square(100.0)], &family, 200_000),
+            Some(vec![])
+        );
+    }
+
+    #[test]
+    fn a_period_below_the_resolution_of_the_position_ends() {
+        let family = LineFamily {
+            angle: 0.0,
+            origin: p(0.0, 0.0),
+            shift: 0.0,
+            spacing: 10.0,
+            dashes: vec![1e-300, -1e-300],
+        };
+        // Every cell emits a dot, so the budget ends it.
+        assert_eq!(pattern_lines(&[square(100.0)], &family, 1000), None);
     }
 
     fn horizontal(spacing: f64, dashes: Vec<f64>) -> LineFamily {

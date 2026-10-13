@@ -1,0 +1,34 @@
+# Coverage-guided fuzzing (#177): `cargo +nightly fuzz run <target>`, or
+# `scripts/fuzz.sh`. Its own workspace: libFuzzer needs a nightly toolchain
+# and sanitizer flags the rest of the build does not take.
+[package]
+name = "cad-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+cad-core = { path = "../crates/cad-core" }
+cad-dxf = { path = "../crates/cad-dxf" }
+cad-input = { path = "../crates/cad-input" }
+
+[[bin]]
+name = "dxf_import"
+path = "fuzz_targets/dxf_import.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "input_resolve"
+path = "fuzz_targets/input_resolve.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

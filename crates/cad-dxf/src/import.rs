@@ -159,7 +159,12 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
 #[derive(Clone, Copy, Debug)]
 struct Group<'a> {
     code: i32,
+    /// The value with the spaces around it removed: what a number, a name,
+    /// or a flag is read from, padded or not.
     value: &'a str,
+    /// The value as written, less the line ending: what words are read
+    /// from, since the spaces at the ends of a text are its own (#177).
+    raw: &'a str,
     line: usize,
 }
 
@@ -207,6 +212,7 @@ impl<'a> Groups<'a> {
         Ok(Some(Group {
             code,
             value: value.trim(),
+            raw: value.strip_suffix('\r').unwrap_or(value),
             line,
         }))
     }
@@ -1543,9 +1549,9 @@ impl RecordBody {
             }
             3 => {
                 self.description = Some(group.value.to_owned());
-                self.chunks.push(group.value.to_owned());
+                self.chunks.push(group.raw.to_owned());
             }
-            1 => self.text = Some(group.value.to_owned()),
+            1 => self.text = Some(group.raw.to_owned()),
             7 => self.style = Some(group.value.to_owned()),
             41 => self.width = Some(real(group)?),
             71 => self.attachment = group.value.parse().ok(),

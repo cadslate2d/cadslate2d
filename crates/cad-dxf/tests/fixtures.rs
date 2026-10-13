@@ -202,6 +202,45 @@ fn minimal_line() {
     assert!(!import.report.has_unsupported_content());
 }
 
+/// A fuzzer finding (#177): every group value was trimmed, so a text
+/// ending in a space lost it, and an MTEXT written in pieces fused the
+/// words on either side of a piece boundary.
+#[test]
+fn text_keeps_the_spaces_at_its_ends() {
+    let import = load("valid", "text-with-spaces.dxf").unwrap();
+    let contents: Vec<String> = in_file_order(&import.drawing)
+        .iter()
+        .map(|entity| match entity {
+            Entity::Text(text) => text.content.clone(),
+            Entity::MText(text) => text.content.clone(),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(contents, vec!["  two  spaces  ", "Bold and italic"]);
+}
+
+/// A fuzzer finding (#177): a pattern line placed at y = 1e20, so far from
+/// the region against its spacing that the pattern's lines could not be
+/// told apart, and the walk over them never ended. The hatch is reported
+/// as too dense and kept solid, like any pattern too fine to draw.
+#[test]
+fn a_hatch_pattern_placed_too_far_to_draw_is_reported() {
+    let import = load("valid", "hatch-pattern-origin-far.dxf").unwrap();
+    let hatches: Vec<cad_document::HatchEntity> = in_file_order(&import.drawing)
+        .into_iter()
+        .filter_map(|entity| match entity {
+            Entity::Hatch(hatch) => Some(hatch),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(hatches.len(), 1);
+    assert_eq!(hatches[0].style, cad_document::HatchStyle::Solid);
+    assert_eq!(
+        import.report.unsupported.get("(HATCH pattern too dense)"),
+        Some(&1)
+    );
+}
+
 #[test]
 fn crlf_and_exponent_notation() {
     let import = load("valid", "crlf-exponent-notation.dxf").unwrap();

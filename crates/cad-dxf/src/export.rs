@@ -999,7 +999,7 @@ impl Writer {
         // DXF readers expect, and the alignment point is the insertion.
         self.point(10, text.start());
         self.real(40, text.height);
-        self.group(1, &text.content);
+        self.group(1, &text_codes(&text.content));
         if text.rotation != 0.0 {
             self.real(50, text.rotation.to_degrees());
         }
@@ -1225,8 +1225,16 @@ fn linetype_name(linetype: Linetype, table: &LinetypeTable) -> String {
     }
 }
 
+/// A text's words as TEXT codes: a `%`, which a reader takes as the start
+/// of a `%%` code, is written `%%%`, the code for itself (a fuzzer finding,
+/// #177: a run of them read back shorter).
+fn text_codes(content: &str) -> String {
+    content.replace('%', "%%%")
+}
+
 /// A paragraph's words as MTEXT codes: a line break is `\P`, and the
-/// characters MTEXT reads as the start of a code are escaped.
+/// characters MTEXT reads as the start of a code — a backslash, a brace,
+/// a `%` — are escaped.
 fn mtext_codes(content: &str) -> String {
     let mut out = String::with_capacity(content.len());
     for c in content.chars() {
@@ -1235,6 +1243,7 @@ fn mtext_codes(content: &str) -> String {
             '\\' => out.push_str("\\\\"),
             '{' => out.push_str("\\{"),
             '}' => out.push_str("\\}"),
+            '%' => out.push_str("%%%"),
             other => out.push(other),
         }
     }
@@ -1964,6 +1973,51 @@ mod tests {
             (value(&texts[2], 72), value(&texts[2], 11)),
             (Some("2"), Some("50.0"))
         );
+    }
+
+    /// A fuzzer finding (#177): a `%` written as itself starts a `%%` code
+    /// on reading, so a run of them came back shorter and a text ending in
+    /// `%%` lost it.
+    #[test]
+    fn a_percent_sign_in_a_text_or_a_paragraph_survives() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.insert(TextEntity::new(
+            Point2::ORIGIN,
+            2.5,
+            0.0,
+            "100% sure, 50%% more, %%%%%%%%%%%",
+        ))
+        .unwrap();
+        tx.insert(MTextEntity::new(
+            Point2::new(0.0, 10.0),
+            60.0,
+            2.5,
+            0.0,
+            "rate 5%\nends %%".to_owned(),
+        ))
+        .unwrap();
+        tx.commit();
+        let text = export(&drawing);
+        assert!(text.contains("\n100%%% sure, 50%%%%%% more, %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%\n"));
+        let back = crate::import(text.as_bytes()).unwrap();
+        let mut contents: Vec<String> = back
+            .drawing
+            .entities()
+            .map(|(_, entity)| match entity {
+                Entity::Text(text) => text.content.clone(),
+                Entity::MText(text) => text.content.clone(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        contents.sort();
+        assert_eq!(
+            contents,
+            vec!["100% sure, 50%% more, %%%%%%%%%%%", "rate 5%\nends %%"]
+        );
+        assert!(!back.report.has_unsupported_content());
+        assert_eq!(back.report.formatting_dropped, 0);
+        assert_eq!(export(&back.drawing), text);
     }
 
     #[test]

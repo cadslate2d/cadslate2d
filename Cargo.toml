@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "benches"]
+# The fuzz crate is its own workspace: nightly and libFuzzer (#177).
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.0.1"

@@ -8,5 +8,11 @@ node_modules/
 .DS_Store
 /benches/generated-drawings/*.dxf
 
+# What the fuzzers grow and find (#177); a finding becomes a fixture
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
+
 # A Python environment for the DXF fixture scripts (ezdxf)
 .venv/
