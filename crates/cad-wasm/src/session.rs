@@ -338,7 +338,8 @@ impl CadSession {
 
     /// The request behind a `HOST` dirty flag: `0` none, `1` open a file,
     /// `2` save the drawing to a file the user chooses, `3` save it back to
-    /// its file, `4` show the settings panel. Taking it clears it.
+    /// its file, `4` show the settings panel, `5` plot to a PDF. Taking it
+    /// clears it.
     pub fn take_host_request(&mut self) -> u32 {
         match self.session.take_host_request() {
             None => 0,
@@ -346,7 +347,15 @@ impl CadSession {
             Some(HostRequest::ExportFile) => 2,
             Some(HostRequest::SaveFile) => 3,
             Some(HostRequest::Settings) => 4,
+            Some(HostRequest::Plot) => 5,
         }
+    }
+
+    /// Model space as a one-page PDF with the session's plot settings
+    /// (#187): ASCII, so it travels as text. The host offers it for
+    /// download under the drawing's name.
+    pub fn plot_pdf(&self) -> String {
+        cad_plot::plot_pdf(self.session.drawing(), &self.session.settings().plot)
     }
 
     /// What the browser kept between sessions, given back once on start

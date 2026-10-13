@@ -15,7 +15,7 @@ use crate::commands::{
     DimRadialCommand, DimStyleCommand, EdgeCommand, EllipseCommand, EraseCommand, ExplodeCommand,
     ExportCommand, GridCommand, HatchCommand, HatchEditCommand, InsertCommand, JoinCommand,
     LayerCommand, LineCommand, LinetypeCommand, LtscaleCommand, LweightCommand, MTextCommand,
-    MirrorCommand, OffsetCommand, OpenCommand, OsnapCommand, PanCommand, PlineCommand,
+    MirrorCommand, OffsetCommand, OpenCommand, OsnapCommand, PanCommand, PlineCommand, PlotCommand,
     PolarAngleCommand, QselectCommand, RectangCommand, RedoCommand, SaveCommand, SelectCommand,
     SettingsCommand, SplineCommand, StretchCommand, TextCommand, TextEditCommand, TransformCommand,
     UndoCommand, UnitsCommand, ZoomCommand,
@@ -54,7 +54,8 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 58] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 59] = [
+            ("PLOT", &["PDFOUT"], || Box::new(PlotCommand::new())),
             ("ALIASEDIT", &[], || Box::new(AliasEditCommand::new())),
             ("SETTINGS", &[], || Box::new(SettingsCommand)),
             ("SELECT", &[], || Box::new(SelectCommand)),

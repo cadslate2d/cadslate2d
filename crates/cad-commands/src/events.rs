@@ -60,4 +60,7 @@ pub enum HostRequest {
     /// Show the settings panel (#186): the toggles, the unit, the autosave
     /// delay, the theme — what the host keeps between sessions.
     Settings,
+    /// Plot model space to a PDF (#187) with the session's plot settings,
+    /// and offer the file for download.
+    Plot,
 }

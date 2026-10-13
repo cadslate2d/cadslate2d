@@ -815,3 +815,24 @@ describe("settings", () => {
     });
   });
 });
+
+// #187: PLOT makes a PDF of model space and offers it under the drawing's name.
+describe("plot", () => {
+  test("PLOT saves a PDF named after the drawing", async () => {
+    const { app, host, tick, enter } = harness();
+    enter("L", "0,0", "100,50", "", "PLOT", "A3", "E", "1:2", "Y", "M");
+    await tick();
+    expect(host.files.saved).toHaveLength(1);
+    const [saved] = host.files.saved;
+    expect(saved?.name).toBe("drawing.pdf");
+    expect(saved?.mimeType).toBe("application/pdf");
+    expect(saved?.text.startsWith("%PDF-1.4\n")).toBe(true);
+    expect(saved?.text).toContain("/MediaBox [0 0 1190.551 841.89]");
+    expect(saved?.text.endsWith("%%EOF\n")).toBe(true);
+    expect(app.ui.getSnapshot().log.at(-1)).toBe(
+      "Plotting the extents of model space in black on A3, at 1:2.",
+    );
+    // Plotting is not saving: the drawing is still unexported.
+    expect(app.ui.getSnapshot().unsavedChanges).toBe(true);
+  });
+});

@@ -15,6 +15,7 @@ import { UiStore } from "./ui-store";
 const RENDER_FLAGS = Dirty.Scene | Dirty.Overlay | Dirty.View;
 const DXF_ACCEPT = ".dxf";
 const DXF_MIME_TYPE = "application/dxf";
+const PDF_MIME_TYPE = "application/pdf";
 const DEFAULT_FILE_NAME = "drawing.dxf";
 const RECOVERED_FILE_NAME = "recovered.dxf";
 /** How long after the last change the drawing is kept (ADR-0019). */
@@ -410,6 +411,8 @@ export class CadApp {
       case HostRequest.Settings:
         this.openSettings();
         return;
+      case HostRequest.Plot:
+        return this.#plot();
       case HostRequest.None:
         return;
     }
@@ -460,6 +463,13 @@ export class CadApp {
   dismissImportReport(): void {
     if (this.#failed) return;
     this.loop.invalidate(this.engine.dismissImportReport());
+  }
+
+  /** PLOT: the page the engine made, offered as a PDF under the drawing's name (#187). */
+  async #plot(): Promise<void> {
+    const pdf = this.engine.plotPdf();
+    const name = (this.engine.uiState().documentName ?? DEFAULT_FILE_NAME).replace(/\.dxf$/i, "");
+    await this.#host.files.saveAs(`${name}.pdf`, pdf, PDF_MIME_TYPE);
   }
 
   async #performSave(ask: boolean): Promise<void> {

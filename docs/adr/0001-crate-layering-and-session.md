@@ -22,7 +22,8 @@ The workspace scaffold is the first implementation task, so the dependency direc
 Dependencies point strictly downward. No cycles, no exceptions.
 
 ```text
-cad-wasm      → cad-commands, cad-render, cad-dxf
+cad-wasm      → cad-commands, cad-render, cad-dxf, cad-plot
+cad-plot      → cad-render, cad-commands, cad-document, cad-geometry, cad-core
 cad-render    → cad-commands, cad-document, cad-geometry, cad-core
 cad-dxf       → cad-document, cad-core
 cad-commands  → cad-document, cad-input, cad-geometry, cad-core
@@ -44,7 +45,8 @@ cad-core      → (no workspace dependencies)
 | `cad-document` | `Drawing`, entities, tables, `EntityStore`, `SpatialIndex`, transactions, `History` | know about commands, selection, view, or rendering |
 | `cad-commands` | `Session`, command state machines, selection, snaps, grips, transient edit sessions | know about packed GPU geometry or JS |
 | `cad-dxf` | DXF ↔ `Drawing` translation and import reports | leak DXF group codes into `cad-document` |
-| `cad-render` | `RenderScene` from `Drawing`; `OverlayFrame` from session interaction state | mutate the document or session |
+| `cad-render` | `RenderScene` from `Drawing`; `OverlayFrame` from session interaction state; `walk_entity`, the one walk over the entity kinds | mutate the document or session |
+| `cad-plot` | A PDF page of model space from `Drawing` and the session's plot settings, through `walk_entity` | know about the browser or the GPU |
 | `cad-wasm` | marshalling between JS and `Session`/`cad-render`/`cad-dxf` | contain CAD logic |
 
 ### The `Session`
@@ -92,3 +94,7 @@ Every user action reaches the core as a method call on `Session`. `cad-wasm` wra
 ### 2026-10-06 — `cad-text`
 
 ADR-0016 chose a stroke font for text and put the font, its metrics, and the layout of a string into a crate of their own, `cad-text`, which depends on `cad-core` only. `cad-document` depends on it for the bounds and primitives of a text entity; nothing above needs to, since text reaches the renderer as line segments like every other entity. `scripts/check-boundaries.sh` knows the crate.
+
+### 2026-10-13 — `cad-plot`
+
+ADR-0027 put the PDF plot into a crate of its own, `cad-plot`, which depends on `cad-render` for the one walk over the entity kinds (`walk_entity`) and on `cad-commands` for the plot settings; `cad-wasm` depends on it to hand the page to the host. `scripts/check-boundaries.sh` knows the crate.

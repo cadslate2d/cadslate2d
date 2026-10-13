@@ -61,6 +61,7 @@ export const HostRequest = {
   ExportFile: 2,
   SaveFile: 3,
   Settings: 4,
+  Plot: 5,
 } as const;
 export type HostRequest = (typeof HostRequest)[keyof typeof HostRequest];
 
@@ -466,6 +467,11 @@ export class CadEngine {
   /** The drawing as ASCII DXF, for a save or an autosave: marks nothing. */
   snapshotDxf(): string {
     return this.#session.snapshot_dxf();
+  }
+
+  /** Model space as a one-page PDF with the session's plot settings (#187): ASCII text. */
+  plotPdf(): string {
+    return this.#session.plot_pdf();
   }
 
   /** Begins the same snapshot in slices (ADR-0024): `snapshotStep` writes it a few records at a time. */

@@ -19,6 +19,7 @@ cad-document = { path = "crates/cad-document" }
 cad-commands = { path = "crates/cad-commands" }
 cad-dxf = { path = "crates/cad-dxf" }
 cad-render = { path = "crates/cad-render" }
+cad-plot = { path = "crates/cad-plot" }
 
 # The wasm-bindgen crate version must equal the installed wasm-bindgen-cli
 # version; scripts/build-wasm.sh checks this (ADR-0004).

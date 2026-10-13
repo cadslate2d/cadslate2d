@@ -41,6 +41,8 @@ describe("WASM API surface", () => {
       // ADR-0021: the fill of a hatch being previewed or highlighted, as triangles, one buffer each.
       "overlay_triangle_batches",
       "overlay_triangles",
+      // #187: model space as a PDF, one call, the file whole.
+      "plot_pdf",
       "pointer_down",
       "pointer_leave",
       "pointer_move",

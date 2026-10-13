@@ -1,0 +1,606 @@
+//! What a plot carries (ADR-0027): the page, the scale, every entity kind,
+//! the lineweights at their width, the colours, the dashes, the clip; and
+//! the property that every primitive lands inside the page.
+
+use std::f64::consts::{FRAC_PI_2, PI, TAU};
+
+use cad_commands::{Paper, PlotArea, PlotScale, PlotSettings};
+use cad_core::{Aabb, LengthUnit, Point2, Vec2};
+use cad_document::{
+    ArcEntity, Block, BlockReferenceEntity, CircleEntity, Color, DimensionEntity, Drawing,
+    EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Layer, LineEntity, Linetype,
+    LinetypeDef, Lineweight, MTextEntity, Measure, Path, PolylineEntity, Properties, SplineEntity,
+    TextEntity,
+};
+use proptest::prelude::*;
+
+use super::*;
+
+fn p(x: f64, y: f64) -> Point2 {
+    Point2::new(x, y)
+}
+
+fn line(x0: f64, y0: f64, x1: f64, y1: f64) -> Entity {
+    LineEntity::new(p(x0, y0), p(x1, y1)).into()
+}
+
+fn settings() -> PlotSettings {
+    PlotSettings::default()
+}
+
+/// The content stream of a plot: between `stream` and `endstream`.
+fn content_of(pdf: &str) -> &str {
+    let start = pdf.find("stream\n").expect("a stream") + "stream\n".len();
+    let end = pdf.find("endstream").expect("an end");
+    &pdf[start..end]
+}
+
+/// What a content stream draws: the points of its path operators, the
+/// widths set, the dash arrays, and the stroke colours.
+#[derive(Debug, Default)]
+struct Ops {
+    /// Every point a `m`, `l`, or `c` lands on or passes through — for a
+    /// curve, samples along it.
+    points: Vec<Point2>,
+    widths: Vec<f64>,
+    dashes: Vec<Vec<f64>>,
+    strokes: Vec<[f64; 3]>,
+    operators: Vec<String>,
+}
+
+fn parse(content: &str) -> Ops {
+    let mut ops = Ops::default();
+    let mut stack: Vec<f64> = Vec::new();
+    let mut array: Option<Vec<f64>> = None;
+    let mut current = Point2::ORIGIN;
+    for token in content.split_whitespace() {
+        if let Some(rest) = token.strip_prefix('[') {
+            let (rest, closed) = match rest.strip_suffix(']') {
+                Some(inner) => (inner, true),
+                None => (rest, false),
+            };
+            let mut values = Vec::new();
+            if !rest.is_empty() {
+                values.push(rest.parse().expect("a number in a dash array"));
+            }
+            if closed {
+                ops.dashes.push(values);
+            } else {
+                array = Some(values);
+            }
+            continue;
+        }
+        if let Some(rest) = token.strip_suffix(']') {
+            let mut values = array.take().unwrap_or_default();
+            if !rest.is_empty() {
+                values.push(rest.parse().expect("a number in a dash array"));
+            }
+            ops.dashes.push(values);
+            continue;
+        }
+        if let Some(values) = array.as_mut() {
+            values.push(token.parse().expect("a number in a dash array"));
+            continue;
+        }
+        if let Ok(value) = token.parse::<f64>() {
+            stack.push(value);
+            continue;
+        }
+        match token {
+            "m" | "l" => {
+                let point = p(stack[0], stack[1]);
+                ops.points.push(point);
+                current = point;
+            }
+            "c" => {
+                let c1 = p(stack[0], stack[1]);
+                let c2 = p(stack[2], stack[3]);
+                let end = p(stack[4], stack[5]);
+                for sample in 0..=8 {
+                    let t = f64::from(sample) / 8.0;
+                    let u = 1.0 - t;
+                    let point = Point2::ORIGIN
+                        + (current - Point2::ORIGIN) * (u * u * u)
+                        + (c1 - Point2::ORIGIN) * (3.0 * u * u * t)
+                        + (c2 - Point2::ORIGIN) * (3.0 * u * t * t)
+                        + (end - Point2::ORIGIN) * (t * t * t);
+                    ops.points.push(point);
+                }
+                current = end;
+            }
+            "w" => ops.widths.push(stack[0]),
+            "RG" => ops.strokes.push([stack[0], stack[1], stack[2]]),
+            _ => {}
+        }
+        ops.operators.push(token.to_owned());
+        stack.clear();
+    }
+    ops
+}
+
+fn media_box(pdf: &str) -> Aabb {
+    let start = pdf.find("/MediaBox [").expect("a media box") + "/MediaBox [".len();
+    let end = start + pdf[start..].find(']').expect("a closed box");
+    let values: Vec<f64> = pdf[start..end]
+        .split_whitespace()
+        .map(|value| value.parse().unwrap())
+        .collect();
+    Aabb::from_points(p(values[0], values[1]), p(values[2], values[3]))
+}
+
+#[test]
+fn the_page_is_landscape_for_a_wide_area_and_fits_it_within_the_margins() {
+    let drawing = Drawing::from_entities([line(0.0, 0.0, 400.0, 100.0)]);
+    let page = Page::new(&drawing, &settings());
+    assert!(page.landscape);
+    assert!((page.width - 297.0 * POINTS_PER_MM).abs() < 1e-9);
+    assert!((page.height - 210.0 * POINTS_PER_MM).abs() < 1e-9);
+    // 400 units across 277 printable millimetres: the width decides.
+    assert!((page.scale - 277.0 * POINTS_PER_MM / 400.0).abs() < 1e-9);
+    let on_page = page.area_on_page();
+    assert!((on_page.min().x - MARGIN_MM * POINTS_PER_MM).abs() < 1e-6);
+    assert!((on_page.max().x - (297.0 - MARGIN_MM) * POINTS_PER_MM).abs() < 1e-6);
+    assert!((on_page.center().y - page.height / 2.0).abs() < 1e-6);
+
+    let tall = Drawing::from_entities([line(0.0, 0.0, 10.0, 50.0)]);
+    let page = Page::new(&tall, &settings());
+    assert!(!page.landscape);
+    assert!((page.width - 210.0 * POINTS_PER_MM).abs() < 1e-9);
+}
+
+#[test]
+fn a_ratio_scale_lands_lengths_at_their_paper_size() {
+    let drawing = Drawing::from_entities([line(0.0, 0.0, 1000.0, 0.0)])
+        .with_unit(Some(LengthUnit::Millimetres));
+    let page = Page::new(
+        &drawing,
+        &PlotSettings {
+            paper: Paper::A3,
+            scale: PlotScale::Ratio(50.0),
+            ..settings()
+        },
+    );
+    // A metre at 1:50 is 20 mm on paper.
+    assert!((page.length(1000.0) - 20.0 * POINTS_PER_MM).abs() < 1e-9);
+    // In metres, the same line of one unit is a metre.
+    let metres =
+        Drawing::from_entities([line(0.0, 0.0, 1.0, 0.0)]).with_unit(Some(LengthUnit::Metres));
+    let page = Page::new(
+        &metres,
+        &PlotSettings {
+            scale: PlotScale::Ratio(50.0),
+            ..settings()
+        },
+    );
+    assert!((page.length(1.0) - 20.0 * POINTS_PER_MM).abs() < 1e-9);
+    // A unitless drawing is taken in millimetres.
+    let unitless = Drawing::from_entities([line(0.0, 0.0, 1000.0, 0.0)]);
+    let page = Page::new(
+        &unitless,
+        &PlotSettings {
+            scale: PlotScale::Ratio(50.0),
+            ..settings()
+        },
+    );
+    assert!((page.length(1000.0) - 20.0 * POINTS_PER_MM).abs() < 1e-9);
+}
+
+#[test]
+fn an_empty_drawing_is_still_a_page() {
+    let pdf = plot_pdf(&Drawing::new(), &settings());
+    assert!(pdf.starts_with("%PDF-1.4\n"));
+    assert!(pdf.ends_with("%%EOF\n"));
+    assert!(!Page::new(&Drawing::new(), &settings()).landscape);
+}
+
+fn weighted(lineweight: Lineweight) -> Drawing {
+    Drawing::from_parts(
+        [],
+        [],
+        [(
+            line(0.0, 0.0, 100.0, 0.0),
+            Properties {
+                lineweight,
+                ..Properties::default()
+            },
+        )],
+    )
+    .unwrap()
+}
+
+#[test]
+fn lineweights_measure_on_the_page_at_their_width() {
+    let half = weighted(Lineweight::Hundredths(50));
+    let ops = parse(content_of(&plot_pdf(&half, &settings())));
+    assert_eq!(ops.widths, vec![1.417], "0.50 mm in points");
+    // Whatever the scale: a lineweight is a width on paper.
+    let ops = parse(content_of(&plot_pdf(
+        &half,
+        &PlotSettings {
+            scale: PlotScale::Ratio(1000.0),
+            ..settings()
+        },
+    )));
+    assert_eq!(ops.widths, vec![1.417]);
+    let default = weighted(Lineweight::Default);
+    let ops = parse(content_of(&plot_pdf(&default, &settings())));
+    assert_eq!(ops.widths, vec![0.709], "the default is 0.25 mm");
+    // Lineweights not plotted: everything at the default.
+    let ops = parse(content_of(&plot_pdf(
+        &half,
+        &PlotSettings {
+            lineweights: false,
+            ..settings()
+        },
+    )));
+    assert_eq!(ops.widths, vec![0.709]);
+}
+
+fn coloured() -> Drawing {
+    Drawing::from_parts(
+        [Layer {
+            color: Color::Index(5),
+            ..Layer::named("blue")
+        }],
+        [],
+        [
+            (
+                line(0.0, 0.0, 100.0, 0.0),
+                Properties {
+                    color: Color::Index(1),
+                    ..Properties::default()
+                },
+            ),
+            (
+                line(0.0, 10.0, 100.0, 10.0),
+                Properties::on(cad_document::LayerId::from_raw(1)),
+            ),
+            (line(0.0, 20.0, 100.0, 20.0), Properties::default()),
+        ],
+    )
+    .unwrap()
+}
+
+#[test]
+fn colours_are_the_palettes_and_the_foreground_is_black_or_everything_is() {
+    let ops = parse(content_of(&plot_pdf(&coloured(), &settings())));
+    assert_eq!(
+        ops.strokes,
+        vec![[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]],
+        "red by the object, blue by the layer, colour 7 black on paper"
+    );
+    let ops = parse(content_of(&plot_pdf(
+        &coloured(),
+        &PlotSettings {
+            monochrome: true,
+            ..settings()
+        },
+    )));
+    assert_eq!(ops.strokes, vec![[0.0, 0.0, 0.0]], "one look for all three");
+}
+
+#[test]
+fn a_dashed_linetype_becomes_a_dash_array_scaled_to_the_page_and_runs_on_through_a_polyline() {
+    let dashed = LinetypeDef::built_in_named("DASHED").unwrap();
+    let pattern = dashed.pattern.clone();
+    let drawing = Drawing::from_parts(
+        [],
+        [dashed],
+        [(
+            Entity::Polyline(PolylineEntity::new(
+                vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 50.0)],
+                false,
+            )),
+            Properties {
+                linetype: Linetype::Named(cad_document::LinetypeId::from_raw(1)),
+                ..Properties::default()
+            },
+        )],
+    )
+    .unwrap();
+    let plot = PlotSettings {
+        scale: PlotScale::Ratio(2.0),
+        ..settings()
+    };
+    let page = Page::new(&drawing, &plot);
+    let ops = parse(content_of(&plot_pdf(&drawing, &plot)));
+    let expected: Vec<f64> = pattern
+        .iter()
+        .map(|length| num(page.length(*length)).parse().unwrap())
+        .collect();
+    assert_eq!(ops.dashes, vec![expected]);
+    // One `m`, two `l`: the polyline is one subpath, so the dashes run on.
+    assert_eq!(
+        ops.operators.iter().filter(|op| *op == "m").count(),
+        1,
+        "{:?}",
+        ops.operators
+    );
+    assert_eq!(ops.operators.iter().filter(|op| *op == "l").count(), 2);
+    // A text is plotted continuous whatever its linetype.
+    let text = Drawing::from_parts(
+        [],
+        [LinetypeDef::built_in_named("DASHED").unwrap()],
+        [(
+            Entity::Text(TextEntity::new(p(0.0, 0.0), 10.0, 0.0, "Dash")),
+            Properties {
+                linetype: Linetype::Named(cad_document::LinetypeId::from_raw(1)),
+                ..Properties::default()
+            },
+        )],
+    )
+    .unwrap();
+    let ops = parse(content_of(&plot_pdf(&text, &settings())));
+    assert_eq!(ops.dashes, vec![Vec::<f64>::new()]);
+}
+
+#[test]
+fn a_window_clips_the_page_to_the_area() {
+    let drawing = Drawing::from_entities([line(-1000.0, -1000.0, 1000.0, 1000.0)]);
+    let window = Aabb::from_points(p(0.0, 0.0), p(100.0, 50.0));
+    let plot = PlotSettings {
+        area: PlotArea::Window(window),
+        ..settings()
+    };
+    let pdf = plot_pdf(&drawing, &plot);
+    let page = Page::new(&drawing, &plot);
+    assert_eq!(page.area, window);
+    let clip = page.area_on_page();
+    let size = clip.max() - clip.min();
+    assert!(pdf.contains(&format!(
+        "{} {} {} {} re W n\n",
+        num(clip.min().x),
+        num(clip.min().y),
+        num(size.x),
+        num(size.y)
+    )));
+}
+
+/// One of everything the drawing can hold.
+fn everything() -> Drawing {
+    let mut drawing =
+        Drawing::from_parts([], [LinetypeDef::built_in_named("DASHED").unwrap()], []).unwrap();
+    let mut tx = drawing.transaction();
+    let part = tx
+        .define_block(Block::new(
+            "Part",
+            Point2::ORIGIN,
+            vec![EntityRecord::new(
+                line(0.0, 0.0, 10.0, 10.0),
+                Properties::default(),
+            )],
+        ))
+        .unwrap();
+    for entity in [
+        line(0.0, 0.0, 100.0, 0.0),
+        CircleEntity::new(p(150.0, 50.0), 30.0).into(),
+        ArcEntity::new(p(250.0, 50.0), 30.0, 0.0, PI).into(),
+        EllipseEntity::new(p(350.0, 50.0), Vec2::new(40.0, 0.0), 0.5).into(),
+        SplineEntity::through(&[p(0.0, 100.0), p(50.0, 150.0), p(100.0, 100.0)])
+            .unwrap()
+            .into(),
+        PolylineEntity::with_bulges(
+            vec![p(150.0, 100.0), p(250.0, 100.0), p(250.0, 150.0)],
+            vec![0.0, 1.0, 0.0],
+            true,
+        )
+        .into(),
+        TextEntity::new(p(300.0, 120.0), 10.0, 0.0, "Plot").into(),
+        MTextEntity::new(p(300.0, 160.0), 80.0, 8.0, 0.0, "Two\nlines").into(),
+        BlockReferenceEntity::new(part, p(0.0, 200.0), 2.0, FRAC_PI_2).into(),
+        DimensionEntity::new(
+            Measure::Linear {
+                a: p(100.0, 200.0),
+                b: p(200.0, 200.0),
+                rotation: 0.0,
+            },
+            p(150.0, 230.0),
+        )
+        .into(),
+        HatchEntity::solid(vec![Path {
+            vertices: vec![
+                p(300.0, 200.0),
+                p(360.0, 200.0),
+                p(360.0, 260.0),
+                p(300.0, 260.0),
+            ],
+            bulges: vec![0.0, 0.0, 0.0, 0.0],
+            closed: true,
+        }])
+        .into(),
+        HatchEntity {
+            loops: vec![Path {
+                vertices: vec![p(400.0, 200.0), p(460.0, 200.0), p(460.0, 260.0)],
+                bulges: vec![0.0, 0.5, 0.0],
+                closed: true,
+            }],
+            style: HatchStyle::Pattern {
+                name: "ANSI31".to_owned(),
+                angle: 0.0,
+                scale: 1.0,
+                origin: Point2::ORIGIN,
+            },
+        }
+        .into(),
+    ] {
+        tx.insert(entity).unwrap();
+    }
+    tx.commit();
+    drawing
+}
+
+#[test]
+fn every_entity_kind_lands_on_the_page() {
+    let drawing = everything();
+    let pdf = plot_pdf(&drawing, &settings());
+    let content = content_of(&pdf);
+    let ops = parse(content);
+    assert!(content.contains(" c\n"), "arcs as curves");
+    assert!(
+        content.contains("f*\n"),
+        "the solid hatch filled by even-odd"
+    );
+    assert!(
+        content.contains("h f\n") || content.contains(" l\n"),
+        "something stroked"
+    );
+    assert!(
+        ops.points.len() > 200,
+        "a text's strokes and a pattern's lines"
+    );
+    let page = media_box(&pdf);
+    for point in &ops.points {
+        assert!(page.contains_point(*point), "{point:?} is off the page");
+    }
+    // Twelve entities, some sharing a look: fewer width settings than entities.
+    assert!(!ops.widths.is_empty());
+}
+
+#[test]
+fn the_cross_reference_table_points_at_every_object() {
+    let pdf = plot_pdf(&everything(), &settings());
+    let xref_at: usize = pdf
+        .rsplit("startxref\n")
+        .next()
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(pdf[xref_at..].starts_with("xref\n0 6\n"));
+    let table = &pdf[xref_at + "xref\n0 6\n".len()..];
+    for (index, entry) in table.lines().take(6).enumerate() {
+        let offset: usize = entry[..10].parse().unwrap();
+        if index == 0 {
+            assert_eq!(entry, "0000000000 65535 f ");
+        } else {
+            assert!(
+                pdf[offset..].starts_with(&format!("{index} 0 obj\n")),
+                "object {index} at {offset}"
+            );
+        }
+    }
+    let length: usize = pdf
+        .split("/Length ")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(content_of(&pdf).len(), length);
+    assert!(
+        pdf.is_ascii(),
+        "ASCII throughout: a text file to any reader"
+    );
+}
+
+#[test]
+fn numbers_are_short_and_plain() {
+    assert_eq!(num(0.0), "0");
+    assert_eq!(num(-0.0004), "0");
+    assert_eq!(num(1.5), "1.5");
+    assert_eq!(num(1234.56789), "1234.568");
+    assert_eq!(num(1e-7), "0");
+    assert_eq!(num(f64::NAN), "0");
+}
+
+#[test]
+fn the_plot_is_described_for_the_log() {
+    assert_eq!(describe(&settings()), "A4 to fit");
+    assert_eq!(
+        describe(&PlotSettings {
+            paper: Paper::Letter,
+            scale: PlotScale::Ratio(50.0),
+            ..settings()
+        }),
+        "Letter at 1:50"
+    );
+}
+
+/// Writes a plot of everything to `target/plot-sample.pdf`, for a reader
+/// to open: `cargo test -p cad-plot -- --ignored sample`.
+#[test]
+#[ignore]
+fn the_sample_plot_for_a_reader() {
+    let pdf = plot_pdf(&everything(), &settings());
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/plot-sample.pdf");
+    std::fs::write(&path, pdf).unwrap();
+}
+
+fn any_entity() -> impl Strategy<Value = Entity> {
+    let coordinate = -500.0..500.0;
+    let radius = 1.0..200.0;
+    prop_oneof![
+        (
+            coordinate.clone(),
+            coordinate.clone(),
+            coordinate.clone(),
+            coordinate.clone()
+        )
+            .prop_map(|(x0, y0, x1, y1)| line(x0, y0, x1, y1)),
+        (coordinate.clone(), coordinate.clone(), radius.clone())
+            .prop_map(|(x, y, r)| CircleEntity::new(p(x, y), r).into()),
+        (
+            coordinate.clone(),
+            coordinate.clone(),
+            radius.clone(),
+            0.0..TAU,
+            0.1..TAU
+        )
+            .prop_map(|(x, y, r, start, sweep)| ArcEntity::new(
+                p(x, y),
+                r,
+                start,
+                start + sweep
+            )
+            .into()),
+        (
+            prop::collection::vec((coordinate.clone(), coordinate.clone(), -1.0..1.0), 2..6),
+            any::<bool>()
+        )
+            .prop_map(|(vertices, closed)| {
+                let bulges = vertices.iter().map(|(_, _, bulge)| *bulge).collect();
+                PolylineEntity::with_bulges(
+                    vertices.into_iter().map(|(x, y, _)| p(x, y)).collect(),
+                    bulges,
+                    closed,
+                )
+                .into()
+            }),
+        (coordinate.clone(), coordinate, 1.0..50.0, 0.0..TAU)
+            .prop_map(|(x, y, height, angle)| TextEntity::new(p(x, y), height, angle, "Ag").into()),
+    ]
+}
+
+proptest! {
+    /// Every point a plot draws is on the page, within its margins, at
+    /// any scale that fits — the page is laid out from the extents, and
+    /// the extents hold every primitive.
+    #[test]
+    fn every_primitive_lands_inside_the_page(
+        entities in prop::collection::vec(any_entity(), 1..8),
+        paper in prop::sample::select(Paper::ALL.to_vec()),
+    ) {
+        let drawing = Drawing::from_entities(entities);
+        let plot = PlotSettings { paper, ..settings() };
+        let pdf = plot_pdf(&drawing, &plot);
+        let page = media_box(&pdf);
+        let margin = MARGIN_MM * POINTS_PER_MM;
+        // A quarter-turn Bézier bulges 0.027% of its radius outside the
+        // arc: under half a point on any page here.
+        let printable = Aabb::from_points(
+            page.min() + Vec2::new(margin, margin),
+            page.max() - Vec2::new(margin, margin),
+        )
+        .expanded(0.5);
+        let ops = parse(content_of(&pdf));
+        prop_assert!(!ops.points.is_empty());
+        for point in &ops.points {
+            prop_assert!(printable.contains_point(*point), "{point:?} outside {printable:?}");
+        }
+    }
+}

@@ -25,7 +25,7 @@
 //! handing a frame to JavaScript needs no conversion and no allocation.
 
 use cad_core::Point2;
-use cad_document::{Entity, HatchStyle, PolylineEntity, Properties, Tables};
+use cad_document::{Entity, HatchEntity, HatchStyle, PolylineEntity, Properties, Tables};
 use cad_geometry::{Arc, Primitive, bulge_primitive, polyline_spans};
 
 /// What a batch of geometry *is*. TypeScript resolves each role to a colour
@@ -333,133 +333,179 @@ impl PackedFrame {
         extend_batches(&mut self.arc_batch_words, style, index);
     }
 
-    /// Appends the stroke geometry of one entity. The single place that knows
-    /// how each entity kind becomes segments, shared by scene and overlay. A
-    /// block reference is its definition's entities, placed, read from
-    /// `blocks` (ADR-0017).
+    /// Appends the stroke geometry of one entity: the walk of
+    /// [`walk_entity`], packed with `style`.
     pub fn push_entity(&mut self, style: StyleRole, entity: &Entity, tables: Tables<'_>) {
-        match entity {
-            Entity::Line(line) => self.push_segment(style, line.start, line.end),
-            Entity::Circle(circle) => {
-                self.push_arc(
-                    style,
-                    &Arc::new(circle.center, circle.radius, 0.0, std::f64::consts::TAU),
-                );
-            }
-            Entity::Arc(arc) => self.push_arc(style, &arc.arc()),
-            // An ellipse is its chords (#181), the path distance running on
-            // through them so a linetype does not start again at each.
-            Entity::Ellipse(ellipse) => {
-                let mut distance = 0.0;
-                for chord in ellipse.ellipse().segments() {
-                    self.push_segment_along(style, chord.start, chord.end, distance);
-                    distance += chord.length();
-                }
-            }
-            Entity::Spline(spline) => {
-                let mut distance = 0.0;
-                for chord in spline.spline().segments() {
-                    self.push_segment_along(style, chord.start, chord.end, distance);
-                    distance += chord.length();
-                }
-            }
-            // Round caps on every segment meet at the vertices, so joints have
-            // neither gaps nor spikes at any angle. Arc segments are drawn
-            // as arcs, exactly like arc entities (ADR-0009). The path
-            // distance runs on through the vertices — by chord along a
-            // straight segment, by arc length along an arc segment — so a
-            // linetype pattern does not start again at each.
-            Entity::Polyline(polyline) => {
-                let vertices = &polyline.vertices;
-                let mut distance = 0.0;
-                for (from, to) in polyline_spans(vertices.len(), polyline.closed, |index| {
-                    polyline.bulge(index)
-                }) {
-                    let bulge = polyline.bulge(from);
-                    match bulge_primitive(vertices[from], vertices[to], bulge) {
-                        Primitive::Segment(segment) => {
-                            self.push_segment_along(style, segment.start, segment.end, distance);
-                            distance += segment.length();
-                        }
-                        Primitive::Arc(arc) => {
-                            let length = arc.radius * arc.sweep;
-                            // A clockwise segment runs from the arc's end
-                            // back to its start: the path is `length` further
-                            // along at the start than where this segment began.
-                            let forwards = bulge > 0.0;
-                            let at_start = if forwards {
-                                distance
-                            } else {
-                                distance + length
-                            };
-                            self.push_arc_along(style, &arc, at_start, forwards);
-                            distance += length;
-                        }
-                        Primitive::Circle(circle) => {
-                            let full =
-                                Arc::new(circle.center, circle.radius, 0.0, std::f64::consts::TAU);
-                            self.push_arc_along(style, &full, distance, true);
-                            distance += circle.radius * std::f64::consts::TAU;
-                        }
-                    }
-                }
-            }
-            // A text is the strokes of its glyphs (ADR-0016): segments like
-            // any other. The scene draws every text continuous, whatever
-            // its linetype says, as drafting programs do.
-            Entity::Text(text) => self.push_strokes(style, text.strokes()),
-            // On its own, an attribute definition shows its tag (#183).
-            Entity::AttributeDefinition(definition) => {
-                self.push_strokes(style, definition.as_text().strokes())
-            }
-            Entity::MText(text) => self.push_strokes(style, text.strokes()),
-            Entity::BlockRef(reference) => {
-                for (part, _) in tables.blocks.flatten(reference, Properties::default()) {
-                    self.push_entity(style, &part, tables);
-                }
-            }
-            // A hatch is its fill — triangles for a solid one (ADR-0021),
-            // the pattern's pieces as segments for a pattern — and its
-            // boundary loops, drawn as polylines.
-            Entity::Hatch(hatch) => {
-                match hatch.style {
-                    HatchStyle::Solid => {
-                        for triangle in hatch.fill() {
-                            self.push_triangle(style, triangle);
-                        }
-                    }
-                    HatchStyle::Pattern { .. } => {
-                        for line in hatch.lines().unwrap_or_default() {
-                            self.push_segment(style, line.start, line.end);
-                        }
-                    }
-                }
-                for path in &hatch.loops {
-                    let boundary = Entity::from(PolylineEntity::from(path.clone()));
-                    self.push_entity(style, &boundary, tables);
-                }
-            }
-            // A dimension is what its style lays out (ADR-0020): lines,
-            // arrowhead outlines, an arc, and the strokes of its text.
-            Entity::Dimension(dimension) => {
-                let layout = dimension.layout(tables.dim_style(dimension.style));
-                for segment in layout.segments() {
-                    self.push_segment(style, segment.start, segment.end);
-                }
-                for arc in &layout.arcs {
-                    self.push_arc(style, arc);
-                }
-                self.push_strokes(style, layout.text.strokes());
-            }
+        walk_entity(entity, tables, &mut Styled { frame: self, style });
+    }
+}
+
+/// Where the geometry of an entity goes: the frame's buffers, or a page
+/// (#187). The one walk over the entity kinds feeds either, so what prints
+/// is what is drawn.
+pub trait GeometrySink {
+    /// A straight piece that begins `distance` along its entity's path.
+    fn segment(&mut self, start: Point2, end: Point2, distance: f64);
+    /// An arc whose path is `distance` long at its counter-clockwise start
+    /// and runs `forwards` (counter-clockwise) or back round it. A full
+    /// circle is an arc with a sweep of 2π.
+    fn arc(&mut self, arc: &Arc, distance: f64, forwards: bool);
+    /// One filled triangle.
+    fn triangle(&mut self, corners: [Point2; 3]);
+    /// A solid hatch's fill: its triangles (ADR-0021), unless the sink
+    /// fills regions itself.
+    fn hatch_fill(&mut self, hatch: &HatchEntity) {
+        for triangle in hatch.fill() {
+            self.triangle(triangle);
         }
     }
+}
 
-    /// The segments of polylines, each at the start of its own path.
-    fn push_strokes(&mut self, style: StyleRole, strokes: Vec<Vec<Point2>>) {
-        for stroke in strokes {
-            for pair in stroke.windows(2) {
-                self.push_segment(style, pair[0], pair[1]);
+/// A frame receiving one entity's geometry under one style.
+struct Styled<'a> {
+    frame: &'a mut PackedFrame,
+    style: StyleRole,
+}
+
+impl GeometrySink for Styled<'_> {
+    fn segment(&mut self, start: Point2, end: Point2, distance: f64) {
+        self.frame
+            .push_segment_along(self.style, start, end, distance);
+    }
+
+    fn arc(&mut self, arc: &Arc, distance: f64, forwards: bool) {
+        self.frame
+            .push_arc_along(self.style, arc, distance, forwards);
+    }
+
+    fn triangle(&mut self, corners: [Point2; 3]) {
+        self.frame.push_triangle(self.style, corners);
+    }
+}
+
+/// The geometry of one entity, handed to `sink`. The single place that
+/// knows how each entity kind becomes segments, arcs, and triangles,
+/// shared by scene, overlay, and plot. A block reference is its
+/// definition's entities, placed, read from `tables` (ADR-0017).
+pub fn walk_entity(entity: &Entity, tables: Tables<'_>, sink: &mut impl GeometrySink) {
+    match entity {
+        Entity::Line(line) => sink.segment(line.start, line.end, 0.0),
+        Entity::Circle(circle) => {
+            sink.arc(
+                &Arc::new(circle.center, circle.radius, 0.0, std::f64::consts::TAU),
+                0.0,
+                true,
+            );
+        }
+        Entity::Arc(arc) => sink.arc(&arc.arc(), 0.0, true),
+        // An ellipse is its chords (#181), the path distance running on
+        // through them so a linetype does not start again at each.
+        Entity::Ellipse(ellipse) => {
+            let mut distance = 0.0;
+            for chord in ellipse.ellipse().segments() {
+                sink.segment(chord.start, chord.end, distance);
+                distance += chord.length();
             }
+        }
+        Entity::Spline(spline) => {
+            let mut distance = 0.0;
+            for chord in spline.spline().segments() {
+                sink.segment(chord.start, chord.end, distance);
+                distance += chord.length();
+            }
+        }
+        // Round caps on every segment meet at the vertices, so joints have
+        // neither gaps nor spikes at any angle. Arc segments are drawn
+        // as arcs, exactly like arc entities (ADR-0009). The path
+        // distance runs on through the vertices — by chord along a
+        // straight segment, by arc length along an arc segment — so a
+        // linetype pattern does not start again at each.
+        Entity::Polyline(polyline) => {
+            let vertices = &polyline.vertices;
+            let mut distance = 0.0;
+            for (from, to) in polyline_spans(vertices.len(), polyline.closed, |index| {
+                polyline.bulge(index)
+            }) {
+                let bulge = polyline.bulge(from);
+                match bulge_primitive(vertices[from], vertices[to], bulge) {
+                    Primitive::Segment(segment) => {
+                        sink.segment(segment.start, segment.end, distance);
+                        distance += segment.length();
+                    }
+                    Primitive::Arc(arc) => {
+                        let length = arc.radius * arc.sweep;
+                        // A clockwise segment runs from the arc's end
+                        // back to its start: the path is `length` further
+                        // along at the start than where this segment began.
+                        let forwards = bulge > 0.0;
+                        let at_start = if forwards {
+                            distance
+                        } else {
+                            distance + length
+                        };
+                        sink.arc(&arc, at_start, forwards);
+                        distance += length;
+                    }
+                    Primitive::Circle(circle) => {
+                        let full =
+                            Arc::new(circle.center, circle.radius, 0.0, std::f64::consts::TAU);
+                        sink.arc(&full, distance, true);
+                        distance += circle.radius * std::f64::consts::TAU;
+                    }
+                }
+            }
+        }
+        // A text is the strokes of its glyphs (ADR-0016): segments like
+        // any other. The scene draws every text continuous, whatever
+        // its linetype says, as drafting programs do.
+        Entity::Text(text) => walk_strokes(sink, text.strokes()),
+        // On its own, an attribute definition shows its tag (#183).
+        Entity::AttributeDefinition(definition) => {
+            walk_strokes(sink, definition.as_text().strokes())
+        }
+        Entity::MText(text) => walk_strokes(sink, text.strokes()),
+        Entity::BlockRef(reference) => {
+            for (part, _) in tables.blocks.flatten(reference, Properties::default()) {
+                walk_entity(&part, tables, sink);
+            }
+        }
+        // A hatch is its fill — triangles for a solid one (ADR-0021),
+        // the pattern's pieces as segments for a pattern — and its
+        // boundary loops, drawn as polylines.
+        Entity::Hatch(hatch) => {
+            match hatch.style {
+                HatchStyle::Solid => sink.hatch_fill(hatch),
+                HatchStyle::Pattern { .. } => {
+                    for line in hatch.lines().unwrap_or_default() {
+                        sink.segment(line.start, line.end, 0.0);
+                    }
+                }
+            }
+            for path in &hatch.loops {
+                let boundary = Entity::from(PolylineEntity::from(path.clone()));
+                walk_entity(&boundary, tables, sink);
+            }
+        }
+        // A dimension is what its style lays out (ADR-0020): lines,
+        // arrowhead outlines, an arc, and the strokes of its text.
+        Entity::Dimension(dimension) => {
+            let layout = dimension.layout(tables.dim_style(dimension.style));
+            for segment in layout.segments() {
+                sink.segment(segment.start, segment.end, 0.0);
+            }
+            for arc in &layout.arcs {
+                sink.arc(arc, 0.0, true);
+            }
+            walk_strokes(sink, layout.text.strokes());
+        }
+    }
+}
+
+/// The segments of polylines, each at the start of its own path.
+fn walk_strokes(sink: &mut impl GeometrySink, strokes: Vec<Vec<Point2>>) {
+    for stroke in strokes {
+        for pair in stroke.windows(2) {
+            sink.segment(pair[0], pair[1], 0.0);
         }
     }
 }

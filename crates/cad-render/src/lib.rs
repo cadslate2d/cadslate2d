@@ -16,6 +16,6 @@ mod frame;
 mod overlay;
 mod scene;
 
-pub use frame::{DrawBatch, PackedFrame, StyleRole};
+pub use frame::{DrawBatch, GeometrySink, PackedFrame, StyleRole, walk_entity};
 pub use overlay::{FAR_CURVE_RADIUS_PIXELS, OverlayFrame};
 pub use scene::{CHUNK_IDS, DirtyRange, InstanceKind, RenderScene, SceneCache};

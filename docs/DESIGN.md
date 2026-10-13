@@ -2046,7 +2046,7 @@ Possible work:
 - paper space;
 - layouts (kept through a round trip and named, not drawn, since M8 #184 — [ADR-0025](adr/0025-kept-layouts.md); drawing them is a space of its own, later);
 - plotting;
-- PDF export;
+- PDF export (of model space, since M8 #187 — [ADR-0027](adr/0027-pdf-plot.md): `PLOT` writes a vector PDF page through the renderer's entity walk; plotting a layout waits on layouts being drawn);
 - scripting;
 - plugins;
 - user aliases;

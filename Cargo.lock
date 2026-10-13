@@ -140,6 +140,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cad-plot"
+version = "0.0.1"
+dependencies = [
+ "cad-commands",
+ "cad-core",
+ "cad-document",
+ "cad-geometry",
+ "cad-render",
+ "proptest",
+]
+
+[[package]]
 name = "cad-render"
 version = "0.0.1"
 dependencies = [
@@ -165,6 +177,7 @@ dependencies = [
  "cad-core",
  "cad-document",
  "cad-dxf",
+ "cad-plot",
  "cad-render",
  "console_error_panic_hook",
  "js-sys",

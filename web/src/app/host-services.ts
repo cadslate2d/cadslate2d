@@ -141,6 +141,12 @@ export const downloadFiles: FileAccess = {
 
 /** The picker's description of the files it shows. */
 const DXF_TYPES = [{ description: "DXF drawing", accept: { "application/dxf": [".dxf"] } }];
+const PDF_TYPES = [{ description: "PDF plot", accept: { "application/pdf": [".pdf"] } }];
+
+/** What the save picker offers for a file of this type (#187: plots are PDFs). */
+function typesFor(mimeType: string) {
+  return mimeType === "application/pdf" ? PDF_TYPES : DXF_TYPES;
+}
 
 /** A cancelled picker rejects with an AbortError: that is an answer, not a failure. */
 function cancelled(error: unknown): boolean {
@@ -185,11 +191,11 @@ export const fileSystemAccessFiles: FileAccess = {
     }
   },
 
-  async saveAs(suggestedName, text) {
+  async saveAs(suggestedName, text, mimeType) {
     const picker = window.showSaveFilePicker;
     if (!picker) return undefined;
     try {
-      const handle = await picker.call(window, { suggestedName, types: DXF_TYPES });
+      const handle = await picker.call(window, { suggestedName, types: typesFor(mimeType) });
       await writeThrough(handle, text);
       return { name: handle.name, handle };
     } catch (error) {

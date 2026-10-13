@@ -29,6 +29,7 @@ mod lweight;
 mod modify;
 mod mtext;
 mod offset;
+mod plot;
 mod properties;
 mod reconciliation;
 mod selection;

@@ -39,7 +39,7 @@ pub use overlay::OverlayItem;
 pub use registry::CommandRegistry;
 pub use selection::{Selection, SelectionMethod};
 pub use session::{Aim, Session};
-pub use settings::DraftingSettings;
+pub use settings::{DraftingSettings, Paper, PlotArea, PlotScale, PlotSettings};
 pub use snap::{SnapMode, SnapModes, SnapPoint};
 pub use summary::SelectionSummary;
 pub use toggles::{Toggle, Toggles};
