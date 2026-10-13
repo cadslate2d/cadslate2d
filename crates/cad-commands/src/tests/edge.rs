@@ -59,7 +59,10 @@ fn trim_removes_the_picked_side_of_the_crossing() {
     let mut h = crossing();
     let ids = h.ids();
     h.enter("TR");
-    assert_eq!(h.prompt(), "Select cutting edges <all>:");
+    assert_eq!(
+        h.prompt(),
+        "Select cutting edges or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove] <all>:"
+    );
     h.click_world(p(40.0, 30.0));
     assert_eq!(h.log().last().unwrap(), "1 found, 1 total");
     h.enter("");
@@ -538,7 +541,10 @@ fn extend_carries_the_picked_end_on_to_the_boundary() {
     let mut h = short_of_the_boundary();
     let ids = h.ids();
     h.enter("EX");
-    assert_eq!(h.prompt(), "Select boundary edges <all>:");
+    assert_eq!(
+        h.prompt(),
+        "Select boundary edges or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove] <all>:"
+    );
     h.click_world(p(100.0, 40.0));
     h.enter("");
     assert_eq!(h.prompt(), "Select object to extend:");

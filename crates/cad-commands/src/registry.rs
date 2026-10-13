@@ -16,8 +16,9 @@ use crate::commands::{
     ExportCommand, GridCommand, HatchCommand, HatchEditCommand, InsertCommand, JoinCommand,
     LayerCommand, LineCommand, LinetypeCommand, LtscaleCommand, LweightCommand, MTextCommand,
     MirrorCommand, OffsetCommand, OpenCommand, OsnapCommand, PanCommand, PlineCommand,
-    PolarAngleCommand, RectangCommand, RedoCommand, SaveCommand, SplineCommand, StretchCommand,
-    TextCommand, TextEditCommand, TransformCommand, UndoCommand, UnitsCommand, ZoomCommand,
+    PolarAngleCommand, QselectCommand, RectangCommand, RedoCommand, SaveCommand, SelectCommand,
+    SplineCommand, StretchCommand, TextCommand, TextEditCommand, TransformCommand, UndoCommand,
+    UnitsCommand, ZoomCommand,
 };
 
 type CommandFactory = fn() -> Box<dyn Command>;
@@ -53,7 +54,9 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 54] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 56] = [
+            ("SELECT", &[], || Box::new(SelectCommand)),
+            ("QSELECT", &["QS"], || Box::new(QselectCommand::new())),
             ("ERASE", &["E"], || Box::new(EraseCommand)),
             ("MOVE", &["M"], || Box::new(TransformCommand::moving())),
             ("COPY", &["CO", "CP"], || {

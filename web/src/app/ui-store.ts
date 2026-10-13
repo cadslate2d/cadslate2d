@@ -61,6 +61,7 @@ const NO_SELECTION: SelectionSummary = {
   headline: "No selection",
   kinds: [],
   geometry: [],
+  method: "",
 };
 
 /** What the store reads from the engine. */

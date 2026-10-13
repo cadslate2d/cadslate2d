@@ -68,7 +68,9 @@ test("the M1 drafting scenario", async ({ page }) => {
 
   // ── edit: ERASE the arc with a crossing box, verb first ──
   await enter(page, "E");
-  await expect(prompt(page)).toHaveText("Select objects:");
+  await expect(prompt(page)).toHaveText(
+    "Select objects or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:",
+  );
   // From empty space right of the arc, leftwards across it: a crossing box
   // that stays clear of the plate's bottom edge just below.
   await page.mouse.click(x + 35, y + 40);

@@ -105,7 +105,9 @@ test.describe("ERASE", () => {
   test("ERASE asks for objects when nothing is selected", async ({ page }) => {
     const { x, y } = await scene(page);
     await enter(page, "E");
-    await expect(prompt(page)).toHaveText("Select objects:");
+    await expect(prompt(page)).toHaveText(
+      "Select objects or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:",
+    );
     await page.mouse.click(x, y);
     await expect(logLines(page).last()).toHaveText("1 found, 1 total");
     await page.mouse.click(x + 30, y - 80);

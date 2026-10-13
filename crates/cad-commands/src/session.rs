@@ -4,7 +4,8 @@ use std::cell::RefCell;
 
 use cad_core::{Aabb, EntityId, PixelTolerance, Point2, ScreenPoint, View};
 use cad_document::{Color, Drawing, FOREGROUND_INDEX, Paint, Revision, index_paint};
-use cad_input::{ExpectedInput, Input, InputKind};
+use cad_geometry::SelectionShape;
+use cad_input::{ExpectedInput, Input, InputKind, Keyword};
 
 use crate::aids::{self, POLAR_APERTURE, Track, TrackKind};
 use crate::command::angle_degrees;
@@ -16,8 +17,8 @@ use crate::snap::find_snap_from;
 use crate::{
     Command, CommandContext, CommandInput, CommandRegistry, Dirty, DraftingSettings, Grip,
     HostRequest, HoveredObject, ImportReport, KeyAction, LayerRow, Modifiers, OverlayItem,
-    PointerButton, Selection, SelectionSummary, SnapModes, SnapPoint, Step, Toggle, Toggles,
-    UiState,
+    PointerButton, Prompt, Selection, SelectionMethod, SelectionSummary, SnapModes, SnapPoint,
+    Step, Toggle, Toggles, UiState,
 };
 
 const IDLE_PROMPT: &str = "Command:";
@@ -28,6 +29,98 @@ const MAX_WHEEL_DELTA: f64 = 500.0;
 /// How close, on screen, a click must be to an entity to select it. A
 /// display/picking tolerance: never used for geometric equality (DESIGN §18.3).
 const PICK_TOLERANCE: PixelTolerance = PixelTolerance(5.0);
+
+/// The option keywords every "Select objects" prompt offers (#185). They
+/// are the session's, not a command's: the session builds the selection.
+mod select_keywords {
+    use cad_input::Keyword;
+
+    pub(super) const FENCE: Keyword = Keyword::new("Fence");
+    pub(super) const WPOLYGON: Keyword = Keyword::new("WPolygon");
+    pub(super) const CPOLYGON: Keyword = Keyword::new("CPolygon");
+    pub(super) const PREVIOUS: Keyword = Keyword::new("Previous");
+    pub(super) const LAST: Keyword = Keyword::new("Last");
+    pub(super) const ALL: Keyword = Keyword::new("ALL");
+    pub(super) const REMOVE: Keyword = Keyword::new("Remove");
+    pub(super) const ADD: Keyword = Keyword::new("Add");
+    pub(super) const UNDO: Keyword = Keyword::new("Undo");
+
+    pub(super) const ADDING: [Keyword; 7] =
+        [FENCE, WPOLYGON, CPOLYGON, PREVIOUS, LAST, ALL, REMOVE];
+    pub(super) const REMOVING: [Keyword; 7] = [FENCE, WPOLYGON, CPOLYGON, PREVIOUS, LAST, ALL, ADD];
+}
+
+/// A fence or polygon being drawn to select with (#185).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShapeKind {
+    Fence,
+    WindowPolygon,
+    CrossingPolygon,
+}
+
+#[derive(Debug)]
+struct ShapeInProgress {
+    kind: ShapeKind,
+    points: Vec<Point2>,
+}
+
+impl ShapeInProgress {
+    fn new(kind: ShapeKind) -> Self {
+        Self {
+            kind,
+            points: Vec::new(),
+        }
+    }
+
+    fn noun(&self) -> &'static str {
+        match self.kind {
+            ShapeKind::Fence => "fence",
+            ShapeKind::WindowPolygon | ShapeKind::CrossingPolygon => "polygon",
+        }
+    }
+
+    /// A fence is two points at least; a polygon three.
+    fn minimum(&self) -> usize {
+        match self.kind {
+            ShapeKind::Fence => 2,
+            ShapeKind::WindowPolygon | ShapeKind::CrossingPolygon => 3,
+        }
+    }
+
+    fn closed(&self) -> bool {
+        self.kind != ShapeKind::Fence
+    }
+
+    fn crossing(&self) -> bool {
+        self.kind != ShapeKind::WindowPolygon
+    }
+
+    fn prompt(&self) -> Prompt {
+        let order = if self.points.is_empty() {
+            "First"
+        } else {
+            "Next"
+        };
+        Prompt::new(format!("{order} {} point", self.noun()))
+    }
+
+    fn shape(&self) -> SelectionShape {
+        let points = self.points.clone();
+        match self.kind {
+            ShapeKind::Fence => SelectionShape::Fence(points),
+            ShapeKind::WindowPolygon => SelectionShape::WindowPolygon(points),
+            ShapeKind::CrossingPolygon => SelectionShape::CrossingPolygon(points),
+        }
+    }
+
+    fn method(&self) -> SelectionMethod {
+        match self.kind {
+            ShapeKind::Fence => SelectionMethod::Fence,
+            ShapeKind::WindowPolygon => SelectionMethod::WindowPolygon,
+            ShapeKind::CrossingPolygon => SelectionMethod::CrossingPolygon,
+        }
+    }
+}
 
 /// The point a pointer click would give right now, and what put it there:
 /// an object snap, a drafting aid, or nothing but the cursor.
@@ -66,6 +159,13 @@ pub struct Session {
     pan_anchor: Option<ScreenPoint>,
     /// First corner of a window or crossing selection in progress.
     selection_box: Option<ScreenPoint>,
+    /// A fence or polygon selection being drawn point by point (#185).
+    selection_shape: Option<ShapeInProgress>,
+    /// The selection the last command took, for `Previous`.
+    previous_selection: Selection,
+    /// `Remove` mode at a selection prompt: what the pointer or a keyword
+    /// finds leaves the selection, until `Add`.
+    removing: bool,
     log: CommandLog,
     history: InputHistory,
     /// Set by a command that needs the host; taken by the host afterwards.
@@ -125,6 +225,9 @@ impl Session {
             cursor: None,
             pan_anchor: None,
             selection_box: None,
+            selection_shape: None,
+            previous_selection: Selection::default(),
+            removing: false,
             log: CommandLog::new(),
             history: InputHistory::default(),
             host_request: None,
@@ -277,10 +380,17 @@ impl Session {
 
     /// The prompt shown on the command line right now.
     pub fn prompt(&self) -> String {
-        self.active.as_ref().map_or_else(
-            || IDLE_PROMPT.to_owned(),
-            |active| active.command.prompt().render(&active.command.expected()),
-        )
+        let Some(active) = &self.active else {
+            return IDLE_PROMPT.to_owned();
+        };
+        if let Some(shape) = &self.selection_shape {
+            return shape.prompt().render(&self.expected());
+        }
+        let mut prompt = active.command.prompt();
+        if self.removing && self.at_selection_prompt() {
+            prompt.message = "Remove objects".to_owned();
+        }
+        prompt.render(&self.expected())
     }
 
     pub fn ui_state(&self) -> UiState {
@@ -431,6 +541,14 @@ impl Session {
                 crossing: is_crossing(start, self.cursor.unwrap_or(start)),
             });
         }
+        if let Some(shape) = &self.selection_shape {
+            items.push(OverlayItem::SelectionPath {
+                points: shape.points.clone(),
+                to: aim.point,
+                closed: shape.closed(),
+                crossing: shape.crossing(),
+            });
+        }
         if let Some(snap) = aim.snap {
             items.push(OverlayItem::SnapMarker {
                 mode: snap.mode,
@@ -484,6 +602,11 @@ impl Session {
             // A click during a command is a point, exactly like a typed coordinate.
             // At the idle prompt and at "Select objects:", the pointer builds
             // the selection set; anywhere else a click is a point.
+            // A fence or polygon takes the click as its next point.
+            PointerButton::Primary if self.selection_shape.is_some() => match self.aim() {
+                Some(aim) => self.feed_point(aim.point).unwrap_or(Dirty::NONE),
+                None => Dirty::NONE,
+            },
             PointerButton::Primary if self.is_selecting() => {
                 // A grip under the cursor comes before picking and box selection.
                 match self.hovered_grip().filter(|_| !modifiers.shift) {
@@ -631,6 +754,9 @@ impl Session {
     /// Makes `command` the active command, cancelling any other first.
     fn begin(&mut self, name: &'static str, command: Box<dyn Command>) -> Dirty {
         let cancelled = self.cancel_active();
+        // A command started on a selection takes it: that is what
+        // `Previous` brings back.
+        self.remember_selection();
         // One invocation is one undo step, however many transactions it commits.
         self.drawing.begin_group();
         cancelled
@@ -810,7 +936,10 @@ impl Session {
             return self.finish_selection_box(start, at, modifiers);
         }
         match self.pick(at) {
-            Some(id) => self.change_selection(&[id], modifiers.shift),
+            Some(id) => {
+                let remove = modifiers.shift || self.removing;
+                self.change_selection(&[id], remove, SelectionMethod::Click)
+            }
             None => {
                 self.selection_box = Some(at);
                 Dirty::OVERLAY
@@ -848,7 +977,116 @@ impl Session {
             })
             .collect();
         hits.sort_unstable();
-        self.change_selection(&hits, modifiers.shift) | Dirty::OVERLAY
+        let method = if crossing {
+            SelectionMethod::Crossing
+        } else {
+            SelectionMethod::Window
+        };
+        let remove = modifiers.shift || self.removing;
+        self.change_selection(&hits, remove, method) | Dirty::OVERLAY
+    }
+
+    /// Whether the active command is collecting objects.
+    fn at_selection_prompt(&self) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|active| active.command.expected().kind == InputKind::Selection)
+    }
+
+    /// Keeps the selection a command is about to take, for `Previous`.
+    fn remember_selection(&mut self) {
+        if !self.selection.is_empty() {
+            self.previous_selection = self.selection.clone();
+        }
+    }
+
+    /// One of the selection keywords at a selection prompt (#185); any other
+    /// keyword, and a keyword anywhere else, goes to the command.
+    fn keyword(&mut self, keyword: Keyword) -> Dirty {
+        use select_keywords::{ADD, ALL, CPOLYGON, FENCE, LAST, PREVIOUS, REMOVE, WPOLYGON};
+        if let Some(shape) = &mut self.selection_shape {
+            // Undo is the only keyword a fence or polygon offers.
+            shape.points.pop();
+            return Dirty::OVERLAY | Dirty::UI;
+        }
+        if !self.at_selection_prompt() {
+            return self.feed(CommandInput::Keyword(keyword));
+        }
+        let removing = self.removing;
+        match keyword {
+            FENCE => self.start_shape(ShapeKind::Fence),
+            WPOLYGON => self.start_shape(ShapeKind::WindowPolygon),
+            CPOLYGON => self.start_shape(ShapeKind::CrossingPolygon),
+            PREVIOUS => {
+                let ids: Vec<EntityId> = self.previous_selection.iter().collect();
+                if ids.is_empty() {
+                    return self.notify("There is no previous selection.");
+                }
+                self.change_selection(&ids, removing, SelectionMethod::Previous)
+            }
+            LAST => {
+                let last = self
+                    .drawing
+                    .shown()
+                    .map(|(id, _)| id)
+                    .filter(|id| !self.drawing.is_locked(*id))
+                    .max();
+                match last {
+                    Some(id) => self.change_selection(&[id], removing, SelectionMethod::Last),
+                    None => self.notify("There is nothing to select."),
+                }
+            }
+            ALL => {
+                let mut ids: Vec<EntityId> = self.drawing.shown().map(|(id, _)| id).collect();
+                ids.sort_unstable();
+                self.change_selection(&ids, removing, SelectionMethod::All)
+            }
+            REMOVE => {
+                self.removing = true;
+                Dirty::UI
+            }
+            ADD => {
+                self.removing = false;
+                Dirty::UI
+            }
+            other => self.feed(CommandInput::Keyword(other)),
+        }
+    }
+
+    fn start_shape(&mut self, kind: ShapeKind) -> Dirty {
+        self.selection_box = None;
+        self.selection_shape = Some(ShapeInProgress::new(kind));
+        Dirty::OVERLAY | Dirty::UI
+    }
+
+    /// Enter ends a fence or polygon: everything shown that it takes joins
+    /// the selection, or leaves it in Remove mode.
+    fn finish_shape(&mut self) -> Dirty {
+        let Some(shape) = self.selection_shape.take() else {
+            return Dirty::NONE;
+        };
+        if shape.points.len() < shape.minimum() {
+            let message = format!(
+                "A {} needs at least {} points.",
+                shape.noun(),
+                shape.minimum()
+            );
+            return self.notify(&message) | Dirty::OVERLAY;
+        }
+        let selector = shape.shape();
+        let tables = self.drawing.tables();
+        let mut hits: Vec<EntityId> = self
+            .drawing
+            .query_shown(&selector.bounds())
+            .into_iter()
+            .filter(|&id| {
+                self.drawing
+                    .entity(id)
+                    .is_some_and(|entity| entity.selected_by(&selector, tables))
+            })
+            .collect();
+        hits.sort_unstable();
+        self.change_selection(&hits, self.removing, shape.method()) | Dirty::OVERLAY
     }
 
     /// Adds `ids` to the selection, or removes them, and reports the result
@@ -857,7 +1095,12 @@ impl Session {
     /// Objects on a locked layer are never added: a selection is what a
     /// command will change. Leaving them out is said, so a click that
     /// selects nothing is not a mystery.
-    fn change_selection(&mut self, ids: &[EntityId], remove: bool) -> Dirty {
+    fn change_selection(
+        &mut self,
+        ids: &[EntityId],
+        remove: bool,
+        method: SelectionMethod,
+    ) -> Dirty {
         let locked = if remove {
             0
         } else {
@@ -873,6 +1116,9 @@ impl Session {
                 }
             })
             .count();
+        if changed > 0 && !remove {
+            self.selection.set_method(method);
+        }
         if self.active.is_some() {
             let verb = if remove { "removed" } else { "found" };
             self.log
@@ -901,9 +1147,24 @@ impl Session {
 
     /// What the current prompt accepts.
     fn expected(&self) -> ExpectedInput {
-        self.active
-            .as_ref()
-            .map_or_else(ExpectedInput::command, |active| active.command.expected())
+        if self.selection_shape.is_some() {
+            return ExpectedInput::point().with_keywords(&[select_keywords::UNDO]);
+        }
+        let Some(active) = &self.active else {
+            return ExpectedInput::command();
+        };
+        let expected = active.command.expected();
+        if expected.kind != InputKind::Selection {
+            return expected;
+        }
+        // Every selection prompt offers the session's methods, after the
+        // command's own options.
+        let own: &[Keyword] = if self.removing {
+            &select_keywords::REMOVING
+        } else {
+            &select_keywords::ADDING
+        };
+        expected.with_keywords(own)
     }
 
     /// Routes one resolved input. An `Err` is a message for the user; the
@@ -914,7 +1175,7 @@ impl Session {
             Input::Point(point) => self.feed_point(point.resolve(self.relative_origin())),
             Input::Distance(distance) => Ok(self.feed(CommandInput::Distance(distance))),
             Input::Angle(angle) => Ok(self.feed(CommandInput::Angle(angle))),
-            Input::Keyword(keyword) => Ok(self.feed(CommandInput::Keyword(keyword))),
+            Input::Keyword(keyword) => Ok(self.keyword(keyword)),
             Input::Text(text) => Ok(self.feed(CommandInput::Text(text))),
             Input::DirectDistance(distance) => {
                 let target = self.direct_distance_target(distance).ok_or(NO_DIRECTION)?;
@@ -929,7 +1190,14 @@ impl Session {
                 Some(aim) => self.feed_point(aim.point),
                 None => Ok(self.feed(CommandInput::Accept)),
             },
-            Input::Accept => Ok(self.feed(CommandInput::Accept)),
+            // Enter ends a fence or polygon.
+            Input::Accept if self.selection_shape.is_some() => Ok(self.finish_shape()),
+            Input::Accept => {
+                if self.at_selection_prompt() {
+                    self.remember_selection();
+                }
+                Ok(self.feed(CommandInput::Accept))
+            }
         }
     }
 
@@ -957,6 +1225,11 @@ impl Session {
     /// the point itself, or the distance or angle it makes with the command's
     /// base point. Typed coordinates and pointer clicks both arrive here.
     fn feed_point(&mut self, point: Point2) -> Result<Dirty, &'static str> {
+        if let Some(shape) = &mut self.selection_shape {
+            shape.points.push(point);
+            self.last_point = point;
+            return Ok(Dirty::OVERLAY | Dirty::UI);
+        }
         let Some(active) = &self.active else {
             return Ok(Dirty::NONE);
         };
@@ -978,6 +1251,11 @@ impl Session {
     /// Escape cancels the active command; at the idle prompt it clears the
     /// selection. Two Escapes therefore always reach idle with nothing selected.
     fn escape(&mut self) -> Dirty {
+        // A fence or polygon being drawn is the innermost thing to cancel:
+        // the command goes on collecting objects.
+        if self.selection_shape.take().is_some() {
+            return Dirty::OVERLAY | Dirty::UI;
+        }
         // An open selection box is the innermost thing to cancel.
         if self.selection_box.take().is_some() && self.active.is_none() {
             return Dirty::OVERLAY;
@@ -994,6 +1272,8 @@ impl Session {
 
     fn cancel_active(&mut self) -> Dirty {
         self.selection_box = None;
+        self.selection_shape = None;
+        self.removing = false;
         match self.active.take() {
             Some(_) => {
                 self.drawing.end_group();
@@ -1039,6 +1319,8 @@ impl Session {
             self.active = Some(active);
         } else {
             self.drawing.end_group();
+            // Remove mode belongs to the prompt that is over.
+            self.removing = false;
         }
 
         // Whatever the command did, the selection must never name an entity

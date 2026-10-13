@@ -27,7 +27,20 @@ const KINDS: [(&str, &str); 12] = [
     ("hatch", "hatches"),
 ];
 
-fn kind_index(entity: &Entity) -> usize {
+/// The kind named by `name` — singular or plural, any case — if any.
+pub(crate) fn kind_named(name: &str) -> Option<usize> {
+    let name = name.trim();
+    KINDS
+        .iter()
+        .position(|(one, many)| one.eq_ignore_ascii_case(name) || many.eq_ignore_ascii_case(name))
+}
+
+/// The kinds, singular, for a message that lists them.
+pub(crate) fn kind_names() -> Vec<&'static str> {
+    KINDS.iter().map(|(one, _)| *one).collect()
+}
+
+pub(crate) fn kind_index(entity: &Entity) -> usize {
     match entity {
         Entity::Line(_) => 0,
         Entity::Circle(_) => 1,
@@ -62,6 +75,9 @@ pub struct SelectionSummary {
     pub lineweight: Option<String>,
     /// For one object, what defines it, as label and value, read only.
     pub geometry: Vec<(String, String)>,
+    /// How the objects were selected — "window", "fence", "quick select" —
+    /// or empty (#185).
+    pub method: String,
 }
 
 impl SelectionSummary {
@@ -102,6 +118,7 @@ impl SelectionSummary {
             geometry: only
                 .map(|entity| geometry_of(entity, drawing))
                 .unwrap_or_default(),
+            method: selection.method().describe().to_owned(),
         }
     }
 

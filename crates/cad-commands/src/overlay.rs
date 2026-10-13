@@ -47,6 +47,15 @@ pub enum OverlayItem {
         to: Point2,
         crossing: bool,
     },
+    /// A fence or polygon selection in progress (#185): its points so
+    /// far, the rubber band to `to`, and — for a polygon — the closing
+    /// edge back to the first point.
+    SelectionPath {
+        points: Vec<Point2>,
+        to: Point2,
+        closed: bool,
+        crossing: bool,
+    },
     /// The direction polar tracking has locked onto: a ray from `from`
     /// through `through`, drawn to the edge of the view.
     TrackingLine { from: Point2, through: Point2 },

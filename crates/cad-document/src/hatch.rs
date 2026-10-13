@@ -326,14 +326,6 @@ impl HatchEntity {
             .fold(f64::INFINITY, f64::min)
     }
 
-    /// Whether the boundary reaches into `bounds`, or `bounds` lies in the fill.
-    pub fn crosses(&self, bounds: &Aabb) -> bool {
-        self.boundary()
-            .iter()
-            .any(|primitive| primitive.intersects_aabb(bounds))
-            || self.contains(bounds.center())
-    }
-
     /// Every loop vertex, loop by loop: the grips.
     pub fn vertices(&self) -> Vec<Point2> {
         self.loops
@@ -464,19 +456,13 @@ mod tests {
             hatch.bounds(),
             Aabb::from_points(p(0.0, 0.0), p(100.0, 100.0))
         );
-        assert!(
-            hatch.crosses(&Aabb::from_points(p(-5.0, 40.0), p(5.0, 60.0))),
-            "the edge"
-        );
-        assert!(
-            hatch.crosses(&Aabb::from_points(p(10.0, 10.0), p(20.0, 20.0))),
-            "inside"
-        );
-        assert!(
-            !hatch.crosses(&Aabb::from_points(p(45.0, 45.0), p(55.0, 55.0))),
-            "in the hole"
-        );
-        assert!(!hatch.crosses(&Aabb::from_points(p(200.0, 0.0), p(210.0, 10.0))));
+        let crosses = |from, to| {
+            Entity::Hatch(hatch.clone()).crosses(&Aabb::from_points(from, to), Tables::none())
+        };
+        assert!(crosses(p(-5.0, 40.0), p(5.0, 60.0)), "the edge");
+        assert!(crosses(p(10.0, 10.0), p(20.0, 20.0)), "inside");
+        assert!(!crosses(p(45.0, 45.0), p(55.0, 55.0)), "in the hole");
+        assert!(!crosses(p(200.0, 0.0), p(210.0, 10.0)));
         // An island in the hole is filled again.
         let island = HatchEntity::solid(vec![
             square(0.0, 0.0, 100.0),

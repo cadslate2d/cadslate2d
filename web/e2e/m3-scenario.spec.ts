@@ -87,7 +87,9 @@ test("the M3 drafting scenario", async ({ page }) => {
 
   // ── TRIM against every edge at once: each line is cut by both polylines ──
   await enter(page, "TR");
-  await expect(prompt(page)).toHaveText("Select cutting edges <all>:");
+  await expect(prompt(page)).toHaveText(
+    "Select cutting edges or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove] <all>:",
+  );
   await enter(page, "");
   await expect(logLines(page).last()).toHaveText("Every object is an edge.");
   // Of each line: the end above the link, the end below, and the middle

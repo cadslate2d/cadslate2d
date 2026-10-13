@@ -47,6 +47,8 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `EXPLODE` | `X` | Takes the selected objects apart one level: a block reference becomes its definition's objects where the reference put them (nested references stay references), a polyline its lines and arcs, and a dimension the lines, arrowheads, arc, and text its style laid out. a pattern hatch its pattern's lines. Other objects — a solid hatch among them — are refused by name. |
 | `CHPROP` | `CH`, `PROPERTIES` | Changes the layer (`LAyer`), colour, linetype, or lineweight of the selected objects, all of them in one step; several properties in one go, until Enter. |
 | `LAYER` | `LA` | Layers from the command line: `New`, `Set` (the layer new objects go on), `Color`, `LWeight`, `LType`, `ON`, `OFF`, `Lock`, `Unlock`, `Rename`, `Delete`, and `?` to list. Names may contain spaces; several can be given at once, separated by commas. Objects on a layer that is off are hidden and cannot be picked; objects on a locked layer cannot be changed. |
+| `SELECT` | — | Builds a selection at the idle prompt, with the pointer or with the methods below, and keeps it for the next command. |
+| `QSELECT` | `QS` | Selects by what objects are: a kind (`line`, `circle`, `text`, … or all), then optionally a property — `Layer`, `Color`, `LType`, `LWeight` — tested with `=` or `<>` (a value alone means `=`), or `<` and `>` for a colour number or a lineweight. The result replaces the selection; objects on layers that are off or locked are never in it. |
 | `ERASE` | `E`, Delete | Erases the selected objects. |
 | `MOVE` | `M` | Moves the selection from a base point to a second point. |
 | `COPY` | `CO`, `CP` | Copies the selection; keeps placing until Enter. |
@@ -87,6 +89,7 @@ Options shown in brackets, as in `Specify next point or [Close/Undo]:`, are chos
 | `25mm`, `2.5m,300mm`, `@1in<45` | A length with a unit — `mm`, `cm`, `m`, `in`, `ft` — converted into the drawing's unit. Needs a drawing unit: see `UNITS` |
 | Click | A point while a command asks for one; on a grip, takes the grip; otherwise adds the object under the cursor to the selection (Shift+click removes it) |
 | Click or drag on empty space | A selection box: left to right selects what is entirely inside (window); right to left selects what it touches (crossing) |
+| `F`, `WP`, `CP`, `P`, `L`, `ALL`, `R`, `A` at any `Select objects` prompt | A `Fence` (what the polyline you draw crosses, by its geometry: a fence through a polyline's arc takes the polyline), a `WPolygon` (what lies wholly inside the polygon, which need not be convex) or a `CPolygon` (what it touches or holds), the `Previous` selection (what the last command took), the `Last` object drawn, `ALL` that is shown, and `Remove` mode until `Add`: what the pointer or a method finds then leaves the selection. Enter ends a fence or polygon, `Undo` takes its last point back, Escape drops it and keeps the prompt. The Properties panel names the method |
 | Enter / Space | Accept or finish; at the idle prompt, repeat the last command |
 | Escape | Cancel the command; pressed again, clear the selection |
 | Up / Down | Recall earlier input |

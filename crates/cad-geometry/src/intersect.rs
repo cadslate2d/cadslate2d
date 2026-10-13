@@ -291,6 +291,17 @@ impl Primitive {
         }
     }
 
+    /// Some point of the primitive: a segment's start, an arc's start, a
+    /// point of a circle. For tests that need one point on a curve, such as
+    /// whether the curve lies in a region it does not cross.
+    pub fn a_point(&self) -> Point2 {
+        match self {
+            Primitive::Segment(segment) => segment.start,
+            Primitive::Circle(circle) => circle.point_at(0.0),
+            Primitive::Arc(arc) => arc.start_point(),
+        }
+    }
+
     /// The point of the primitive nearest to `point`.
     pub fn closest_point(&self, point: Point2) -> Point2 {
         match self {

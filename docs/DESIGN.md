@@ -902,6 +902,8 @@ Initial selection behavior:
 - right-to-left crossing selection;
 - Escape clears selection.
 
+> **Extended in M8 (#185):** every selection prompt also offers `Fence`, `WPolygon`, `CPolygon`, `Previous`, `Last`, `ALL`, and `Remove`/`Add` modes; `SELECT` builds a set at the idle prompt and `QSELECT` one by kind and property. The shapes are `cad_geometry::SelectionShape`, judged on an entity's edges (`Entity::selected_by`), so a fence through a polyline's arc takes it. The selection carries how it was made (`SelectionMethod`), which the Properties panel shows.
+
 ## 16.2 Grip model
 
 Selected entities expose editable grips.

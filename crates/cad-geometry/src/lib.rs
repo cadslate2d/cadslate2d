@@ -23,6 +23,7 @@ mod pattern;
 mod polygon;
 mod polyline;
 mod segment;
+mod select;
 pub mod spline;
 mod transform;
 mod trim;
@@ -50,6 +51,7 @@ pub use polyline::{
     is_straight, polyline_closes, polyline_primitives, polyline_spans,
 };
 pub use segment::Segment;
+pub use select::SelectionShape;
 pub use spline::{CHORD_TOLERANCE, MAX_POINTS, Spline, fit_parameters};
 pub use transform::{Transform, unit_at_degrees};
 pub use trim::{

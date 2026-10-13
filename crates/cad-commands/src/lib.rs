@@ -37,7 +37,7 @@ pub use events::{HostRequest, KeyAction, Modifiers, PointerButton};
 pub use grips::{Grip, GripId};
 pub use overlay::OverlayItem;
 pub use registry::CommandRegistry;
-pub use selection::Selection;
+pub use selection::{Selection, SelectionMethod};
 pub use session::{Aim, Session};
 pub use settings::DraftingSettings;
 pub use snap::{SnapMode, SnapModes, SnapPoint};

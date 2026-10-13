@@ -3,7 +3,7 @@
 use cad_core::tolerance::LinearTolerance;
 use cad_core::{Aabb, Point2, Vec2};
 use cad_geometry::{
-    Arc, Circle, Ellipse, Path, Primitive, Segment, Spline, Transform, is_straight,
+    Arc, Circle, Ellipse, Path, Primitive, Segment, SelectionShape, Spline, Transform, is_straight,
     polyline_primitives,
 };
 
@@ -528,35 +528,77 @@ impl Entity {
     /// True when any part of the entity's geometry lies within `bounds`
     /// (crossing selection). Interiors do not count.
     pub fn crosses(&self, bounds: &Aabb, tables: Tables<'_>) -> bool {
+        self.selected_by(&SelectionShape::Crossing(*bounds), tables)
+    }
+
+    /// Whether a selection shape — a box, a polygon, a fence (#185) —
+    /// takes this entity. The shape judges by the entity's edges and by
+    /// what it encloses, so a fence through a polyline's arc segment takes
+    /// the polyline, and a polygon drawn inside a hatch takes the hatch.
+    pub fn selected_by(&self, shape: &SelectionShape, tables: Tables<'_>) -> bool {
+        shape.takes(&self.selection_edges(tables), |point| {
+            self.encloses(point, tables)
+        })
+    }
+
+    /// The curves a selection shape is tested against: the geometry of a
+    /// curve, the frame of a text, the lines, arcs, and text frame of a
+    /// dimension, the boundary of a hatch, and a block's, placed.
+    fn selection_edges(&self, tables: Tables<'_>) -> Vec<Primitive> {
         match self {
-            Entity::Line(line) => line.segment().intersects_aabb(bounds),
-            Entity::Circle(circle) => circle.circle().intersects_aabb(bounds),
-            Entity::Arc(arc) => arc.arc().intersects_aabb(bounds),
-            Entity::Ellipse(ellipse) => ellipse
-                .ellipse()
-                .segments()
-                .iter()
-                .any(|segment| segment.intersects_aabb(bounds)),
-            Entity::Spline(spline) => spline
-                .spline()
-                .segments()
-                .iter()
-                .any(|segment| segment.intersects_aabb(bounds)),
-            Entity::Polyline(polyline) => polyline
-                .primitives()
-                .any(|primitive| primitive.intersects_aabb(bounds)),
-            Entity::Text(text) => text.crosses(bounds),
-            Entity::MText(text) => text.crosses(bounds),
-            Entity::AttributeDefinition(definition) => definition.as_text().crosses(bounds),
+            Entity::Line(_)
+            | Entity::Circle(_)
+            | Entity::Arc(_)
+            | Entity::Ellipse(_)
+            | Entity::Spline(_)
+            | Entity::Polyline(_) => self.primitives(tables),
+            Entity::Text(text) => frame_edges(&text.frame()),
+            Entity::MText(text) => frame_edges(&text.frame()),
+            Entity::AttributeDefinition(definition) => frame_edges(&definition.as_text().frame()),
             Entity::BlockRef(reference) => tables
                 .blocks
                 .flatten(reference, crate::Properties::default())
                 .iter()
-                .any(|(entity, _)| entity.crosses(bounds, tables)),
+                .flat_map(|(entity, _)| entity.selection_edges(tables))
+                .collect(),
+            Entity::Dimension(dimension) => {
+                let layout = dimension.layout(tables.dim_style(dimension.style));
+                layout
+                    .segments()
+                    .map(Primitive::Segment)
+                    .chain(layout.arcs.iter().copied().map(Primitive::Arc))
+                    .chain(frame_edges(&layout.text.frame()))
+                    .collect()
+            }
+            Entity::Hatch(hatch) => hatch.boundary(),
+        }
+    }
+
+    /// Whether `point` lies in the entity's own area: a text's box, a
+    /// hatch's fill, a dimension's text box, or any of a block's. A curve
+    /// has no area.
+    fn encloses(&self, point: Point2, tables: Tables<'_>) -> bool {
+        match self {
+            Entity::Line(_)
+            | Entity::Circle(_)
+            | Entity::Arc(_)
+            | Entity::Ellipse(_)
+            | Entity::Spline(_)
+            | Entity::Polyline(_) => false,
+            Entity::Text(text) => text.frame().contains(point),
+            Entity::MText(text) => text.frame().contains(point),
+            Entity::AttributeDefinition(definition) => definition.as_text().frame().contains(point),
+            Entity::BlockRef(reference) => tables
+                .blocks
+                .flatten(reference, crate::Properties::default())
+                .iter()
+                .any(|(entity, _)| entity.encloses(point, tables)),
             Entity::Dimension(dimension) => dimension
                 .layout(tables.dim_style(dimension.style))
-                .crosses(bounds),
-            Entity::Hatch(hatch) => hatch.crosses(bounds),
+                .text
+                .frame()
+                .contains(point),
+            Entity::Hatch(hatch) => hatch.contains(point),
         }
     }
 
@@ -726,6 +768,11 @@ impl From<HatchEntity> for Entity {
 /// An immutable entity payload shared between the store and undo history, so
 /// history never deep-copies large entities (DESIGN §19.4).
 pub type SharedEntity = std::sync::Arc<Entity>;
+
+/// A text frame's four edges, as primitives.
+fn frame_edges(frame: &crate::text::TextFrame) -> Vec<Primitive> {
+    frame.edges().into_iter().map(Primitive::Segment).collect()
+}
 
 #[cfg(test)]
 mod tests {

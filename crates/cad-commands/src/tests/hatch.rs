@@ -148,7 +148,10 @@ fn lines_and_arcs_that_meet_end_to_end_bound_a_region() {
 fn select_takes_every_loop_the_selected_objects_make() {
     let mut h = Harness::with_entities(plate());
     h.enter_all(&["H", "S"]);
-    assert_eq!(h.prompt(), "Select boundary objects:");
+    assert_eq!(
+        h.prompt(),
+        "Select boundary objects or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:"
+    );
     h.select_box(p(-150.0, -80.0), p(150.0, 80.0));
     h.enter("");
     let all = hatches(&h);

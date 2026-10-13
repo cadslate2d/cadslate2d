@@ -141,15 +141,6 @@ impl MTextEntity {
             .fold(f64::INFINITY, f64::min)
     }
 
-    pub fn crosses(&self, bounds: &Aabb) -> bool {
-        let frame = self.frame();
-        frame
-            .edges()
-            .iter()
-            .any(|edge| edge.intersects_aabb(bounds))
-            || frame.contains(bounds.min())
-    }
-
     /// The paragraph moved, turned, scaled, or mirrored. A mirrored
     /// paragraph takes the mirrored box and reads the right way up in it,
     /// from its new top left (see `TextEntity::transformed`).

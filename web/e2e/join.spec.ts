@@ -25,7 +25,9 @@ test.describe("JOIN", () => {
     expect(count(await exported(page), "LINE")).toBe(2);
 
     await enter(page, "J");
-    await expect(prompt(page)).toHaveText("Select objects to join or [Close]:");
+    await expect(prompt(page)).toHaveText(
+      "Select objects to join or [CLose/Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:",
+    );
     await clickWorld(page, canvas, 10, 0);
     await clickWorld(page, canvas, 80, 0);
     await enter(page, "");
@@ -72,7 +74,7 @@ test.describe("JOIN", () => {
     await enter(page, "A", "50,0", "0,50", "-50,0");
     await enter(page, "J");
     await clickWorld(page, canvas, 0, 50);
-    await enter(page, "C");
+    await enter(page, "CL");
     await expect(logLines(page).last()).toHaveText("1 arc closed into a circle.");
 
     const text = await exported(page);

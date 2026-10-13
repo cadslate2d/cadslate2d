@@ -245,14 +245,6 @@ impl DimensionLayout {
             .chain(self.arcs.iter().map(|arc| arc.distance_to_point(point)))
             .fold(self.text.distance_to(point), f64::min)
     }
-
-    /// Whether any line, arc, arrowhead, or the text's box reaches into `bounds`.
-    pub fn crosses(&self, bounds: &Aabb) -> bool {
-        self.segments()
-            .any(|segment| segment.intersects_aabb(bounds))
-            || self.arcs.iter().any(|arc| arc.intersects_aabb(bounds))
-            || self.text.crosses(bounds)
-    }
 }
 
 impl DimensionEntity {

@@ -177,7 +177,10 @@ fn rotate_previews_without_touching_the_document_and_commits_once() {
 fn rotate_asks_for_objects_when_nothing_is_selected() {
     let mut h = Harness::with_entities([line()]);
     h.enter("RO");
-    assert_eq!(h.prompt(), "Select objects:");
+    assert_eq!(
+        h.prompt(),
+        "Select objects or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:"
+    );
     h.click_world(p(50.0, 0.0));
     h.enter_all(&["", "0,0", "180"]);
     assert_same(

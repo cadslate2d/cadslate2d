@@ -38,7 +38,10 @@ fn line_of(h: &Harness, id: EntityId) -> LineEntity {
 fn a_command_asks_for_objects_when_nothing_is_selected() {
     let (mut h, line, circle) = scene();
     h.enter("ERASE");
-    assert_eq!(h.prompt(), "Select objects:");
+    assert_eq!(
+        h.prompt(),
+        "Select objects or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:"
+    );
 
     h.click_world(p(0.0, 0.0));
     assert_eq!(h.log().last().unwrap(), "1 found, 1 total");
@@ -64,7 +67,10 @@ fn typing_at_select_objects_is_explained() {
         h.log().last().unwrap(),
         "Select objects by clicking them or with a window, then press Enter."
     );
-    assert_eq!(h.prompt(), "Select objects:");
+    assert_eq!(
+        h.prompt(),
+        "Select objects or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:"
+    );
 }
 
 #[test]

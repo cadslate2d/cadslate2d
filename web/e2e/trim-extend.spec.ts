@@ -20,7 +20,9 @@ test.describe("TRIM", () => {
   test("cuts a line back to the cutting edge on the side that is picked", async ({ page }) => {
     const canvas = await openApp(page);
     await enter(page, "L", "40,-60", "40,60", "", "L", "0,0", "100,0", "", "TR");
-    await expect(prompt(page)).toHaveText("Select cutting edges <all>:");
+    await expect(prompt(page)).toHaveText(
+      "Select cutting edges or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove] <all>:",
+    );
     await clickWorld(page, canvas, 40, 30);
     await enter(page, "");
     await expect(prompt(page)).toHaveText("Select object to trim:");
@@ -185,7 +187,9 @@ test.describe("EXTEND", () => {
   test("carries a line on to the boundary edge", async ({ page }) => {
     const canvas = await openApp(page);
     await enter(page, "L", "100,-80", "100,80", "", "L", "0,0", "60,0", "", "EX");
-    await expect(prompt(page)).toHaveText("Select boundary edges <all>:");
+    await expect(prompt(page)).toHaveText(
+      "Select boundary edges or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove] <all>:",
+    );
     await clickWorld(page, canvas, 100, 40);
     await enter(page, "");
     await expect(prompt(page)).toHaveText("Select object to extend:");

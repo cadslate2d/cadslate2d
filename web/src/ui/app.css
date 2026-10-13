@@ -424,6 +424,11 @@ body {
   color: var(--color-text-muted);
 }
 
+.properties__method {
+  color: var(--color-text-faint);
+  font-size: var(--font-size-xs);
+}
+
 .properties__table {
   width: 100%;
   border-collapse: collapse;

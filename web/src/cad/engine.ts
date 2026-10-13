@@ -132,6 +132,8 @@ export interface SelectionSummary {
   readonly lineweight?: string;
   /** For one object: label and value of what defines it, read only. */
   readonly geometry: readonly (readonly [label: string, value: string])[];
+  /** How the objects were selected — "window", "fence", "quick select" — or empty. */
+  readonly method: string;
 }
 
 /** One row of the Layers panel: names and looks only, never IDs or geometry. */

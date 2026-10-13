@@ -164,6 +164,49 @@ fn snap_markers_cause_no_committed_upload() {
     assert_eq!(cache.build_count(), builds, "the scene was rebuilt");
 }
 
+/// #185: a fence or polygon being drawn is overlay work only — its
+/// segments are in the overlay, and the committed scene is neither rebuilt
+/// nor given a new revision.
+#[test]
+fn a_fence_being_drawn_causes_no_committed_upload() {
+    let mut h = drawing();
+    let mut cache = SceneCache::new();
+    let revision = cache.scene(h.session.drawing()).revision();
+    let builds = cache.build_count();
+
+    h.enter_all(&["E", "F"]);
+    h.click(100.0, 100.0);
+    h.click(300.0, 400.0);
+    let dirty = h.move_to(500.0, 200.0);
+    assert!(dirty.contains(Dirty::OVERLAY) && !dirty.contains(Dirty::SCENE));
+    let overlay = overlay_of(&h);
+    let fence_segments: usize = overlay
+        .frame()
+        .batches()
+        .iter()
+        .filter(|batch| batch.style == StyleRole::SelectionCrossing)
+        .map(|batch| batch.count as usize)
+        .sum();
+    assert_eq!(fence_segments, 2, "two points and the rubber band");
+    assert_eq!(cache.scene(h.session.drawing()).revision(), revision);
+    assert_eq!(cache.build_count(), builds, "the scene was rebuilt");
+
+    h.enter_all(&["", "WP"]); // Enter ends the fence; the polygon starts
+    h.click(100.0, 100.0);
+    h.click(300.0, 100.0);
+    h.move_to(300.0, 300.0);
+    let overlay = overlay_of(&h);
+    let polygon_segments: usize = overlay
+        .frame()
+        .batches()
+        .iter()
+        .filter(|batch| batch.style == StyleRole::SelectionWindow)
+        .map(|batch| batch.count as usize)
+        .sum();
+    assert_eq!(polygon_segments, 3, "two edges and the closing edge");
+    assert_eq!(cache.scene(h.session.drawing()).revision(), revision);
+}
+
 /// #118: hover feedback and pick previews are overlay work only. Hovering
 /// objects while a command asks for one changes the overlay and never the
 /// committed scene.

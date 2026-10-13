@@ -81,7 +81,10 @@ fn chprop_changes_every_selected_object_in_one_step_and_loops_until_enter() {
 fn chprop_asks_for_objects_when_nothing_is_selected_and_refuses_bad_values() {
     let mut h = harness();
     h.enter("CH");
-    assert_eq!(h.prompt(), "Select objects:");
+    assert_eq!(
+        h.prompt(),
+        "Select objects or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:"
+    );
     h.click_world(p(50.0, 20.0));
     h.enter("");
     assert_eq!(last(&h), "1 found");

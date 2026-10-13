@@ -211,6 +211,26 @@ impl OverlayFrame {
                         );
                     }
                 }
+                OverlayItem::SelectionPath {
+                    points,
+                    to,
+                    closed,
+                    crossing,
+                } => {
+                    let style = if *crossing {
+                        StyleRole::SelectionCrossing
+                    } else {
+                        StyleRole::SelectionWindow
+                    };
+                    let mut path: Vec<Point2> = points.clone();
+                    path.push(*to);
+                    for pair in path.windows(2) {
+                        self.frame.push_segment(style, pair[0], pair[1]);
+                    }
+                    if *closed && path.len() > 2 {
+                        self.frame.push_segment(style, *to, path[0]);
+                    }
+                }
                 OverlayItem::TrackingLine { from, through } => {
                     self.push_tracking_line(*from, *through, view)
                 }

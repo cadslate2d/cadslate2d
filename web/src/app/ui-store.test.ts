@@ -18,7 +18,7 @@ class FakeSource implements UiSource {
     keptLayouts: [],
     layers: [],
     linetypes: [],
-    selection: { count: 0, headline: "No selection", kinds: [], geometry: [] },
+    selection: { count: 0, headline: "No selection", kinds: [], geometry: [], method: "" },
     textEditor: undefined,
   };
   logReads = 0;

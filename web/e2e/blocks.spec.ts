@@ -21,7 +21,9 @@ test.describe("blocks", () => {
     await enter(page, "B");
     await expect(prompt(page)).toHaveText("Enter block name:");
     await enter(page, "Chair", "0,0");
-    await expect(prompt(page)).toHaveText("Select objects:");
+    await expect(prompt(page)).toHaveText(
+      "Select objects or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:",
+    );
     await clickWorld(page, canvas, 20, 0);
     await clickWorld(page, canvas, 0, 20);
     await enter(page, "");
@@ -84,7 +86,9 @@ test.describe("blocks", () => {
     await enter(page, "");
 
     await enter(page, "X");
-    await expect(prompt(page)).toHaveText("Select objects:");
+    await expect(prompt(page)).toHaveText(
+      "Select objects or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:",
+    );
     await clickWorld(page, canvas, 20, 0);
     await enter(page, "");
     await expect(logLines(page).last()).toHaveText("1 block reference exploded into 2 objects.");

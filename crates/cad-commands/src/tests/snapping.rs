@@ -102,7 +102,10 @@ fn there_is_no_snap_when_no_command_is_asking_for_a_point() {
     assert_eq!(h.session.ui_state().snap, None);
 
     h.enter("M");
-    assert_eq!(h.prompt(), "Select objects:");
+    assert_eq!(
+        h.prompt(),
+        "Select objects or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:"
+    );
     assert_eq!(h.session.snap(), None, "selecting objects");
 
     h.escape();

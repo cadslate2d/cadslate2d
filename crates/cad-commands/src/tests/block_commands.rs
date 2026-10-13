@@ -69,7 +69,10 @@ fn block_replaces_the_selection_with_one_reference_and_one_undo_restores_it() {
     h.enter("Chair");
     assert_eq!(h.prompt(), "Specify base point:");
     h.enter("0,0");
-    assert_eq!(h.prompt(), "Select objects:");
+    assert_eq!(
+        h.prompt(),
+        "Select objects or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:"
+    );
     h.click_world(p(5.0, 0.0));
     h.click_world(p(0.0, 5.0));
     h.enter("");
@@ -184,7 +187,10 @@ fn an_existing_name_asks_before_redefining_and_every_reference_follows() {
     h.enter("");
     assert_eq!(h.prompt(), "Enter block name:");
     h.enter_all(&["Chair", "Yes", "0,0"]);
-    assert_eq!(h.prompt(), "Select objects:");
+    assert_eq!(
+        h.prompt(),
+        "Select objects or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:"
+    );
     h.click_world(p(0.0, 15.0));
     h.enter("");
     assert_eq!(
@@ -394,7 +400,10 @@ fn explode_turns_a_reference_into_its_parts_as_they_were_drawn_and_one_undo_rest
     let mut h = Harness::with_drawing(drawing);
 
     h.enter("X");
-    assert_eq!(h.prompt(), "Select objects:");
+    assert_eq!(
+        h.prompt(),
+        "Select objects or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:"
+    );
     h.click_world(p(110.0, 0.0));
     h.enter("");
     assert_eq!(

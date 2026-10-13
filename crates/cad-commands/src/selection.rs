@@ -5,6 +5,43 @@ use std::collections::BTreeSet;
 
 use cad_core::EntityId;
 
+/// How the last objects came into the selection (#185): named in the
+/// Properties panel beside what was selected.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SelectionMethod {
+    #[default]
+    None,
+    Click,
+    Window,
+    Crossing,
+    Fence,
+    WindowPolygon,
+    CrossingPolygon,
+    Previous,
+    Last,
+    All,
+    QuickSelect,
+}
+
+impl SelectionMethod {
+    /// The method as the panel names it; empty for none.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::Click => "click",
+            Self::Window => "window",
+            Self::Crossing => "crossing",
+            Self::Fence => "fence",
+            Self::WindowPolygon => "window polygon",
+            Self::CrossingPolygon => "crossing polygon",
+            Self::Previous => "previous",
+            Self::Last => "last",
+            Self::All => "all",
+            Self::QuickSelect => "quick select",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Selection {
     ids: BTreeSet<EntityId>,
@@ -12,9 +49,28 @@ pub struct Selection {
     /// the Properties panel's summary — can tell it is still good without
     /// reading the set again.
     generation: u64,
+    /// How the set was last added to or replaced.
+    method: SelectionMethod,
 }
 
 impl Selection {
+    /// How the set was last added to or replaced; `None` once it is empty.
+    pub fn method(&self) -> SelectionMethod {
+        if self.ids.is_empty() {
+            SelectionMethod::None
+        } else {
+            self.method
+        }
+    }
+
+    /// Records how what is selected was selected.
+    pub fn set_method(&mut self, method: SelectionMethod) {
+        if self.method != method {
+            self.method = method;
+            self.generation += 1;
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.ids.len()
     }

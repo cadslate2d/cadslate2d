@@ -111,6 +111,8 @@ struct SelectionSummaryDto {
     lineweight: Option<String>,
     /// `[label, value]` pairs: one object's defining geometry.
     geometry: Vec<(String, String)>,
+    /// How the objects were selected, or empty (#185).
+    method: String,
 }
 
 impl From<SelectionSummary> for SelectionSummaryDto {
@@ -128,6 +130,7 @@ impl From<SelectionSummary> for SelectionSummaryDto {
             linetype: summary.linetype,
             lineweight: summary.lineweight,
             geometry: summary.geometry,
+            method: summary.method,
         }
     }
 }

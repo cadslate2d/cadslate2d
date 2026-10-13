@@ -61,7 +61,9 @@ test("the M5 file scenario", async ({ page }) => {
   await expect(prompt(page)).toHaveText("Command:");
   await enter(page, "L", "200,0", "240,0", "", "L", "200,0", "200,40", "");
   await enter(page, "B", "Chair", "200,0");
-  await expect(prompt(page)).toHaveText("Select objects:");
+  await expect(prompt(page)).toHaveText(
+    "Select objects or [Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:",
+  );
   // A window round both lines, from empty space to empty space.
   await clickWorld(page, canvas, 190, -10);
   await clickWorld(page, canvas, 250, 50);

@@ -204,17 +204,6 @@ impl TextEntity {
             .fold(f64::INFINITY, f64::min)
     }
 
-    /// Whether any edge of the box lies within `bounds`, or the box holds
-    /// the whole of `bounds`: a crossing selection takes the text either way.
-    pub fn crosses(&self, bounds: &Aabb) -> bool {
-        let frame = self.frame();
-        frame
-            .edges()
-            .iter()
-            .any(|edge| edge.intersects_aabb(bounds))
-            || frame.contains(bounds.min())
-    }
-
     /// The text moved, turned, scaled, or mirrored. A mirrored text keeps
     /// reading the right way: it takes the mirrored box and lays itself in
     /// it from whichever end leaves the baseline the right way up, as a

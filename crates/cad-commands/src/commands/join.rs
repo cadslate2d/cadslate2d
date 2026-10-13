@@ -11,7 +11,8 @@ use cad_input::{ExpectedInput, Keyword};
 use super::modify::{counted, selection_expected};
 use crate::{Command, CommandContext, CommandInput, Prompt, Step};
 
-const CLOSE: Keyword = Keyword::new("Close");
+/// `CL`, so that `C` stays the crossing polygon of every selection prompt (#185).
+const CLOSE: Keyword = Keyword::new("CLose");
 
 #[derive(Debug)]
 pub(crate) struct JoinCommand;

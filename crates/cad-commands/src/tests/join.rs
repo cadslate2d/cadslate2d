@@ -41,7 +41,10 @@ fn collinear_lines_are_joined_into_one_line_in_one_step() {
     ]);
     let ids = h.ids();
     h.enter("J");
-    assert_eq!(h.prompt(), "Select objects to join or [Close]:");
+    assert_eq!(
+        h.prompt(),
+        "Select objects to join or [CLose/Fence/WPolygon/CPolygon/Previous/Last/ALL/Remove]:"
+    );
     h.click_world(p(10.0, 0.0));
     h.click_world(p(90.0, 0.0));
     assert_eq!(last_message(&h), "1 found, 2 total");
@@ -93,7 +96,7 @@ fn the_close_option_makes_the_circle_an_arc_is_part_of() {
     let ids = h.ids();
     h.enter("J");
     h.click_world(p(50.0 * FRAC_1_SQRT_2, 50.0 * FRAC_1_SQRT_2)); // on the arc, at 45°
-    h.enter("C");
+    h.enter("CL"); // `C` alone is the crossing polygon of every selection prompt
     assert_eq!(last_message(&h), "1 arc closed into a circle.");
     assert_eq!(
         h.entities(),
@@ -219,7 +222,7 @@ fn close_refuses_anything_but_arcs_of_one_circle() {
     let before = h.entities();
     h.enter("J");
     h.select_box(p(-400.0, -400.0), p(400.0, 400.0));
-    h.enter("C");
+    h.enter("CL"); // `C` alone is the crossing polygon of every selection prompt
     assert_eq!(
         last_message(&h),
         "Close makes a circle out of arcs of one circle; select only those."

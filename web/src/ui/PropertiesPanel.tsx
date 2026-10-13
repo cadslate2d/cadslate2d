@@ -132,6 +132,11 @@ export function PropertiesPanel({ app }: { app: CadApp }) {
         <span className="properties__headline" data-testid="selection-headline">
           {selection.headline}
         </span>
+        {selection.method !== "" && (
+          <span className="properties__method" data-testid="selection-method">
+            by {selection.method}
+          </span>
+        )}
       </div>
       {selection.count > 0 && (
         <div className="properties__scroll">
