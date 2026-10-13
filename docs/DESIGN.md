@@ -2051,6 +2051,8 @@ Possible work:
 
 Nothing in M8 should constrain M0.
 
+> **Broken down at the M7 exit:** the order of work and the issues are in the [roadmap](roadmap.md) and the [M7 review](reviews/m7-exit-review.md): view commands, ellipses and splines, block attributes, layouts kept through a round trip, advanced selection, user aliases and settings, PDF export, and chunk origins. SHX fonts, xrefs, scripting, plugins, packaging, and DWG stay ideas on the epic.
+
 ---
 
 # Part V — Provisional Subsystem Notes

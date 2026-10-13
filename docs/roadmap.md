@@ -13,10 +13,36 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M4 — Drawing Organization | Complete and closed ([review](reviews/m4-exit-review.md)). |
 | M5 — DXF Compatibility | Complete and closed ([review](reviews/m5-exit-review.md)). |
 | M6 — Annotation and Hatch | Complete and closed ([review](reviews/m6-exit-review.md)). |
-| M7 — Rendering and Performance Hardening | Next. Broken into issues at the M6 exit. |
-| M8 | FUTURE. Not planned against. |
+| M7 — Rendering and Performance Hardening | Complete and closed ([review](reviews/m7-exit-review.md)); the text atlas (#175) waits on real GPUs and moved to M8 with the other person-blocked items. |
+| M8 — Compatibility Expansion | Next. Broken into issues at the M7 exit. |
 
-## M7, as broken down after M6
+## M8, as broken down after M7
+
+DESIGN §36 lists possible work and says nothing in it should constrain M0. M8 takes what a drafter opening files from other programs meets first — the entities still reported on import, the layouts a save loses, the view commands classic drafting assumes — and leaves the rest as ideas on the epic (#107). The [M7 review](reviews/m7-exit-review.md) says what M7 left.
+
+### Order of work
+
+1. **ZOOM and PAN commands** (#180): `Extents`, `Window`, `Previous`, a scale, `Center`; `PAN` by two points.
+2. **Ellipses** (#181), then **splines** (#182): entities with primitives by chords at a tolerance, grips, a command each, DXF both ways; a hatch bounded by a spline.
+3. **Block attributes** (#183): `ATTDEF`, values on references, the prompts on `INSERT`, `ATTEDIT`, DXF both ways.
+4. **Layouts and paper space kept through a round trip** (#184): opaque records, named, not drawn, not lost.
+5. **Advanced selection** (#185): fence, window and crossing polygons, previous, last, all, `QSELECT`.
+6. **User aliases and settings** (#186), in the browser's storage.
+7. **PDF export of model space** (#187), the first form of plotting, with an ADR on the writer.
+8. **Chunk origins** (#188) for drawings that span ten million units, carried from #151.
+9. **Exit** (#189): a scenario on a file from another program, the review, and what follows.
+
+### Not in M8
+
+- SHX fonts, xrefs, scripting, plugins, native packaging, a DWG strategy, a native project format (§39), a WebGPU adapter (§38).
+- Drawing layouts; associative dimensions.
+
+### Needs a person
+
+- Real GPUs (#110), which the text atlas (#175) waits on; WebKit (#109); the R-tree crash upstream (#111).
+- An interactive CAD program reading our R2000 files; the File System Access path in a real browser; how the program feels against classic CAD; the arc grip behaviour (ADR-0010); the M2 exit assessment (#101).
+
+## M7, as it was planned
 
 DESIGN §35 lists candidate hardening work — strokes, caps and joins, linetypes, curves, packing, buffer reuse, a text atlas, culling, batching, 100k benchmarks, fuzzing, crash recovery, workers — and §42 the targets: 10k entities effortless, 50k smooth for normal editing, 100k usable. §35 insists a worker be justified by profiling; the same rule is applied to everything here.
 
