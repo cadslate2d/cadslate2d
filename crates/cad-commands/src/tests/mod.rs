@@ -31,6 +31,7 @@ mod reconciliation;
 mod selection;
 mod selection_sets;
 mod snapping;
+mod spline;
 mod stretch;
 mod text;
 mod transform;

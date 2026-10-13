@@ -202,6 +202,16 @@ pub fn entity_snap_points(entity: &Entity, mode: SnapMode, tables: Tables<'_>) -
             _ => Vec::new(),
         };
     }
+    // A spline offers its ends and its middle: not the ends of its chords.
+    if let Entity::Spline(entity) = entity {
+        let spline = entity.spline();
+        let (start, end) = spline.domain();
+        return match mode {
+            SnapMode::Endpoint => vec![spline.start_point(), spline.end_point()],
+            SnapMode::Midpoint => vec![spline.point_at((start + end) / 2.0)],
+            _ => Vec::new(),
+        };
+    }
     entity
         .primitives(tables)
         .iter()
@@ -323,6 +333,7 @@ pub fn find_snap_from(
                     // An ellipse's nearest point is on its curve, not a chord.
                     let nearest = match entity {
                         Entity::Ellipse(ellipse) => Some(ellipse.ellipse().closest_point(at)),
+                        Entity::Spline(spline) => Some(spline.spline().closest_point(at)),
                         _ => entity
                             .primitives(drawing.tables())
                             .iter()

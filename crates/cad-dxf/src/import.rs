@@ -652,7 +652,7 @@ impl<'a> Reader<'a> {
                 return Ok(());
             }
             let mut body = RecordBody::default();
-            if record.value == "HATCH" {
+            if record.value == "HATCH" || record.value == "SPLINE" {
                 body.raw = Some(Vec::new());
             }
             let mut groups = 0;
@@ -730,6 +730,10 @@ impl<'a> Reader<'a> {
             (_, "INSERT") if entities => self.insert(record, body)?,
             (_, "DIMENSION") if entities => self.dimension(body)?,
             (_, "HATCH") if entities => self.hatch(body)?,
+            (_, "SPLINE") if entities => match body.raw.as_deref().and_then(crate::spline::read) {
+                Some(spline) => self.import(Entity::Spline(spline), body)?,
+                None => self.report.count_unsupported(INVALID),
+            },
             (RecordContext::Tables, "STYLE") => self.table_text_style(body)?,
             (RecordContext::Tables, "DIMSTYLE") => self.table_dim_style(body)?,
             (_, "LWPOLYLINE") if entities => {
@@ -1207,6 +1211,7 @@ impl<'a> Reader<'a> {
                     Entity::Circle(_) => self.report.circles += 1,
                     Entity::Arc(_) => self.report.arcs += 1,
                     Entity::Ellipse(_) => self.report.ellipses += 1,
+                    Entity::Spline(_) => self.report.splines += 1,
                     Entity::Polyline(_) => self.report.polylines += 1,
                     Entity::Text(_) | Entity::MText(_) => self.report.texts += 1,
                     // Counted once its block is found.
@@ -2032,7 +2037,7 @@ mod tests {
     fn unsupported_entities_are_counted_by_kind_and_supported_ones_still_import() {
         let mut body = vec![(0, "RAY"), (10, "0"), (20, "0"), (40, "5")];
         body.extend_from_slice(&LINE_0_0_TO_10_5);
-        body.extend_from_slice(&[(0, "SPLINE"), (70, "8"), (0, "RAY"), (40, "1")]);
+        body.extend_from_slice(&[(0, "XLINE"), (70, "8"), (0, "RAY"), (40, "1")]);
         // A 3D polyline is unsupported; its vertices belong to it and are not counted separately.
         body.extend_from_slice(&[
             (0, "POLYLINE"),
@@ -2051,7 +2056,7 @@ mod tests {
             .iter()
             .map(|(kind, count)| (kind.as_str(), *count))
             .collect();
-        assert_eq!(counts, vec![("POLYLINE", 1), ("RAY", 2), ("SPLINE", 1)]);
+        assert_eq!(counts, vec![("POLYLINE", 1), ("RAY", 2), ("XLINE", 1)]);
         assert!(import.report.has_unsupported_content());
     }
 

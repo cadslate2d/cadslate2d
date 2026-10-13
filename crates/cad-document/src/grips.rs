@@ -115,6 +115,12 @@ impl Entity {
                 .iter()
                 .map(|vertex| grip(GripKind::Vertex, *vertex))
                 .collect(),
+            // A spline's grips are its defining points: fit or control.
+            Entity::Spline(spline) => spline
+                .defining_points()
+                .iter()
+                .map(|point| grip(GripKind::Vertex, *point))
+                .collect(),
             Entity::Text(text) => vec![grip(GripKind::Insertion, text.insertion)],
             Entity::MText(text) => vec![grip(GripKind::Insertion, text.insertion)],
             Entity::BlockRef(reference) => vec![grip(GripKind::Insertion, reference.insertion)],
@@ -256,6 +262,11 @@ impl Entity {
                     }
                 };
                 moved.ellipse().is_valid().then(|| moved.into())
+            }
+            Entity::Spline(spline) => {
+                let mut points = spline.defining_points().to_vec();
+                *points.get_mut(index)? = to;
+                spline.redefined(points).map(Entity::from)
             }
             Entity::Polyline(polyline) => {
                 let (before, after) = polyline_neighbours(polyline, index)?;

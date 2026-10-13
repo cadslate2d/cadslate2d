@@ -12,11 +12,12 @@ use cad_document::{Drawing, Entity, Properties};
 use crate::Selection;
 
 /// The kinds an entity can be, in the order they are listed.
-const KINDS: [(&str, &str); 10] = [
+const KINDS: [(&str, &str); 11] = [
     ("line", "lines"),
     ("circle", "circles"),
     ("arc", "arcs"),
     ("ellipse", "ellipses"),
+    ("spline", "splines"),
     ("polyline", "polylines"),
     ("text", "texts"),
     ("multiline text", "multiline texts"),
@@ -31,12 +32,13 @@ fn kind_index(entity: &Entity) -> usize {
         Entity::Circle(_) => 1,
         Entity::Arc(_) => 2,
         Entity::Ellipse(_) => 3,
-        Entity::Polyline(_) => 4,
-        Entity::Text(_) => 5,
-        Entity::MText(_) => 6,
-        Entity::BlockRef(_) => 7,
-        Entity::Dimension(_) => 8,
-        Entity::Hatch(_) => 9,
+        Entity::Spline(_) => 4,
+        Entity::Polyline(_) => 5,
+        Entity::Text(_) => 6,
+        Entity::MText(_) => 7,
+        Entity::BlockRef(_) => 8,
+        Entity::Dimension(_) => 9,
+        Entity::Hatch(_) => 10,
     }
 }
 
@@ -211,6 +213,24 @@ fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, String)> {
                 rows.push(row("End parameter", degrees(ellipse.end())));
             }
             rows
+        }
+        Entity::Spline(spline) => {
+            let length: f64 = spline
+                .spline()
+                .segments()
+                .iter()
+                .map(|segment| segment.length())
+                .sum();
+            vec![
+                row("Degree", spline.degree.to_string()),
+                row("Control points", spline.control.len().to_string()),
+                row("Fit points", spline.fit.len().to_string()),
+                row(
+                    "Closed",
+                    (if spline.is_closed() { "Yes" } else { "No" }).to_owned(),
+                ),
+                row("Length", number(length)),
+            ]
         }
         Entity::Polyline(polyline) => {
             let length: f64 = polyline

@@ -19,7 +19,7 @@ use cad_document::{
     DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity, EntityRecord,
     HatchEntity, HatchStyle, Justification, Layer, LineEntity, Linetype, LinetypeDef,
     LinetypeTable, Lineweight, MTextEntity, Measure, PolylineEntity, Properties, Revision,
-    TextEntity, TextStyle, TextStyleTable,
+    SplineEntity, TextEntity, TextStyle, TextStyleTable,
 };
 
 use crate::properties::{
@@ -752,6 +752,7 @@ impl Writer {
             Entity::Circle(_) => "CIRCLE",
             Entity::Arc(_) => "ARC",
             Entity::Ellipse(_) => "ELLIPSE",
+            Entity::Spline(_) => "SPLINE",
             Entity::Polyline(_) => "LWPOLYLINE",
             Entity::Text(_) => "TEXT",
             Entity::MText(_) => "MTEXT",
@@ -765,6 +766,7 @@ impl Writer {
             Entity::Circle(circle) => self.circle(circle),
             Entity::Arc(arc) => self.arc(arc),
             Entity::Ellipse(ellipse) => self.ellipse(ellipse),
+            Entity::Spline(spline) => self.spline(spline),
             Entity::Polyline(polyline) => self.polyline(polyline),
             Entity::Text(text) => self.text(text, drawing.text_styles()),
             Entity::MText(text) => self.mtext(text, drawing.text_styles()),
@@ -976,6 +978,32 @@ impl Writer {
         } else {
             self.real(41, geometry.start);
             self.real(42, geometry.start + geometry.sweep);
+        }
+    }
+
+    /// A SPLINE (#182): flags (70: planar, and closed when it ends where
+    /// it began), the degree (71), the counts (72, 73, 74), the knots (40),
+    /// the weights (41) when rational, the control points (10), and the
+    /// fit points (11) it was drawn through, when it was.
+    fn spline(&mut self, spline: &SplineEntity) {
+        self.group(100, "AcDbSpline");
+        let flags = 8 | if spline.is_closed() { 1 } else { 0 };
+        self.int(70, flags);
+        self.int(71, spline.degree as i64);
+        self.int(72, spline.knots.len() as i64);
+        self.int(73, spline.control.len() as i64);
+        self.int(74, spline.fit.len() as i64);
+        for knot in &spline.knots {
+            self.real(40, *knot);
+        }
+        for weight in &spline.weights {
+            self.real(41, *weight);
+        }
+        for point in &spline.control {
+            self.point(10, *point);
+        }
+        for point in &spline.fit {
+            self.point(11, *point);
         }
     }
 
@@ -2072,6 +2100,33 @@ mod tests {
         assert_eq!(value(&records[1], 42), Some("2.0"));
         let back = crate::import(text.as_bytes()).unwrap();
         assert_eq!(back.report.ellipses, 2);
+        assert_eq!(export(&back.drawing), text);
+    }
+
+    /// #182: a spline is written with its degree, counts, knots, weights,
+    /// control points, and fit points, and reads back the same.
+    #[test]
+    fn splines_are_written_whole_and_survive() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let through = cad_document::SplineEntity::through(&[
+            Point2::new(0.0, 0.0),
+            Point2::new(30.0, 60.0),
+            Point2::new(70.0, 60.0),
+            Point2::new(100.0, 0.0),
+        ])
+        .unwrap();
+        tx.insert(through).unwrap();
+        tx.commit();
+        let text = export(&drawing);
+        let records = records(&text, "SPLINE");
+        assert_eq!(records.len(), 1);
+        assert_eq!(value(&records[0], 71), Some("3"));
+        assert_eq!(value(&records[0], 72), Some("8"));
+        assert_eq!(value(&records[0], 73), Some("4"));
+        assert_eq!(value(&records[0], 74), Some("4"));
+        let back = crate::import(text.as_bytes()).unwrap();
+        assert_eq!(back.report.splines, 1);
         assert_eq!(export(&back.drawing), text);
     }
 

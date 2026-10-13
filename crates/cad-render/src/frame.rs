@@ -356,6 +356,13 @@ impl PackedFrame {
                     distance += chord.length();
                 }
             }
+            Entity::Spline(spline) => {
+                let mut distance = 0.0;
+                for chord in spline.spline().segments() {
+                    self.push_segment_along(style, chord.start, chord.end, distance);
+                    distance += chord.length();
+                }
+            }
             // Round caps on every segment meet at the vertices, so joints have
             // neither gaps nor spikes at any angle. Arc segments are drawn
             // as arcs, exactly like arc entities (ADR-0009). The path
@@ -600,6 +607,23 @@ mod tests {
         assert_eq!(frame.arc_count(), 0);
         let distances = frame.segment_distances();
         assert_eq!(distances[0], 0.0);
+        assert!(distances.windows(2).all(|pair| pair[1] > pair[0]));
+    }
+
+    /// #182: a spline is its chords, with the path distance running on.
+    #[test]
+    fn a_spline_becomes_chords_with_a_running_path_distance() {
+        let mut frame = PackedFrame::default();
+        let spline = cad_document::SplineEntity::through(&[
+            Point2::ORIGIN,
+            Point2::new(30.0, 60.0),
+            Point2::new(70.0, 60.0),
+            Point2::new(100.0, 0.0),
+        ])
+        .unwrap();
+        frame.push_entity(StyleRole::Entity, &Entity::from(spline), Tables::none());
+        assert!(frame.segment_count() >= 16);
+        let distances = frame.segment_distances();
         assert!(distances.windows(2).all(|pair| pair[1] > pair[0]));
     }
 

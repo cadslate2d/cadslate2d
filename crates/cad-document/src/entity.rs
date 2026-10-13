@@ -1,8 +1,10 @@
 //! Semantic entity types (DESIGN §11).
 
+use cad_core::tolerance::LinearTolerance;
 use cad_core::{Aabb, Point2, Vec2};
 use cad_geometry::{
-    Arc, Circle, Ellipse, Path, Primitive, Segment, Transform, is_straight, polyline_primitives,
+    Arc, Circle, Ellipse, Path, Primitive, Segment, Spline, Transform, is_straight,
+    polyline_primitives,
 };
 
 pub use crate::block::BlockReferenceEntity;
@@ -148,6 +150,98 @@ impl From<Ellipse> for EllipseEntity {
     }
 }
 
+/// A spline (#182): a B-spline by its degree, control points, knots, and
+/// weights — what DXF's `SPLINE` holds — and the fit points it was drawn
+/// through, when it was, which are then its grips. Its curve is read as
+/// chords (`cad_geometry::Spline`), subdivided until flat to a quarter of a
+/// thousandth of its extent.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SplineEntity {
+    pub degree: usize,
+    pub control: Vec<Point2>,
+    pub knots: Vec<f64>,
+    /// One per control point, or empty when the spline is not rational.
+    pub weights: Vec<f64>,
+    /// The points the curve passes through, when it was defined by them.
+    pub fit: Vec<Point2>,
+}
+
+impl SplineEntity {
+    /// A cubic through `points`, in order; `None` when they do not make one.
+    pub fn through(points: &[Point2]) -> Option<Self> {
+        let spline = Spline::through(points)?;
+        Some(Self {
+            degree: spline.degree,
+            control: spline.control,
+            knots: spline.knots,
+            weights: spline.weights,
+            fit: points.to_vec(),
+        })
+    }
+
+    /// A spline given by its control data alone.
+    pub fn from_spline(spline: Spline) -> Self {
+        Self {
+            degree: spline.degree,
+            control: spline.control,
+            knots: spline.knots,
+            weights: spline.weights,
+            fit: Vec::new(),
+        }
+    }
+
+    pub fn spline(&self) -> Spline {
+        Spline {
+            degree: self.degree,
+            control: self.control.clone(),
+            knots: self.knots.clone(),
+            weights: self.weights.clone(),
+        }
+    }
+
+    /// Whether the curve ends where it began.
+    pub fn is_closed(&self) -> bool {
+        let spline = self.spline();
+        LinearTolerance::DEFAULT
+            .around(&self.control)
+            .coincident(spline.start_point(), spline.end_point())
+    }
+
+    /// The points that define the curve: the fit points when it was drawn
+    /// through them, else the control points. Its grips.
+    pub fn defining_points(&self) -> &[Point2] {
+        if self.fit.is_empty() {
+            &self.control
+        } else {
+            &self.fit
+        }
+    }
+
+    /// The spline with its defining points replaced by `points`, one for
+    /// one: re-fitted through them, or with the control points moved.
+    pub fn redefined(&self, points: Vec<Point2>) -> Option<Self> {
+        if points.len() != self.defining_points().len() {
+            return None;
+        }
+        if self.fit.is_empty() {
+            let moved = Self {
+                control: points,
+                ..self.clone()
+            };
+            moved.is_valid().then_some(moved)
+        } else {
+            Self::through(&points)
+        }
+    }
+
+    /// Whether the data makes a spline, fit points included.
+    pub fn is_valid(&self) -> bool {
+        self.spline().is_valid()
+            && self.fit.len() <= cad_geometry::MAX_POINTS
+            && self.fit.iter().all(|point| point.is_finite())
+    }
+}
+
 /// A chain of segments through at least two vertices, optionally closed back
 /// to the first. A segment is straight unless the vertex it starts at has a
 /// *bulge*, which makes it a circular arc (see `cad_geometry::polyline` for
@@ -248,6 +342,8 @@ pub enum Entity {
     Arc(ArcEntity),
     /// An ellipse or an arc of one (#181), read as chords.
     Ellipse(EllipseEntity),
+    /// A spline (#182), read as chords.
+    Spline(SplineEntity),
     Polyline(PolylineEntity),
     /// A single line of text (ADR-0016). Not a curve: it has no
     /// primitives, and is picked and selected by its box.
@@ -276,6 +372,7 @@ impl Entity {
             Entity::Circle(circle) => circle.circle().bounds(),
             Entity::Arc(arc) => arc.arc().bounds(),
             Entity::Ellipse(ellipse) => ellipse.ellipse().bounds(),
+            Entity::Spline(spline) => spline.spline().bounds(),
             // Arc segments can reach beyond the vertices. Every polyline in a
             // drawing has segments; one without bounds nothing useful.
             Entity::Polyline(polyline) => polyline
@@ -300,6 +397,7 @@ impl Entity {
             Entity::Circle(circle) => circle.circle().distance_to_point(point),
             Entity::Arc(arc) => arc.arc().distance_to_point(point),
             Entity::Ellipse(ellipse) => ellipse.ellipse().distance_to_point(point),
+            Entity::Spline(spline) => spline.spline().distance_to_point(point),
             Entity::Polyline(polyline) => polyline
                 .primitives()
                 .map(|primitive| primitive.distance_to_point(point))
@@ -333,6 +431,13 @@ impl Entity {
             // its major axis from the curve.
             Entity::Ellipse(ellipse) => ellipse
                 .ellipse()
+                .segments()
+                .into_iter()
+                .map(Primitive::Segment)
+                .collect(),
+            // A spline likewise (#182), flat to a quarter of a thousandth of its extent.
+            Entity::Spline(spline) => spline
+                .spline()
                 .segments()
                 .into_iter()
                 .map(Primitive::Segment)
@@ -395,6 +500,11 @@ impl Entity {
                 .segments()
                 .iter()
                 .any(|segment| segment.intersects_aabb(bounds)),
+            Entity::Spline(spline) => spline
+                .spline()
+                .segments()
+                .iter()
+                .any(|segment| segment.intersects_aabb(bounds)),
             Entity::Polyline(polyline) => polyline
                 .primitives()
                 .any(|primitive| primitive.intersects_aabb(bounds)),
@@ -433,6 +543,20 @@ impl Entity {
             Entity::Ellipse(ellipse) => {
                 EllipseEntity::from(ellipse.ellipse().transformed(transform)).into()
             }
+            Entity::Spline(spline) => SplineEntity {
+                control: spline
+                    .control
+                    .iter()
+                    .map(|point| transform.apply(*point))
+                    .collect(),
+                fit: spline
+                    .fit
+                    .iter()
+                    .map(|point| transform.apply(*point))
+                    .collect(),
+                ..spline.clone()
+            }
+            .into(),
             Entity::Arc(arc) => {
                 // Arcs run counter-clockwise from start to end. A mirror
                 // reverses direction, so the two ends trade places.
@@ -499,6 +623,12 @@ impl From<CircleEntity> for Entity {
 impl From<PolylineEntity> for Entity {
     fn from(polyline: PolylineEntity) -> Self {
         Entity::Polyline(polyline)
+    }
+}
+
+impl From<SplineEntity> for Entity {
+    fn from(spline: SplineEntity) -> Self {
+        Entity::Spline(spline)
     }
 }
 
@@ -668,6 +798,7 @@ mod tests {
                     ellipse.end_point(),
                 ]
             }
+            Entity::Spline(spline) => spline.control.clone(),
             Entity::Polyline(polyline) => polyline.vertices.clone(),
             Entity::Text(text) => text.frame().corners().to_vec(),
             Entity::MText(text) => text.frame().corners().to_vec(),

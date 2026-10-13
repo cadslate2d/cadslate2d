@@ -155,6 +155,8 @@ impl Entity {
             Entity::Circle(circle) => held(&[circle.center]),
             // An ellipse goes whole, by its centre, like a circle.
             Entity::Ellipse(ellipse) => held(&[ellipse.center]),
+            // A spline by the points that define it.
+            Entity::Spline(spline) => held(spline.defining_points()),
             Entity::Arc(entity) => {
                 let arc = entity.arc();
                 held(&[arc.start_point(), arc.end_point()])
@@ -201,6 +203,12 @@ impl Entity {
             }
             // A circle or an ellipse is held whole or not at all.
             Entity::Circle(_) | Entity::Ellipse(_) => Some(self.clone()),
+            // A spline's defining points inside the window move; it re-fits.
+            Entity::Spline(spline) => {
+                let points: Vec<Point2> =
+                    spline.defining_points().iter().map(|p| moved(*p)).collect();
+                spline.redefined(points).map(Entity::from)
+            }
             Entity::Text(text) => Some(
                 TextEntity {
                     insertion: moved(text.insertion),
@@ -343,6 +351,7 @@ impl Entity {
             }
             Entity::Text(_)
             | Entity::MText(_)
+            | Entity::Spline(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
             | Entity::Hatch(_) => Err(BreakError::Unsupported(self.kind_name())),
@@ -403,6 +412,7 @@ impl Entity {
         match self {
             Entity::Text(_)
             | Entity::MText(_)
+            | Entity::Spline(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
             | Entity::Hatch(_) => Err(TrimError::Unsupported(self.kind_name())),
@@ -485,6 +495,7 @@ impl Entity {
                 Err(ExtendError::Unsupported("closed polyline"))
             }
             Entity::Ellipse(_)
+            | Entity::Spline(_)
             | Entity::Text(_)
             | Entity::MText(_)
             | Entity::BlockRef(_)
@@ -550,6 +561,7 @@ impl Entity {
             Entity::Circle(_)
             | Entity::Polyline(_)
             | Entity::Ellipse(_)
+            | Entity::Spline(_)
             | Entity::Text(_)
             | Entity::MText(_)
             | Entity::BlockRef(_)
@@ -612,6 +624,7 @@ impl Entity {
             Entity::Arc(arc) => Ok(Primitive::Arc(arc.arc())),
             Entity::Polyline(_)
             | Entity::Ellipse(_)
+            | Entity::Spline(_)
             | Entity::Text(_)
             | Entity::MText(_)
             | Entity::BlockRef(_)
@@ -716,6 +729,7 @@ impl Entity {
             Entity::Circle(_) => "circle",
             Entity::Arc(_) => "arc",
             Entity::Ellipse(_) => "ellipse",
+            Entity::Spline(_) => "spline",
             Entity::Polyline(_) => "polyline",
             Entity::Text(_) => "text",
             Entity::MText(_) => "multiline text",
@@ -770,6 +784,7 @@ impl Entity {
                     PathOffsetError::Vanishes => OffsetError::Collapses,
                 }),
             Entity::Ellipse(_)
+            | Entity::Spline(_)
             | Entity::Text(_)
             | Entity::MText(_)
             | Entity::BlockRef(_)
@@ -790,6 +805,7 @@ impl Entity {
             Entity::Arc(arc) => (arc.center.distance_to(point) - arc.radius).abs(),
             Entity::Polyline(_) => self.own_distance_to(point),
             Entity::Ellipse(_)
+            | Entity::Spline(_)
             | Entity::Text(_)
             | Entity::MText(_)
             | Entity::BlockRef(_)

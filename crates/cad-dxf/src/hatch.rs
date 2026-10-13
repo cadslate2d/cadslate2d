@@ -12,7 +12,7 @@ use cad_core::Point2;
 use cad_document::{HatchStyle, Path, hatch_pattern};
 
 /// What could not be held of a HATCH, by report key.
-pub(crate) const SPLINE_OR_ELLIPSE: &str = "(HATCH boundary with a spline or ellipse)";
+pub(crate) const SPLINE_OR_ELLIPSE: &str = "(HATCH boundary with an ellipse)";
 pub(crate) const UNKNOWN_PATTERN: &str = "(HATCH pattern not in the table)";
 pub(crate) const GRADIENT: &str = "(gradient HATCH)";
 
@@ -246,7 +246,48 @@ fn edge_path(g: &mut Groups<'_>) -> Result<Path, &'static str> {
                 let ccw = g.int(73).unwrap_or(1) != 0;
                 spans.extend(arc_spans(center, radius, start, end, ccw));
             }
-            Some(3 | 4) => return Err(SPLINE_OR_ELLIPSE),
+            // A spline edge (#182): its degree (94), rational (73), knots
+            // (95 of them, 40), control points (96 of them, 10/20, each
+            // with a weight 42 when rational), and fit points (97, 11/21):
+            // read as the chords of the spline.
+            Some(4) => {
+                let degree = g.int(94).unwrap_or(3).max(1) as usize;
+                let rational = g.int(73).unwrap_or(0) != 0;
+                g.int(74);
+                let knot_count = g.int(95).unwrap_or(0).max(0) as usize;
+                let control_count = g.int(96).unwrap_or(0).max(0) as usize;
+                let mut knots = Vec::with_capacity(knot_count);
+                for _ in 0..knot_count {
+                    knots.push(g.real(40).ok_or(crate::import::INVALID)?);
+                }
+                let mut control = Vec::with_capacity(control_count);
+                let mut weights = Vec::new();
+                for _ in 0..control_count {
+                    control.push(g.point(10).ok_or(crate::import::INVALID)?);
+                    if rational {
+                        weights.push(g.real(42).unwrap_or(1.0));
+                    }
+                }
+                let fit_count = g.int(97).unwrap_or(0).max(0) as usize;
+                let mut fit = Vec::with_capacity(fit_count);
+                for _ in 0..fit_count {
+                    fit.push(g.point(11).ok_or(crate::import::INVALID)?);
+                }
+                // Tangents, where a writer gives them.
+                g.point(12);
+                g.point(13);
+                let spline = crate::spline::assemble(degree, control, knots, weights, fit)
+                    .ok_or(crate::import::INVALID)?;
+                let points = spline.spline().chord_points();
+                for pair in points.windows(2) {
+                    spans.push(Span {
+                        start: pair[0],
+                        end: pair[1],
+                        bulge: 0.0,
+                    });
+                }
+            }
+            Some(3) => return Err(SPLINE_OR_ELLIPSE),
             _ => return Err(crate::import::INVALID),
         }
     }

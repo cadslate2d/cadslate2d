@@ -259,6 +259,7 @@ fn expectation(imported: &Import, line: &str) -> Result<(), String> {
                 "circles" => report.circles,
                 "arcs" => report.arcs,
                 "ellipses" => report.ellipses,
+                "splines" => report.splines,
                 "polylines" => report.polylines,
                 "texts" => report.texts,
                 "block_references" => report.block_references,

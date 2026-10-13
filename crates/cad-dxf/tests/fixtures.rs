@@ -269,6 +269,40 @@ fn ellipses_whole_and_as_arcs() {
     assert!(arc.end_point().distance_to(Point2::new(-7.5, 0.0)) < 1e-9);
 }
 
+/// #182: a SPLINE by fit points alone is interpolated through them; one
+/// by control points, knots, and weights is taken as it is; one of a
+/// single point is not a spline and is reported.
+#[test]
+fn splines_by_fit_points_and_by_control_points() {
+    let import = load("valid", "splines.dxf").unwrap();
+    let splines: Vec<cad_document::SplineEntity> = in_file_order(&import.drawing)
+        .into_iter()
+        .filter_map(|entity| match entity {
+            Entity::Spline(spline) => Some(spline),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(import.report.splines, 2);
+    assert_eq!(
+        import.report.unsupported.get("(invalid geometry)"),
+        Some(&1)
+    );
+    let arch = &splines[0];
+    assert_eq!(arch.fit.len(), 4);
+    assert_eq!(arch.degree, 3);
+    assert!(arch.spline().distance_to_point(Point2::new(30.0, 60.0)) < 0.1);
+    let circle = &splines[1];
+    assert_eq!(
+        (circle.degree, circle.control.len(), circle.weights.len()),
+        (2, 9, 9)
+    );
+    assert!(circle.fit.is_empty());
+    for i in 0..=20 {
+        let point = circle.spline().point_at(i as f64 / 20.0);
+        assert!((point.distance_to(Point2::new(50.0, 50.0)) - 10.0).abs() < 1e-9);
+    }
+}
+
 #[test]
 fn crlf_and_exponent_notation() {
     let import = load("valid", "crlf-exponent-notation.dxf").unwrap();
@@ -1230,14 +1264,14 @@ fn hatches_from_another_writer() {
             _ => None,
         })
         .collect();
-    assert_eq!(hatches.len(), 6, "all but the spline-bounded one");
+    assert_eq!(hatches.len(), 7, "the spline-bounded one too, since #182");
     let report = &import.report;
-    assert_eq!(report.hatches, 6);
-    for key in [
-        "(HATCH boundary with a spline or ellipse)",
-        "(gradient HATCH)",
-        "(HATCH pattern not in the table)",
-    ] {
+    assert_eq!(report.hatches, 7);
+    assert_eq!(
+        report.unsupported.get("(HATCH boundary with an ellipse)"),
+        None
+    );
+    for key in ["(gradient HATCH)", "(HATCH pattern not in the table)"] {
         assert_eq!(report.unsupported.get(key), Some(&1), "{key}");
     }
 
@@ -1280,13 +1314,20 @@ fn hatches_from_another_writer() {
         hatches[3].contains(Point2::new(650.0, 140.0)),
         "under the clockwise arc"
     );
-    // The gradient and the pattern the table lacks are filled solid.
+    // Bounded by a spline edge and a line (#182): the spline read as its chords.
     assert_eq!(hatches[4].style, HatchStyle::Solid);
+    assert_eq!(hatches[4].loops.len(), 1);
+    assert!(
+        hatches[4].contains(Point2::new(850.0, 20.0)),
+        "under the spline's arch"
+    );
+    // The gradient and the pattern the table lacks are filled solid.
     assert_eq!(hatches[5].style, HatchStyle::Solid);
+    assert_eq!(hatches[6].style, HatchStyle::Solid);
 
     let text = export(&import.drawing);
     let back = cad_dxf::import(text.as_bytes()).unwrap();
-    assert_eq!(back.report.hatches, 6);
+    assert_eq!(back.report.hatches, 7);
     assert!(
         !back.report.has_unsupported_content(),
         "our own hatches are whole"

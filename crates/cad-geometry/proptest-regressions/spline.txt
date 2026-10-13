@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc f8253c4dd8d3246b4369c30ee98445c89f54fdd41210c006ce10f9eb085a8b8b # shrinks to points = [Point2 { x: 0.0, y: 92.38203219476108 }, Point2 { x: 82.01669020606327, y: -82.04393252980199 }, Point2 { x: -87.99376169072464, y: -61.460088852086926 }, Point2 { x: 0.0, y: 0.0 }, Point2 { x: -54.53764747617432, y: 63.34643167360122 }, Point2 { x: 90.36756366251518, y: -64.80626395072099 }, Point2 { x: 12.925894959199281, y: 94.43819153456495 }]

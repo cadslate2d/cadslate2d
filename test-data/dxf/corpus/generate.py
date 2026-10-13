@@ -238,10 +238,10 @@ def unsupported(release: str) -> None:
     ]
     if modern(release):
         msp.add_spline([(0, 0), (10, 10), (20, 0)])
-        # Imported since #181; it stays here as the one ellipse ezdxf wrote.
+        # Imported since #181 and #182; they stay here as the one ellipse
+        # and the one spline ezdxf wrote.
         msp.add_ellipse((50, 50), major_axis=(20, 0), ratio=0.5)
-        expect[0:2] = ["imported lines 1", "imported ellipses 1", "entities 2"]
-        expect += ["unsupported SPLINE 1"]
+        expect[0:2] = ["imported lines 1", "imported ellipses 1", "imported splines 1", "entities 3"]
     save(doc, f"{release.lower()}-unsupported", expect)
 
 
@@ -333,18 +333,18 @@ def hatches(release: str) -> None:
         h = msp.add_hatch()
         h.set_gradient((255, 0, 0), (0, 0, 255))
         h.paths.add_polyline_path([(0, 200), (100, 200), (100, 300), (0, 300)], is_closed=True)
-    count = 5 if gradient else 4
+    count = 6 if gradient else 5
     save(doc, f"{release.lower()}-hatches", [
         f"imported hatches {count}",
-        'unsupported "(HATCH boundary with a spline or ellipse)" 1',
         'unsupported "(HATCH pattern not in the table)" 1',
         'unsupported "(gradient HATCH)" 1' if gradient else None,
         f"entities {count}",
         "hatch 0 SOLID 2",
         "hatch 1 ANSI31 1",
         "hatch 2 NET 1",
-        "hatch 3 SOLID 1  # AR-CONC",
-        "hatch 4 SOLID 1  # the gradient" if gradient else None,
+        "hatch 3 SOLID 1  # bounded by a spline and a line",
+        "hatch 4 SOLID 1  # AR-CONC",
+        "hatch 5 SOLID 1  # the gradient" if gradient else None,
     ])
 
 

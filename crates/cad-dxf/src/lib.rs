@@ -19,6 +19,7 @@ mod hatch;
 mod import;
 mod properties;
 mod report;
+mod spline;
 mod text_codes;
 
 pub use error::DxfError;

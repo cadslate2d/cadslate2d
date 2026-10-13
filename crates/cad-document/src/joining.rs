@@ -100,6 +100,7 @@ fn open_path(entity: &Entity) -> Option<Path> {
         Entity::Polyline(_)
         | Entity::Circle(_)
         | Entity::Ellipse(_)
+        | Entity::Spline(_)
         | Entity::Text(_)
         | Entity::MText(_)
         | Entity::BlockRef(_)
