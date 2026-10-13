@@ -238,8 +238,10 @@ def unsupported(release: str) -> None:
     ]
     if modern(release):
         msp.add_spline([(0, 0), (10, 10), (20, 0)])
+        # Imported since #181; it stays here as the one ellipse ezdxf wrote.
         msp.add_ellipse((50, 50), major_axis=(20, 0), ratio=0.5)
-        expect += ["unsupported SPLINE 1", "unsupported ELLIPSE 1"]
+        expect[0:2] = ["imported lines 1", "imported ellipses 1", "entities 2"]
+        expect += ["unsupported SPLINE 1"]
     save(doc, f"{release.lower()}-unsupported", expect)
 
 

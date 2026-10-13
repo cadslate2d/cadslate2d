@@ -16,10 +16,10 @@ use std::fmt::Write;
 use cad_core::{EntityId, LengthUnit, Point2};
 use cad_document::{
     ArcEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, DimStyle,
-    DimStyleId, DimensionEntity, Drawing, DrawingSettings, Entity, EntityRecord, HatchEntity,
-    HatchStyle, Justification, Layer, LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight,
-    MTextEntity, Measure, PolylineEntity, Properties, Revision, TextEntity, TextStyle,
-    TextStyleTable,
+    DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity, EntityRecord,
+    HatchEntity, HatchStyle, Justification, Layer, LineEntity, Linetype, LinetypeDef,
+    LinetypeTable, Lineweight, MTextEntity, Measure, PolylineEntity, Properties, Revision,
+    TextEntity, TextStyle, TextStyleTable,
 };
 
 use crate::properties::{
@@ -751,6 +751,7 @@ impl Writer {
             Entity::Line(_) => "LINE",
             Entity::Circle(_) => "CIRCLE",
             Entity::Arc(_) => "ARC",
+            Entity::Ellipse(_) => "ELLIPSE",
             Entity::Polyline(_) => "LWPOLYLINE",
             Entity::Text(_) => "TEXT",
             Entity::MText(_) => "MTEXT",
@@ -763,6 +764,7 @@ impl Writer {
             Entity::Line(line) => self.line(line),
             Entity::Circle(circle) => self.circle(circle),
             Entity::Arc(arc) => self.arc(arc),
+            Entity::Ellipse(ellipse) => self.ellipse(ellipse),
             Entity::Polyline(polyline) => self.polyline(polyline),
             Entity::Text(text) => self.text(text, drawing.text_styles()),
             Entity::MText(text) => self.mtext(text, drawing.text_styles()),
@@ -958,6 +960,23 @@ impl Writer {
         self.group(100, "AcDbCircle");
         self.point(10, circle.center);
         self.real(40, circle.radius);
+    }
+
+    /// An ELLIPSE (#181): the centre, the major axis's end relative to it,
+    /// the ratio, and the parameters — 0 and 2π for a whole one.
+    fn ellipse(&mut self, ellipse: &EllipseEntity) {
+        self.group(100, "AcDbEllipse");
+        self.point(10, ellipse.center);
+        self.point(11, Point2::ORIGIN + ellipse.major);
+        self.real(40, ellipse.ratio);
+        let geometry = ellipse.ellipse();
+        if geometry.is_full() {
+            self.real(41, 0.0);
+            self.real(42, std::f64::consts::TAU);
+        } else {
+            self.real(41, geometry.start);
+            self.real(42, geometry.start + geometry.sweep);
+        }
     }
 
     /// DXF arcs run counter-clockwise from the start angle to the end
@@ -2017,6 +2036,42 @@ mod tests {
         );
         assert!(!back.report.has_unsupported_content());
         assert_eq!(back.report.formatting_dropped, 0);
+        assert_eq!(export(&back.drawing), text);
+    }
+
+    /// #181: an ellipse and an arc of one are written as DXF holds them and
+    /// read back the same, byte for byte on the second pass.
+    #[test]
+    fn ellipses_are_written_with_their_axis_ratio_and_parameters_and_survive() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.insert(EllipseEntity::new(
+            Point2::new(10.0, 20.0),
+            cad_core::Vec2::new(30.0, 40.0),
+            0.6,
+        ))
+        .unwrap();
+        tx.insert(EllipseEntity::arc(
+            Point2::ORIGIN,
+            cad_core::Vec2::new(25.0, 0.0),
+            0.4,
+            0.5,
+            2.0,
+        ))
+        .unwrap();
+        tx.commit();
+        let text = export(&drawing);
+        let records = records(&text, "ELLIPSE");
+        assert_eq!(records.len(), 2);
+        assert_eq!(value(&records[0], 11), Some("30.0"));
+        assert_eq!(value(&records[0], 21), Some("40.0"));
+        assert_eq!(value(&records[0], 40), Some("0.6"));
+        assert_eq!(value(&records[0], 41), Some("0.0"));
+        assert_eq!(value(&records[0], 42), Some("6.283185307179586"));
+        assert_eq!(value(&records[1], 41), Some("0.5"));
+        assert_eq!(value(&records[1], 42), Some("2.0"));
+        let back = crate::import(text.as_bytes()).unwrap();
+        assert_eq!(back.report.ellipses, 2);
         assert_eq!(export(&back.drawing), text);
     }
 

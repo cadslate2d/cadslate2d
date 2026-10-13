@@ -11,6 +11,7 @@ mod corner;
 mod crossing;
 mod curve_fillet;
 mod dimension;
+pub mod ellipse;
 mod extend;
 pub mod intersect;
 mod join;
@@ -29,6 +30,7 @@ pub use arc::{Arc, Circle, normalize_angle};
 pub use corner::{Chamfer, Corner, CornerError, Fillet};
 pub use curve_fillet::{CurveFillet, fillet_curves};
 pub use dimension::{Arrowhead, foot_on_line, normalized, perpendicular, readable_angle};
+pub use ellipse::{CHORDS_PER_TURN, Ellipse};
 pub use extend::{extend_arc, extend_segment};
 pub use intersect::{Hits, Orientation, Primitive, orientation};
 pub use join::{
@@ -49,6 +51,6 @@ pub use polyline::{
 pub use segment::Segment;
 pub use transform::{Transform, unit_at_degrees};
 pub use trim::{
-    Trimmed, break_arc, break_circle, break_segment, trim_arc, trim_arc_parts, trim_circle,
-    trim_circle_parts, trim_segment, trim_segment_parts,
+    Trimmed, break_arc, break_circle, break_ellipse, break_segment, trim_arc, trim_arc_parts,
+    trim_circle, trim_circle_parts, trim_ellipse_parts, trim_segment, trim_segment_parts,
 };

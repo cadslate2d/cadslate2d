@@ -5,7 +5,7 @@
 use cad_core::Point2;
 use cad_core::tolerance::LinearTolerance;
 
-use crate::{Arc, Circle, Segment, normalize_angle};
+use crate::{Arc, Circle, Ellipse, Segment, normalize_angle};
 
 /// A curve with two ends, which is what trimming works on.
 pub(crate) trait OpenCurve: Sized {
@@ -159,6 +159,108 @@ fn break_open<C: OpenCurve>(
         (None, Some(_)) | (Some(_), None) if split_only => None,
         (head, tail) => Some(head.into_iter().chain(tail).collect()),
     }
+}
+
+impl OpenCurve for Ellipse {
+    fn start_point(&self) -> Point2 {
+        Ellipse::start_point(self)
+    }
+
+    fn end_point(&self) -> Point2 {
+        Ellipse::end_point(self)
+    }
+
+    fn parameter_of(&self, point: Point2) -> f64 {
+        let nearest = self.closest_point(point);
+        (normalize_angle(Ellipse::parameter_of(self, nearest) - self.start) / self.sweep)
+            .clamp(0.0, 1.0)
+    }
+
+    fn between(&self, from: Point2, to: Point2) -> Self {
+        // The curve's own ends keep their exact parameters.
+        let parameter = |point: Point2, own: f64, own_point: Point2| {
+            if point == own_point {
+                own
+            } else {
+                Ellipse::parameter_of(self, point)
+            }
+        };
+        let start = parameter(from, self.start, Ellipse::start_point(self));
+        let end = parameter(to, self.start + self.sweep, Ellipse::end_point(self));
+        Ellipse::from_parameters(self.center, self.major, self.ratio, start, end)
+    }
+
+    fn nearest(&self, point: Point2) -> Point2 {
+        self.closest_point(point)
+    }
+}
+
+/// An ellipse, or an arc of one, broken between two points: an arc as an
+/// open curve; a whole ellipse like a circle — the part counter-clockwise
+/// from the first point to the second goes, and the rest stays as one arc,
+/// or `None` when the two points are the same (#181).
+pub fn break_ellipse(
+    ellipse: &Ellipse,
+    first: Point2,
+    second: Point2,
+    tolerance: LinearTolerance,
+) -> Option<Vec<Ellipse>> {
+    if !ellipse.is_full() {
+        return break_open(ellipse, first, second, tolerance);
+    }
+    let (a, b) = (ellipse.closest_point(first), ellipse.closest_point(second));
+    (!tolerance.coincident(a, b)).then(|| {
+        vec![Ellipse::from_parameters(
+            ellipse.center,
+            ellipse.major,
+            ellipse.ratio,
+            ellipse.parameter_of(b),
+            ellipse.parameter_of(a),
+        )]
+    })
+}
+
+/// An ellipse, or an arc of one, trimmed at `pick`: an arc as an open
+/// curve; a whole ellipse like a circle, which needs two cuts (#181).
+pub fn trim_ellipse_parts(
+    ellipse: &Ellipse,
+    cuts: &[Point2],
+    pick: Point2,
+    tolerance: LinearTolerance,
+) -> Option<Trimmed<Ellipse>> {
+    if !ellipse.is_full() {
+        return trim_open(ellipse, cuts, pick, tolerance);
+    }
+    let mut distinct: Vec<Point2> = Vec::new();
+    for cut in cuts {
+        if !distinct
+            .iter()
+            .any(|seen| tolerance.coincident(*seen, *cut))
+        {
+            distinct.push(*cut);
+        }
+    }
+    if distinct.len() < 2 {
+        return None;
+    }
+    let mut parameters: Vec<f64> = distinct
+        .iter()
+        .map(|cut| ellipse.parameter_of(ellipse.closest_point(*cut)))
+        .collect();
+    parameters.sort_by(f64::total_cmp);
+    let at = ellipse.parameter_of(ellipse.closest_point(pick));
+    let next = parameters
+        .iter()
+        .position(|parameter| *parameter > at)
+        .unwrap_or(0);
+    let previous = (next + parameters.len() - 1) % parameters.len();
+    let arc = |from: f64, to: f64| {
+        Ellipse::from_parameters(ellipse.center, ellipse.major, ellipse.ratio, from, to)
+    };
+    Some(Trimmed {
+        kept: vec![arc(parameters[next], parameters[previous])],
+        removed: arc(parameters[previous], parameters[next]),
+    })
 }
 
 /// See [`break_open`]: a segment broken between two points.

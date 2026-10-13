@@ -182,6 +182,26 @@ pub fn entity_snap_points(entity: &Entity, mode: SnapMode, tables: Tables<'_>) -
             _ => Vec::new(),
         };
     }
+    // An ellipse offers its centre, its axis ends, and an arc's ends and
+    // middle: not the ends of its chords (#181).
+    if let Entity::Ellipse(entity) = entity {
+        let ellipse = entity.ellipse();
+        return match mode {
+            SnapMode::Center => vec![ellipse.center],
+            SnapMode::Quadrant => ellipse
+                .quadrant_parameters()
+                .into_iter()
+                .map(|t| ellipse.point_at(t))
+                .collect(),
+            SnapMode::Endpoint if !ellipse.is_full() => {
+                vec![ellipse.start_point(), ellipse.end_point()]
+            }
+            SnapMode::Midpoint if !ellipse.is_full() => {
+                vec![ellipse.point_at(ellipse.start + ellipse.sweep / 2.0)]
+            }
+            _ => Vec::new(),
+        };
+    }
     entity
         .primitives(tables)
         .iter()
@@ -300,11 +320,15 @@ pub fn find_snap_from(
             match mode {
                 SnapMode::Intersection => {}
                 SnapMode::Nearest if on_curve => {
-                    let nearest = entity
-                        .primitives(drawing.tables())
-                        .iter()
-                        .map(|primitive| primitive.closest_point(at))
-                        .min_by(|a, b| pixels_to(*a).total_cmp(&pixels_to(*b)));
+                    // An ellipse's nearest point is on its curve, not a chord.
+                    let nearest = match entity {
+                        Entity::Ellipse(ellipse) => Some(ellipse.ellipse().closest_point(at)),
+                        _ => entity
+                            .primitives(drawing.tables())
+                            .iter()
+                            .map(|primitive| primitive.closest_point(at))
+                            .min_by(|a, b| pixels_to(*a).total_cmp(&pixels_to(*b))),
+                    };
                     found.extend(nearest.map(|point| Ranked {
                         tier: Tier::Nearest,
                         ..Ranked::at(mode, point, pixels_to(point))

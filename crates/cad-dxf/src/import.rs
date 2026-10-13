@@ -14,13 +14,13 @@
 
 use std::collections::HashMap;
 
-use cad_core::{LengthUnit, Point2};
+use cad_core::{LengthUnit, Point2, Vec2};
 use cad_document::{
     ArcEntity, Block, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, DimStyle,
-    DimStyleId, DimensionEntity, Drawing, DrawingSettings, Entity, EntityRecord, HatchEntity,
-    HatchStyle, Justification, Layer, LayerId, LineEntity, Linetype, LinetypeDef, LinetypeId,
-    Lineweight, MTextEntity, Measure, PolylineEntity, Properties, TextEntity, TextStyle,
-    TextStyleId, check_name, nearest_index, same_name,
+    DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity, EntityRecord,
+    HatchEntity, HatchStyle, Justification, Layer, LayerId, LineEntity, Linetype, LinetypeDef,
+    LinetypeId, Lineweight, MTextEntity, Measure, PolylineEntity, Properties, TextEntity,
+    TextStyle, TextStyleId, check_name, nearest_index, same_name,
 };
 
 use crate::export::insunits_code;
@@ -710,6 +710,10 @@ impl<'a> Reader<'a> {
                 Some(arc) => self.import(Entity::Arc(arc), body)?,
                 None => self.report.count_unsupported(INVALID),
             },
+            (_, "ELLIPSE") if entities => match body.ellipse(record.line)? {
+                Some(ellipse) => self.import(Entity::Ellipse(ellipse), body)?,
+                None => self.report.count_unsupported(INVALID),
+            },
             (_, "TEXT") if entities => {
                 let (text, dropped) = body.text(record.line)?;
                 let mut pending = body.pending();
@@ -1202,6 +1206,7 @@ impl<'a> Reader<'a> {
                     Entity::Line(_) => self.report.lines += 1,
                     Entity::Circle(_) => self.report.circles += 1,
                     Entity::Arc(_) => self.report.arcs += 1,
+                    Entity::Ellipse(_) => self.report.ellipses += 1,
                     Entity::Polyline(_) => self.report.polylines += 1,
                     Entity::Text(_) | Entity::MText(_) => self.report.texts += 1,
                     // Counted once its block is found.
@@ -1742,6 +1747,21 @@ impl RecordBody {
         Ok((radius > 0.0).then(|| CircleEntity::new(center, radius)))
     }
 
+    /// An ELLIPSE (#181): centre (10, 20), the major axis's end relative
+    /// to it (11, 21), the minor axis as a ratio (40), and the start and
+    /// end parameters (41, 42), radians, 0 and 2π for a whole one. One
+    /// with no axis, or a ratio outside (0, 1], is not an ellipse.
+    fn ellipse(&self, at: usize) -> Result<Option<EllipseEntity>, DxfError> {
+        let need = |value, group| required(value, at, "ELLIPSE", group);
+        let center = Point2::new(need(self.x0, 10)?, need(self.y0, 20)?);
+        let major = Vec2::new(need(self.x1, 11)?, need(self.y1, 21)?);
+        let ratio = need(self.radius, 40)?;
+        let start = self.width.unwrap_or(0.0);
+        let end = self.scale_y.unwrap_or(std::f64::consts::TAU);
+        let ellipse = EllipseEntity::arc(center, major, ratio, start, end);
+        Ok(ellipse.ellipse().is_valid().then_some(ellipse))
+    }
+
     /// DXF arcs run counter-clockwise from group 50 to group 51, in degrees.
     fn arc(&self, at: usize) -> Result<Option<ArcEntity>, DxfError> {
         let need = |value, group| required(value, at, "ARC", group);
@@ -2010,9 +2030,9 @@ mod tests {
 
     #[test]
     fn unsupported_entities_are_counted_by_kind_and_supported_ones_still_import() {
-        let mut body = vec![(0, "ELLIPSE"), (10, "0"), (20, "0"), (40, "5")];
+        let mut body = vec![(0, "RAY"), (10, "0"), (20, "0"), (40, "5")];
         body.extend_from_slice(&LINE_0_0_TO_10_5);
-        body.extend_from_slice(&[(0, "SPLINE"), (70, "8"), (0, "ELLIPSE"), (40, "1")]);
+        body.extend_from_slice(&[(0, "SPLINE"), (70, "8"), (0, "RAY"), (40, "1")]);
         // A 3D polyline is unsupported; its vertices belong to it and are not counted separately.
         body.extend_from_slice(&[
             (0, "POLYLINE"),
@@ -2031,7 +2051,7 @@ mod tests {
             .iter()
             .map(|(kind, count)| (kind.as_str(), *count))
             .collect();
-        assert_eq!(counts, vec![("ELLIPSE", 2), ("POLYLINE", 1), ("SPLINE", 1)]);
+        assert_eq!(counts, vec![("POLYLINE", 1), ("RAY", 2), ("SPLINE", 1)]);
         assert!(import.report.has_unsupported_content());
     }
 

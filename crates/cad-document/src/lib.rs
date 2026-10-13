@@ -49,8 +49,8 @@ pub use editing::{
     BreakError, CornerError, Cornered, ExtendError, OffsetError, StretchHold, TrimError, TrimParts,
 };
 pub use entity::{
-    ArcEntity, CircleEntity, Entity, LineEntity, MTextEntity, PolylineEntity, SharedEntity,
-    TextEntity,
+    ArcEntity, CircleEntity, EllipseEntity, Entity, LineEntity, MTextEntity, PolylineEntity,
+    SharedEntity, TextEntity,
 };
 pub use exploding::ExplodeError;
 pub use grips::{EntityGrip, GripKind};

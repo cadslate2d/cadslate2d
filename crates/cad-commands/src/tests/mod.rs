@@ -14,6 +14,7 @@ mod dimension;
 mod dimlinear;
 mod dimstyle;
 mod edge;
+mod ellipse;
 mod far_from_origin;
 mod grips;
 mod hatch;

@@ -241,6 +241,34 @@ fn a_hatch_pattern_placed_too_far_to_draw_is_reported() {
     );
 }
 
+/// #181: an ELLIPSE's centre, major axis, ratio, and parameters; one with
+/// no axis and one with a ratio past 1 are not ellipses and are reported.
+#[test]
+fn ellipses_whole_and_as_arcs() {
+    let import = load("valid", "ellipses.dxf").unwrap();
+    let ellipses: Vec<cad_document::EllipseEntity> = in_file_order(&import.drawing)
+        .into_iter()
+        .filter_map(|entity| match entity {
+            Entity::Ellipse(ellipse) => Some(ellipse),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(import.report.ellipses, 2);
+    assert_eq!(
+        import.report.unsupported.get("(invalid geometry)"),
+        Some(&2)
+    );
+    let whole = ellipses[0];
+    assert_eq!(whole.center, Point2::new(50.0, 50.0));
+    assert_eq!(whole.major, cad_core::Vec2::new(20.0, 0.0));
+    assert_eq!(whole.ratio, 0.5);
+    assert!(whole.is_full());
+    let arc = ellipses[1].ellipse();
+    assert!(!arc.is_full());
+    assert!(arc.start_point().distance_to(Point2::new(0.0, 30.0)) < 1e-9);
+    assert!(arc.end_point().distance_to(Point2::new(-7.5, 0.0)) < 1e-9);
+}
+
 #[test]
 fn crlf_and_exponent_notation() {
     let import = load("valid", "crlf-exponent-notation.dxf").unwrap();

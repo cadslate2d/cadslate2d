@@ -13,6 +13,7 @@ pub struct ImportReport {
     pub circles: usize,
     /// ARC entities imported.
     pub arcs: usize,
+    pub ellipses: usize,
     /// POLYLINE and LWPOLYLINE entities imported.
     pub polylines: usize,
     /// TEXT and MTEXT entities imported.
@@ -85,6 +86,7 @@ impl ImportReport {
         self.lines
             + self.circles
             + self.arcs
+            + self.ellipses
             + self.polylines
             + self.texts
             + self.block_references
@@ -106,6 +108,7 @@ impl ImportReport {
             (self.lines, "line", "lines"),
             (self.circles, "circle", "circles"),
             (self.arcs, "arc", "arcs"),
+            (self.ellipses, "ellipse", "ellipses"),
             (self.polylines, "polyline", "polylines"),
             (self.texts, "text", "texts"),
             (self.block_references, "block reference", "block references"),

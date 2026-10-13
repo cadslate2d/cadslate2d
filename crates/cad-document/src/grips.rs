@@ -17,15 +17,15 @@
 //! one of those three re-fits the arc through the dragged point and the
 //! other two, which stay where they were. The centre grip moves the arc.
 
-use std::f64::consts::FRAC_PI_2;
+use std::f64::consts::{FRAC_PI_2, PI};
 
 use cad_core::Point2;
 use cad_core::tolerance::LinearTolerance;
 use cad_geometry::Arc;
 
 use crate::{
-    ArcEntity, BlockReferenceEntity, CircleEntity, Entity, LineEntity, MTextEntity, PolylineEntity,
-    TextEntity,
+    ArcEntity, BlockReferenceEntity, CircleEntity, EllipseEntity, Entity, LineEntity, MTextEntity,
+    PolylineEntity, TextEntity,
 };
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
@@ -89,6 +89,26 @@ impl Entity {
                     grip(GripKind::Endpoint, arc.end_point()),
                     grip(GripKind::Center, arc.center),
                 ]
+            }
+            // An ellipse: its centre and the four axis ends; an arc of one,
+            // its ends and its centre.
+            Entity::Ellipse(entity) => {
+                let ellipse = entity.ellipse();
+                if ellipse.is_full() {
+                    std::iter::once(grip(GripKind::Center, ellipse.center))
+                        .chain(
+                            [0.0, FRAC_PI_2, PI, 3.0 * FRAC_PI_2]
+                                .into_iter()
+                                .map(|t| grip(GripKind::Quadrant, ellipse.point_at(t))),
+                        )
+                        .collect()
+                } else {
+                    vec![
+                        grip(GripKind::Endpoint, ellipse.start_point()),
+                        grip(GripKind::Endpoint, ellipse.end_point()),
+                        grip(GripKind::Center, ellipse.center),
+                    ]
+                }
             }
             Entity::Polyline(polyline) => polyline
                 .vertices
@@ -174,6 +194,68 @@ impl Entity {
                     ),
                     _ => None,
                 }
+            }
+            // The centre moves the ellipse whole; a major-axis end sets the
+            // long axis and keeps the short one's length; a minor-axis end
+            // sets the short one; an arc's end sets its parameter.
+            Entity::Ellipse(entity) => {
+                let ellipse = entity.ellipse();
+                let (a, b) = (
+                    ellipse.major.length(),
+                    ellipse.major.length() * ellipse.ratio,
+                );
+                let moved = if ellipse.is_full() {
+                    match index {
+                        0 => EllipseEntity {
+                            center: to,
+                            ..*entity
+                        },
+                        1 | 3 => {
+                            let major = if index == 1 {
+                                to - ellipse.center
+                            } else {
+                                ellipse.center - to
+                            };
+                            let length = major.length();
+                            if TOLERANCE.is_zero(length) {
+                                return None;
+                            }
+                            EllipseEntity {
+                                major,
+                                ratio: (b / length).min(1.0),
+                                ..*entity
+                            }
+                        }
+                        2 | 4 => {
+                            let length = ellipse.center.distance_to(to);
+                            if TOLERANCE.is_zero(length) {
+                                return None;
+                            }
+                            EllipseEntity {
+                                ratio: (length / a).min(1.0),
+                                ..*entity
+                            }
+                        }
+                        _ => return None,
+                    }
+                } else {
+                    match index {
+                        0 => EllipseEntity {
+                            start_parameter: ellipse.parameter_of(to),
+                            ..*entity
+                        },
+                        1 => EllipseEntity {
+                            end_parameter: ellipse.parameter_of(to),
+                            ..*entity
+                        },
+                        2 => EllipseEntity {
+                            center: to,
+                            ..*entity
+                        },
+                        _ => return None,
+                    }
+                };
+                moved.ellipse().is_valid().then(|| moved.into())
             }
             Entity::Polyline(polyline) => {
                 let (before, after) = polyline_neighbours(polyline, index)?;

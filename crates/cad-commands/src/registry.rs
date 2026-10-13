@@ -12,12 +12,12 @@ use crate::Command;
 use crate::commands::{
     ArcCommand, BlockCommand, BreakCommand, ChpropCommand, CircleCommand, ColorCommand,
     CornerCommand, DimAngularCommand, DimLinearCommand, DimRadialCommand, DimStyleCommand,
-    EdgeCommand, EraseCommand, ExplodeCommand, ExportCommand, GridCommand, HatchCommand,
-    HatchEditCommand, InsertCommand, JoinCommand, LayerCommand, LineCommand, LinetypeCommand,
-    LtscaleCommand, LweightCommand, MTextCommand, MirrorCommand, OffsetCommand, OpenCommand,
-    OsnapCommand, PanCommand, PlineCommand, PolarAngleCommand, RectangCommand, RedoCommand,
-    SaveCommand, StretchCommand, TextCommand, TextEditCommand, TransformCommand, UndoCommand,
-    UnitsCommand, ZoomCommand,
+    EdgeCommand, EllipseCommand, EraseCommand, ExplodeCommand, ExportCommand, GridCommand,
+    HatchCommand, HatchEditCommand, InsertCommand, JoinCommand, LayerCommand, LineCommand,
+    LinetypeCommand, LtscaleCommand, LweightCommand, MTextCommand, MirrorCommand, OffsetCommand,
+    OpenCommand, OsnapCommand, PanCommand, PlineCommand, PolarAngleCommand, RectangCommand,
+    RedoCommand, SaveCommand, StretchCommand, TextCommand, TextEditCommand, TransformCommand,
+    UndoCommand, UnitsCommand, ZoomCommand,
 };
 
 type CommandFactory = fn() -> Box<dyn Command>;
@@ -53,7 +53,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 50] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 51] = [
             ("ERASE", &["E"], || Box::new(EraseCommand)),
             ("MOVE", &["M"], || Box::new(TransformCommand::moving())),
             ("COPY", &["CO", "CP"], || {
@@ -96,6 +96,7 @@ impl CommandRegistry {
             }),
             ("CIRCLE", &["C"], || Box::new(CircleCommand::new())),
             ("ARC", &["A"], || Box::new(ArcCommand::new())),
+            ("ELLIPSE", &["EL"], || Box::new(EllipseCommand::new())),
             ("LINE", &["L"], || Box::new(LineCommand::new())),
             ("TEXT", &["DT", "DTEXT"], || Box::new(TextCommand::new())),
             ("MTEXT", &["MT", "T"], || Box::new(MTextCommand::new())),

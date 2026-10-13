@@ -11,15 +11,15 @@ use cad_core::{Aabb, Point2, Vec2};
 
 use crate::tables::Tables;
 use cad_geometry::{
-    Corner, CornerJoin, Path, PathCornerError, PathOffsetError, PathTrimError, Primitive,
-    break_arc, break_circle, break_segment, distance_to_line, extend_arc, extend_segment,
-    fillet_curves, offset_arc, offset_circle, offset_segment, trim_arc_parts, trim_circle_parts,
-    trim_segment_parts,
+    Corner, CornerJoin, Ellipse, Path, PathCornerError, PathOffsetError, PathTrimError, Primitive,
+    break_arc, break_circle, break_ellipse, break_segment, distance_to_line, extend_arc,
+    extend_segment, fillet_curves, offset_arc, offset_circle, offset_segment, trim_arc_parts,
+    trim_circle_parts, trim_ellipse_parts, trim_segment_parts,
 };
 
 use crate::{
-    ArcEntity, BlockReferenceEntity, CircleEntity, Entity, LineEntity, MTextEntity, PolylineEntity,
-    TextEntity,
+    ArcEntity, BlockReferenceEntity, CircleEntity, EllipseEntity, Entity, LineEntity, MTextEntity,
+    PolylineEntity, TextEntity,
 };
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
@@ -153,6 +153,8 @@ impl Entity {
         match self {
             Entity::Line(line) => held(&[line.start, line.end]),
             Entity::Circle(circle) => held(&[circle.center]),
+            // An ellipse goes whole, by its centre, like a circle.
+            Entity::Ellipse(ellipse) => held(&[ellipse.center]),
             Entity::Arc(entity) => {
                 let arc = entity.arc();
                 held(&[arc.start_point(), arc.end_point()])
@@ -197,8 +199,8 @@ impl Entity {
                 let (start, end) = (moved(line.start), moved(line.end));
                 (!TOLERANCE.coincident(start, end)).then(|| LineEntity::new(start, end).into())
             }
-            // A circle is held whole or not at all.
-            Entity::Circle(_) => Some(self.clone()),
+            // A circle or an ellipse is held whole or not at all.
+            Entity::Circle(_) | Entity::Ellipse(_) => Some(self.clone()),
             Entity::Text(text) => Some(
                 TextEntity {
                     insertion: moved(text.insertion),
@@ -322,6 +324,23 @@ impl Entity {
             Entity::Circle(circle) => break_circle(&circle.circle(), first, second, TOLERANCE)
                 .map(|arc| vec![ArcEntity::from(arc).into()])
                 .ok_or(BreakError::NeedsTwoPoints("circle")),
+            Entity::Ellipse(entity) => {
+                let ellipse = entity.ellipse();
+                break_ellipse(&ellipse, first, second, TOLERANCE)
+                    .map(|pieces| {
+                        pieces
+                            .into_iter()
+                            .map(|piece| EllipseEntity::from(piece).into())
+                            .collect()
+                    })
+                    .ok_or_else(|| {
+                        if ellipse.is_full() {
+                            return BreakError::NeedsTwoPoints("ellipse");
+                        }
+                        let (a, b) = (ellipse.closest_point(first), ellipse.closest_point(second));
+                        open_failure(ellipse.start_point(), ellipse.end_point(), a, b)
+                    })
+            }
             Entity::Text(_)
             | Entity::MText(_)
             | Entity::BlockRef(_)
@@ -409,6 +428,18 @@ impl Entity {
                     None => Err(TrimError::NeedsTwoCrossings("circle")),
                 }
             }
+            Entity::Ellipse(entity) => {
+                let ellipse = entity.ellipse();
+                let piece = |piece: Ellipse| Entity::from(EllipseEntity::from(piece));
+                match trim_ellipse_parts(&ellipse, cuts, pick, TOLERANCE) {
+                    Some(parts) => Ok(TrimParts {
+                        kept: parts.kept.into_iter().map(piece).collect(),
+                        removed: piece(parts.removed),
+                    }),
+                    None if cuts.is_empty() || !ellipse.is_full() => Err(TrimError::NoIntersection),
+                    None => Err(TrimError::NeedsTwoCrossings("ellipse")),
+                }
+            }
             Entity::Polyline(entity) => {
                 let polyline = |path: Path| Entity::from(PolylineEntity::from(path));
                 match entity.path().trimmed(cuts, pick, TOLERANCE) {
@@ -453,7 +484,8 @@ impl Entity {
             Entity::Polyline(polyline) if polyline.closed => {
                 Err(ExtendError::Unsupported("closed polyline"))
             }
-            Entity::Text(_)
+            Entity::Ellipse(_)
+            | Entity::Text(_)
             | Entity::MText(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
@@ -517,6 +549,7 @@ impl Entity {
             }
             Entity::Circle(_)
             | Entity::Polyline(_)
+            | Entity::Ellipse(_)
             | Entity::Text(_)
             | Entity::MText(_)
             | Entity::BlockRef(_)
@@ -578,6 +611,7 @@ impl Entity {
             Entity::Circle(circle) => Ok(Primitive::Circle(circle.circle())),
             Entity::Arc(arc) => Ok(Primitive::Arc(arc.arc())),
             Entity::Polyline(_)
+            | Entity::Ellipse(_)
             | Entity::Text(_)
             | Entity::MText(_)
             | Entity::BlockRef(_)
@@ -681,6 +715,7 @@ impl Entity {
             Entity::Line(_) => "line",
             Entity::Circle(_) => "circle",
             Entity::Arc(_) => "arc",
+            Entity::Ellipse(_) => "ellipse",
             Entity::Polyline(_) => "polyline",
             Entity::Text(_) => "text",
             Entity::MText(_) => "multiline text",
@@ -734,7 +769,8 @@ impl Entity {
                     PathOffsetError::NoSide => OffsetError::NoSide,
                     PathOffsetError::Vanishes => OffsetError::Collapses,
                 }),
-            Entity::Text(_)
+            Entity::Ellipse(_)
+            | Entity::Text(_)
             | Entity::MText(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
@@ -753,7 +789,8 @@ impl Entity {
             Entity::Circle(circle) => (circle.center.distance_to(point) - circle.radius).abs(),
             Entity::Arc(arc) => (arc.center.distance_to(point) - arc.radius).abs(),
             Entity::Polyline(_) => self.own_distance_to(point),
-            Entity::Text(_)
+            Entity::Ellipse(_)
+            | Entity::Text(_)
             | Entity::MText(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)

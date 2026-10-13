@@ -12,10 +12,11 @@ use cad_document::{Drawing, Entity, Properties};
 use crate::Selection;
 
 /// The kinds an entity can be, in the order they are listed.
-const KINDS: [(&str, &str); 9] = [
+const KINDS: [(&str, &str); 10] = [
     ("line", "lines"),
     ("circle", "circles"),
     ("arc", "arcs"),
+    ("ellipse", "ellipses"),
     ("polyline", "polylines"),
     ("text", "texts"),
     ("multiline text", "multiline texts"),
@@ -29,12 +30,13 @@ fn kind_index(entity: &Entity) -> usize {
         Entity::Line(_) => 0,
         Entity::Circle(_) => 1,
         Entity::Arc(_) => 2,
-        Entity::Polyline(_) => 3,
-        Entity::Text(_) => 4,
-        Entity::MText(_) => 5,
-        Entity::BlockRef(_) => 6,
-        Entity::Dimension(_) => 7,
-        Entity::Hatch(_) => 8,
+        Entity::Ellipse(_) => 3,
+        Entity::Polyline(_) => 4,
+        Entity::Text(_) => 5,
+        Entity::MText(_) => 6,
+        Entity::BlockRef(_) => 7,
+        Entity::Dimension(_) => 8,
+        Entity::Hatch(_) => 9,
     }
 }
 
@@ -190,6 +192,25 @@ fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, String)> {
                 row("End angle", degrees(arc.end_angle)),
                 row("Arc length", number(geometry.radius * geometry.sweep)),
             ]
+        }
+        Entity::Ellipse(entity) => {
+            let ellipse = entity.ellipse();
+            let major = ellipse.major.length();
+            let mut rows = vec![
+                row("Centre", point(entity.center)),
+                row("Major axis", number(2.0 * major)),
+                row("Minor axis", number(2.0 * major * entity.ratio)),
+                row("Ratio", number(entity.ratio)),
+                row(
+                    "Rotation",
+                    degrees(ellipse.major.y.atan2(ellipse.major.x).rem_euclid(TAU)),
+                ),
+            ];
+            if !ellipse.is_full() {
+                rows.push(row("Start parameter", degrees(ellipse.start)));
+                rows.push(row("End parameter", degrees(ellipse.end())));
+            }
+            rows
         }
         Entity::Polyline(polyline) => {
             let length: f64 = polyline

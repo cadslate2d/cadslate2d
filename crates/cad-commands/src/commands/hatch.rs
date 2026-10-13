@@ -149,6 +149,16 @@ pub(crate) fn loops_of(entities: &[&Entity]) -> Vec<Path> {
                 bulges: vec![1.0, 1.0],
                 closed: true,
             }),
+            // A whole ellipse bounds a region as its chords (#181).
+            Entity::Ellipse(ellipse) if ellipse.is_full() => {
+                let mut vertices = ellipse.ellipse().chord_points();
+                vertices.pop();
+                loops.push(Path {
+                    bulges: vec![0.0; vertices.len()],
+                    vertices,
+                    closed: true,
+                });
+            }
             Entity::Line(_) | Entity::Arc(_) | Entity::Polyline(_) => open.push(entity),
             _ => {}
         }

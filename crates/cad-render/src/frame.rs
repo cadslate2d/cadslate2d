@@ -347,6 +347,15 @@ impl PackedFrame {
                 );
             }
             Entity::Arc(arc) => self.push_arc(style, &arc.arc()),
+            // An ellipse is its chords (#181), the path distance running on
+            // through them so a linetype does not start again at each.
+            Entity::Ellipse(ellipse) => {
+                let mut distance = 0.0;
+                for chord in ellipse.ellipse().segments() {
+                    self.push_segment_along(style, chord.start, chord.end, distance);
+                    distance += chord.length();
+                }
+            }
             // Round caps on every segment meet at the vertices, so joints have
             // neither gaps nor spikes at any angle. Arc segments are drawn
             // as arcs, exactly like arc entities (ADR-0009). The path
@@ -579,6 +588,21 @@ mod tests {
     }
 
     /// #114: arc segments of a polyline are drawn as arcs, like arc entities.
+    /// #181: an ellipse is its chords, with the path distance running on
+    /// through them.
+    #[test]
+    fn an_ellipse_becomes_chords_with_a_running_path_distance() {
+        let mut frame = PackedFrame::default();
+        let ellipse =
+            cad_document::EllipseEntity::new(Point2::ORIGIN, cad_core::Vec2::new(100.0, 0.0), 0.5);
+        frame.push_entity(StyleRole::Entity, &Entity::from(ellipse), Tables::none());
+        assert_eq!(frame.segment_count(), cad_geometry::CHORDS_PER_TURN as u32);
+        assert_eq!(frame.arc_count(), 0);
+        let distances = frame.segment_distances();
+        assert_eq!(distances[0], 0.0);
+        assert!(distances.windows(2).all(|pair| pair[1] > pair[0]));
+    }
+
     #[test]
     fn a_bulged_polyline_becomes_segments_and_arcs() {
         use cad_document::PolylineEntity;

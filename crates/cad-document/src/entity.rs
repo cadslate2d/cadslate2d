@@ -2,7 +2,7 @@
 
 use cad_core::{Aabb, Point2, Vec2};
 use cad_geometry::{
-    Arc, Circle, Path, Primitive, Segment, Transform, is_straight, polyline_primitives,
+    Arc, Circle, Ellipse, Path, Primitive, Segment, Transform, is_straight, polyline_primitives,
 };
 
 pub use crate::block::BlockReferenceEntity;
@@ -75,6 +75,76 @@ impl ArcEntity {
 impl From<Arc> for ArcEntity {
     fn from(arc: Arc) -> Self {
         Self::new(arc.center, arc.radius, arc.start, arc.end())
+    }
+}
+
+/// An ellipse, or an arc of one (#181): its centre, its major half-axis,
+/// the minor axis as a ratio of it, and the parameters it runs between —
+/// what DXF's `ELLIPSE` holds. Its curve is read as chords
+/// (`cad_geometry::Ellipse`), so it snaps, picks, and intersects like a
+/// polyline would, to a third of a thousandth of its major axis.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EllipseEntity {
+    pub center: Point2,
+    /// From the centre to one end of the long axis.
+    pub major: Vec2,
+    /// The minor half-axis over the major, in `(0, 1]`.
+    pub ratio: f64,
+    /// Start parameter, radians.
+    pub start_parameter: f64,
+    /// End parameter, radians; equal to the start for a whole ellipse.
+    pub end_parameter: f64,
+}
+
+impl EllipseEntity {
+    pub const fn new(center: Point2, major: Vec2, ratio: f64) -> Self {
+        Self {
+            center,
+            major,
+            ratio,
+            start_parameter: 0.0,
+            end_parameter: 0.0,
+        }
+    }
+
+    pub const fn arc(center: Point2, major: Vec2, ratio: f64, start: f64, end: f64) -> Self {
+        Self {
+            center,
+            major,
+            ratio,
+            start_parameter: start,
+            end_parameter: end,
+        }
+    }
+
+    pub fn ellipse(&self) -> Ellipse {
+        Ellipse::from_parameters(
+            self.center,
+            self.major,
+            self.ratio,
+            self.start_parameter,
+            self.end_parameter,
+        )
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.ellipse().is_full()
+    }
+}
+
+impl From<Ellipse> for EllipseEntity {
+    fn from(ellipse: Ellipse) -> Self {
+        if ellipse.is_full() {
+            Self::new(ellipse.center, ellipse.major, ellipse.ratio)
+        } else {
+            Self::arc(
+                ellipse.center,
+                ellipse.major,
+                ellipse.ratio,
+                ellipse.start,
+                ellipse.end(),
+            )
+        }
     }
 }
 
@@ -176,6 +246,8 @@ pub enum Entity {
     Line(LineEntity),
     Circle(CircleEntity),
     Arc(ArcEntity),
+    /// An ellipse or an arc of one (#181), read as chords.
+    Ellipse(EllipseEntity),
     Polyline(PolylineEntity),
     /// A single line of text (ADR-0016). Not a curve: it has no
     /// primitives, and is picked and selected by its box.
@@ -203,6 +275,7 @@ impl Entity {
             Entity::Line(line) => line.segment().bounds(),
             Entity::Circle(circle) => circle.circle().bounds(),
             Entity::Arc(arc) => arc.arc().bounds(),
+            Entity::Ellipse(ellipse) => ellipse.ellipse().bounds(),
             // Arc segments can reach beyond the vertices. Every polyline in a
             // drawing has segments; one without bounds nothing useful.
             Entity::Polyline(polyline) => polyline
@@ -226,6 +299,7 @@ impl Entity {
             Entity::Line(line) => line.segment().distance_to_point(point),
             Entity::Circle(circle) => circle.circle().distance_to_point(point),
             Entity::Arc(arc) => arc.arc().distance_to_point(point),
+            Entity::Ellipse(ellipse) => ellipse.ellipse().distance_to_point(point),
             Entity::Polyline(polyline) => polyline
                 .primitives()
                 .map(|primitive| primitive.distance_to_point(point))
@@ -255,6 +329,14 @@ impl Entity {
             Entity::Line(line) => vec![Primitive::Segment(line.segment())],
             Entity::Circle(circle) => vec![Primitive::Circle(circle.circle())],
             Entity::Arc(arc) => vec![Primitive::Arc(arc.arc())],
+            // An ellipse is its chords (#181): a third of a thousandth of
+            // its major axis from the curve.
+            Entity::Ellipse(ellipse) => ellipse
+                .ellipse()
+                .segments()
+                .into_iter()
+                .map(Primitive::Segment)
+                .collect(),
             Entity::Polyline(polyline) => polyline.primitives().collect(),
             // Nothing intersects, trims against, or snaps to the strokes
             // of a text, nor to the lines of a dimension: an annotation is
@@ -308,6 +390,11 @@ impl Entity {
             Entity::Line(line) => line.segment().intersects_aabb(bounds),
             Entity::Circle(circle) => circle.circle().intersects_aabb(bounds),
             Entity::Arc(arc) => arc.arc().intersects_aabb(bounds),
+            Entity::Ellipse(ellipse) => ellipse
+                .ellipse()
+                .segments()
+                .iter()
+                .any(|segment| segment.intersects_aabb(bounds)),
             Entity::Polyline(polyline) => polyline
                 .primitives()
                 .any(|primitive| primitive.intersects_aabb(bounds)),
@@ -343,6 +430,9 @@ impl Entity {
                 circle.radius * transform.scale_factor(),
             )
             .into(),
+            Entity::Ellipse(ellipse) => {
+                EllipseEntity::from(ellipse.ellipse().transformed(transform)).into()
+            }
             Entity::Arc(arc) => {
                 // Arcs run counter-clockwise from start to end. A mirror
                 // reverses direction, so the two ends trade places.
@@ -409,6 +499,12 @@ impl From<CircleEntity> for Entity {
 impl From<PolylineEntity> for Entity {
     fn from(polyline: PolylineEntity) -> Self {
         Entity::Polyline(polyline)
+    }
+}
+
+impl From<EllipseEntity> for Entity {
+    fn from(ellipse: EllipseEntity) -> Self {
+        Entity::Ellipse(ellipse)
     }
 }
 
@@ -563,6 +659,14 @@ mod tests {
             Entity::Arc(arc) => {
                 let arc = arc.arc();
                 vec![arc.start_point(), arc.mid_point(), arc.end_point()]
+            }
+            Entity::Ellipse(ellipse) => {
+                let ellipse = ellipse.ellipse();
+                vec![
+                    ellipse.start_point(),
+                    ellipse.point_at(ellipse.start + ellipse.sweep / 2.0),
+                    ellipse.end_point(),
+                ]
             }
             Entity::Polyline(polyline) => polyline.vertices.clone(),
             Entity::Text(text) => text.frame().corners().to_vec(),
