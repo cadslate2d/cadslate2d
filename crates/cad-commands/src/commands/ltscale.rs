@@ -45,7 +45,7 @@ impl Command for LtscaleCommand {
             // Enter keeps the scale there is.
             return Step::Finished;
         };
-        let mut transaction = ctx.drawing.transaction();
+        let mut transaction = ctx.transaction();
         if transaction.set_ltscale(scale).is_err() {
             drop(transaction);
             ctx.message("The linetype scale must be a positive number.");

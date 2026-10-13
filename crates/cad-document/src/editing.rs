@@ -19,7 +19,7 @@ use cad_geometry::{
 
 use crate::{
     ArcEntity, AttributeDefinitionEntity, BlockReferenceEntity, CircleEntity, EllipseEntity,
-    Entity, LineEntity, MTextEntity, PolylineEntity, TextEntity,
+    Entity, LineEntity, MTextEntity, PolylineEntity, TextEntity, ViewportEntity,
 };
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
@@ -171,6 +171,8 @@ impl Entity {
             Entity::Dimension(dimension) => held(&dimension.points()),
             // A hatch by its loops' vertices.
             Entity::Hatch(hatch) => held(&hatch.vertices()),
+            // A viewport by its centre: it moves whole, or not at all.
+            Entity::Viewport(viewport) => held(&[viewport.center]),
         }
     }
 
@@ -250,6 +252,13 @@ impl Entity {
                         dimension.with_point(index, moved(*point))
                     })?
                     .into(),
+            ),
+            Entity::Viewport(viewport) => Some(
+                ViewportEntity {
+                    center: moved(viewport.center),
+                    ..*viewport
+                }
+                .into(),
             ),
             Entity::Hatch(hatch) => {
                 let stretched = hatch
@@ -366,7 +375,8 @@ impl Entity {
             | Entity::Spline(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
-            | Entity::Hatch(_) => Err(BreakError::Unsupported(self.kind_name())),
+            | Entity::Hatch(_)
+            | Entity::Viewport(_) => Err(BreakError::Unsupported(self.kind_name())),
             Entity::Polyline(polyline) => {
                 let path = polyline.path();
                 path.broken(first, second, TOLERANCE)
@@ -428,7 +438,8 @@ impl Entity {
             | Entity::Spline(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
-            | Entity::Hatch(_) => Err(TrimError::Unsupported(self.kind_name())),
+            | Entity::Hatch(_)
+            | Entity::Viewport(_) => Err(TrimError::Unsupported(self.kind_name())),
             Entity::Line(entity) => trim_segment_parts(&entity.segment(), cuts, pick, TOLERANCE)
                 .map(|parts| TrimParts {
                     kept: parts.kept.into_iter().map(line).collect(),
@@ -514,7 +525,8 @@ impl Entity {
             | Entity::AttributeDefinition(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
-            | Entity::Hatch(_) => Err(ExtendError::Unsupported(self.kind_name())),
+            | Entity::Hatch(_)
+            | Entity::Viewport(_) => Err(ExtendError::Unsupported(self.kind_name())),
             Entity::Polyline(polyline) => {
                 let from_end = polyline_end_is_nearer(polyline, pick);
                 polyline
@@ -581,7 +593,8 @@ impl Entity {
             | Entity::AttributeDefinition(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
-            | Entity::Hatch(_) => None,
+            | Entity::Hatch(_)
+            | Entity::Viewport(_) => None,
         }
     }
 
@@ -645,7 +658,8 @@ impl Entity {
             | Entity::AttributeDefinition(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
-            | Entity::Hatch(_) => Err(CornerError::Unsupported(entity.kind_name())),
+            | Entity::Hatch(_)
+            | Entity::Viewport(_) => Err(CornerError::Unsupported(entity.kind_name())),
         };
         let rebuilt = |original: &Entity, primitive: Primitive| -> Entity {
             match primitive {
@@ -753,6 +767,7 @@ impl Entity {
             Entity::BlockRef(_) => "block reference",
             Entity::Dimension(_) => "dimension",
             Entity::Hatch(_) => "hatch",
+            Entity::Viewport(_) => "viewport",
         }
     }
 
@@ -807,7 +822,8 @@ impl Entity {
             | Entity::AttributeDefinition(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
-            | Entity::Hatch(_) => Err(OffsetError::Unsupported(self.kind_name())),
+            | Entity::Hatch(_)
+            | Entity::Viewport(_) => Err(OffsetError::Unsupported(self.kind_name())),
         }
     }
 
@@ -829,7 +845,8 @@ impl Entity {
             | Entity::AttributeDefinition(_)
             | Entity::BlockRef(_)
             | Entity::Dimension(_)
-            | Entity::Hatch(_) => {
+            | Entity::Hatch(_)
+            | Entity::Viewport(_) => {
                 return Err(OffsetError::Unsupported(self.kind_name()));
             }
         };

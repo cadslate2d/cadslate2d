@@ -21,7 +21,7 @@ use cad_document::{
     EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Justification, Layer, LayerId,
     Layout, LayoutId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity,
     Measure, PolylineEntity, Properties, RawEntity, RawGroup, TextEntity, TextStyle, TextStyleId,
-    check_name, nearest_index, same_name,
+    ViewportEntity, check_name, nearest_index, same_name,
 };
 
 use crate::export::insunits_code;
@@ -863,8 +863,19 @@ impl<'a> Reader<'a> {
                     self.finish_polyline(polyline)?;
                 }
             }
-            // A record of a layout's paper the drawing has no entity for —
-            // a VIEWPORT — is kept as it is, to be written back (#191).
+            // A VIEWPORT (#192) is an entity of a layout; one in model
+            // space — a tiled viewport of an old file — the drawing has
+            // no place for.
+            (_, "VIEWPORT") if entities => {
+                let on_paper = matches!(self.open_block, Some(OpenBlock::Paper(_))) || body.paper;
+                match body.viewport(record.line)? {
+                    Some(viewport) if on_paper => self.import(Entity::Viewport(viewport), body)?,
+                    Some(_) => self.report.count_unsupported("VIEWPORT"),
+                    None => self.report.count_unsupported(INVALID),
+                }
+            }
+            // A record of a layout's paper the drawing has no entity for
+            // is kept as it is, to be written back (#191).
             (_, kind) if entities && !SUBORDINATE_RECORDS.contains(&kind) => {
                 match (&mut self.open_block, &body.raw) {
                     (Some(OpenBlock::Paper(paper)), Some(raw)) => paper.kept.push(RawEntity {
@@ -1336,6 +1347,7 @@ impl<'a> Reader<'a> {
                     Entity::BlockRef(_) => {}
                     Entity::Dimension(_) => self.report.dimensions += 1,
                     Entity::Hatch(_) => self.report.hatches += 1,
+                    Entity::Viewport(_) => self.report.viewports += 1,
                 }
                 match &mut self.open_block {
                     Some(OpenBlock::Paper(paper)) => paper.entities.push((entity, properties)),
@@ -1773,9 +1785,38 @@ struct RecordBody {
     has_dropped_properties: bool,
     /// Group 67: the record is in paper space (#191).
     paper: bool,
+    /// A VIEWPORT's view (#192): the model point at its centre (12, 22),
+    /// the height of its view (45), and whether it is on (68).
+    view_center_x: Option<f64>,
+    view_center_y: Option<f64>,
+    view_height: Option<f64>,
+    status: Option<i64>,
 }
 
 impl RecordBody {
+    /// A VIEWPORT (#192): its frame — centre (10, 20), width (40), height
+    /// (41) — the model point at its centre (12, 22), the height of its
+    /// view (45), and whether it is on (68, positive). `None` for a frame
+    /// or a view with no height.
+    fn viewport(&self, at: usize) -> Result<Option<ViewportEntity>, DxfError> {
+        let need = |value, group| required(value, at, "VIEWPORT", group);
+        let center = Point2::new(need(self.x0, 10)?, need(self.y0, 20)?);
+        let width = need(self.radius, 40)?;
+        let height = need(self.width, 41)?;
+        let view_center = Point2::new(
+            self.view_center_x.unwrap_or(0.0),
+            self.view_center_y.unwrap_or(0.0),
+        );
+        let view_height = self.view_height.unwrap_or(height);
+        let mut viewport =
+            ViewportEntity::new(center, width, height, view_center, height / view_height);
+        viewport.on = self.status.is_none_or(|status| status > 0);
+        Ok(
+            (width > 0.0 && height > 0.0 && view_height > 0.0 && viewport.check().is_ok())
+                .then_some(viewport),
+        )
+    }
+
     fn absorb(&mut self, group: Group<'_>) -> Result<(), DxfError> {
         match group.code {
             10 => {
@@ -1844,6 +1885,10 @@ impl RecordBody {
                 _ => self.has_dropped_properties = true,
             },
             67 => self.paper = group.value.trim() == "1",
+            12 => self.view_center_x = Some(real(group)?),
+            22 => self.view_center_y = Some(real(group)?),
+            45 => self.view_height = Some(real(group)?),
+            68 => self.status = group.value.trim().parse().ok(),
             420 => self.true_color = group.value.parse::<i64>().ok(),
             49 => self.elements.push(real(group)?),
             74 => self.has_shapes |= group.value.parse::<i64>().unwrap_or(0) != 0,

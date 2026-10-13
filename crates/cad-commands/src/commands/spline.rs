@@ -84,7 +84,7 @@ impl Command for SplineCommand {
                     ctx.message("These points do not make a spline.");
                     return Step::Continue;
                 };
-                let mut transaction = ctx.drawing.transaction();
+                let mut transaction = ctx.transaction();
                 transaction
                     .insert(spline)
                     .expect("a spline has no text style to miss");

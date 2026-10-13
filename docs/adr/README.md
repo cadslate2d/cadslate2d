@@ -40,6 +40,7 @@ There are two kinds:
 | [0027](0027-pdf-plot.md) | A PDF plot of model space is the renderer's entity walk written as a page by `cad-plot`; text as strokes, no fonts | Accepted | Design |
 | [0028](0028-chunk-origins.md) | Each scene chunk is packed against an origin within reach of its geometry; regions of chunks drawn under their own transforms | Accepted | Design |
 | [0029](0029-spaces.md) | Every entity is in a space; the model is the first row of the layout table; a file's paper entities are entities of their layout | Accepted | Design |
+| [0030](0030-viewports.md) | A viewport is an entity of a layout's paper; its contents are the model's committed scene drawn again under its own transform | Accepted | Design |
 
 ## Expected evidence ADRs
 

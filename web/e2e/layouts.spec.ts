@@ -12,7 +12,7 @@ test("a file's layouts are kept, named, and written back", async ({ page }) => {
     mimeType: "application/dxf",
     buffer: Buffer.from(text),
   });
-  await expect(logLines(page).filter({ hasText: "Imported 3 lines." })).toHaveCount(1);
+  await expect(logLines(page).filter({ hasText: "Imported 3 lines, 1 viewport." })).toHaveCount(1);
   await expect(
     logLines(page).filter({ hasText: "2 layouts, not drawn yet: Layout1, Layout2." }),
   ).toHaveCount(1);

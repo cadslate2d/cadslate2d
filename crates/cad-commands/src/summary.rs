@@ -12,7 +12,7 @@ use cad_document::{Drawing, Entity, Properties};
 use crate::Selection;
 
 /// The kinds an entity can be, in the order they are listed.
-const KINDS: [(&str, &str); 12] = [
+const KINDS: [(&str, &str); 13] = [
     ("line", "lines"),
     ("circle", "circles"),
     ("arc", "arcs"),
@@ -25,6 +25,7 @@ const KINDS: [(&str, &str); 12] = [
     ("block reference", "block references"),
     ("dimension", "dimensions"),
     ("hatch", "hatches"),
+    ("viewport", "viewports"),
 ];
 
 /// The kind named by `name` — singular or plural, any case — if any.
@@ -54,6 +55,7 @@ pub(crate) fn kind_index(entity: &Entity) -> usize {
         Entity::BlockRef(_) => 9,
         Entity::Dimension(_) => 10,
         Entity::Hatch(_) => 11,
+        Entity::Viewport(_) => 12,
     }
 }
 
@@ -173,7 +175,7 @@ impl Common {
 }
 
 /// Four decimals, like the status bar's readout.
-fn number(value: f64) -> String {
+pub(crate) fn number(value: f64) -> String {
     format!("{value:.4}")
 }
 
@@ -284,6 +286,14 @@ fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, String)> {
             row("Width", number(text.width)),
             row("Rotation", degrees(text.rotation)),
             row("Lines", text.lines().len().to_string()),
+        ],
+        Entity::Viewport(viewport) => vec![
+            row("Centre", point(viewport.center)),
+            row("Width", number(viewport.width)),
+            row("Height", number(viewport.height)),
+            row("View centre", point(viewport.view_center)),
+            row("Scale", format!("1:{}", number(1.0 / viewport.scale))),
+            row("On", if viewport.on { "yes" } else { "no" }.to_owned()),
         ],
         Entity::Hatch(hatch) => {
             let mut rows = vec![row("Pattern", hatch.style.name().to_owned())];

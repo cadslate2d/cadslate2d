@@ -31,7 +31,7 @@ impl Held {
     /// Everything shown that `window` crosses and that has a defining point
     /// inside it — except what is on a locked layer, which is counted.
     fn by(window: Aabb, ctx: &CommandContext<'_>) -> Self {
-        let mut ids = ctx.drawing.query_shown(&window);
+        let mut ids = ctx.drawing.query_shown_in(ctx.space, &window);
         ids.sort_unstable();
         let mut held = Self {
             window: Some(window),
@@ -113,7 +113,7 @@ impl StretchCommand {
             }
         }
         if !changes.is_empty() {
-            let mut transaction = ctx.drawing.transaction();
+            let mut transaction = ctx.transaction();
             for (id, entity) in changes {
                 transaction
                     .replace(id, entity)

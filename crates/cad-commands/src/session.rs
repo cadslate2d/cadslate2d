@@ -161,6 +161,10 @@ pub struct Session {
     selection_box: Option<ScreenPoint>,
     /// A fence or polygon selection being drawn point by point (#185).
     selection_shape: Option<ShapeInProgress>,
+    /// The space the session is in (#191, #192): the model, or a layout.
+    /// What the pointer finds, what commands make, and what the scene
+    /// shows are its. The seam #193's commands and tabs move.
+    space: LayoutId,
     /// The selection the last command took, for `Previous`.
     previous_selection: Selection,
     /// `Remove` mode at a selection prompt: what the pointer or a keyword
@@ -226,6 +230,7 @@ impl Session {
             pan_anchor: None,
             selection_box: None,
             selection_shape: None,
+            space: LayoutId::MODEL,
             previous_selection: Selection::default(),
             removing: false,
             log: CommandLog::new(),
@@ -330,6 +335,7 @@ impl Session {
         }
         find_snap_from(
             &self.drawing,
+            self.space,
             &self.view,
             cursor,
             self.settings.snap_modes,
@@ -731,6 +737,27 @@ impl Session {
         self.toggles
     }
 
+    /// The space the session is in: the model, or a layout (#191).
+    pub fn space(&self) -> LayoutId {
+        self.space
+    }
+
+    /// Goes to `space`, which must exist: the selection is cleared and
+    /// the scene is the space's. Nothing in the drawing changes.
+    pub fn set_space(&mut self, space: LayoutId) -> Dirty {
+        if !self.drawing.layouts().contains(space) {
+            return self.notify("That layout does not exist.");
+        }
+        if space == self.space {
+            return Dirty::NONE;
+        }
+        self.space = space;
+        self.selection.clear();
+        self.selection_box = None;
+        self.selection_shape = None;
+        Dirty::SCENE | Dirty::OVERLAY | Dirty::UI
+    }
+
     /// What the host kept between sessions, given back on start (#186):
     /// the toggles as last left, the unit for a drawing not yet begun, and
     /// the user's aliases, those that cannot be taken said in the log.
@@ -937,7 +964,7 @@ impl Session {
         let point = self.view.screen_to_world(at);
         let reach = self.view.pixels_to_world(PICK_TOLERANCE.0);
         self.drawing
-            .query_shown(&self.view.pick_bounds(at, PICK_TOLERANCE))
+            .query_shown_in(self.space, &self.view.pick_bounds(at, PICK_TOLERANCE))
             .into_iter()
             .filter_map(|id| {
                 Some((
@@ -997,7 +1024,7 @@ impl Session {
         let crossing = is_crossing(start, end);
         let mut hits: Vec<EntityId> = self
             .drawing
-            .query_shown(&bounds)
+            .query_shown_in(self.space, &bounds)
             .into_iter()
             .filter(|&id| {
                 self.drawing.entity(id).is_some_and(|entity| {
@@ -1060,7 +1087,7 @@ impl Session {
             LAST => {
                 let last = self
                     .drawing
-                    .shown()
+                    .shown_in(self.space)
                     .map(|(id, _)| id)
                     .filter(|id| !self.drawing.is_locked(*id))
                     .max();
@@ -1070,7 +1097,11 @@ impl Session {
                 }
             }
             ALL => {
-                let mut ids: Vec<EntityId> = self.drawing.shown().map(|(id, _)| id).collect();
+                let mut ids: Vec<EntityId> = self
+                    .drawing
+                    .shown_in(self.space)
+                    .map(|(id, _)| id)
+                    .collect();
                 ids.sort_unstable();
                 self.change_selection(&ids, removing, SelectionMethod::All)
             }
@@ -1110,7 +1141,7 @@ impl Session {
         let tables = self.drawing.tables();
         let mut hits: Vec<EntityId> = self
             .drawing
-            .query_shown(&selector.bounds())
+            .query_shown_in(self.space, &selector.bounds())
             .into_iter()
             .filter(|&id| {
                 self.drawing
@@ -1346,6 +1377,7 @@ impl Session {
             view: &mut self.view,
             previous_views: &mut self.previous_views,
             aliases: self.registry.aliases_mut(),
+            space: self.space,
             log: &mut self.log,
             host_request: &mut self.host_request,
         };
@@ -1360,8 +1392,9 @@ impl Session {
         // Whatever the command did, the selection must never name an entity
         // that is gone, that is no longer shown, or that has been locked.
         let drawing = &self.drawing;
+        let space = self.space;
         self.selection
-            .retain(|id| drawing.is_shown(*id) && !drawing.is_locked(*id));
+            .retain(|id| drawing.is_shown_in(*id, space) && !drawing.is_locked(*id));
 
         let mut dirty = Dirty::OVERLAY | Dirty::UI;
         if self.drawing.revision() != revision {

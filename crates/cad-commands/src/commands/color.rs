@@ -69,7 +69,7 @@ impl Command for ColorCommand {
             return Step::Continue;
         };
         if color != self.current {
-            let mut transaction = ctx.drawing.transaction();
+            let mut transaction = ctx.transaction();
             transaction.set_current_color(color);
             transaction.commit();
         }

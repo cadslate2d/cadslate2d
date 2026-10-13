@@ -123,7 +123,7 @@ impl Command for OffsetCommand {
                 };
                 match amount.apply(source, at) {
                     Ok(offsets) => {
-                        let mut transaction = ctx.drawing.transaction();
+                        let mut transaction = ctx.transaction();
                         for offset in offsets {
                             // An offset is a copy: it has its source's properties.
                             transaction

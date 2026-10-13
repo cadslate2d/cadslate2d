@@ -94,7 +94,7 @@ impl Command for BreakCommand {
                 match entity.broken(*first, second) {
                     Ok(pieces) => {
                         let mut pieces = pieces.into_iter();
-                        let mut transaction = ctx.drawing.transaction();
+                        let mut transaction = ctx.transaction();
                         if let Some(first) = pieces.next() {
                             transaction
                                 .replace(*id, first)

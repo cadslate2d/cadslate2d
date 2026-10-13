@@ -48,7 +48,7 @@ impl Command for RectangCommand {
             (None, CommandInput::Point(corner)) => self.first = Some(corner),
             (Some(first), CommandInput::Point(other)) => match rectangle(first, other) {
                 Some(polyline) => {
-                    let mut transaction = ctx.drawing.transaction();
+                    let mut transaction = ctx.transaction();
                     transaction
                         .insert(polyline)
                         .expect("a polyline has no text style to miss");

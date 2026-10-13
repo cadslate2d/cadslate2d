@@ -44,7 +44,7 @@ impl LineCommand {
             ctx.message("Zero-length line ignored.");
             return;
         }
-        let mut transaction = ctx.drawing.transaction();
+        let mut transaction = ctx.transaction();
         self.created.push(
             transaction
                 .insert(LineEntity::new(start, end))

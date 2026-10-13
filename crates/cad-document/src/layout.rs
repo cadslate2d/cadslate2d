@@ -6,6 +6,8 @@
 //! records of its paper the drawing has no entity for, kept as they were
 //! and written back (ADR-0025, narrowed).
 
+use cad_core::{Aabb, Point2};
+
 use crate::kept::{RawEntity, RawGroup};
 use crate::names::Named;
 use crate::table::{Table, TableChange, TableId};
@@ -37,6 +39,39 @@ impl Layout {
             name: name.into(),
             ..Self::default()
         }
+    }
+}
+
+impl Layout {
+    /// The sheet's printable area, in paper units: from the plot settings
+    /// the file gave the layout — paper width and height (44, 45) less its
+    /// margins (40 to 43) — or, for a layout made here, an A3 landscape
+    /// sheet with the margins the writer gives it. What `MVIEW Fit` fills.
+    pub fn printable_area(&self) -> Aabb {
+        let value = |code: i32| {
+            self.kept
+                .iter()
+                .find(|(c, _)| *c == code)
+                .and_then(|(_, v)| v.trim().parse::<f64>().ok())
+                .filter(|v| v.is_finite())
+        };
+        let (width, height) = match (value(44), value(45)) {
+            (Some(w), Some(h)) if w > 0.0 && h > 0.0 => (w, h),
+            _ => (420.0, 297.0),
+        };
+        let margin = |code: i32, default: f64| value(code).filter(|m| *m >= 0.0).unwrap_or(default);
+        let (left, bottom, right, top) = (
+            margin(40, 7.5),
+            margin(41, 20.0),
+            margin(42, 7.5),
+            margin(43, 20.0),
+        );
+        let min = Point2::new(left, bottom);
+        let max = Point2::new(
+            (width - right).max(left + 1.0),
+            (height - top).max(bottom + 1.0),
+        );
+        Aabb::from_points(min, max)
     }
 }
 

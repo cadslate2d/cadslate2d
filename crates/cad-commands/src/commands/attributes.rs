@@ -223,7 +223,7 @@ impl Command for AttdefCommand {
                 };
                 let text = TextEntity::new(start, height, degrees.to_radians(), default);
                 let definition = AttributeDefinitionEntity::new(tag, prompt, text);
-                let mut transaction = ctx.drawing.transaction();
+                let mut transaction = ctx.transaction();
                 transaction
                     .insert(definition)
                     .expect("an attribute definition has the standard style");
@@ -353,7 +353,7 @@ impl Command for AtteditCommand {
                     };
                     return Step::Continue;
                 }
-                let mut transaction = ctx.drawing.transaction();
+                let mut transaction = ctx.transaction();
                 if transaction.replace(id, reference).is_err() {
                     drop(transaction);
                     ctx.message("The reference is gone.");

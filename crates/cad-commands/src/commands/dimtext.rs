@@ -116,7 +116,7 @@ impl TextOptions {
 /// Commits `dimension` as one transaction and finishes, or explains why
 /// the drawing refused it and keeps asking.
 pub(super) fn commit(dimension: DimensionEntity, ctx: &mut CommandContext<'_>) -> Step {
-    let mut transaction = ctx.drawing.transaction();
+    let mut transaction = ctx.transaction();
     match transaction.insert(dimension) {
         Ok(_) => {
             transaction.commit();

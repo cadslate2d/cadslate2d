@@ -17,6 +17,8 @@ pub struct ImportReport {
     pub splines: usize,
     /// Attribute definitions of the drawing itself: a block's are its own.
     pub attribute_definitions: usize,
+    /// Viewports of the layouts (#192).
+    pub viewports: usize,
     /// Layouts with something on their paper — entities of the drawing
     /// since #191, or records kept as the file held them — by name. They
     /// are not drawn yet. An empty layout is read without a word.
@@ -129,6 +131,7 @@ impl ImportReport {
             (self.block_references, "block reference", "block references"),
             (self.dimensions, "dimension", "dimensions"),
             (self.hatches, "hatch", "hatches"),
+            (self.viewports, "viewport", "viewports"),
         ];
         let imported: Vec<String> = kinds
             .into_iter()

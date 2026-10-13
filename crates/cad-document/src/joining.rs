@@ -106,7 +106,8 @@ fn open_path(entity: &Entity) -> Option<Path> {
         | Entity::MText(_)
         | Entity::BlockRef(_)
         | Entity::Dimension(_)
-        | Entity::Hatch(_) => None,
+        | Entity::Hatch(_)
+        | Entity::Viewport(_) => None,
     }
 }
 

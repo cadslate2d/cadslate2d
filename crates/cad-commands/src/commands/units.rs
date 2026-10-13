@@ -65,7 +65,7 @@ impl Command for UnitsCommand {
             .find(|(candidate, _)| *candidate == keyword)
             .map(|(_, unit)| *unit);
         if unit != self.current {
-            let mut transaction = ctx.drawing.transaction();
+            let mut transaction = ctx.transaction();
             transaction.set_unit(unit);
             transaction.commit();
         }

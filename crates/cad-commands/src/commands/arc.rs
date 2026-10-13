@@ -107,7 +107,7 @@ fn create(arc: Option<Arc>, problem: &str, ctx: &mut CommandContext<'_>) -> Step
         ctx.message(problem);
         return Step::Continue;
     };
-    let mut transaction = ctx.drawing.transaction();
+    let mut transaction = ctx.transaction();
     transaction
         .insert(ArcEntity::from(arc))
         .expect("an arc has no text style to miss");

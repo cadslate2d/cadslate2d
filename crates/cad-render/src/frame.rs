@@ -538,6 +538,13 @@ pub fn walk_entity(entity: &Entity, tables: Tables<'_>, sink: &mut impl Geometry
                 walk_entity(&part, tables, sink);
             }
         }
+        // A viewport is drawn as its frame (#192, ADR-0030); what shows
+        // through it is the model's scene, drawn by the adapter.
+        Entity::Viewport(viewport) => {
+            for edge in viewport.edges() {
+                sink.segment(edge.start, edge.end, 0.0);
+            }
+        }
         // A hatch is its fill — triangles for a solid one (ADR-0021),
         // the pattern's pieces as segments for a pattern — and its
         // boundary loops, drawn as polylines.

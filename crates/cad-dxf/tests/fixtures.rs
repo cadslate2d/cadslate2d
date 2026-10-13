@@ -7,7 +7,7 @@ use cad_core::Point2;
 use cad_document::{
     BlockReferenceEntity, Color, DimStyleId, Drawing, Entity, Justification, Layer, LayerId,
     Layout, LayoutId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity,
-    Properties, TextEntity, TextStyleId,
+    Properties, TextEntity, TextStyleId, ViewportEntity,
 };
 use cad_dxf::{DxfError, Import, export, import};
 
@@ -123,7 +123,10 @@ fn every_valid_fixture_exports_the_same_in_slices() {
         }
         assert_eq!(job.finish(&drawing).unwrap(), export(&drawing), "{name}");
         // Three records fit one step; the transition after them costs none.
-        assert!(steps > 0 || drawing.len() <= 3, "{name}: {steps} steps");
+        // The ENTITIES section is the model's: a layout's records are
+        // written with the blocks, before the first step (#191).
+        let model = drawing.entities_in(LayoutId::MODEL).count();
+        assert!(steps > 0 || model <= 3, "{name}: {steps} steps");
     }
 }
 
@@ -322,21 +325,55 @@ fn layouts_are_kept_through_a_round_trip() {
     let (two, layout2) = layouts[2];
     assert_eq!(layout1.block_name, "*Paper_Space");
     assert_eq!(layout2.block_name, "*Paper_Space0");
-    assert_eq!(layout1.kept_entities.len(), 1, "the viewport, kept");
-    assert_eq!(layout1.kept_entities[0].kind, "VIEWPORT");
+    assert!(
+        layout1.kept_entities.is_empty(),
+        "the viewport is an entity (#192)"
+    );
     assert!(layout2.kept_entities.is_empty());
     assert!(!layout1.kept.is_empty(), "the LAYOUT object, kept");
-    // The lines are entities of their layouts: one each, on their layers.
-    assert_eq!(drawing.len(), 3);
+    // The lines and the viewport are entities of their layouts.
+    assert_eq!(drawing.len(), 4);
     assert_eq!(drawing.shown().count(), 1, "the model holds its one line");
-    assert_eq!(drawing.shown_in(one).count(), 1);
+    assert_eq!(
+        drawing.shown_in(one).count(),
+        2,
+        "the viewport and the title line"
+    );
     assert_eq!(drawing.shown_in(two).count(), 1);
-    let (title, _) = drawing.shown_in(one).next().unwrap();
+    let viewport = drawing
+        .shown_in(one)
+        .find_map(|(_, entity)| match entity {
+            Entity::Viewport(viewport) => Some(*viewport),
+            _ => None,
+        })
+        .expect("the viewport");
+    assert_eq!(viewport.center, Point2::new(148.5, 105.0));
+    assert_eq!((viewport.width, viewport.height), (277.0, 190.0));
+    assert_eq!(viewport.view_center, Point2::new(50.0, 25.0));
+    assert!(
+        (viewport.scale - 190.0 / 200.0).abs() < 1e-12,
+        "190 mm of paper for 200 units"
+    );
+    assert!(viewport.on);
+    let (title, _) = drawing
+        .shown_in(one)
+        .find(|(_, entity)| matches!(entity, Entity::Line(_)))
+        .unwrap();
     assert_eq!(drawing.layer_of(title).unwrap().name, "TITLE");
     assert_eq!(import.report.layouts, vec!["Layout1", "Layout2"]);
     assert_eq!(
         import.report.lines, 3,
         "a layout's entities count as imported"
+    );
+    assert_eq!(import.report.viewports, 1);
+    assert!(
+        import
+            .report
+            .summary()
+            .iter()
+            .any(|line| line == "Imported 3 lines, 1 viewport."),
+        "{:?}",
+        import.report.summary()
     );
     assert!(
         import.report.losses().is_empty(),
@@ -388,7 +425,7 @@ fn layouts_are_kept_through_a_round_trip() {
     let back = cad_dxf::import(text.as_bytes()).unwrap();
     assert_eq!(back.report.layouts, vec!["Layout1", "Layout2"]);
     assert!(back.report.losses().is_empty());
-    assert_eq!(back.drawing.shown_in(one).count(), 1);
+    assert_eq!(back.drawing.shown_in(one).count(), 2);
     assert_eq!(export(&back.drawing), text, "stable on the second pass");
 }
 
@@ -1628,5 +1665,56 @@ fn export_matches_the_golden_file() {
         exported,
         fs::read_to_string(&golden).unwrap(),
         "export changed; see the test's doc comment"
+    );
+}
+
+/// #192: a viewport made on a layout here is written and read back as it
+/// was; one the ENTITIES section puts in model space has no place in the
+/// drawing and is reported.
+#[test]
+fn a_viewport_round_trips_and_one_in_the_model_is_reported() {
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+    let mut window = ViewportEntity::new(
+        Point2::new(150.0, 100.0),
+        200.0,
+        120.0,
+        Point2::new(1234.5, -67.25),
+        0.02,
+    );
+    window.on = false;
+    tx.insert_in(sheet, window).unwrap();
+    tx.commit();
+    let text = export(&drawing);
+    assert!(text.contains("\nVIEWPORT\n"));
+    assert!(
+        text.contains("\n 45\n6000.0\n"),
+        "120 mm at 1:50 is 6000 units"
+    );
+    assert!(text.contains("\n 68\n0\n"), "off");
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(back.report.viewports, 1);
+    let (id, _) = back.drawing.layouts().iter().nth(1).unwrap();
+    let read = back
+        .drawing
+        .shown_in(id)
+        .find_map(|(_, entity)| match entity {
+            Entity::Viewport(viewport) => Some(*viewport),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(read, window);
+    assert_eq!(export(&back.drawing), text, "stable on the second pass");
+
+    let tiled = "  0\nSECTION\n  2\nENTITIES\n  0\nVIEWPORT\n  8\n0\n 10\n0.0\n 20\n0.0\n 40\n100.0\n 41\n50.0\n 45\n50.0\n 68\n1\n  0\nENDSEC\n  0\nEOF\n";
+    let import = cad_dxf::import(tiled.as_bytes()).unwrap();
+    assert_eq!(import.drawing.len(), 0);
+    assert_eq!(import.report.unsupported.get("VIEWPORT"), Some(&1));
+    let flat = "  0\nSECTION\n  2\nENTITIES\n  0\nVIEWPORT\n  8\n0\n 67\n1\n 10\n0.0\n 20\n0.0\n 40\n100.0\n 41\n0.0\n  0\nENDSEC\n  0\nEOF\n";
+    let import = cad_dxf::import(flat.as_bytes()).unwrap();
+    assert_eq!(
+        import.report.unsupported.get("(invalid geometry)"),
+        Some(&1)
     );
 }

@@ -32,7 +32,7 @@ fn move_view(ctx: &mut CommandContext<'_>, next: View) {
 /// The view fitted to the drawing's extents; where there is nothing, the
 /// view as it is.
 fn extents(ctx: &mut CommandContext<'_>) -> Step {
-    match ctx.drawing.extents() {
+    match ctx.drawing.extents_in(ctx.space) {
         Some(extents) => {
             let mut next = ctx.view.clone();
             next.fit(&extents);

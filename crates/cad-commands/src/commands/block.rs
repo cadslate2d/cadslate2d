@@ -133,7 +133,7 @@ impl BlockCommand {
         let block = Block::new(name, base, records);
 
         let result = {
-            let mut transaction = ctx.drawing.transaction();
+            let mut transaction = ctx.transaction();
             let defined = match id {
                 Some(id) => transaction.redefine_block(id, block).map(|()| id),
                 None => transaction.define_block(block),
@@ -303,7 +303,7 @@ impl InsertCommand {
     }
 
     fn commit(ctx: &mut CommandContext<'_>, reference: BlockReferenceEntity) -> Step {
-        let mut transaction = ctx.drawing.transaction();
+        let mut transaction = ctx.transaction();
         transaction
             .insert(reference)
             .expect("the block was found and the scale checked");
@@ -521,7 +521,7 @@ impl ExplodeCommand {
         let mut exploded: Vec<&'static str> = Vec::new();
         let mut refused: Vec<&'static str> = Vec::new();
         let mut parts = 0;
-        let mut transaction = ctx.drawing.transaction();
+        let mut transaction = ctx.transaction();
         for (id, kind, outcome) in outcomes {
             match outcome {
                 Ok(pieces) => {

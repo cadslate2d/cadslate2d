@@ -8,7 +8,7 @@
 use std::fmt::Debug;
 
 use cad_core::{EntityId, Point2, Vec2, View};
-use cad_document::{Drawing, Entity};
+use cad_document::{Drawing, Entity, LayoutId, TransactionBuilder};
 use cad_input::{CommandAliases, ExpectedInput, Keyword};
 
 use crate::log::CommandLog;
@@ -115,11 +115,20 @@ pub struct CommandContext<'a> {
     pub previous_views: &'a mut Vec<View>,
     /// The command names and aliases, for ALIASEDIT to set the user's (#186).
     pub aliases: &'a mut CommandAliases,
+    /// The space the session is in (#191): the model, or a layout. New
+    /// entities go into it through [`transaction`](Self::transaction).
+    pub space: LayoutId,
     pub(crate) log: &'a mut CommandLog,
     pub(crate) host_request: &'a mut Option<HostRequest>,
 }
 
 impl CommandContext<'_> {
+    /// A transaction whose new entities go into the current space. The
+    /// one way a command changes the drawing.
+    pub fn transaction(&mut self) -> TransactionBuilder<'_> {
+        self.drawing.transaction().in_space(self.space)
+    }
+
     /// Writes a line to the command log.
     pub fn message(&mut self, text: impl Into<String>) {
         self.log.push(text.into());

@@ -107,7 +107,7 @@ impl Command for MTextCommand {
                     return Step::Finished;
                 }
                 let text = MTextEntity::new(*insertion, *width, self.height, 0.0, content);
-                let mut transaction = ctx.drawing.transaction();
+                let mut transaction = ctx.transaction();
                 transaction
                     .insert(text)
                     .expect("a new paragraph has the standard style");

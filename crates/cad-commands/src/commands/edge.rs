@@ -9,7 +9,7 @@
 //! and published in `docs/modify-matrix.md`.
 
 use cad_core::{Aabb, EntityId, Point2};
-use cad_document::{Drawing, Entity, ExtendError, TrimError};
+use cad_document::{Drawing, Entity, ExtendError, LayoutId, TrimError};
 use cad_geometry::Primitive;
 use cad_input::ExpectedInput;
 
@@ -64,6 +64,8 @@ enum State {
 pub(crate) struct EdgeCommand {
     operation: Operation,
     state: State,
+    /// The space the command runs in, from `start` (#191).
+    space: LayoutId,
 }
 
 impl EdgeCommand {
@@ -79,6 +81,7 @@ impl EdgeCommand {
         Self {
             operation,
             state: State::Edges,
+            space: LayoutId::MODEL,
         }
     }
 
@@ -88,6 +91,7 @@ impl EdgeCommand {
     fn edges_near<'a>(
         edges: &Edges,
         drawing: &'a Drawing,
+        space: LayoutId,
         target: EntityId,
         region: &Aabb,
     ) -> Vec<&'a Entity> {
@@ -95,7 +99,7 @@ impl EdgeCommand {
             // Candidates come from the index, never from a scan of the drawing.
             // An object on a locked layer is an edge like any other; one on
             // a layer that is off is not there.
-            Edges::All => drawing.query_shown(region),
+            Edges::All => drawing.query_shown_in(space, region),
             Edges::Chosen(ids) => ids.clone(),
         };
         ids.into_iter()
@@ -116,10 +120,11 @@ impl EdgeCommand {
         let shape = drawing
             .entity(target)
             .ok_or_else(|| "That object no longer exists.".to_owned())?;
+        let space = self.space;
         match self.operation {
             Operation::Trim => {
                 let cuts: Vec<Point2> =
-                    Self::edges_near(edges, drawing, target, &drawing.bounds_of(shape))
+                    Self::edges_near(edges, drawing, space, target, &drawing.bounds_of(shape))
                         .into_iter()
                         .flat_map(|edge| shape.intersections(edge, drawing.tables()))
                         .collect();
@@ -145,11 +150,11 @@ impl EdgeCommand {
             }
             Operation::Extend => {
                 let within = drawing
-                    .extents()
+                    .extents_in(space)
                     .unwrap_or_else(|| drawing.bounds_of(shape));
                 let boundary: Vec<Primitive> = shape
                     .extension_reach(pick, &within)
-                    .map(|reach| Self::edges_near(edges, drawing, target, &reach))
+                    .map(|reach| Self::edges_near(edges, drawing, space, target, &reach))
                     .unwrap_or_default()
                     .into_iter()
                     .flat_map(|edge| edge.primitives(drawing.tables()))
@@ -177,7 +182,7 @@ impl EdgeCommand {
         match self.edit(edges, ctx.drawing, target, pick) {
             Ok(edit) => {
                 let mut pieces = edit.replacement.into_iter();
-                let mut transaction = ctx.drawing.transaction();
+                let mut transaction = ctx.transaction();
                 if let Some(first) = pieces.next() {
                     transaction
                         .replace(target, first)
@@ -200,6 +205,7 @@ impl Command for EdgeCommand {
         // The edges are chosen here, from nothing: an earlier selection is
         // not silently taken to be them.
         ctx.selection.clear();
+        self.space = ctx.space;
         Step::Continue
     }
 

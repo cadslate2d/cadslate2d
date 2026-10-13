@@ -207,7 +207,7 @@ impl QselectCommand {
     fn select(&self, ctx: &mut CommandContext<'_>, test: Option<Test>) -> Step {
         let drawing = &*ctx.drawing;
         let ids: Vec<_> = drawing
-            .shown()
+            .shown_in(ctx.space)
             .filter(|(id, entity)| {
                 !drawing.is_locked(*id)
                     && self.kind.is_none_or(|kind| kind_index(entity) == kind)

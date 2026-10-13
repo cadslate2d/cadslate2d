@@ -39,6 +39,7 @@ mod tables;
 mod text;
 mod text_style;
 mod transaction;
+mod viewport;
 
 pub use aci::{FOREGROUND_INDEX, Paint, index_paint, nearest_index};
 pub use block::{Block, BlockChange, BlockId, BlockReferenceEntity, BlockTable, empty_blocks};
@@ -78,3 +79,4 @@ pub use tables::Tables;
 pub use text::{Justification, TextFrame};
 pub use text_style::{TextStyle, TextStyleChange, TextStyleId, TextStyleTable};
 pub use transaction::{Change, EntityChange, Transaction};
+pub use viewport::{ViewportEntity, ViewportError};

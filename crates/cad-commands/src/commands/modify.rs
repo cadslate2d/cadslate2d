@@ -46,7 +46,7 @@ impl EraseCommand {
             ctx.message(NOTHING_SELECTED);
             return Step::Finished;
         }
-        let mut transaction = ctx.drawing.transaction();
+        let mut transaction = ctx.transaction();
         for id in &ids {
             transaction
                 .remove(*id)

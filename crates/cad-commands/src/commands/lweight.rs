@@ -69,7 +69,7 @@ impl Command for LweightCommand {
             return Step::Continue;
         };
         if lineweight != self.current {
-            let mut transaction = ctx.drawing.transaction();
+            let mut transaction = ctx.transaction();
             transaction.set_current_lineweight(lineweight);
             transaction.commit();
         }

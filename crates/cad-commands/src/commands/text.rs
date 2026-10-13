@@ -140,7 +140,7 @@ impl Command for TextCommand {
                 CommandInput::Text(content),
             ) => {
                 let text = self.text(*start, *height, *rotation, &content);
-                let mut transaction = ctx.drawing.transaction();
+                let mut transaction = ctx.transaction();
                 transaction
                     .insert(text)
                     .expect("a new text has the standard style");
@@ -261,7 +261,7 @@ impl Command for TextEditCommand {
                     && let Some(Entity::Text(text)) = ctx.drawing.entity(*id)
                 {
                     let edited = text.saying(content);
-                    let mut transaction = ctx.drawing.transaction();
+                    let mut transaction = ctx.transaction();
                     transaction
                         .replace(*id, edited)
                         .expect("the picked text is live and keeps its style");
@@ -275,7 +275,7 @@ impl Command for TextEditCommand {
                     && let Some(Entity::MText(text)) = ctx.drawing.entity(*id)
                 {
                     let edited = text.saying(content);
-                    let mut transaction = ctx.drawing.transaction();
+                    let mut transaction = ctx.transaction();
                     transaction
                         .replace(*id, edited)
                         .expect("the picked paragraph is live and keeps its style");

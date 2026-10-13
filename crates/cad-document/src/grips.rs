@@ -11,6 +11,7 @@
 //! | Text | Insertion | moves the text |
 //! | MText | Insertion | moves the paragraph |
 //! | Block reference | Insertion | moves the reference |
+//! | Viewport | Vertex at each corner, then Center | a corner resizes the frame about the opposite one; the centre moves it |
 //!
 //! Arc grips follow the familiar *stretch* behaviour (ADR-0010): an arc is
 //! always the arc through its start, its midpoint, and its end. Dragging
@@ -25,7 +26,7 @@ use cad_geometry::Arc;
 
 use crate::{
     ArcEntity, AttributeDefinitionEntity, BlockReferenceEntity, CircleEntity, EllipseEntity,
-    Entity, LineEntity, MTextEntity, PolylineEntity, TextEntity,
+    Entity, LineEntity, MTextEntity, PolylineEntity, TextEntity, ViewportEntity,
 };
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
@@ -127,6 +128,14 @@ impl Entity {
                 vec![grip(GripKind::Insertion, definition.text.insertion)]
             }
             Entity::BlockRef(reference) => vec![grip(GripKind::Insertion, reference.insertion)],
+            // A viewport: its corners, which resize it, then its centre,
+            // which moves it (#192).
+            Entity::Viewport(viewport) => viewport
+                .corners()
+                .into_iter()
+                .map(|corner| grip(GripKind::Vertex, corner))
+                .chain(std::iter::once(grip(GripKind::Center, viewport.center)))
+                .collect(),
             Entity::Hatch(hatch) => hatch
                 .vertices()
                 .into_iter()
@@ -330,6 +339,19 @@ impl Entity {
                 .filter(|moved| moved.check().is_ok())
                 .map(Entity::from),
             // A loop vertex moves, as a polyline's does: not onto a
+            // A viewport's corner resizes it about the opposite corner; its
+            // centre moves it (#192).
+            Entity::Viewport(viewport) => match index {
+                0..=3 => viewport.with_corner(index, to).map(Entity::from),
+                4 => Some(
+                    ViewportEntity {
+                        center: to,
+                        ..*viewport
+                    }
+                    .into(),
+                ),
+                _ => None,
+            },
             // neighbour, and the loop must still bound a region.
             Entity::Hatch(hatch) => {
                 let vertices = hatch.vertices();

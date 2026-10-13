@@ -67,7 +67,7 @@ impl ChpropCommand {
             .iter()
             .filter_map(|id| Some((id, ctx.drawing.properties(id)?)))
             .collect();
-        let mut transaction = ctx.drawing.transaction();
+        let mut transaction = ctx.transaction();
         for (id, properties) in &records {
             transaction
                 .set_properties(*id, edit(*properties))

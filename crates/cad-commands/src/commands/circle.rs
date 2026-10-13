@@ -75,7 +75,7 @@ fn create(circle: Circle, ctx: &mut CommandContext<'_>) -> Step {
         ctx.message("The radius must be greater than zero.");
         return Step::Continue;
     }
-    let mut transaction = ctx.drawing.transaction();
+    let mut transaction = ctx.transaction();
     transaction
         .insert(CircleEntity::new(circle.center, circle.radius))
         .expect("a circle has no text style to miss");

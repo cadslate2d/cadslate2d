@@ -59,7 +59,7 @@ impl Command for GripEditCommand {
             // Put back where it was: not an edit, and not an undo step.
             Some(edited) if &edited == entity => Step::Finished,
             Some(edited) => {
-                let mut transaction = ctx.drawing.transaction();
+                let mut transaction = ctx.transaction();
                 transaction
                     .replace(id.entity, edited)
                     .expect("the entity was just read");

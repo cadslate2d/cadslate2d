@@ -20,7 +20,7 @@ use cad_document::{
     Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity,
     EntityRecord, HatchEntity, HatchStyle, Justification, Layer, LayoutId, LayoutTable, LineEntity,
     Linetype, LinetypeDef, LinetypeTable, Lineweight, MTextEntity, Measure, PolylineEntity,
-    Properties, Revision, SplineEntity, TextEntity, TextStyle, TextStyleTable,
+    Properties, Revision, SplineEntity, TextEntity, TextStyle, TextStyleTable, ViewportEntity,
 };
 
 use crate::properties::{
@@ -65,6 +65,11 @@ impl Handles {
     /// `$HANDSEED`: the first handle a reader may give to something new.
     fn seed(&self) -> Handle {
         Handle(self.0)
+    }
+
+    /// The handle taken last: the record being written.
+    fn last(&self) -> Handle {
+        Handle(self.0 - 1)
     }
 }
 
@@ -272,6 +277,9 @@ impl Export {
             handles,
             dimensions_named: 0,
             paper: false,
+            viewports_written: 0,
+            active_viewport: None,
+            viewport_links: HashMap::new(),
         };
         body.group(0, "SECTION");
         body.group(2, "CLASSES");
@@ -359,6 +367,9 @@ impl Export {
             handles: Handles(0),
             dimensions_named: 0,
             paper: false,
+            viewports_written: 0,
+            active_viewport: None,
+            viewport_links: HashMap::new(),
         };
         header.section("HEADER", |w| w.header(drawing, self.body.handles.seed()));
         Ok(header.out + &self.body.out)
@@ -374,6 +385,15 @@ struct Writer {
     dimensions_named: usize,
     /// Inside a layout's paper block: every entity is flagged as paper (67).
     paper: bool,
+    /// VIEWPORT records written in the current paper block: the next
+    /// one's number (69), and the handle of the first, which the LAYOUT
+    /// names as its active viewport (331).
+    viewports_written: usize,
+    active_viewport: Option<Handle>,
+    /// The viewport a kept LAYOUT names as active (331), by the handle
+    /// the file gave it, to the handle of the first viewport written in
+    /// the layout's block (#192).
+    viewport_links: HashMap<String, Handle>,
 }
 
 /// Every dimension, with its properties, in the order their DIMENSION
@@ -818,6 +838,8 @@ impl Writer {
                 continue;
             };
             self.paper = true;
+            self.viewports_written = 0;
+            self.active_viewport = None;
             self.block(&sheet.block_name, Point2::ORIGIN, 0, sheet.record, |w| {
                 for id in records_in(drawing, sheet.id) {
                     if let Some(record) = drawing.record(id) {
@@ -830,6 +852,14 @@ impl Writer {
                 }
             });
             self.paper = false;
+            let active = layout
+                .kept
+                .iter()
+                .find(|(code, _)| *code == 331)
+                .map(|(_, old)| old.trim().to_uppercase());
+            if let (Some(old), Some(handle)) = (active, self.active_viewport.take()) {
+                self.viewport_links.insert(old, handle);
+            }
         }
         let user = drawing
             .blocks()
@@ -920,6 +950,7 @@ impl Writer {
             Entity::BlockRef(_) => "INSERT",
             Entity::Dimension(_) => "DIMENSION",
             Entity::Hatch(_) => "HATCH",
+            Entity::Viewport(_) => "VIEWPORT",
         };
         self.entity(kind, owner, layer, &record.properties, drawing.linetypes());
         match &*record.entity {
@@ -940,7 +971,55 @@ impl Writer {
             }
             Entity::Dimension(dimension) => self.dimension(dimension, drawing),
             Entity::Hatch(hatch) => self.hatch(hatch),
+            Entity::Viewport(viewport) => self.viewport_entity(viewport),
         }
+    }
+
+    /// A VIEWPORT (#192): its frame on paper — centre (10, 20), width
+    /// (40), height (41) — on or off (68), its number (69) in the order
+    /// written, the model point at its centre (12, 22), and the height of
+    /// the model's view (45); the rest as every writer lays it out: a view
+    /// straight down, no twist, no lens, no UCS.
+    fn viewport_entity(&mut self, viewport: &ViewportEntity) {
+        self.viewports_written += 1;
+        if self.active_viewport.is_none() {
+            self.active_viewport = Some(self.handles.last());
+        }
+        self.group(100, "AcDbViewport");
+        self.point(10, viewport.center);
+        self.real(30, 0.0);
+        self.real(40, viewport.width);
+        self.real(41, viewport.height);
+        self.int(68, if viewport.on { 1 } else { 0 });
+        self.int(69, self.viewports_written as i64);
+        self.point(12, viewport.view_center);
+        self.point(13, Point2::ORIGIN);
+        self.point(14, Point2::new(0.5, 0.5));
+        self.point(15, Point2::new(0.5, 0.5));
+        self.point(16, Point2::ORIGIN);
+        self.real(36, 1.0);
+        self.point(17, Point2::ORIGIN);
+        self.real(37, 0.0);
+        self.real(42, 50.0);
+        self.real(43, 0.0);
+        self.real(44, 0.0);
+        self.real(45, viewport.view_height());
+        self.real(50, 0.0);
+        self.real(51, 0.0);
+        self.int(72, 1000);
+        self.int(90, 0);
+        self.group(1, "");
+        self.int(281, 0);
+        self.int(71, 1);
+        self.int(74, 0);
+        self.point(110, Point2::ORIGIN);
+        self.real(130, 0.0);
+        self.point(111, Point2::new(1.0, 0.0));
+        self.real(131, 0.0);
+        self.point(112, Point2::new(0.0, 1.0));
+        self.real(132, 0.0);
+        self.int(79, 0);
+        self.real(146, 0.0);
     }
 
     /// A HATCH (ADR-0021): its pattern's name (2), the solid flag (70),
@@ -1470,7 +1549,8 @@ impl Writer {
                     self.handle(330, owner);
                 }
                 code if is_handle_reference(code) => {
-                    match remap.get(&value.trim().to_uppercase()) {
+                    let old = value.trim().to_uppercase();
+                    match self.viewport_links.get(&old).or_else(|| remap.get(&old)) {
                         Some(handle) => self.handle(code, *handle),
                         None => self.group(code, "0"),
                     }

@@ -573,7 +573,11 @@ impl RenderScene {
         // a hatch, whose pattern carries its own dashes.
         if matches!(
             entity,
-            Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_) | Entity::Hatch(_)
+            Entity::Text(_)
+                | Entity::MText(_)
+                | Entity::Dimension(_)
+                | Entity::Hatch(_)
+                | Entity::Viewport(_)
         ) {
             properties.linetype = Linetype::CONTINUOUS;
         }

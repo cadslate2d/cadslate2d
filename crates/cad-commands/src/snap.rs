@@ -9,7 +9,7 @@
 //! view at the moment of use; it is never a geometric tolerance (§18.3).
 
 use cad_core::{EntityId, PixelTolerance, Point2, ScreenPoint, View};
-use cad_document::{Drawing, Entity, Measure, Tables};
+use cad_document::{Drawing, Entity, LayoutId, Measure, Tables};
 use cad_geometry::Primitive;
 
 /// How close, on screen, the cursor must be to a snap point to take it.
@@ -183,6 +183,20 @@ pub fn entity_snap_points(entity: &Entity, mode: SnapMode, tables: Tables<'_>) -
             _ => Vec::new(),
         };
     }
+    // A viewport offers its frame's corners, their midpoints, and its
+    // centre (#192): a window on the paper, not geometry of the drawing.
+    if let Entity::Viewport(viewport) = entity {
+        return match mode {
+            SnapMode::Endpoint => viewport.corners().to_vec(),
+            SnapMode::Midpoint => viewport
+                .edges()
+                .iter()
+                .map(|edge| edge.start + (edge.end - edge.start) * 0.5)
+                .collect(),
+            SnapMode::Center => vec![viewport.center],
+            _ => Vec::new(),
+        };
+    }
     // An ellipse offers its centre, its axis ends, and an arc's ends and
     // middle: not the ends of its chords (#181).
     if let Entity::Ellipse(entity) = entity {
@@ -296,7 +310,15 @@ pub fn find_snap(
     modes: SnapModes,
     excluded: &[EntityId],
 ) -> Option<SnapPoint> {
-    find_snap_from(drawing, view, cursor, modes, excluded, None)
+    find_snap_from(
+        drawing,
+        LayoutId::MODEL,
+        view,
+        cursor,
+        modes,
+        excluded,
+        None,
+    )
 }
 
 /// [`find_snap`], with the point the command is drawing from. Perpendicular
@@ -304,6 +326,7 @@ pub fn find_snap(
 /// when there is one.
 pub fn find_snap_from(
     drawing: &Drawing,
+    space: LayoutId,
     view: &View,
     cursor: ScreenPoint,
     modes: SnapModes,
@@ -319,7 +342,7 @@ pub fn find_snap_from(
 
     // Candidates come from the index, never from a scan of the drawing.
     // What is on a layer that is off is not there to snap to.
-    let mut ids = drawing.query_shown(&view.pick_bounds(cursor, SNAP_APERTURE));
+    let mut ids = drawing.query_shown_in(space, &view.pick_bounds(cursor, SNAP_APERTURE));
     ids.retain(|id| !excluded.contains(id));
     ids.sort_unstable();
     let candidates: Vec<&Entity> = ids.iter().filter_map(|id| drawing.entity(*id)).collect();
@@ -781,6 +804,7 @@ mod tests {
         let cursor = view.world_to_screen(at);
         find_snap_from(
             drawing,
+            LayoutId::MODEL,
             &view,
             cursor,
             SnapModes::only(modes),

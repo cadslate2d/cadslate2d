@@ -19,6 +19,7 @@ use crate::spatial::RTreeIndex;
 use crate::table::TableChange;
 use crate::tables::Tables;
 use crate::text_style::{TextStyle, TextStyleId, TextStyleTable, initial_text_styles};
+use crate::viewport::ViewportError;
 use crate::{
     Change, Color, DrawingSettings, Entity, EntityChange, EntityRecord, EntityStore, Linetype,
     Lineweight, MTextEntity, Properties, Revision, SettingsChange, SpatialIndex, TextEntity,
@@ -161,6 +162,11 @@ pub enum TransactionError {
     BlockCycle(BlockId),
     /// A reference's scale must be a positive number.
     BadBlockScale,
+    /// A viewport that cannot be as given (#192).
+    BadViewport(ViewportError),
+    /// A viewport is a window of a layout's paper: it cannot be in the
+    /// model, nor in a block.
+    ViewportOffPaper,
     /// The layout does not exist, in the drawing or earlier in this
     /// transaction.
     UnknownLayout(LayoutId),
@@ -229,6 +235,8 @@ impl fmt::Display for TransactionError {
             Self::DuplicateBlockName(id) => write!(f, "block {id} already has that name"),
             Self::BlockCycle(id) => write!(f, "block {id} would contain itself"),
             Self::BadBlockScale => write!(f, "a block reference's scale must be positive"),
+            Self::BadViewport(error) => write!(f, "{error}"),
+            Self::ViewportOffPaper => write!(f, "a viewport belongs on a layout's paper"),
             Self::UnknownLayout(id) => write!(f, "layout {id} does not exist"),
             Self::PermanentLayout => write!(f, "the model cannot be removed or renamed"),
             Self::LayoutInUse(id) => write!(
@@ -242,6 +250,22 @@ impl fmt::Display for TransactionError {
 }
 
 impl std::error::Error for TransactionError {}
+
+/// A viewport (#192) must be one the paper can hold, and is a window of a
+/// layout's paper: in the model, or in a block, it has nothing to be a
+/// window of.
+fn viewport_placeable(entity: &Entity, space: LayoutId) -> Result<(), TransactionError> {
+    match entity {
+        Entity::Viewport(viewport) => {
+            viewport.check().map_err(TransactionError::BadViewport)?;
+            if space == LayoutId::MODEL {
+                return Err(TransactionError::ViewportOffPaper);
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
 
 impl Default for Drawing {
     fn default() -> Self {
@@ -335,6 +359,7 @@ impl Drawing {
                 return Err(TransactionError::UnknownLayout(space));
             }
             Self::check_record(&drawing, &entity, &properties)?;
+            viewport_placeable(&entity, space)?;
             let id = drawing.ids.allocate();
             drawing
                 .entities
@@ -466,6 +491,9 @@ impl Drawing {
             }
             for record in block.entities.iter() {
                 check_record(&drawing, &record.entity, &record.properties)?;
+                if matches!(*record.entity, Entity::Viewport(_)) {
+                    return Err(TransactionError::ViewportOffPaper);
+                }
             }
         }
         for (entity, properties) in entities {
@@ -514,6 +542,7 @@ impl Drawing {
             {
                 Err(TransactionError::BadBlockScale)
             }
+            Entity::Viewport(viewport) => viewport.check().map_err(TransactionError::BadViewport),
             _ => Ok(()),
         }
     }
@@ -840,6 +869,7 @@ impl Drawing {
             changes: Vec::new(),
             touched: HashSet::new(),
             others: Vec::new(),
+            space: LayoutId::MODEL,
         }
     }
 
@@ -1045,6 +1075,9 @@ pub struct TransactionBuilder<'d> {
     /// Where in `changes` the table and settings changes are: the few a
     /// transaction over many entities has to look at for each of them.
     others: Vec<usize>,
+    /// The space new entities go into (#191): the model, unless the
+    /// transaction was made [`in_space`](Self::in_space).
+    space: LayoutId,
 }
 
 impl TransactionBuilder<'_> {
@@ -1057,17 +1090,15 @@ impl TransactionBuilder<'_> {
     /// that object's properties with [`insert_like`](Self::insert_like)
     /// instead.
     pub fn insert(&mut self, entity: impl Into<Entity>) -> Result<EntityId, TransactionError> {
-        let settings = self.settings_now();
-        let properties = Properties {
-            layer: settings.current_layer,
-            color: settings.current_color,
-            linetype: settings.current_linetype,
-            lineweight: settings.current_lineweight,
-        };
-        let entity = entity.into();
-        self.known_text_style(&entity)?;
-        self.known_block(&entity)?;
-        Ok(self.insert_record(EntityRecord::new(entity, properties)))
+        self.insert_in(self.space, entity)
+    }
+
+    /// The same transaction, with new entities going into `space` (#191):
+    /// the session's current space, which the drawing does not know.
+    #[must_use]
+    pub fn in_space(mut self, space: LayoutId) -> Self {
+        self.space = space;
+        self
     }
 
     /// Adds a new entity with the given properties.
@@ -1076,12 +1107,7 @@ impl TransactionBuilder<'_> {
         entity: impl Into<Entity>,
         properties: Properties,
     ) -> Result<EntityId, TransactionError> {
-        self.known_layer(properties.layer)?;
-        self.known_linetype(properties.linetype)?;
-        let entity = entity.into();
-        self.known_text_style(&entity)?;
-        self.known_block(&entity)?;
-        Ok(self.insert_record(EntityRecord::new(entity, properties)))
+        self.insert_with_in(self.space, entity, properties)
     }
 
     /// Adds a new entity with the properties of `source`, an entity of the
@@ -1091,14 +1117,16 @@ impl TransactionBuilder<'_> {
         source: EntityId,
         entity: impl Into<Entity>,
     ) -> Result<EntityId, TransactionError> {
-        let properties = self
+        let record = self
             .drawing
-            .properties(source)
+            .record(source)
             .ok_or(TransactionError::UnknownEntity(source))?;
+        let (properties, space) = (record.properties, record.space);
         let entity = entity.into();
         self.known_text_style(&entity)?;
         self.known_block(&entity)?;
-        Ok(self.insert_record(EntityRecord::new(entity, properties)))
+        viewport_placeable(&entity, space)?;
+        Ok(self.insert_record(EntityRecord::new(entity, properties).in_space(space)))
     }
 
     /// Adds a new entity to `space` — the model, or a layout — with the
@@ -1119,6 +1147,7 @@ impl TransactionBuilder<'_> {
         let entity = entity.into();
         self.known_text_style(&entity)?;
         self.known_block(&entity)?;
+        viewport_placeable(&entity, space)?;
         Ok(self.insert_record(EntityRecord::new(entity, properties).in_space(space)))
     }
 
@@ -1135,6 +1164,7 @@ impl TransactionBuilder<'_> {
         let entity = entity.into();
         self.known_text_style(&entity)?;
         self.known_block(&entity)?;
+        viewport_placeable(&entity, space)?;
         Ok(self.insert_record(EntityRecord::new(entity, properties).in_space(space)))
     }
 
@@ -1143,6 +1173,7 @@ impl TransactionBuilder<'_> {
     pub fn set_space(&mut self, id: EntityId, space: LayoutId) -> Result<(), TransactionError> {
         self.known_layout(space)?;
         let before = self.existing(id)?;
+        viewport_placeable(&before.entity, space)?;
         let after = before.in_space(space);
         self.push(EntityChange::Replace { id, before, after });
         Ok(())
@@ -1234,6 +1265,7 @@ impl TransactionBuilder<'_> {
         self.known_text_style(&entity)?;
         self.known_block(&entity)?;
         let before = self.existing(id)?;
+        viewport_placeable(&entity, before.space)?;
         let after = before.with_entity(entity);
         self.push(EntityChange::Replace { id, before, after });
         Ok(())
@@ -1838,6 +1870,13 @@ impl TransactionBuilder<'_> {
     /// Whether a definition's entities are ones the drawing could hold,
     /// and none of them places `id` itself, directly or through others.
     fn check_block_contents(&self, id: BlockId, block: &Block) -> Result<(), TransactionError> {
+        if block
+            .entities
+            .iter()
+            .any(|record| matches!(*record.entity, Entity::Viewport(_)))
+        {
+            return Err(TransactionError::ViewportOffPaper);
+        }
         for record in block.entities.iter() {
             self.known_layer(record.properties.layer)?;
             self.known_linetype(record.properties.linetype)?;

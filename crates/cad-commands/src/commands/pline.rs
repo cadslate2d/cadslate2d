@@ -89,7 +89,7 @@ impl PlineCommand {
         let bulges = std::mem::take(&mut self.bulges);
         let polyline =
             PolylineEntity::with_bulges(std::mem::take(&mut self.vertices), bulges, closed);
-        let mut transaction = ctx.drawing.transaction();
+        let mut transaction = ctx.transaction();
         transaction
             .insert(polyline)
             .expect("a polyline has no text style to miss");

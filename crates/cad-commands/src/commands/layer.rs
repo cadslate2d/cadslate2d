@@ -216,7 +216,7 @@ impl LayerCommand {
         ctx: &mut CommandContext<'_>,
         changes: impl FnOnce(&mut TransactionBuilder<'_>) -> Result<String, TransactionError>,
     ) {
-        let mut transaction = ctx.drawing.transaction();
+        let mut transaction = ctx.transaction();
         match changes(&mut transaction) {
             Ok(done) => {
                 transaction.commit();

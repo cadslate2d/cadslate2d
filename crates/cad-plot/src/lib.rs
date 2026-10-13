@@ -205,7 +205,11 @@ fn content(drawing: &Drawing, settings: &PlotSettings, page: &Page) -> String {
             // continuous, whatever their linetype says.
             if matches!(
                 part,
-                Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_) | Entity::Hatch(_)
+                Entity::Text(_)
+                    | Entity::MText(_)
+                    | Entity::Dimension(_)
+                    | Entity::Hatch(_)
+                    | Entity::Viewport(_)
             ) {
                 properties.linetype = Linetype::CONTINUOUS;
             }

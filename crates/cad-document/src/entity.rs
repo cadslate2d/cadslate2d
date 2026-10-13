@@ -13,6 +13,7 @@ use crate::hatch::HatchEntity;
 pub use crate::mtext::MTextEntity;
 use crate::tables::Tables;
 pub use crate::text::TextEntity;
+use crate::viewport::ViewportEntity;
 
 /// A straight line between two points.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -393,6 +394,10 @@ pub enum Entity {
     /// A filled region (ADR-0021): boundary loops and a fill, cut into
     /// triangles whenever it is asked for.
     Hatch(HatchEntity),
+    /// A window on a layout's paper onto model space (#192, ADR-0030):
+    /// drawn as its frame; its contents are the model's scene, drawn
+    /// again under its own transform.
+    Viewport(ViewportEntity),
 }
 
 impl Entity {
@@ -421,6 +426,7 @@ impl Entity {
                 dimension.layout(tables.dim_style(dimension.style)).bounds()
             }
             Entity::Hatch(hatch) => hatch.bounds(),
+            Entity::Viewport(viewport) => viewport.frame(),
         }
     }
 
@@ -451,6 +457,8 @@ impl Entity {
                 .distance_to(point),
             // A hatch by its fill and its boundary.
             Entity::Hatch(hatch) => hatch.distance_to(point),
+            // A viewport by its frame: what shows through it is the model's.
+            Entity::Viewport(viewport) => viewport.distance_to(point),
         }
     }
 
@@ -486,6 +494,9 @@ impl Entity {
             | Entity::AttributeDefinition(_)
             | Entity::Dimension(_)
             | Entity::Hatch(_) => Vec::new(),
+            // A viewport's frame is a window, not geometry of the drawing:
+            // nothing trims against it. Its corners snap (see `snap.rs`).
+            Entity::Viewport(_) => Vec::new(),
             Entity::BlockRef(reference) => tables
                 .blocks
                 .flatten(reference, crate::Properties::default())
@@ -571,6 +582,11 @@ impl Entity {
                     .collect()
             }
             Entity::Hatch(hatch) => hatch.boundary(),
+            Entity::Viewport(viewport) => viewport
+                .edges()
+                .into_iter()
+                .map(Primitive::Segment)
+                .collect(),
         }
     }
 
@@ -599,6 +615,7 @@ impl Entity {
                 .frame()
                 .contains(point),
             Entity::Hatch(hatch) => hatch.contains(point),
+            Entity::Viewport(viewport) => viewport.contains(point),
         }
     }
 
@@ -682,6 +699,7 @@ impl Entity {
             Entity::BlockRef(reference) => reference.transformed(transform).into(),
             Entity::Dimension(dimension) => dimension.transformed(transform).into(),
             Entity::Hatch(hatch) => hatch.transformed(transform).into(),
+            Entity::Viewport(viewport) => viewport.transformed(transform).into(),
         }
     }
 
@@ -702,6 +720,12 @@ impl From<LineEntity> for Entity {
 impl From<CircleEntity> for Entity {
     fn from(circle: CircleEntity) -> Self {
         Entity::Circle(circle)
+    }
+}
+
+impl From<ViewportEntity> for Entity {
+    fn from(viewport: ViewportEntity) -> Self {
+        Entity::Viewport(viewport)
     }
 }
 
@@ -904,6 +928,7 @@ mod tests {
             Entity::BlockRef(reference) => vec![reference.insertion],
             Entity::Dimension(dimension) => dimension.points(),
             Entity::Hatch(hatch) => hatch.vertices(),
+            Entity::Viewport(viewport) => viewport.corners().to_vec(),
         }
     }
 

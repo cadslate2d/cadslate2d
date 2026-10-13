@@ -232,7 +232,7 @@ impl CornerCommand {
             let cornered = a
                 .with_corner_between(first.1, second.1, self.kind.corner_join(ctx.settings))
                 .map_err(|error| self.kind.explain(error))?;
-            let mut transaction = ctx.drawing.transaction();
+            let mut transaction = ctx.transaction();
             transaction
                 .replace(first.0, cornered)
                 .expect("the polyline was just read");
@@ -244,7 +244,7 @@ impl CornerCommand {
             .join(ctx.settings, (a, first.1), (b, second.1))
             .map_err(|error| self.kind.explain(error))?;
 
-        let mut transaction = ctx.drawing.transaction();
+        let mut transaction = ctx.transaction();
         transaction
             .replace(first.0, joined.first)
             .expect("the first object was just read");
@@ -277,7 +277,7 @@ impl CornerCommand {
             self.kind.done()
         );
         if done > 0 {
-            let mut transaction = ctx.drawing.transaction();
+            let mut transaction = ctx.transaction();
             transaction
                 .replace(id, cornered)
                 .expect("the polyline was just read");

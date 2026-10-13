@@ -77,7 +77,7 @@ impl JoinCommand {
         };
 
         // The oldest member becomes the result; the others go.
-        let mut transaction = ctx.drawing.transaction();
+        let mut transaction = ctx.transaction();
         for (members, entity) in results {
             let mut members = members.into_iter().map(|member| ids[member]);
             if let Some(kept) = members.next() {

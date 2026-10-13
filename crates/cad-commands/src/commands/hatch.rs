@@ -118,7 +118,7 @@ impl HatchCommand {
             ctx.message(error.explain());
             return Step::Continue;
         }
-        let mut transaction = ctx.drawing.transaction();
+        let mut transaction = ctx.transaction();
         match transaction.insert(hatch) {
             Ok(_) => {
                 transaction.commit();
@@ -191,7 +191,11 @@ pub(crate) fn loops_of(entities: &[&Entity]) -> Vec<Path> {
 
 impl Command for HatchCommand {
     fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
-        let shown: Vec<&Entity> = ctx.drawing.shown().map(|(_, entity)| entity).collect();
+        let shown: Vec<&Entity> = ctx
+            .drawing
+            .shown_in(ctx.space)
+            .map(|(_, entity)| entity)
+            .collect();
         self.candidates = loops_of(&shown).into_iter().map(Candidate::new).collect();
         self.options = LookOptions::new(Look::remembered(ctx));
         Step::Continue
@@ -321,7 +325,7 @@ impl HatchEditCommand {
             self.options.look = before;
             return;
         }
-        let mut transaction = ctx.drawing.transaction();
+        let mut transaction = ctx.transaction();
         transaction
             .replace(id, restyled)
             .expect("the hatch was picked from the drawing");

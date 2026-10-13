@@ -88,7 +88,7 @@ impl EllipseCommand {
 }
 
 fn create(ellipse: Ellipse, ctx: &mut CommandContext<'_>) -> Step {
-    let mut transaction = ctx.drawing.transaction();
+    let mut transaction = ctx.transaction();
     transaction
         .insert(EllipseEntity::from(ellipse))
         .expect("an ellipse has no text style to miss");

@@ -208,7 +208,9 @@ test("the M8 scenario: a file from another program opened whole, edited, plotted
     buffer: Buffer.from(scenarioDxf()),
   });
   await expect(
-    logLines(page).filter({ hasText: "Imported 3 lines, 1 ellipse, 1 spline, 1 block reference." }),
+    logLines(page).filter({
+      hasText: "Imported 3 lines, 1 ellipse, 1 spline, 1 block reference, 1 viewport.",
+    }),
   ).toHaveCount(1);
   await expect(
     logLines(page).filter({ hasText: "2 layouts, not drawn yet: Layout1, Layout2." }),
