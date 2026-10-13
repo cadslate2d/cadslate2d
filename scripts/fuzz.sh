@@ -30,7 +30,11 @@ for file in test-data/dxf/valid/*.dxf test-data/dxf/malformed/*.dxf test-data/dx
   cp -n "$file" "fuzz/corpus/dxf_import/$(basename "$file")" 2>/dev/null || true
 done
 
+# The host triple, named: a cargo-fuzz built for musl would otherwise pick
+# the musl target, where sanitizers do not link.
+host=$(rustc +nightly -vV | sed -n 's/^host: //p')
+
 for target in "${targets[@]}"; do
   echo "== fuzz: $target for ${seconds}s"
-  cargo +nightly fuzz run "$target" -- -max_total_time="$seconds" -max_len=65536 -timeout=30
+  cargo +nightly fuzz run --target "$host" "$target" -- -max_total_time="$seconds" -max_len=65536 -timeout=30
 done
