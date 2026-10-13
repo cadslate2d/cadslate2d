@@ -38,6 +38,7 @@ There are two kinds:
 | [0025](0025-kept-layouts.md) | Layouts and paper space are kept as the file's own groups, their handles remapped, written back and not drawn | Accepted | Design |
 | [0026](0026-user-aliases-and-settings.md) | User aliases under the built-in table, settings in `localStorage`, restored in one call; the theme is UI state | Accepted | Design |
 | [0027](0027-pdf-plot.md) | A PDF plot of model space is the renderer's entity walk written as a page by `cad-plot`; text as strokes, no fonts | Accepted | Design |
+| [0028](0028-chunk-origins.md) | Each scene chunk is packed against an origin within reach of its geometry; regions of chunks drawn under their own transforms | Accepted | Design |
 
 ## Expected evidence ADRs
 

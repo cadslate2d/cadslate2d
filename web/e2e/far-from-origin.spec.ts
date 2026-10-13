@@ -118,6 +118,55 @@ test("a plot ten million units out is drafted on and saved exactly", async ({ pa
   await expect(logLines(page).filter({ hasText: "Unknown command" })).toHaveCount(0);
 });
 
+test("a drawing that spans ten million units draws its far end to a pixel at a hundred pixels per unit", async ({
+  page,
+}) => {
+  // #188 (ADR-0028): the far plot's chunk is packed against an origin of
+  // its own, so its offsets are tens of units and exact. The near lines
+  // fill the first chunk, so the plot is in the second.
+  const canvas = await openApp(page);
+  await page.keyboard.press("F7");
+  const near: number[][] = [];
+  for (let index = 0; index < 600; index += 1) near.push([0, index, 10, index]);
+  const dxf = dxfOfLines([
+    ...near,
+    [FAR, FAR, FAR + 10, FAR],
+    [FAR + 5, FAR + 4, FAR + 5, FAR - 4],
+  ]);
+  await chooseFile(page, () => enter(page, "OPEN"), {
+    name: "span.dxf",
+    mimeType: "application/dxf",
+    buffer: Buffer.from(dxf),
+  });
+  await expect(logLines(page).filter({ hasText: "Imported 602 lines." })).toHaveCount(1);
+  await page.getByRole("button", { name: "Dismiss the import report" }).click();
+  // ZOOM Center on the far plot at a height of six units: a hundred
+  // pixels per unit on the 600-pixel canvas.
+  await enter(page, "ZOOM", "C", `${FAR + 5},${FAR}`, "6");
+  await page.mouse.move(5, 5);
+  const screen = await mapping(page, canvas);
+  const box = await canvas.boundingBox();
+  const centre = screen(FAR + 5, FAR);
+  const scale = screen(FAR + 6, FAR).x - centre.x;
+  expect(scale, "about a hundred pixels per unit").toBeGreaterThan(60);
+  expect(scale, "about a hundred pixels per unit").toBeLessThan(200);
+  // The horizontal line lies on the centre row to a pixel: lit pixels in
+  // the rows about it, and none in the rows three and more above or
+  // below — where a line placed two pixels off would reach.
+  const row = Math.round(centre.y - (box?.y ?? 0));
+  const column = Math.round(centre.x - (box?.x ?? 0));
+  const band = (rows: number, height: number) =>
+    litPixelsAround(
+      page,
+      canvas,
+      { x: column - (box?.width ?? 0) / 2 + 60, y: (box?.height ?? 0) / 2 - row + rows },
+      { width: 50, height },
+    );
+  expect(await band(0, 2)).toBeGreaterThan(80);
+  expect(await band(4, 1)).toBe(0);
+  expect(await band(-4, 1)).toBe(0);
+});
+
 test("a drawing that spans ten million units draws its far end to a unit", async ({ page }) => {
   // The scene's single origin (ADR-0003) sits at the centre of the extents;
   // f32 offsets from it resolve to a unit at 10⁷. A plot that far from a

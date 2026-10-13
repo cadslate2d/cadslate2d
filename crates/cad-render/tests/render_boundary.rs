@@ -307,6 +307,98 @@ fn buffer_lengths_and_batch_ranges_are_consistent() {
     }
 }
 
+/// #188: the regions tile every buffer — each kind's runs start where the
+/// last ended and reach its end — and a drawing of ordinary size is one
+/// region, so the adapter draws it as it did. The transforms of a frame
+/// are one per region, and pointer movement changes none of the geometry.
+#[test]
+fn regions_tile_the_buffers_and_an_ordinary_drawing_is_one() {
+    for (name, h) in [
+        ("empty", Harness::new()),
+        ("drawing", drawing()),
+        ("interacting", interacting()),
+    ] {
+        let mut cache = SceneCache::new();
+        let scene = cache.scene(h.session.drawing());
+        let regions = scene.regions();
+        assert_eq!(regions.len(), 1, "{name}: one region");
+        let counts = [
+            scene.frame().segment_count(),
+            scene.frame().arc_count(),
+            scene.frame().triangle_count(),
+        ];
+        assert_eq!(regions[0].first, [0, 0, 0], "{name}");
+        assert_eq!(regions[0].count, counts, "{name}");
+    }
+    // A drawing spanning ten million units: two regions, tiling each kind.
+    let mut h = Harness::new();
+    // IDs start at 1: this many lines fill the first chunk exactly.
+    let mut lines = Vec::new();
+    for index in 1..cad_render::CHUNK_IDS {
+        let y = index as f64;
+        lines.push(cad_document::Entity::from(cad_document::LineEntity::new(
+            cad_core::Point2::new(0.0, y),
+            cad_core::Point2::new(10.0, y),
+        )));
+    }
+    let far = 1e7;
+    lines.push(cad_document::CircleEntity::new(cad_core::Point2::new(far, far), 30.0).into());
+    lines.push(
+        cad_document::LineEntity::new(
+            cad_core::Point2::new(far, far),
+            cad_core::Point2::new(far + 100.0, far),
+        )
+        .into(),
+    );
+    h.session.open_drawing(
+        cad_document::Drawing::from_entities(lines),
+        "span.dxf",
+        vec![],
+        vec![],
+    );
+    let mut cache = SceneCache::new();
+    let scene = cache.scene(h.session.drawing());
+    let regions = scene.regions();
+    assert_eq!(regions.len(), 2);
+    assert_eq!(regions[0].first, [0, 0, 0]);
+    assert_eq!(regions[1].first, regions[0].count);
+    let counts = [
+        scene.frame().segment_count(),
+        scene.frame().arc_count(),
+        scene.frame().triangle_count(),
+    ];
+    let totals: Vec<u32> = regions[0]
+        .count
+        .iter()
+        .zip(regions[1].count)
+        .map(|(a, b)| a + b)
+        .collect();
+    assert_eq!(totals, counts);
+    assert_eq!(regions[1].count, [1, 1, 0], "the far line and circle");
+    assert!(
+        regions[1]
+            .origin
+            .distance_to(cad_core::Point2::new(far + 35.0, far))
+            < 1e-6
+    );
+    // The far chunk's circle is placed exactly: its centre is an offset of
+    // tens of units from its own origin.
+    let arcs = scene.frame().arcs();
+    let at = regions[1].first[1] as usize * PackedFrame::FLOATS_PER_ARC;
+    let centre =
+        regions[1].origin + cad_core::Vec2::new(f64::from(arcs[at]), f64::from(arcs[at + 1]));
+    assert!(
+        centre.distance_to(cad_core::Point2::new(far, far)) < 1e-3,
+        "{centre:?}"
+    );
+    let revision = scene.revision();
+    h.move_to(10.0, 10.0);
+    h.session
+        .wheel(ScreenPoint::new(400.0, 300.0), 120.0, Modifiers::NONE);
+    assert_eq!(cache.scene(h.session.drawing()).revision(), revision);
+    assert_eq!(cache.build_count(), 1);
+}
+
 /// ADR-0022: an edit re-packs the chunk holding what it changed and
 /// reports the instances to upload as ranges; pointer activity reports
 /// nothing; a layer switched off rebuilds everything.

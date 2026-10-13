@@ -561,11 +561,42 @@ impl CadSession {
         )
     }
 
-    /// Clip transform for the committed scene: `[scale_x, scale_y, translate_x,
-    /// translate_y]`, a copy. Changes with the view; the scene does not.
+    /// Clip transforms for the committed scene, one per region (#188):
+    /// `[scale_x, scale_y, translate_x, translate_y]` each, in the order
+    /// of `scene_regions`, a copy. Changes with the view; the scene does
+    /// not. A drawing of ordinary size is one region.
     pub fn scene_transform(&mut self) -> Vec<f32> {
-        let origin = self.scene.scene(self.session.drawing()).frame().origin();
-        transform_words(self.session.view().clip_transform(origin))
+        let view = self.session.view();
+        self.scene
+            .scene(self.session.drawing())
+            .regions()
+            .iter()
+            .flat_map(|region| transform_words(view.clip_transform(region.origin)))
+            .collect()
+    }
+
+    /// The runs of committed instances drawn under each transform of
+    /// `scene_transform` (#188): `segment_first, segment_count, arc_first,
+    /// arc_count, triangle_first, triangle_count` per region, in instances.
+    /// Changes with the scene; read it with the scene buffers. Owned.
+    pub fn scene_regions(&mut self) -> Uint32Array {
+        let words: Vec<u32> = self
+            .scene
+            .scene(self.session.drawing())
+            .regions()
+            .iter()
+            .flat_map(|region| {
+                [
+                    region.first[0],
+                    region.count[0],
+                    region.first[1],
+                    region.count[1],
+                    region.first[2],
+                    region.count[2],
+                ]
+            })
+            .collect();
+        Uint32Array::from(words.as_slice())
     }
 
     /// Transient segment instances (previews, highlights, crosshair). A view

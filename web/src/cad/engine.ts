@@ -252,7 +252,17 @@ export interface FrameBuffers {
    * committed scene has them; absent, everything is new. An owned copy.
    */
   readonly dirty?: Uint32Array;
+  /**
+   * The runs of instances drawn under each transform of `sceneTransform`
+   * (#188): `segmentFirst, segmentCount, arcFirst, arcCount, triangleFirst,
+   * triangleCount` per region — `WORDS_PER_REGION`. Only the committed
+   * scene has them; the overlay is one run under one transform. An owned copy.
+   */
+  readonly regions?: Uint32Array;
 }
+
+/** Words per scene region: first and count for segments, arcs, and triangles. */
+export const WORDS_PER_REGION = 6;
 
 /** What `snapshotStep` answers. */
 export const SnapshotStatus = {
@@ -288,8 +298,14 @@ export function dirtyRanges(dirty: Uint32Array, kind: DirtyKind): InstanceRange[
   return ranges;
 }
 
-/** `[scaleX, scaleY, translateX, translateY]`: `clip = position * scale + translate`. */
+/**
+ * `[scaleX, scaleY, translateX, translateY]`: `clip = position * scale + translate`.
+ * The committed scene's holds four per region (#188), in the order of the
+ * frame's `regions`; the overlay's is one.
+ */
 export type ClipTransform = Float32Array;
+/** Floats per clip transform. */
+export const FLOATS_PER_TRANSFORM = 4;
 
 let ready: Promise<void> | undefined;
 let memory: WebAssembly.Memory | undefined;
@@ -529,6 +545,7 @@ export class CadEngine {
     // Views are created inside this call and never escape it.
     return consume({
       dirty,
+      regions: this.#session.scene_regions(),
       segments: this.#session.scene_segments(),
       batches: this.#session.scene_batches(),
       arcs: this.#session.scene_arcs(),
@@ -543,7 +560,7 @@ export class CadEngine {
     });
   }
 
-  /** Clip transform for the committed scene. An owned copy, safe to keep. */
+  /** Clip transforms for the committed scene, one per region. An owned copy, safe to keep. */
   sceneTransform(): ClipTransform {
     return this.#session.scene_transform();
   }

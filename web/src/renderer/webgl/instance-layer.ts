@@ -1,10 +1,11 @@
 import {
+  FLOATS_PER_TRANSFORM,
   WORDS_PER_BATCH,
   type ClipTransform,
   type InstanceRange,
   type StyleRole,
 } from "../../cad/engine";
-import type { CanvasPalette } from "../palette";
+import type { CanvasPalette, StrokeStyle } from "../palette";
 import { nextCapacity } from "./buffer-capacity";
 import { DISTANCE_ATTRIBUTE_LOCATION } from "./linetypes";
 import { STYLE_ATTRIBUTE_LOCATION } from "./style-table";
@@ -199,12 +200,8 @@ export class InstanceLayer {
     const gl = this.#gl;
     if (this.#batches.length === 0) return 0;
 
-    gl.bindVertexArray(this.#vao);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.#buffer);
-    gl.uniform2f(uniforms.scale, transform[0] ?? 0, transform[1] ?? 0);
-    gl.uniform2f(uniforms.translate, transform[2] ?? 0, transform[3] ?? 0);
-    gl.uniform1f(uniforms.styled, this.#styles ? 1 : 0);
-
+    this.#begin(uniforms);
+    this.#transform(uniforms, transform, 0);
     let drawCalls = 0;
     for (let offset = 0; offset < this.#batches.length; offset += WORDS_PER_BATCH) {
       const role = this.#batches[offset] as StyleRole;
@@ -212,15 +209,62 @@ export class InstanceLayer {
       const count = this.#batches[offset + 2] ?? 0;
       const stroke = palette.strokes[role];
       if (stroke === undefined || count === 0 || !include(role)) continue;
-
-      gl.uniform4f(uniforms.color, ...stroke.color);
-      gl.uniform1f(uniforms.halfWidth, (stroke.width * devicePixelRatio) / 2);
-      this.#pointAt(first);
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, this.#layout.verticesPerInstance, count);
-      drawCalls += 1;
+      drawCalls += this.#drawRun(uniforms, stroke, devicePixelRatio, first, count);
     }
     gl.bindVertexArray(null);
     return drawCalls;
+  }
+
+  /**
+   * Issues one instanced draw per region (#188): the run `[first, count]`
+   * at `runs[2r]`, under the transform at `transforms[4r]`, in the
+   * committed role. Returns the number of draw calls.
+   */
+  drawRegions(
+    uniforms: StrokeUniforms,
+    transforms: ClipTransform,
+    runs: readonly (readonly [first: number, count: number])[],
+    stroke: StrokeStyle,
+    devicePixelRatio: number,
+  ): number {
+    if (runs.every(([, count]) => count === 0)) return 0;
+    this.#begin(uniforms);
+    let drawCalls = 0;
+    runs.forEach(([first, count], region) => {
+      if (count === 0) return;
+      this.#transform(uniforms, transforms, region * FLOATS_PER_TRANSFORM);
+      drawCalls += this.#drawRun(uniforms, stroke, devicePixelRatio, first, count);
+    });
+    this.#gl.bindVertexArray(null);
+    return drawCalls;
+  }
+
+  #begin(uniforms: StrokeUniforms): void {
+    const gl = this.#gl;
+    gl.bindVertexArray(this.#vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.#buffer);
+    gl.uniform1f(uniforms.styled, this.#styles ? 1 : 0);
+  }
+
+  #transform(uniforms: StrokeUniforms, transform: ClipTransform, at: number): void {
+    const gl = this.#gl;
+    gl.uniform2f(uniforms.scale, transform[at] ?? 0, transform[at + 1] ?? 0);
+    gl.uniform2f(uniforms.translate, transform[at + 2] ?? 0, transform[at + 3] ?? 0);
+  }
+
+  #drawRun(
+    uniforms: StrokeUniforms,
+    stroke: StrokeStyle,
+    devicePixelRatio: number,
+    first: number,
+    count: number,
+  ): number {
+    const gl = this.#gl;
+    gl.uniform4f(uniforms.color, ...stroke.color);
+    gl.uniform1f(uniforms.halfWidth, (stroke.width * devicePixelRatio) / 2);
+    this.#pointAt(first);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, this.#layout.verticesPerInstance, count);
+    return 1;
   }
 
   dispose(): void {

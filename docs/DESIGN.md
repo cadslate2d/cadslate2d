@@ -1463,6 +1463,8 @@ Document coordinates remain `f64`.
 
 GPU geometry may use camera-relative `f32` coordinates.
 
+> **M8 (#188):** each chunk of the committed scene is packed against an origin within reach of its geometry, and regions of chunks are drawn under their own translations ([ADR-0028](adr/0028-chunk-origins.md)): a drawing spanning ten million units is placed to a pixel at a hundred pixels per unit at either end.
+
 > **M7:** a curve whose on-screen radius is past 5×10⁴ pixels — where `f32` coarsens the analytic stroke — is drawn as the visible span of its curve, tessellated in `f64` from the view centre into the overlay, and the shader draws nothing for it; the committed scene is untouched — [ADR-0009](adr/0009-curve-rendering.md), extended (#112). The limit lines meet from the single scene origin is answered in [ADR-0003](adr/0003-view-ownership-and-viewport-independent-scene.md), extended (#151): a drawing wholly far out is exact, one spanning 10⁷ is placed to a unit at its far end, and chunk origins (ADR-0022) are the rebase when a drawing of that kind is asked for.
 
 ## 23.5 Text rendering

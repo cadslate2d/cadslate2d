@@ -18,7 +18,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use cad_core::{EntityId, Point2};
+use cad_core::{Aabb, EntityId, Point2};
 use cad_document::{
     Drawing, Entity, Linetype, LinetypeDef, LinetypeId, Paint, Properties, Revision, Weight,
 };
@@ -54,6 +54,33 @@ struct ChunkCounts {
     triangles: u32,
 }
 
+/// One chunk as packed: its counts, and the origin its instances are
+/// offsets from (#188).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Chunk {
+    counts: ChunkCounts,
+    origin: Point2,
+}
+
+/// How far, in drawing units, a chunk's geometry may lie from the origin it
+/// is packed against: `f32` offsets this large resolve to under a hundredth
+/// of a unit — a pixel at a hundred pixels per unit (#188). A chunk whose
+/// extents reach past this from the origin in use takes its own, at its
+/// extents' centre; one that stays within it shares the previous chunk's,
+/// so a drawing of ordinary size is one run per kind, as before.
+pub const MAX_ORIGIN_OFFSET: f64 = 100_000.0;
+
+/// A run of consecutive chunks packed against one origin: what the adapter
+/// draws under one translation (#188).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneRegion {
+    pub origin: Point2,
+    /// The first instance of each kind, in the order of [`InstanceKind`].
+    pub first: [u32; 3],
+    /// How many instances of each kind.
+    pub count: [u32; 3],
+}
+
 /// Stable geometry derived from the canonical document.
 ///
 /// A scene is a function of the drawing alone — there is no view parameter —
@@ -79,8 +106,9 @@ pub struct RenderScene {
     styles: Vec<u8>,
     /// The pattern table: see [`Self::patterns`].
     patterns: Vec<f32>,
-    /// What each chunk of [`CHUNK_IDS`] entity IDs packed, in chunk order.
-    chunks: Vec<ChunkCounts>,
+    /// What each chunk of [`CHUNK_IDS`] entity IDs packed, in chunk order,
+    /// and the origin each is relative to.
+    chunks: Vec<Chunk>,
     /// What changed since the last [`Self::take_dirty`], or everything.
     dirty: Vec<DirtyRange>,
     dirty_all: bool,
@@ -126,6 +154,100 @@ impl RenderScene {
             chunks: Vec::new(),
             dirty: Vec::new(),
             dirty_all: true,
+        }
+    }
+
+    /// The runs of chunks packed against one origin, in order: each is
+    /// drawn under its own translation (#188). A drawing within
+    /// [`MAX_ORIGIN_OFFSET`] of one point is one region; a drawing that
+    /// spans ten million units is one per end. Never empty: a scene with
+    /// no chunks is one empty region at the frame's origin.
+    pub fn regions(&self) -> Vec<SceneRegion> {
+        let mut regions: Vec<SceneRegion> = Vec::new();
+        let mut first = [0u32; 3];
+        for chunk in &self.chunks {
+            let count = [
+                chunk.counts.segments,
+                chunk.counts.arcs,
+                chunk.counts.triangles,
+            ];
+            match regions.last_mut() {
+                Some(region) if region.origin == chunk.origin => {
+                    for (total, added) in region.count.iter_mut().zip(count) {
+                        *total += added;
+                    }
+                }
+                _ => regions.push(SceneRegion {
+                    origin: chunk.origin,
+                    first,
+                    count,
+                }),
+            }
+            for (next, added) in first.iter_mut().zip(count) {
+                *next += added;
+            }
+        }
+        if regions.is_empty() {
+            regions.push(SceneRegion {
+                origin: self.frame.origin(),
+                first: [0; 3],
+                count: [0; 3],
+            });
+        }
+        regions
+    }
+
+    /// Whether every corner of `extents` lies within [`MAX_ORIGIN_OFFSET`]
+    /// of `origin`.
+    fn within_reach(origin: Point2, extents: &Aabb) -> bool {
+        extents.corners().iter().all(|corner| {
+            let offset = *corner - origin;
+            offset.x.abs() <= MAX_ORIGIN_OFFSET && offset.y.abs() <= MAX_ORIGIN_OFFSET
+        })
+    }
+
+    /// Packs `chunk` against the first of `candidates`, and — when its
+    /// geometry reaches further from that than [`MAX_ORIGIN_OFFSET`], read
+    /// off the offsets just packed — again against the first candidate
+    /// within reach, or its own extents' centre. A drawing of ordinary
+    /// size never packs twice. Returns the chunk's counts and origin.
+    fn pack_chunk(&mut self, drawing: &Drawing, chunk: usize, candidates: &[Point2]) -> Chunk {
+        let first = candidates.first().copied().unwrap_or(Point2::ORIGIN);
+        let before = self.counts();
+        self.frame.set_origin(first);
+        self.pack_chunk_into_frame(drawing, chunk);
+        let mut origin = first;
+        let offsets = self
+            .frame
+            .offsets_since(before.segments, before.arcs, before.triangles);
+        if let Some(offsets) = offsets {
+            let extents = Aabb::from_points(
+                first + (offsets.min() - Point2::ORIGIN),
+                first + (offsets.max() - Point2::ORIGIN),
+            );
+            if !Self::within_reach(first, &extents) {
+                origin = candidates[1..]
+                    .iter()
+                    .copied()
+                    .find(|candidate| Self::within_reach(*candidate, &extents))
+                    .unwrap_or_else(|| extents.center());
+                self.frame
+                    .truncate_to(before.segments, before.arcs, before.triangles);
+                self.segment_styles.truncate(before.segments as usize);
+                self.arc_styles.truncate(before.arcs as usize);
+                self.triangle_styles.truncate(before.triangles as usize);
+                self.frame.set_origin(origin);
+                self.pack_chunk_into_frame(drawing, chunk);
+            }
+        }
+        let after = self.counts();
+        Chunk {
+            counts: ChunkCounts {
+                segments: after.segments - before.segments,
+                arcs: after.arcs - before.arcs,
+                triangles: after.triangles - before.triangles,
+            },
+            origin,
         }
     }
 
@@ -213,11 +335,12 @@ impl RenderScene {
         ranges
     }
 
-    /// The whole scene, afresh: the origin at the centre of the extents,
-    /// every chunk packed in order.
+    /// The whole scene, afresh: every chunk packed in order, each against
+    /// the origin of the chunk before it while that is within reach, and
+    /// against its own extents' centre otherwise (#188).
     fn rebuild_all(&mut self, drawing: &Drawing) {
-        // Centre the origin on the drawing so f32 offsets keep the most
-        // precision where the geometry actually is.
+        // Centre the first origin on the drawing so f32 offsets keep the
+        // most precision where the geometry actually is.
         let origin = drawing
             .extents()
             .map_or(Point2::ORIGIN, |extents| extents.center());
@@ -229,15 +352,11 @@ impl RenderScene {
         self.style_indices.clear();
         self.chunks.clear();
         let chunk_count = drawing.id_bound().div_ceil(CHUNK_IDS) as usize;
+        let mut previous = origin;
         for chunk in 0..chunk_count {
-            let before = self.counts();
-            self.pack_chunk_into_frame(drawing, chunk);
-            let after = self.counts();
-            self.chunks.push(ChunkCounts {
-                segments: after.segments - before.segments,
-                arcs: after.arcs - before.arcs,
-                triangles: after.triangles - before.triangles,
-            });
+            let packed = self.pack_chunk(drawing, chunk, &[previous]);
+            previous = packed.origin;
+            self.chunks.push(packed);
         }
         self.frame.batch_everything(StyleRole::Entity);
         self.dirty.clear();
@@ -248,26 +367,44 @@ impl RenderScene {
     fn repack(&mut self, drawing: &Drawing, chunks: &BTreeSet<usize>) {
         let needed = drawing.id_bound().div_ceil(CHUNK_IDS) as usize;
         if self.chunks.len() < needed {
-            self.chunks.resize(needed, ChunkCounts::default());
+            // A new chunk starts from the origin of the one before it.
+            let origin = self
+                .chunks
+                .last()
+                .map_or(self.frame.origin(), |chunk| chunk.origin);
+            self.chunks.resize(
+                needed,
+                Chunk {
+                    counts: ChunkCounts::default(),
+                    origin,
+                },
+            );
         }
         for &chunk in chunks {
             if chunk >= self.chunks.len() {
                 continue;
             }
             // Pack the chunk on its own, then splice it over the old one.
-            let origin = self.frame.origin();
-            let mut scratch = RenderScene::scratch(self, origin);
-            scratch.pack_chunk_into_frame(drawing, chunk);
+            // It keeps its origin while its geometry stays within reach of
+            // it — so what was there is where it was — and takes the
+            // previous chunk's, or its own centre, when it does not.
+            let kept = self.chunks[chunk].origin;
+            let before = chunk
+                .checked_sub(1)
+                .map_or(kept, |previous| self.chunks[previous].origin);
+            let mut scratch = RenderScene::scratch(self, kept);
+            let packed = scratch.pack_chunk(drawing, chunk, &[kept, before]);
+            let origin = packed.origin;
             self.properties = std::mem::take(&mut scratch.properties);
             self.style_indices = std::mem::take(&mut scratch.style_indices);
-            let new = scratch.counts();
-            let old = self.chunks[chunk];
+            let new = packed.counts;
+            let old = self.chunks[chunk].counts;
             let offset = self.chunks[..chunk]
                 .iter()
-                .fold(ChunkCounts::default(), |sum, counts| ChunkCounts {
-                    segments: sum.segments + counts.segments,
-                    arcs: sum.arcs + counts.arcs,
-                    triangles: sum.triangles + counts.triangles,
+                .fold(ChunkCounts::default(), |sum, chunk| ChunkCounts {
+                    segments: sum.segments + chunk.counts.segments,
+                    arcs: sum.arcs + chunk.counts.arcs,
+                    triangles: sum.triangles + chunk.counts.triangles,
                 });
             let splice = |into: &mut Vec<f32>, from: &[f32], per: usize, at: u32, old: u32| {
                 let start = at as usize * per;
@@ -333,7 +470,10 @@ impl RenderScene {
                 offset.triangles,
                 old.triangles,
             );
-            self.chunks[chunk] = new;
+            self.chunks[chunk] = Chunk {
+                counts: new,
+                origin,
+            };
             // What to upload: the chunk's run when its size held; from the
             // chunk to the end when what follows moved.
             let totals = self.counts();
@@ -1015,6 +1155,118 @@ mod tests {
         // span from it, at the same resolution.
         assert!((origin.x - (far + 100.0) / 2.0).abs() < 1e-6);
         assert!((origin.y - far / 2.0).abs() < 1e-6);
+    }
+
+    /// #188: a chunk far from the chunk before it is packed against its
+    /// own origin, and the regions say which run is which; a drawing of
+    /// ordinary size is one region, as before.
+    #[test]
+    fn chunks_out_of_reach_of_the_previous_origin_take_their_own_and_make_a_region() {
+        let far = 1e7;
+        let near = LineEntity::new(Point2::new(0.0, 0.0), Point2::new(100.0, 0.0));
+        let mut entities: Vec<Entity> = vec![near.into()];
+        // Fill the first chunk — IDs start at 1 — so the far lines land
+        // in the second.
+        for index in 2..CHUNK_IDS {
+            let y = index as f64;
+            entities.push(LineEntity::new(Point2::new(0.0, y), Point2::new(10.0, y)).into());
+        }
+        entities.push(LineEntity::new(Point2::new(far, far), Point2::new(far + 100.0, far)).into());
+        entities.push(
+            LineEntity::new(Point2::new(far, far + 60.0), Point2::new(far, far - 60.0)).into(),
+        );
+        let drawing = Drawing::from_entities(entities);
+        let mut cache = SceneCache::new();
+        let scene = cache.scene(&drawing);
+        let regions = scene.regions();
+        assert_eq!(regions.len(), 2, "{regions:?}");
+        assert_eq!(regions[0].first, [0, 0, 0]);
+        let near_count = CHUNK_IDS as u32 - 1;
+        assert_eq!(regions[0].count, [near_count, 0, 0]);
+        assert_eq!(regions[1].first, [near_count, 0, 0]);
+        assert_eq!(regions[1].count, [2, 0, 0]);
+        // The far chunk's origin is its own extents' centre, read off the
+        // offsets packed from the near origin — a unit or so out at 10⁷,
+        // which does not matter: what matters is how far the geometry is
+        // from it, and that is tens of units …
+        assert!((regions[1].origin.x - (far + 50.0)).abs() < 2.0);
+        assert!((regions[1].origin.y - far).abs() < 2.0);
+        // … so its geometry is placed to a hundredth of a unit: a pixel
+        // at a hundred pixels per unit.
+        let segments = scene.frame().segments();
+        let placed = |index: usize, region: &SceneRegion| -> [Point2; 2] {
+            let s = &segments[index * PackedFrame::FLOATS_PER_SEGMENT..];
+            [
+                region.origin + cad_core::Vec2::new(f64::from(s[0]), f64::from(s[1])),
+                region.origin + cad_core::Vec2::new(f64::from(s[2]), f64::from(s[3])),
+            ]
+        };
+        let [a, b] = placed(near_count as usize, &regions[1]);
+        assert!(a.distance_to(Point2::new(far, far)) < 0.01, "{a:?}");
+        assert!(b.distance_to(Point2::new(far + 100.0, far)) < 0.01, "{b:?}");
+        let [c, d] = placed(near_count as usize + 1, &regions[1]);
+        assert!(c.distance_to(Point2::new(far, far + 60.0)) < 0.01);
+        assert!(d.distance_to(Point2::new(far, far - 60.0)) < 0.01);
+        let [e, f] = placed(0, &regions[0]);
+        assert!(e.distance_to(Point2::new(0.0, 0.0)) < 0.01);
+        assert!(f.distance_to(Point2::new(100.0, 0.0)) < 0.01);
+
+        // A drawing of ordinary size, however many chunks: one region.
+        let mut many = Vec::new();
+        for index in 0..CHUNK_IDS * 3 {
+            let y = index as f64;
+            many.push(Entity::from(LineEntity::new(
+                Point2::new(0.0, y),
+                Point2::new(10.0, y),
+            )));
+        }
+        let drawing = Drawing::from_entities(many);
+        let regions = SceneCache::new().scene(&drawing).regions();
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].count, [CHUNK_IDS as u32 * 3, 0, 0]);
+        // A scene with nothing in it is one empty region.
+        let regions = SceneCache::new().scene(&Drawing::new()).regions();
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].count, [0, 0, 0]);
+    }
+
+    /// #188: an edit keeps a chunk's origin while its geometry stays within
+    /// reach of it, and moves it when the chunk is drawn far away.
+    #[test]
+    fn a_repacked_chunk_keeps_its_origin_within_reach_and_moves_it_beyond() {
+        let mut drawing = Drawing::from_entities([Entity::from(LineEntity::new(
+            Point2::new(0.0, 0.0),
+            Point2::new(100.0, 0.0),
+        ))]);
+        let mut cache = SceneCache::new();
+        let origin = cache.scene(&drawing).regions()[0].origin;
+        assert_eq!(origin, Point2::new(50.0, 0.0));
+
+        let mut tx = drawing.transaction();
+        tx.insert(LineEntity::new(
+            Point2::new(0.0, 1000.0),
+            Point2::new(100.0, 1000.0),
+        ))
+        .unwrap();
+        tx.commit();
+        let regions = cache.scene(&drawing).regions();
+        assert_eq!(cache.partial_build_count(), 1);
+        assert_eq!(regions[0].origin, origin, "within reach: the same origin");
+
+        let mut tx = drawing.transaction();
+        tx.insert(LineEntity::new(
+            Point2::new(0.0, 1e7),
+            Point2::new(100.0, 1e7),
+        ))
+        .unwrap();
+        tx.commit();
+        let regions = cache.scene(&drawing).regions();
+        assert_eq!(cache.partial_build_count(), 2);
+        assert_ne!(
+            regions[0].origin, origin,
+            "out of reach: the chunk's own centre"
+        );
+        assert!((regions[0].origin.y - 5e6).abs() < 1.0);
     }
 
     #[test]

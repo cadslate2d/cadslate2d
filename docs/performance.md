@@ -34,6 +34,8 @@ The index is no longer most of an open (ADR-0007, amended): at 100k the packed t
 | A line drawn: the last chunk re-packed | 0.026 ms | 0.026 ms | 0.030 ms |
 | The same edit, the scene rebuilt whole | 6.8 ms | 37 ms | 76 ms |
 
+After #188 (chunk origins, [ADR-0028](adr/0028-chunk-origins.md)), re-measured 2026-10-13: a repack 0.30 / 0.29 / 0.33 ms, a last-chunk repack 0.025 / 0.026 / 0.026 ms, a whole rebuild 7.0 / 37 / 75 ms — the reach check costs nothing measurable; the Firefox frames on the commit before and after are the same within the run-to-run noise (the ADR has both columns).
+
 An edit now costs a chunk of 512 entities, whatever the drawing's size; the whole rebuild, which a layer switched on or off still pays, is a tenth slower than before for walking the ID ranges.
 
 ## In the browser (2026-10-12, #171)

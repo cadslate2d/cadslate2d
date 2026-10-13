@@ -24,7 +24,7 @@
 //! All buffers are stored exactly as they cross the WASM boundary, so
 //! handing a frame to JavaScript needs no conversion and no allocation.
 
-use cad_core::Point2;
+use cad_core::{Aabb, Point2};
 use cad_document::{Entity, HatchEntity, HatchStyle, PolylineEntity, Properties, Tables};
 use cad_geometry::{Arc, Primitive, bulge_primitive, polyline_spans};
 
@@ -129,6 +129,19 @@ fn extend_batches(words: &mut Vec<u32>, style: StyleRole, index: u32) {
     }
 }
 
+/// Drops the batches past instance `count`, and shortens the one across it.
+fn truncate_batches(words: &mut Vec<u32>, count: u32) {
+    while let Some(last) = words.rchunks_exact_mut(PackedFrame::WORDS_PER_BATCH).next() {
+        if last[1] >= count {
+            let keep = words.len() - PackedFrame::WORDS_PER_BATCH;
+            words.truncate(keep);
+        } else {
+            last[2] = last[2].min(count - last[1]);
+            break;
+        }
+    }
+}
+
 fn decode_batches(words: &[u32]) -> Vec<DrawBatch> {
     let (batches, _) = words.as_chunks::<{ PackedFrame::WORDS_PER_BATCH }>();
     batches
@@ -164,6 +177,62 @@ impl PackedFrame {
     }
 
     /// The `f64` world position that segment coordinates are relative to.
+    /// Makes `origin` the origin of what is pushed from now on, keeping
+    /// what was pushed before as it is: a scene packs each chunk relative
+    /// to its own (#188).
+    pub(crate) fn set_origin(&mut self, origin: Point2) {
+        self.origin = origin;
+    }
+
+    /// The box, in offsets from the origin, around every instance pushed
+    /// since the counts were `segments`, `arcs`, `triangles`: how far the
+    /// geometry reaches from the origin (#188). `None` when nothing was.
+    pub(crate) fn offsets_since(&self, segments: u32, arcs: u32, triangles: u32) -> Option<Aabb> {
+        let mut bounds: Option<Aabb> = None;
+        let mut take = |x: f32, y: f32| {
+            let point = Point2::new(f64::from(x), f64::from(y));
+            let own = Aabb::from_points(point, point);
+            bounds = Some(bounds.map_or(own, |bounds| bounds.union(&own)));
+        };
+        let (segments, _) = self.segments[segments as usize * Self::FLOATS_PER_SEGMENT..]
+            .as_chunks::<{ Self::FLOATS_PER_SEGMENT }>();
+        for [x0, y0, x1, y1] in segments {
+            take(*x0, *y0);
+            take(*x1, *y1);
+        }
+        let (arcs, _) = self.arcs[arcs as usize * Self::FLOATS_PER_ARC..]
+            .as_chunks::<{ Self::FLOATS_PER_ARC }>();
+        for [cx, cy, radius, ..] in arcs {
+            take(cx - radius, cy - radius);
+            take(cx + radius, cy + radius);
+        }
+        let (triangles, _) = self.triangles[triangles as usize * Self::FLOATS_PER_TRIANGLE..]
+            .as_chunks::<{ Self::FLOATS_PER_TRIANGLE }>();
+        for [x0, y0, x1, y1, x2, y2] in triangles {
+            take(*x0, *y0);
+            take(*x1, *y1);
+            take(*x2, *y2);
+        }
+        bounds
+    }
+
+    /// Drops every instance pushed since the counts were `segments`,
+    /// `arcs`, `triangles`, batches included: to pack a chunk again
+    /// against another origin (#188).
+    pub(crate) fn truncate_to(&mut self, segments: u32, arcs: u32, triangles: u32) {
+        self.segments
+            .truncate(segments as usize * Self::FLOATS_PER_SEGMENT);
+        self.segment_distances.truncate(segments as usize);
+        truncate_batches(&mut self.batch_words, segments);
+        self.arcs.truncate(arcs as usize * Self::FLOATS_PER_ARC);
+        self.arc_distances
+            .truncate(arcs as usize * Self::FLOATS_PER_ARC_DISTANCE);
+        truncate_batches(&mut self.arc_batch_words, arcs);
+        self.triangles
+            .truncate(triangles as usize * Self::FLOATS_PER_TRIANGLE);
+        truncate_batches(&mut self.triangle_batch_words, triangles);
+    }
+
     pub fn origin(&self) -> Point2 {
         self.origin
     }

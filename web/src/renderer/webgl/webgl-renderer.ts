@@ -7,6 +7,7 @@ import {
   FLOATS_PER_SEGMENT,
   FLOATS_PER_TRIANGLE,
   StyleRole,
+  WORDS_PER_REGION,
   dirtyRanges,
   type ClipTransform,
   type FrameBuffers,
@@ -66,6 +67,11 @@ class FrameLayers {
   readonly fills: InstanceLayer;
   readonly segments: InstanceLayer;
   readonly arcs: InstanceLayer;
+  /**
+   * The committed scene's regions (#188): the run of each kind drawn under
+   * each of its transforms. Absent for the overlay, drawn whole under one.
+   */
+  regions: Uint32Array | undefined;
 
   /** `styled`: every instance has a style index, and colours come from the style table. */
   constructor(gl: WebGL2RenderingContext, pipelines: Pipelines, usage: number, styled: boolean) {
@@ -82,6 +88,7 @@ class FrameLayers {
   upload(frame: FrameBuffers, partial: boolean): number {
     const ranges = (kind: DirtyKind) =>
       partial && frame.dirty ? dirtyRanges(frame.dirty, kind) : undefined;
+    this.regions = frame.regions;
     const fills = this.fills.upload(
       frame.triangles,
       frame.triangleBatches,
@@ -111,6 +118,16 @@ class FrameLayers {
     this.segments.dispose();
     this.arcs.dispose();
   }
+}
+
+/** The `[first, count]` run of `kind` in each region (#188). */
+function regionRuns(regions: Uint32Array, kind: DirtyKind): (readonly [number, number])[] {
+  const runs: (readonly [number, number])[] = [];
+  for (let offset = 0; offset < regions.length; offset += WORDS_PER_REGION) {
+    const at = offset + kind * 2;
+    runs.push([regions[at] ?? 0, regions[at + 1] ?? 0]);
+  }
+  return runs;
 }
 
 interface Pipelines {
@@ -296,12 +313,31 @@ export class WebGlRenderer implements FrameSink {
       [overlay, overlayTransform, isNotUnderlay],
     ];
     for (const [layers, transform, include] of passes) {
-      for (const [pipeline, layer] of [
-        [pipelines.fills, layers.fills],
-        [pipelines.segments, layers.segments],
-        [pipelines.arcs, layers.arcs],
-      ] as const) {
-        this.stats.drawCalls += this.#drawLayer(pipeline, layer, transform, include);
+      const kinds = [
+        [pipelines.fills, layers.fills, DirtyKind.Triangles],
+        [pipelines.segments, layers.segments, DirtyKind.Segments],
+        [pipelines.arcs, layers.arcs, DirtyKind.Arcs],
+      ] as const;
+      for (const [pipeline, layer, kind] of kinds) {
+        this.#usePipeline(pipeline);
+        const { regions } = layers;
+        // The committed scene: each region's run under its own transform
+        // (#188). The overlay: its batches under the one transform.
+        this.stats.drawCalls += regions
+          ? layer.drawRegions(
+              pipeline.uniforms,
+              transform,
+              regionRuns(regions, kind),
+              this.#palette.strokes[StyleRole.Entity],
+              this.#devicePixelRatio,
+            )
+          : layer.draw(
+              pipeline.uniforms,
+              transform,
+              this.#palette,
+              this.#devicePixelRatio,
+              include,
+            );
       }
     }
     this.stats.frames += 1;
@@ -331,12 +367,7 @@ export class WebGlRenderer implements FrameSink {
     this.#gl.deleteProgram(pipelines.arcs.program);
   }
 
-  #drawLayer(
-    pipeline: Pipeline,
-    layer: InstanceLayer,
-    transform: ClipTransform,
-    include: (role: StyleRole) => boolean,
-  ): number {
+  #usePipeline(pipeline: Pipeline): void {
     const gl = this.#gl;
     gl.useProgram(pipeline.program);
     gl.uniform2f(pipeline.uniforms.viewport, this.#canvas.width, this.#canvas.height);
@@ -346,7 +377,6 @@ export class WebGlRenderer implements FrameSink {
       pipeline.uniforms.maxRadius,
       FAR_CURVE_RADIUS_CSS_PIXELS * FAR_CURVE_SHADER_FACTOR * this.#devicePixelRatio,
     );
-    return layer.draw(pipeline.uniforms, transform, this.#palette, this.#devicePixelRatio, include);
   }
 
   readonly #onContextLost = (event: Event): void => {

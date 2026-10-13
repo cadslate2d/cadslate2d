@@ -61,6 +61,8 @@ describe("WASM API surface", () => {
       "scene_dirty_ranges",
       // ADR-0015: the linetype patterns the style table names, as one buffer.
       "scene_patterns",
+      // #188: the runs of instances drawn under each region's transform, with the scene.
+      "scene_regions",
       "scene_revision",
       // ADR-0015: the path distance of every segment instance, as one buffer.
       "scene_segment_distances",

@@ -21,7 +21,7 @@ Two shapes of chunking were open: by **entity ID range** (a chunk is the entitie
 
 `RenderScene` packs every shown entity in ID order, the entities of one chunk together, and remembers how many segments, arcs, and triangles each chunk produced. When the drawing can say what changed, `SceneCache::scene` re-packs only the chunks holding those IDs — each into a scratch frame from the scene's origin, spliced over the old run in the scene's buffers, with what follows moved when the chunk's size changed — and leaves the rest untouched. When it cannot, the scene is rebuilt whole as before. The buffers stay one run per kind, batched as one, so the render boundary carries the same buffers it did (ADR-0002); nothing per chunk crosses it.
 
-The origin is fixed at the first full build, so a repacked chunk's offsets are from the same point as its neighbours'. The style table is append-only: a style index means what it meant across repacks, and a row no entity uses any more stays until the next full build (ADR-0014).
+The origin is fixed at the first full build, so a repacked chunk's offsets are from the same point as its neighbours'. (Since #188 a chunk has an origin of its own when its geometry is out of reach of the previous chunk's, and keeps it across repacks while its geometry stays within reach — [ADR-0028](0028-chunk-origins.md); a drawing of ordinary size is still one origin, one run per kind.) The style table is append-only: a style index means what it meant across repacks, and a row no entity uses any more stays until the next full build (ADR-0014).
 
 ### 3. The frame uploads the ranges that changed
 
