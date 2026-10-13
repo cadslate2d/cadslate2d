@@ -41,8 +41,8 @@ export interface UiSnapshot {
   readonly unsavedChanges: boolean;
   /** What an export will not include; empty when nothing (DESIGN §24.2). */
   readonly exportLosses: readonly string[];
-  /** Layouts a file carried, kept and written back, not drawn (#184). */
-  readonly keptLayouts: readonly string[];
+  /** The layouts with something on them, by name: not drawn yet (#184, #191). */
+  readonly layouts: readonly string[];
   /** The last import's account, until dismissed or the drawing is replaced. */
   readonly importReport: ImportReport | undefined;
   /** The losses an export the user asked for would have; the warning dialog shows them. */
@@ -91,7 +91,7 @@ const INITIAL: UiSnapshot = {
   documentName: undefined,
   unsavedChanges: false,
   exportLosses: [],
-  keptLayouts: [],
+  layouts: [],
   importReport: undefined,
   exportWarning: undefined,
   recovery: undefined,
@@ -169,7 +169,7 @@ export class UiStore {
       documentName: state.documentName,
       unsavedChanges: state.unsavedChanges,
       exportLosses: state.exportLosses,
-      keptLayouts: state.keptLayouts,
+      layouts: state.layouts,
       importReport: state.importReport,
       exportWarning: this.#exportWarning,
       recovery: this.#recovery,

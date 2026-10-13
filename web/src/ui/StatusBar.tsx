@@ -22,13 +22,13 @@ export function StatusBar({ app }: { app: CadApp }) {
         {ui.documentName ?? "Untitled"}
         {ui.unsavedChanges ? " •" : ""}
       </span>
-      {ui.keptLayouts.length > 0 && (
+      {ui.layouts.length > 0 && (
         <span
           className="status__chip"
           data-testid="layouts"
-          title={`Kept, not drawn: ${ui.keptLayouts.join(", ")}`}
+          title={`Not drawn yet: ${ui.layouts.join(", ")}`}
         >
-          {ui.keptLayouts.length === 1 ? "1 layout kept" : `${ui.keptLayouts.length} layouts kept`}
+          {ui.layouts.length === 1 ? "1 layout" : `${ui.layouts.length} layouts`}
         </span>
       )}
       {ui.exportLosses.length > 0 && (

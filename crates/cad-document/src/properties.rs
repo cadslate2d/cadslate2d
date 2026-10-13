@@ -15,6 +15,7 @@
 use std::sync::Arc;
 
 use crate::layer::LayerId;
+use crate::layout::LayoutId;
 use crate::linetype::LinetypeId;
 use crate::{Entity, SharedEntity};
 
@@ -87,6 +88,8 @@ impl Properties {
 pub struct EntityRecord {
     pub entity: SharedEntity,
     pub properties: Properties,
+    /// The space the entity is in: the model, or a layout (#191).
+    pub space: LayoutId,
 }
 
 impl EntityRecord {
@@ -94,13 +97,17 @@ impl EntityRecord {
         Self {
             entity: Arc::new(entity.into()),
             properties,
+            space: LayoutId::MODEL,
         }
     }
 
-    /// The same properties around different geometry.
+    /// The same properties, in the same space, around different geometry.
     #[must_use]
     pub fn with_entity(&self, entity: impl Into<Entity>) -> Self {
-        Self::new(entity, self.properties)
+        Self {
+            space: self.space,
+            ..Self::new(entity, self.properties)
+        }
     }
 
     /// The same geometry — shared, not copied — with different properties.
@@ -109,16 +116,28 @@ impl EntityRecord {
         Self {
             entity: Arc::clone(&self.entity),
             properties,
+            space: self.space,
+        }
+    }
+
+    /// The same record in another space (#191).
+    #[must_use]
+    pub fn in_space(&self, space: LayoutId) -> Self {
+        Self {
+            entity: Arc::clone(&self.entity),
+            properties: self.properties,
+            space,
         }
     }
 }
 
-/// Geometry with default properties.
+/// Geometry with default properties, in the model.
 impl From<SharedEntity> for EntityRecord {
     fn from(entity: SharedEntity) -> Self {
         Self {
             entity,
             properties: Properties::default(),
+            space: LayoutId::MODEL,
         }
     }
 }

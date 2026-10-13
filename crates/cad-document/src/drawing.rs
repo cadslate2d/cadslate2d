@@ -11,8 +11,8 @@ use crate::dim_style::{DimStyle, DimStyleError, DimStyleId, DimStyleTable, initi
 use crate::dimension::DimensionError;
 use crate::history::History;
 use crate::id_alloc::EntityIdAllocator;
-use crate::kept::KeptLayout;
 use crate::layer::{Layer, LayerId, LayerTable, initial_layers};
+use crate::layout::{Layout, LayoutId, LayoutTable, initial_layouts};
 use crate::linetype::{LinetypeDef, LinetypeError, LinetypeId, LinetypeTable, initial_linetypes};
 use crate::names::{NameError, check_name, same_name};
 use crate::spatial::RTreeIndex;
@@ -54,9 +54,8 @@ pub struct Drawing {
     /// such as the render scene asks [`Drawing::shown_changes_since`] what
     /// to redo instead of redoing all of it (ADR-0022).
     journal: VecDeque<(Revision, Revision, Option<Vec<EntityId>>)>,
-    /// Layouts a file carried, kept opaque and written back (#184).
-    /// Not part of the history: nothing edits them.
-    kept_layouts: Vec<KeptLayout>,
+    /// The spaces: the model first, then the layouts (#191).
+    layouts: LayoutTable,
 }
 
 /// How many changes the journal remembers; a scene further behind than
@@ -162,6 +161,18 @@ pub enum TransactionError {
     BlockCycle(BlockId),
     /// A reference's scale must be a positive number.
     BadBlockScale,
+    /// The layout does not exist, in the drawing or earlier in this
+    /// transaction.
+    UnknownLayout(LayoutId),
+    /// The model is always there: it cannot be removed or renamed.
+    PermanentLayout,
+    /// This transaction already touched an entity of the layout, so it
+    /// cannot remove it: do that in a transaction of its own.
+    LayoutInUse(LayoutId),
+    /// The name cannot be a layout's name.
+    BadLayoutName(NameError),
+    /// This layout already has the name, give or take its case.
+    DuplicateLayoutName(LayoutId),
 }
 
 impl fmt::Display for TransactionError {
@@ -218,6 +229,14 @@ impl fmt::Display for TransactionError {
             Self::DuplicateBlockName(id) => write!(f, "block {id} already has that name"),
             Self::BlockCycle(id) => write!(f, "block {id} would contain itself"),
             Self::BadBlockScale => write!(f, "a block reference's scale must be positive"),
+            Self::UnknownLayout(id) => write!(f, "layout {id} does not exist"),
+            Self::PermanentLayout => write!(f, "the model cannot be removed or renamed"),
+            Self::LayoutInUse(id) => write!(
+                f,
+                "layout {id} has an entity this transaction already changed"
+            ),
+            Self::BadLayoutName(error) => write!(f, "{}", error.explain("layout")),
+            Self::DuplicateLayoutName(id) => write!(f, "layout {id} already has that name"),
         }
     }
 }
@@ -252,7 +271,7 @@ impl Drawing {
             revision: Revision::next(),
             shown_revision: Revision::next(),
             journal: VecDeque::new(),
-            kept_layouts: Vec::new(),
+            layouts: initial_layouts(),
         }
     }
 
@@ -284,6 +303,46 @@ impl Drawing {
         entities: impl IntoIterator<Item = (Entity, Properties)>,
     ) -> Result<Self, TransactionError> {
         Self::from_tables(layers, linetypes, [], [], [], entities)
+    }
+
+    /// [`from_tables`](Self::from_tables) with layouts as well (#191):
+    /// after the model, which is always there, they take the IDs 1, 2, …
+    /// in the order given, and each entity names the space it is in. An
+    /// entity in a space that is not among them is refused.
+    pub fn from_spaces(
+        layers: impl IntoIterator<Item = Layer>,
+        linetypes: impl IntoIterator<Item = LinetypeDef>,
+        text_styles: impl IntoIterator<Item = TextStyle>,
+        dim_styles: impl IntoIterator<Item = DimStyle>,
+        blocks: impl IntoIterator<Item = Block>,
+        layouts: impl IntoIterator<Item = Layout>,
+        entities: impl IntoIterator<Item = (Entity, Properties, LayoutId)>,
+    ) -> Result<Self, TransactionError> {
+        let mut drawing =
+            Self::from_tables(layers, linetypes, text_styles, dim_styles, blocks, [])?;
+        for layout in layouts {
+            check_name(&layout.name).map_err(TransactionError::BadLayoutName)?;
+            if let Some(taken) = drawing.layouts.find(&layout.name) {
+                return Err(TransactionError::DuplicateLayoutName(taken));
+            }
+            let id = drawing.layouts.allocate();
+            drawing
+                .layouts
+                .apply(&TableChange::Insert { id, row: layout });
+        }
+        for (entity, properties, space) in entities {
+            if !drawing.layouts.contains(space) {
+                return Err(TransactionError::UnknownLayout(space));
+            }
+            Self::check_record(&drawing, &entity, &properties)?;
+            let id = drawing.ids.allocate();
+            drawing
+                .entities
+                .insert(id, EntityRecord::new(entity, properties).in_space(space))
+                .expect("freshly allocated IDs are unique");
+        }
+        drawing.rebuild_index();
+        Ok(drawing)
     }
 
     /// [`from_parts`](Self::from_parts) with text styles and blocks as
@@ -400,36 +459,7 @@ impl Drawing {
                 .blocks
                 .apply(&TableChange::Insert { id, row: block });
         }
-        // What every record of the drawing, or of a definition, must satisfy.
-        let check_record = |drawing: &Self, entity: &Entity, properties: &Properties| {
-            if !drawing.layers.contains(properties.layer) {
-                return Err(TransactionError::UnknownLayer(properties.layer));
-            }
-            known_linetype(drawing, properties.linetype)?;
-            match entity {
-                Entity::Text(TextEntity { style, .. })
-                | Entity::MText(MTextEntity { style, .. })
-                    if !drawing.text_styles.contains(*style) =>
-                {
-                    Err(TransactionError::UnknownTextStyle(*style))
-                }
-                Entity::BlockRef(reference) if !drawing.blocks.contains(reference.block) => {
-                    Err(TransactionError::UnknownBlock(reference.block))
-                }
-                Entity::Dimension(dimension) if !drawing.dim_styles.contains(dimension.style) => {
-                    Err(TransactionError::UnknownDimStyle(dimension.style))
-                }
-                Entity::Dimension(dimension) if dimension.check().is_err() => Err(
-                    TransactionError::BadDimension(dimension.check().unwrap_err()),
-                ),
-                Entity::BlockRef(reference)
-                    if !(reference.scale.is_finite() && reference.scale > 0.0) =>
-                {
-                    Err(TransactionError::BadBlockScale)
-                }
-                _ => Ok(()),
-            }
-        };
+        let check_record = Self::check_record;
         for (id, block) in drawing.blocks.iter() {
             if drawing.blocks.would_cycle(id, block) {
                 return Err(TransactionError::BlockCycle(id));
@@ -446,17 +476,61 @@ impl Drawing {
                 .insert(id, EntityRecord::new(entity, properties))
                 .expect("freshly allocated IDs are unique");
         }
+        drawing.rebuild_index();
+        Ok(drawing)
+    }
+
+    /// What every record of the drawing, or of a definition, must satisfy.
+    fn check_record(
+        drawing: &Self,
+        entity: &Entity,
+        properties: &Properties,
+    ) -> Result<(), TransactionError> {
+        if !drawing.layers.contains(properties.layer) {
+            return Err(TransactionError::UnknownLayer(properties.layer));
+        }
+        if let Linetype::Named(id) = properties.linetype
+            && !drawing.linetypes.contains(id)
+        {
+            return Err(TransactionError::UnknownLinetype(id));
+        }
+        match entity {
+            Entity::Text(TextEntity { style, .. }) | Entity::MText(MTextEntity { style, .. })
+                if !drawing.text_styles.contains(*style) =>
+            {
+                Err(TransactionError::UnknownTextStyle(*style))
+            }
+            Entity::BlockRef(reference) if !drawing.blocks.contains(reference.block) => {
+                Err(TransactionError::UnknownBlock(reference.block))
+            }
+            Entity::Dimension(dimension) if !drawing.dim_styles.contains(dimension.style) => {
+                Err(TransactionError::UnknownDimStyle(dimension.style))
+            }
+            Entity::Dimension(dimension) if dimension.check().is_err() => Err(
+                TransactionError::BadDimension(dimension.check().unwrap_err()),
+            ),
+            Entity::BlockRef(reference)
+                if !(reference.scale.is_finite() && reference.scale > 0.0) =>
+            {
+                Err(TransactionError::BadBlockScale)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// The spatial index afresh from every entity, for a drawing being
+    /// put together.
+    fn rebuild_index(&mut self) {
         let tables = Tables {
-            blocks: &drawing.blocks,
-            dim_styles: &drawing.dim_styles,
+            blocks: &self.blocks,
+            dim_styles: &self.dim_styles,
         };
-        let bounds: Vec<(EntityId, Aabb)> = drawing
+        let bounds: Vec<(EntityId, Aabb)> = self
             .entities
             .iter()
             .map(|(id, entity)| (id, entity.bounds(tables)))
             .collect();
-        drawing.index.rebuild(&mut bounds.into_iter());
-        Ok(drawing)
+        self.index.rebuild(&mut bounds.into_iter());
     }
 
     /// Changes on every commit, undo, and redo, and at no other time.
@@ -524,15 +598,58 @@ impl Drawing {
         self.entities.record(id).map(|record| record.properties)
     }
 
-    /// The layouts a file carried, kept to be written back (#184).
-    pub fn kept_layouts(&self) -> &[KeptLayout] {
-        &self.kept_layouts
+    /// The spaces of the drawing: the model, row [`LayoutId::MODEL`], and
+    /// its layouts in tab order (#191).
+    pub fn layouts(&self) -> &LayoutTable {
+        &self.layouts
     }
 
-    /// Keeps `layouts` to be written back: what a file carried, as it
-    /// carried them. Outside the history, like the drawing's name.
-    pub fn keep_layouts(&mut self, layouts: Vec<KeptLayout>) {
-        self.kept_layouts = layouts;
+    /// The space an entity is in.
+    pub fn space_of(&self, id: EntityId) -> Option<LayoutId> {
+        self.entities.record(id).map(|record| record.space)
+    }
+
+    /// Whether the entity is shown and in `space`.
+    pub fn is_shown_in(&self, id: EntityId, space: LayoutId) -> bool {
+        self.space_of(id) == Some(space) && self.is_shown(id)
+    }
+
+    /// Every entity of `space`, in dense storage order.
+    pub fn entities_in(&self, space: LayoutId) -> impl Iterator<Item = (EntityId, &Entity)> {
+        self.entities
+            .records()
+            .filter(move |(_, record)| record.space == space)
+            .map(|(id, record)| (id, &*record.entity))
+    }
+
+    /// Every entity of `space` that is shown, in dense storage order.
+    pub fn shown_in(&self, space: LayoutId) -> impl Iterator<Item = (EntityId, &Entity)> {
+        self.entities
+            .records()
+            .filter(move |(_, record)| {
+                record.space == space
+                    && self
+                        .layers
+                        .get(record.properties.layer)
+                        .is_some_and(|layer| layer.on)
+            })
+            .map(|(id, record)| (id, &*record.entity))
+    }
+
+    /// [`query_shown`](Self::query_shown) in `space`: what the pointer
+    /// does there.
+    pub fn query_shown_in(&self, space: LayoutId, bounds: &Aabb) -> Vec<EntityId> {
+        let mut ids = self.index.query(bounds);
+        ids.retain(|id| self.is_shown_in(*id, space));
+        ids
+    }
+
+    /// The bounding box of the entities of `space`, or `None` when it
+    /// has none.
+    pub fn extents_in(&self, space: LayoutId) -> Option<Aabb> {
+        self.entities_in(space)
+            .map(|(_, entity)| entity.bounds(self.tables()))
+            .reduce(|a, b| a.union(&b))
     }
 
     /// The stored record of an entity: its geometry and its properties.
@@ -669,24 +786,18 @@ impl Drawing {
         self.layer_of(id).is_some_and(|layer| layer.locked)
     }
 
-    /// Every entity that is shown, in dense storage order.
+    /// Every entity of the model that is shown, in dense storage order.
+    /// The model's, like [`query_shown`](Self::query_shown) and
+    /// [`extents`](Self::extents): a layout's are read with
+    /// [`shown_in`](Self::shown_in) (#191).
     pub fn shown(&self) -> impl Iterator<Item = (EntityId, &Entity)> {
-        self.entities
-            .records()
-            .filter(|(_, record)| {
-                self.layers
-                    .get(record.properties.layer)
-                    .is_some_and(|layer| layer.on)
-            })
-            .map(|(id, record)| (id, &*record.entity))
+        self.shown_in(LayoutId::MODEL)
     }
 
-    /// [`query`](Self::query), keeping only entities that are shown. This is
-    /// the query for anything the pointer does.
+    /// [`query`](Self::query), keeping only entities of the model that are
+    /// shown. This is the query for anything the pointer does there.
     pub fn query_shown(&self, bounds: &Aabb) -> Vec<EntityId> {
-        let mut ids = self.index.query(bounds);
-        ids.retain(|id| self.is_shown(*id));
-        ids
+        self.query_shown_in(LayoutId::MODEL, bounds)
     }
 
     /// Candidate entities whose bounds intersect `bounds`. Callers follow up
@@ -695,11 +806,10 @@ impl Drawing {
         self.index.query(bounds)
     }
 
-    /// The bounding box of all entities, or `None` for an empty drawing.
+    /// The bounding box of the model's entities, or `None` when it has
+    /// none.
     pub fn extents(&self) -> Option<Aabb> {
-        self.entities()
-            .map(|(_, entity)| entity.bounds(self.tables()))
-            .reduce(|a, b| a.union(&b))
+        self.extents_in(LayoutId::MODEL)
     }
 
     /// The raw value of the next entity ID. Monotonic for the lifetime of the
@@ -794,6 +904,7 @@ impl Drawing {
                 | Change::TextStyle(_)
                 | Change::DimStyle(_)
                 | Change::Block(_)
+                | Change::Layout(_)
                 | Change::Settings(_) => false,
             };
             match change {
@@ -831,6 +942,10 @@ impl Drawing {
                 }
                 Change::TextStyle(change) => {
                     self.text_styles.apply(change);
+                    report.tables_changed = true;
+                }
+                Change::Layout(change) => {
+                    self.layouts.apply(change);
                     report.tables_changed = true;
                 }
                 Change::DimStyle(change) => {
@@ -986,6 +1101,121 @@ impl TransactionBuilder<'_> {
         Ok(self.insert_record(EntityRecord::new(entity, properties)))
     }
 
+    /// Adds a new entity to `space` — the model, or a layout — with the
+    /// properties new objects take (#191).
+    pub fn insert_in(
+        &mut self,
+        space: LayoutId,
+        entity: impl Into<Entity>,
+    ) -> Result<EntityId, TransactionError> {
+        self.known_layout(space)?;
+        let settings = self.settings_now();
+        let properties = Properties {
+            layer: settings.current_layer,
+            color: settings.current_color,
+            linetype: settings.current_linetype,
+            lineweight: settings.current_lineweight,
+        };
+        let entity = entity.into();
+        self.known_text_style(&entity)?;
+        self.known_block(&entity)?;
+        Ok(self.insert_record(EntityRecord::new(entity, properties).in_space(space)))
+    }
+
+    /// Adds a new entity to `space` with the given properties.
+    pub fn insert_with_in(
+        &mut self,
+        space: LayoutId,
+        entity: impl Into<Entity>,
+        properties: Properties,
+    ) -> Result<EntityId, TransactionError> {
+        self.known_layout(space)?;
+        self.known_layer(properties.layer)?;
+        self.known_linetype(properties.linetype)?;
+        let entity = entity.into();
+        self.known_text_style(&entity)?;
+        self.known_block(&entity)?;
+        Ok(self.insert_record(EntityRecord::new(entity, properties).in_space(space)))
+    }
+
+    /// Moves an existing entity to `space`, keeping its ID, its geometry,
+    /// and its properties: one change, undone as one.
+    pub fn set_space(&mut self, id: EntityId, space: LayoutId) -> Result<(), TransactionError> {
+        self.known_layout(space)?;
+        let before = self.existing(id)?;
+        let after = before.in_space(space);
+        self.push(EntityChange::Replace { id, before, after });
+        Ok(())
+    }
+
+    /// Adds a layout and returns its ID. Its name must be allowed and not
+    /// taken.
+    pub fn add_layout(&mut self, layout: Layout) -> Result<LayoutId, TransactionError> {
+        check_name(&layout.name).map_err(TransactionError::BadLayoutName)?;
+        self.free_layout_name(&layout.name, None)?;
+        let id = self.drawing.layouts.allocate();
+        self.push_other(Change::Layout(TableChange::Insert { id, row: layout }));
+        Ok(id)
+    }
+
+    /// Renames a layout. The model keeps its name.
+    pub fn rename_layout(
+        &mut self,
+        id: LayoutId,
+        name: impl Into<String>,
+    ) -> Result<(), TransactionError> {
+        if id == LayoutId::MODEL {
+            return Err(TransactionError::PermanentLayout);
+        }
+        let name = name.into();
+        check_name(&name).map_err(TransactionError::BadLayoutName)?;
+        let before = self
+            .layout_now(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownLayout(id))?;
+        if !same_name(&before.name, &name) {
+            self.free_layout_name(&name, Some(id))?;
+        }
+        let after = Layout {
+            name,
+            ..before.clone()
+        };
+        self.push_other(Change::Layout(TableChange::Replace { id, before, after }));
+        Ok(())
+    }
+
+    /// Removes a layout and everything on it, as one step. The model
+    /// stays. An entity of the layout this transaction already touched
+    /// is refused: remove the layout in a transaction of its own.
+    pub fn remove_layout(&mut self, id: LayoutId) -> Result<(), TransactionError> {
+        if id == LayoutId::MODEL {
+            return Err(TransactionError::PermanentLayout);
+        }
+        let row = self
+            .layout_now(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownLayout(id))?;
+        let on_it: Vec<EntityId> = self
+            .drawing
+            .records()
+            .filter(|(_, record)| record.space == id)
+            .map(|(id, _)| id)
+            .collect();
+        let pending = self.changes.iter().any(|change| match change {
+            Change::Entity(EntityChange::Insert { record, .. }) => record.space == id,
+            Change::Entity(EntityChange::Replace { after, .. }) => after.space == id,
+            _ => false,
+        });
+        if pending || on_it.iter().any(|entity| self.touched.contains(entity)) {
+            return Err(TransactionError::LayoutInUse(id));
+        }
+        for entity in on_it {
+            self.remove(entity)?;
+        }
+        self.push_other(Change::Layout(TableChange::Remove { id, row }));
+        Ok(())
+    }
+
     /// Removes an existing entity.
     pub fn remove(&mut self, id: EntityId) -> Result<(), TransactionError> {
         let record = self.existing(id)?;
@@ -1083,6 +1313,7 @@ impl TransactionBuilder<'_> {
             | Change::TextStyle(_)
             | Change::DimStyle(_)
             | Change::Block(_)
+            | Change::Layout(_)
             | Change::Settings(_) => false,
         });
         if pending || self.drawing.records().any(|(_, record)| on_layer(record)) {
@@ -1644,6 +1875,50 @@ impl TransactionBuilder<'_> {
             });
         match taken {
             Some(id) => Err(TransactionError::DuplicateBlockName(id)),
+            None => Ok(()),
+        }
+    }
+
+    /// The layout `id` as it will be once this transaction commits.
+    fn layout_now(&self, id: LayoutId) -> Option<&Layout> {
+        let change = self.others().find_map(|change| match change {
+            Change::Layout(change) if change.id() == id => Some(change),
+            _ => None,
+        });
+        match change {
+            Some(TableChange::Remove { .. }) => None,
+            Some(TableChange::Insert { row, .. }) => Some(row),
+            Some(TableChange::Replace { after, .. }) => Some(after),
+            None => self.drawing.layouts.get(id),
+        }
+    }
+
+    fn known_layout(&self, id: LayoutId) -> Result<(), TransactionError> {
+        self.layout_now(id)
+            .map(|_| ())
+            .ok_or(TransactionError::UnknownLayout(id))
+    }
+
+    /// Refuses a layout name another layout has, `except` the one given.
+    fn free_layout_name(
+        &self,
+        name: &str,
+        except: Option<LayoutId>,
+    ) -> Result<(), TransactionError> {
+        let added = self.others().filter_map(|change| match change {
+            Change::Layout(TableChange::Insert { id, row })
+            | Change::Layout(TableChange::Replace { id, after: row, .. }) => Some((*id, row)),
+            _ => None,
+        });
+        let taken = self
+            .drawing
+            .layouts
+            .iter()
+            .filter(|(id, _)| self.layout_now(*id).is_some())
+            .chain(added)
+            .find(|(id, row)| Some(*id) != except && same_name(&row.name, name));
+        match taken {
+            Some((id, _)) => Err(TransactionError::DuplicateLayoutName(id)),
             None => Ok(()),
         }
     }
@@ -3942,6 +4217,203 @@ mod tests {
         );
     }
 
+    // ── spaces (#191) ──
+
+    #[test]
+    fn a_new_drawing_has_the_model_and_puts_entities_in_it() {
+        let mut drawing = Drawing::new();
+        assert_eq!(drawing.layouts().len(), 1);
+        assert_eq!(
+            drawing.layouts().get(LayoutId::MODEL).unwrap().name,
+            "Model"
+        );
+        let mut tx = drawing.transaction();
+        let id = tx.insert(line(0.0, 0.0, 10.0, 0.0)).unwrap();
+        tx.commit();
+        assert_eq!(drawing.space_of(id), Some(LayoutId::MODEL));
+        assert!(drawing.is_shown_in(id, LayoutId::MODEL));
+    }
+
+    #[test]
+    fn the_models_reads_see_nothing_of_a_layout_and_the_reverse() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+        let model = tx.insert(line(0.0, 0.0, 10.0, 0.0)).unwrap();
+        let paper = tx.insert_in(sheet, line(0.0, 0.0, 20.0, 0.0)).unwrap();
+        tx.commit();
+        let ids = |iter: Vec<EntityId>| sorted(iter);
+        assert_eq!(
+            ids(drawing.shown().map(|(id, _)| id).collect()),
+            vec![model]
+        );
+        assert_eq!(
+            ids(drawing.shown_in(sheet).map(|(id, _)| id).collect()),
+            vec![paper]
+        );
+        assert_eq!(ids(drawing.query_shown(&everything())), vec![model]);
+        assert_eq!(
+            ids(drawing.query_shown_in(sheet, &everything())),
+            vec![paper]
+        );
+        assert_eq!(drawing.extents().unwrap().max().x, 10.0);
+        assert_eq!(drawing.extents_in(sheet).unwrap().max().x, 20.0);
+        assert_eq!(
+            ids(drawing.query(&everything())),
+            vec![model, paper],
+            "the index holds every space"
+        );
+        assert_eq!(drawing.len(), 2);
+        assert!(!drawing.is_shown_in(paper, LayoutId::MODEL));
+        assert!(drawing.is_shown(paper), "shown, on its own paper");
+    }
+
+    #[test]
+    fn a_removed_layout_takes_its_entities_and_undo_brings_both_back() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+        let paper = tx.insert_in(sheet, line(0.0, 0.0, 20.0, 0.0)).unwrap();
+        let model = tx.insert(line(0.0, 0.0, 10.0, 0.0)).unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.remove_layout(sheet).unwrap();
+        tx.commit();
+        assert!(!drawing.layouts().contains(sheet));
+        assert!(drawing.entity(paper).is_none());
+        assert!(drawing.entity(model).is_some());
+        assert_eq!(drawing.query(&everything()), vec![model]);
+        drawing.undo();
+        assert!(drawing.layouts().contains(sheet));
+        assert_eq!(drawing.space_of(paper), Some(sheet));
+        assert_eq!(sorted(drawing.query(&everything())), vec![paper, model]);
+        drawing.redo();
+        assert!(drawing.entity(paper).is_none());
+    }
+
+    #[test]
+    fn moving_an_entity_between_spaces_is_one_change() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+        let id = tx.insert(line(0.0, 0.0, 10.0, 0.0)).unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.set_space(id, sheet).unwrap();
+        tx.commit();
+        assert_eq!(drawing.space_of(id), Some(sheet));
+        assert!(drawing.query_shown(&everything()).is_empty());
+        assert_eq!(drawing.properties(id), Some(Properties::default()));
+        assert!(drawing.undo().is_some());
+        assert_eq!(drawing.space_of(id), Some(LayoutId::MODEL));
+        assert_eq!(drawing.query_shown(&everything()), vec![id]);
+        assert!(drawing.redo().is_some());
+        assert_eq!(
+            drawing.space_of(id),
+            Some(sheet),
+            "one change, redone as one"
+        );
+    }
+
+    #[test]
+    fn the_model_cannot_be_renamed_or_removed_and_layout_names_are_unique() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.rename_layout(LayoutId::MODEL, "Paper"),
+            Err(TransactionError::PermanentLayout)
+        );
+        assert_eq!(
+            tx.remove_layout(LayoutId::MODEL),
+            Err(TransactionError::PermanentLayout)
+        );
+        let a = tx.add_layout(Layout::named("Sheet")).unwrap();
+        assert_eq!(
+            tx.add_layout(Layout::named("sheet")),
+            Err(TransactionError::DuplicateLayoutName(a))
+        );
+        assert_eq!(
+            tx.add_layout(Layout::named("Model")),
+            Err(TransactionError::DuplicateLayoutName(LayoutId::MODEL))
+        );
+        assert!(matches!(
+            tx.add_layout(Layout::named("a,b")),
+            Err(TransactionError::BadLayoutName(_))
+        ));
+        let b = tx.add_layout(Layout::named("Other")).unwrap();
+        assert_eq!(
+            tx.rename_layout(b, "SHEET"),
+            Err(TransactionError::DuplicateLayoutName(a))
+        );
+        tx.rename_layout(b, "Sheet 2").unwrap();
+        tx.commit();
+        assert_eq!(drawing.layouts().get(b).unwrap().name, "Sheet 2");
+        let mut tx = drawing.transaction();
+        let on_it = tx.insert_in(b, line(0.0, 0.0, 1.0, 1.0)).unwrap();
+        assert_eq!(tx.remove_layout(b), Err(TransactionError::LayoutInUse(b)));
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.replace(on_it, line(0.0, 0.0, 2.0, 2.0)).unwrap();
+        assert_eq!(tx.remove_layout(b), Err(TransactionError::LayoutInUse(b)));
+        tx.commit();
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.insert_in(LayoutId::from_raw(9), line(0.0, 0.0, 1.0, 1.0))
+                .err(),
+            Some(TransactionError::UnknownLayout(LayoutId::from_raw(9)))
+        );
+        tx.commit();
+    }
+
+    #[test]
+    fn a_drawing_from_spaces_holds_each_entity_in_its_space_and_refuses_an_unknown_one() {
+        let sheet = LayoutId::from_raw(1);
+        let drawing = Drawing::from_spaces(
+            [],
+            [],
+            [],
+            [],
+            [],
+            [Layout::named("Sheet")],
+            [
+                (
+                    line(0.0, 0.0, 10.0, 0.0).into(),
+                    Properties::default(),
+                    LayoutId::MODEL,
+                ),
+                (
+                    line(0.0, 0.0, 20.0, 0.0).into(),
+                    Properties::default(),
+                    sheet,
+                ),
+            ],
+        )
+        .unwrap();
+        assert_eq!(drawing.layouts().get(sheet).unwrap().name, "Sheet");
+        assert_eq!(drawing.shown().count(), 1);
+        assert_eq!(drawing.shown_in(sheet).count(), 1);
+        assert!(!drawing.can_undo());
+        let refused = Drawing::from_spaces(
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [(
+                line(0.0, 0.0, 1.0, 0.0).into(),
+                Properties::default(),
+                sheet,
+            )],
+        );
+        assert_eq!(refused.err(), Some(TransactionError::UnknownLayout(sheet)));
+        let duplicate = Drawing::from_spaces([], [], [], [], [], [Layout::named("Model")], []);
+        assert_eq!(
+            duplicate.err(),
+            Some(TransactionError::DuplicateLayoutName(LayoutId::MODEL))
+        );
+    }
+
     #[derive(Clone, Debug)]
     enum Op {
         Create(f64, f64, f64, f64),
@@ -3985,6 +4457,13 @@ mod tests {
         RemoveBlock(usize),
         /// A layer, an entity on it, and an edit of another, as one step.
         Together(usize, f64),
+        /// A layout by name; one renamed; one removed with what is on it;
+        /// a line drawn in a space by index; an entity moved to a space.
+        AddLayout(u8),
+        RenameLayout(usize, u8),
+        RemoveLayout(usize),
+        CreateIn(usize, f64),
+        MoveTo(usize, usize),
         Undo,
         Redo,
     }
@@ -4021,6 +4500,11 @@ mod tests {
             1 => any::<usize>().prop_map(Op::RemoveBlock),
             2 => (coordinate(), any::<usize>()).prop_map(|(x, style)| Op::CreateText(x, style)),
             1 => any::<usize>().prop_map(Op::RemoveTextStyle),
+            1 => (0..4u8).prop_map(Op::AddLayout),
+            1 => (any::<usize>(), 0..4u8).prop_map(|(i, name)| Op::RenameLayout(i, name)),
+            1 => any::<usize>().prop_map(Op::RemoveLayout),
+            2 => (any::<usize>(), coordinate()).prop_map(|(i, x)| Op::CreateIn(i, x)),
+            1 => (any::<usize>(), any::<usize>()).prop_map(|(i, space)| Op::MoveTo(i, space)),
             1 => (0..5u8).prop_map(Op::AddDimStyle),
             1 => (any::<usize>(), -1.0..5.0f64, 0..5u8).prop_map(|(i, h, n)| Op::RestyleDimStyle(i, h, n)),
             1 => any::<usize>().prop_map(Op::RemoveDimStyle),
@@ -4034,19 +4518,27 @@ mod tests {
     /// Everything that is saved: every entity with its geometry and
     /// properties, every layer, every linetype, and the settings.
     type Saved = (
-        Vec<(EntityId, Entity, Properties)>,
+        Vec<(EntityId, Entity, Properties, LayoutId)>,
         Vec<(LayerId, Layer)>,
         Vec<(LinetypeId, LinetypeDef)>,
         Vec<(TextStyleId, TextStyle)>,
         Vec<(DimStyleId, DimStyle)>,
         Vec<(BlockId, Block)>,
+        Vec<(LayoutId, Layout)>,
         DrawingSettings,
     );
 
     fn saved(drawing: &Drawing) -> Saved {
-        let mut entities: Vec<(EntityId, Entity, Properties)> = drawing
+        let mut entities: Vec<(EntityId, Entity, Properties, LayoutId)> = drawing
             .records()
-            .map(|(id, record)| (id, (*record.entity).clone(), record.properties))
+            .map(|(id, record)| {
+                (
+                    id,
+                    (*record.entity).clone(),
+                    record.properties,
+                    record.space,
+                )
+            })
             .collect();
         entities.sort_by_key(|(id, ..)| *id);
         let layers = drawing
@@ -4074,6 +4566,11 @@ mod tests {
             .iter()
             .map(|(id, block)| (id, block.clone()))
             .collect();
+        let layouts = drawing
+            .layouts()
+            .iter()
+            .map(|(id, layout)| (id, layout.clone()))
+            .collect();
         (
             entities,
             layers,
@@ -4081,6 +4578,7 @@ mod tests {
             text_styles,
             dim_styles,
             blocks,
+            layouts,
             drawing.settings(),
         )
     }
@@ -4301,6 +4799,69 @@ mod tests {
                             allocated.push(id);
                         }
                     }
+                    Op::AddLayout(name) => {
+                        let name = format!("Sheet {name}");
+                        let taken = drawing.layouts().find(&name);
+                        let mut tx = drawing.transaction();
+                        let added = tx.add_layout(Layout::named(name.to_uppercase()));
+                        tx.commit();
+                        match (added, taken) {
+                            (Ok(_), None) => {}
+                            (Err(TransactionError::DuplicateLayoutName(id)), Some(existing)) => {
+                                prop_assert_eq!(id, existing);
+                            }
+                            other => prop_assert!(false, "adding a layout: {:?}", other),
+                        }
+                    }
+                    Op::RenameLayout(pick, name) => {
+                        let layouts: Vec<LayoutId> = drawing.layouts().iter().map(|(id, _)| id).collect();
+                        let id = layouts[pick % layouts.len()];
+                        let name = format!("Sheet {name}");
+                        let taken = drawing.layouts().find(&name);
+                        let mut tx = drawing.transaction();
+                        let renamed = tx.rename_layout(id, &name);
+                        tx.commit();
+                        let allowed = id != LayoutId::MODEL && taken.is_none_or(|other| other == id);
+                        prop_assert_eq!(renamed.is_ok(), allowed, "{:?}", renamed);
+                        if allowed {
+                            prop_assert_eq!(drawing.layouts().find(&name), Some(id));
+                        }
+                    }
+                    Op::RemoveLayout(pick) => {
+                        let layouts: Vec<LayoutId> = drawing.layouts().iter().map(|(id, _)| id).collect();
+                        let id = layouts[pick % layouts.len()];
+                        let on_it: Vec<EntityId> = drawing.records().filter(|(_, r)| r.space == id).map(|(id, _)| id).collect();
+                        let mut tx = drawing.transaction();
+                        let removed = tx.remove_layout(id);
+                        tx.commit();
+                        prop_assert_eq!(removed.is_ok(), id != LayoutId::MODEL, "{:?}", removed);
+                        if removed.is_ok() {
+                            prop_assert!(!drawing.layouts().contains(id));
+                            for entity in on_it {
+                                prop_assert!(drawing.entity(entity).is_none(), "entity {} outlived its layout", entity);
+                            }
+                        }
+                    }
+                    Op::CreateIn(pick, x) => {
+                        let layouts: Vec<LayoutId> = drawing.layouts().iter().map(|(id, _)| id).collect();
+                        let space = layouts[pick % layouts.len()];
+                        let mut tx = drawing.transaction();
+                        let id = tx.insert_in(space, line(x, 0.0, x + 10.0, 5.0)).unwrap();
+                        tx.commit();
+                        prop_assert_eq!(drawing.space_of(id), Some(space));
+                        allocated.push(id);
+                    }
+                    Op::MoveTo(pick, space) => {
+                        let live = live_ids(&drawing);
+                        let layouts: Vec<LayoutId> = drawing.layouts().iter().map(|(id, _)| id).collect();
+                        if let Some(&id) = live.get(pick % live.len().max(1)) {
+                            let space = layouts[space % layouts.len()];
+                            let mut tx = drawing.transaction();
+                            tx.set_space(id, space).unwrap();
+                            tx.commit();
+                            prop_assert_eq!(drawing.space_of(id), Some(space));
+                        }
+                    }
                     Op::RemoveTextStyle(pick) => {
                         let styles: Vec<TextStyleId> = drawing.text_styles().iter().map(|(id, _)| id).collect();
                         let id = styles[pick % styles.len()];
@@ -4480,6 +5041,29 @@ mod tests {
                 let count = names.len();
                 names.dedup();
                 prop_assert_eq!(names.len(), count, "two layers share a name");
+                // Spaces (#191): every entity is in a space that exists, the
+                // model is always there, names are unique, and the model's
+                // reads see nothing of a layout, nor a layout's of another.
+                prop_assert!(drawing.layouts().contains(LayoutId::MODEL));
+                for (id, record) in drawing.records() {
+                    prop_assert!(drawing.layouts().contains(record.space), "entity {} is in a space that does not exist", id);
+                }
+                let mut layout_names: Vec<String> = drawing.layouts().iter().map(|(_, l)| l.name.to_lowercase()).collect();
+                layout_names.sort();
+                let count = layout_names.len();
+                layout_names.dedup();
+                prop_assert_eq!(layout_names.len(), count, "two layouts share a name");
+                for (space, _) in drawing.layouts().iter() {
+                    let expected: Vec<EntityId> = sorted(
+                        drawing.records().filter(|(id, r)| r.space == space && drawing.is_shown(*id)).map(|(id, _)| id).collect(),
+                    );
+                    prop_assert_eq!(sorted(drawing.shown_in(space).map(|(id, _)| id).collect()), expected.clone());
+                    prop_assert_eq!(sorted(drawing.query_shown_in(space, &everything())), expected);
+                }
+                prop_assert_eq!(
+                    sorted(drawing.shown().map(|(id, _)| id).collect()),
+                    sorted(drawing.shown_in(LayoutId::MODEL).map(|(id, _)| id).collect())
+                );
             }
 
             let mut reference = LinearIndex::new();

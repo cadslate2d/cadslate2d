@@ -24,6 +24,7 @@ mod id_alloc;
 mod joining;
 pub mod kept;
 mod layer;
+mod layout;
 mod linetype;
 mod lineweight;
 mod mtext;
@@ -60,8 +61,9 @@ pub use hatch_pattern::{
     HatchPattern, PatternSyntax, hatch_pattern, hatch_patterns, parse_patterns,
 };
 pub use joining::{JoinError, Joined, close_into_circle, join};
-pub use kept::{KeptLayout, RawEntity, RawGroup};
+pub use kept::{RawEntity, RawGroup};
 pub use layer::{Layer, LayerChange, LayerId, LayerTable};
+pub use layout::{Layout, LayoutChange, LayoutId, LayoutTable};
 pub use linetype::{LinetypeChange, LinetypeDef, LinetypeError, LinetypeId, LinetypeTable};
 pub use lineweight::Weight;
 pub use mtext::LINE_SPACING;

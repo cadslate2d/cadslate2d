@@ -46,3 +46,5 @@ A layout is not a block to be rendered: it is a sheet of a different size, in di
 
 - Layouts are to be drawn or plotted: then `KeptLayout` becomes the import of a real space (§3 above), and this ADR is superseded.
 - A file is found whose kept records are not written back readably by its own program — the remap rule (`0` for the unknown) would then need to keep more.
+
+> **Narrowed in M9 (#191):** a layout is a row of the drawing's layout table and a file's paper-space entities are entities of their layout ([ADR-0029](0029-spaces.md)); what this ADR keeps opaque is now only the `LAYOUT` object's groups and the records of a sheet the drawing has no entity for, on the layout's row.

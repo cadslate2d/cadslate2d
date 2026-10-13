@@ -17,7 +17,7 @@ class FakeSource implements UiSource {
     unsavedChanges: false,
     revision: 1,
     exportLosses: [],
-    keptLayouts: [],
+    layouts: [],
     layers: [],
     linetypes: [],
     selection: { count: 0, headline: "No selection", kinds: [], geometry: [], method: "" },

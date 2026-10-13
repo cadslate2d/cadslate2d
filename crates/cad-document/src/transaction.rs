@@ -9,6 +9,7 @@ use cad_core::EntityId;
 use crate::block::BlockChange;
 use crate::dim_style::DimStyleChange;
 use crate::layer::LayerChange;
+use crate::layout::LayoutChange;
 use crate::linetype::LinetypeChange;
 use crate::text_style::TextStyleChange;
 use crate::{EntityRecord, SettingsChange};
@@ -69,6 +70,7 @@ pub enum Change {
     TextStyle(TextStyleChange),
     DimStyle(DimStyleChange),
     Block(BlockChange),
+    Layout(LayoutChange),
     Settings(SettingsChange),
 }
 
@@ -81,6 +83,7 @@ impl Change {
             Change::TextStyle(change) => Change::TextStyle(change.inverse()),
             Change::DimStyle(change) => Change::DimStyle(change.inverse()),
             Change::Block(change) => Change::Block(change.inverse()),
+            Change::Layout(change) => Change::Layout(change.inverse()),
             Change::Settings(change) => Change::Settings(change.inverse()),
         }
     }
@@ -234,6 +237,7 @@ mod tests {
                 Change::TextStyle(_) => "text style",
                 Change::DimStyle(_) => "dimension style",
                 Change::Block(_) => "block",
+                Change::Layout(_) => "layout",
                 Change::Settings(_) => "settings",
             })
             .collect();

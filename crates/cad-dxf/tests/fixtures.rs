@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use cad_core::Point2;
 use cad_document::{
     BlockReferenceEntity, Color, DimStyleId, Drawing, Entity, Justification, Layer, LayerId,
-    LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity, Properties, TextEntity,
-    TextStyleId,
+    Layout, LayoutId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity,
+    Properties, TextEntity, TextStyleId,
 };
 use cad_dxf::{DxfError, Import, export, import};
 
@@ -303,23 +303,41 @@ fn splines_by_fit_points_and_by_control_points() {
     }
 }
 
-/// #184: two layouts with their paper-space blocks — a viewport and a
-/// title line in one, a line in the other — kept whole, written back with
-/// their groups as they were and their handles made this file's, and
+/// #184, #191: two layouts with their paper-space blocks — a viewport and a
+/// title line in one, a line in the other. The lines are entities of
+/// their layouts, read like the model's; the viewport is kept as the file
+/// held it; all of it is written back, the handles made this file's, and
 /// read again the same. Nothing of it is a loss.
 #[test]
 fn layouts_are_kept_through_a_round_trip() {
     let import = load("valid", "layouts.dxf").unwrap();
-    let kept = import.drawing.kept_layouts();
-    let names: Vec<&str> = kept.iter().map(|layout| layout.name.as_str()).collect();
-    assert_eq!(names, ["Layout1", "Layout2"]);
-    assert_eq!(kept[0].block_name, "*Paper_Space");
-    assert_eq!(kept[1].block_name, "*Paper_Space0");
-    assert_eq!(kept[0].entities.len(), 2);
-    assert_eq!(kept[0].entities[0].kind, "VIEWPORT");
-    assert_eq!(kept[1].entities.len(), 1);
+    let drawing = &import.drawing;
+    let layouts: Vec<(LayoutId, &Layout)> = drawing.layouts().iter().collect();
+    let names: Vec<&str> = layouts
+        .iter()
+        .map(|(_, layout)| layout.name.as_str())
+        .collect();
+    assert_eq!(names, ["Model", "Layout1", "Layout2"]);
+    let (one, layout1) = layouts[1];
+    let (two, layout2) = layouts[2];
+    assert_eq!(layout1.block_name, "*Paper_Space");
+    assert_eq!(layout2.block_name, "*Paper_Space0");
+    assert_eq!(layout1.kept_entities.len(), 1, "the viewport, kept");
+    assert_eq!(layout1.kept_entities[0].kind, "VIEWPORT");
+    assert!(layout2.kept_entities.is_empty());
+    assert!(!layout1.kept.is_empty(), "the LAYOUT object, kept");
+    // The lines are entities of their layouts: one each, on their layers.
+    assert_eq!(drawing.len(), 3);
+    assert_eq!(drawing.shown().count(), 1, "the model holds its one line");
+    assert_eq!(drawing.shown_in(one).count(), 1);
+    assert_eq!(drawing.shown_in(two).count(), 1);
+    let (title, _) = drawing.shown_in(one).next().unwrap();
+    assert_eq!(drawing.layer_of(title).unwrap().name, "TITLE");
     assert_eq!(import.report.layouts, vec!["Layout1", "Layout2"]);
-    assert_eq!(import.drawing.len(), 1, "model space holds the one line");
+    assert_eq!(
+        import.report.lines, 3,
+        "a layout's entities count as imported"
+    );
     assert!(
         import.report.losses().is_empty(),
         "{:?}",
@@ -330,12 +348,12 @@ fn layouts_are_kept_through_a_round_trip() {
             .report
             .summary()
             .iter()
-            .any(|line| line == "Kept 2 layouts, not drawn: Layout1, Layout2."),
+            .any(|line| line == "2 layouts, not drawn yet: Layout1, Layout2."),
         "{:?}",
         import.report.summary()
     );
 
-    let text = export(&import.drawing);
+    let text = export(drawing);
     // The groups the file held, other than handles, are written as they were.
     assert!(text.contains("\n  2\n*Paper_Space0\n"));
     assert!(text.contains("\nVIEWPORT\n"));
@@ -349,6 +367,16 @@ fn layouts_are_kept_through_a_round_trip() {
         !text.contains("\n  3\nLayout1\n  3\nLayout1"),
         "written once"
     );
+    // A layout's line is in its paper block, flagged as paper, and the
+    // ENTITIES section holds the model's line alone.
+    let entities = text.split("\n  2\nENTITIES\n").nth(1).unwrap();
+    let entities = &entities[..entities.find("\nENDSEC\n").unwrap()];
+    assert_eq!(entities.matches("\nLINE\n").count(), 1);
+    assert!(!entities.contains("\n 67\n1\n"));
+    let blocks = text.split("\n  2\nBLOCKS\n").nth(1).unwrap();
+    let paper = blocks.split("\n  2\n*Paper_Space\n").nth(1).unwrap();
+    let paper = &paper[..paper.find("\nENDBLK\n").unwrap()];
+    assert!(paper.contains("\n 67\n1\n  8\nTITLE\n"));
     // The viewport the layout names as active is the one written, under its new handle.
     let viewport_handle = text
         .split("\nVIEWPORT\n  5\n")
@@ -360,7 +388,89 @@ fn layouts_are_kept_through_a_round_trip() {
     let back = cad_dxf::import(text.as_bytes()).unwrap();
     assert_eq!(back.report.layouts, vec!["Layout1", "Layout2"]);
     assert!(back.report.losses().is_empty());
+    assert_eq!(back.drawing.shown_in(one).count(), 1);
     assert_eq!(export(&back.drawing), text, "stable on the second pass");
+}
+
+/// #191: a layout made in the drawing is written with a paper block and a
+/// sheet of its own, and reads back as a layout with its entities; its
+/// name survives a rename of a layout a file gave its LAYOUT object.
+#[test]
+fn a_layout_made_here_and_a_renamed_one_are_written_and_read_back() {
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    let sheet = tx.add_layout(Layout::named("Title sheet")).unwrap();
+    tx.insert_in(
+        sheet,
+        LineEntity::new(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0)),
+    )
+    .unwrap();
+    tx.insert(LineEntity::new(
+        Point2::new(0.0, 0.0),
+        Point2::new(5.0, 0.0),
+    ))
+    .unwrap();
+    tx.commit();
+    let text = export(&drawing);
+    assert!(text.contains("\n  2\n*Paper_Space\n"));
+    assert!(
+        text.contains("\n  3\nTitle sheet\n"),
+        "the layouts dictionary"
+    );
+    assert!(text.contains("\n  1\nTitle sheet\n"), "the LAYOUT object");
+    assert!(
+        !text.contains("\n  1\nLayout1\n"),
+        "no default sheet beside it"
+    );
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    let names: Vec<String> = back
+        .drawing
+        .layouts()
+        .iter()
+        .map(|(_, l)| l.name.clone())
+        .collect();
+    assert_eq!(names, ["Model", "Title sheet"]);
+    let (id, _) = back.drawing.layouts().iter().nth(1).unwrap();
+    assert_eq!(back.drawing.shown_in(id).count(), 1);
+    assert_eq!(back.drawing.shown().count(), 1);
+    assert_eq!(export(&back.drawing), text, "stable on the second pass");
+
+    // A file's layout renamed: the kept LAYOUT object carries the new name.
+    let mut imported = load("valid", "layouts.dxf").unwrap().drawing;
+    let (two, _) = imported.layouts().iter().nth(2).unwrap();
+    let mut tx = imported.transaction();
+    tx.rename_layout(two, "Details").unwrap();
+    tx.commit();
+    let text = export(&imported);
+    assert!(text.contains("\n  1\nDetails\n"));
+    assert!(!text.contains("\n  1\nLayout2\n"));
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(back.report.layouts, vec!["Layout1", "Details"]);
+}
+
+/// #191: an entity the ENTITIES section flags as paper (67) — as R12 and
+/// some writers put the active layout's — is the active layout's, not the
+/// model's; a paper block no LAYOUT object names is a layout of its own.
+#[test]
+fn a_paper_flag_in_the_entities_section_puts_the_entity_on_the_active_layout() {
+    let text = "  0\nSECTION\n  2\nENTITIES\n  0\nLINE\n  8\n0\n 67\n1\n 10\n0.0\n 20\n0.0\n 11\n100.0\n 21\n0.0\n  0\nLINE\n  8\n0\n 10\n0.0\n 20\n0.0\n 11\n50.0\n 21\n0.0\n  0\nENDSEC\n  0\nEOF\n";
+    let import = cad_dxf::import(text.as_bytes()).unwrap();
+    let drawing = &import.drawing;
+    let names: Vec<String> = drawing
+        .layouts()
+        .iter()
+        .map(|(_, l)| l.name.clone())
+        .collect();
+    assert_eq!(names, ["Model", "Layout1"]);
+    let (sheet, _) = drawing.layouts().iter().nth(1).unwrap();
+    assert_eq!(drawing.shown().count(), 1);
+    assert_eq!(drawing.shown_in(sheet).count(), 1);
+    assert_eq!(import.report.layouts, vec!["Layout1"]);
+    assert_eq!(import.report.lines, 2);
+    let written = export(drawing);
+    let back = cad_dxf::import(written.as_bytes()).unwrap();
+    assert_eq!(back.drawing.shown_in(sheet).count(), 1);
+    assert_eq!(export(&back.drawing), written);
 }
 
 #[test]

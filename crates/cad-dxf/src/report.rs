@@ -17,8 +17,9 @@ pub struct ImportReport {
     pub splines: usize,
     /// Attribute definitions of the drawing itself: a block's are its own.
     pub attribute_definitions: usize,
-    /// Layouts with something on their paper, kept whole and not drawn
-    /// (#184), by name. An empty layout is kept without a word.
+    /// Layouts with something on their paper — entities of the drawing
+    /// since #191, or records kept as the file held them — by name. They
+    /// are not drawn yet. An empty layout is read without a word.
     pub layouts: Vec<String>,
     /// POLYLINE and LWPOLYLINE entities imported.
     pub polylines: usize,
@@ -142,7 +143,7 @@ impl ImportReport {
         }];
         if !self.layouts.is_empty() {
             lines.push(format!(
-                "Kept {}, not drawn: {}.",
+                "{}, not drawn yet: {}.",
                 counted(self.layouts.len(), "layout", "layouts"),
                 self.layouts.join(", ")
             ));

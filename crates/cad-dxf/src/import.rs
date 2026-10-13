@@ -18,9 +18,9 @@ use cad_core::{LengthUnit, Point2, Vec2};
 use cad_document::{
     ArcEntity, AttributeDefinitionEntity, Block, BlockId, BlockReferenceEntity, BlockTable,
     CircleEntity, Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings,
-    EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Justification, KeptLayout, Layer,
-    LayerId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity, Measure,
-    PolylineEntity, Properties, RawEntity, RawGroup, TextEntity, TextStyle, TextStyleId,
+    EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Justification, Layer, LayerId,
+    Layout, LayoutId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity,
+    Measure, PolylineEntity, Properties, RawEntity, RawGroup, TextEntity, TextStyle, TextStyleId,
     check_name, nearest_index, same_name,
 };
 
@@ -267,6 +267,8 @@ struct Pending {
     block: Option<String>,
     /// It carried something the drawing cannot hold.
     dropped: bool,
+    /// Group 67: the entity is in paper space (#191).
+    paper: bool,
 }
 
 impl Default for Pending {
@@ -280,6 +282,7 @@ impl Default for Pending {
             dim_style: None,
             block: None,
             dropped: false,
+            paper: false,
         }
     }
 }
@@ -336,17 +339,26 @@ struct BlockBuilder {
     entities: Vec<(Entity, Pending)>,
 }
 
+/// A layout's entities as read, before their names are resolved.
+type PaperEntities = Vec<(Entity, Pending)>;
+
+/// A paper-space block (#191): the entities of a layout, read like the
+/// drawing's own, and the records the drawing has no entity for, kept as
+/// the file held them (ADR-0025, narrowed).
+#[derive(Debug, Default)]
+struct PaperBlock {
+    name: String,
+    entities: Vec<(Entity, Pending)>,
+    kept: Vec<RawEntity>,
+}
+
 /// The block definition the reader is inside, in the BLOCKS section.
 #[derive(Debug)]
 enum OpenBlock {
     /// A definition the drawing will hold.
     User(BlockBuilder),
-    /// A paper-space block (#184): its entities are kept as the file held
-    /// them, to be written back with the layout they belong to.
-    Paper {
-        name: String,
-        entities: Vec<RawEntity>,
-    },
+    /// A paper-space block: a layout's entities (#191).
+    Paper(PaperBlock),
     /// Model space, paper space, an anonymous block, one with a name no
     /// block can have, or a second definition of a name: its entities are
     /// not user content and are skipped.
@@ -561,8 +573,10 @@ struct Reader<'a> {
     /// Entities read so far, in the drawing and in its blocks together,
     /// against the limit.
     total: usize,
-    /// Paper-space blocks, their entities as the file held them (#184).
-    paper_blocks: Vec<(String, Vec<RawEntity>)>,
+    /// Paper-space blocks: each layout's entities (#191). The one named
+    /// `*Paper_Space` also takes what the ENTITIES section flags as paper
+    /// (67), as R12 and some writers put the active layout there.
+    paper_blocks: Vec<PaperBlock>,
     /// LAYOUT objects as the file held them.
     layouts: Vec<Vec<RawGroup>>,
     /// Block record handles to their names, to pair a layout with its block.
@@ -670,11 +684,12 @@ impl<'a> Reader<'a> {
                 return Ok(());
             }
             let mut body = RecordBody::default();
-            // Records read by walking their groups, and everything a kept
-            // layout holds (#184): a paper-space block's entities, LAYOUT
-            // objects, and BLOCK_RECORD rows, whose handles name the layouts' blocks.
+            // Records read by walking their groups, and everything a
+            // layout keeps (#184, #191): a paper-space block's records the
+            // drawing has no entity for, LAYOUT objects, and BLOCK_RECORD
+            // rows, whose handles name the layouts' blocks.
             let keep_raw = matches!(record.value, "HATCH" | "SPLINE" | "LAYOUT" | "BLOCK_RECORD")
-                || matches!(self.open_block, Some(OpenBlock::Paper { .. }));
+                || matches!(self.open_block, Some(OpenBlock::Paper(_)));
             if keep_raw {
                 body.raw = Some(Vec::new());
             }
@@ -707,8 +722,8 @@ impl<'a> Reader<'a> {
         record: Group<'_>,
         body: &RecordBody,
     ) -> Result<(), DxfError> {
-        // In the BLOCKS section, only a user definition's entities count;
-        // a paper-space block's are kept as they are (#184).
+        // In the BLOCKS section, a user definition's entities and a
+        // paper-space block's count (#191); a skipped block's do not.
         if matches!(context, RecordContext::Blocks) {
             match record.value {
                 "BLOCK" => {
@@ -716,18 +731,13 @@ impl<'a> Reader<'a> {
                     return Ok(());
                 }
                 "ENDBLK" => return self.close_block(),
-                _ if matches!(self.open_block, Some(OpenBlock::Paper { .. })) => {
-                    if let (Some(OpenBlock::Paper { entities, .. }), Some(raw)) =
-                        (&mut self.open_block, &body.raw)
-                    {
-                        entities.push(RawEntity {
-                            kind: record.value.to_owned(),
-                            groups: raw.clone(),
-                        });
-                    }
+                _ if !matches!(
+                    self.open_block,
+                    Some(OpenBlock::User(_) | OpenBlock::Paper(_))
+                ) =>
+                {
                     return Ok(());
                 }
-                _ if !matches!(self.open_block, Some(OpenBlock::User(_))) => return Ok(()),
                 _ => {}
             }
         }
@@ -853,8 +863,16 @@ impl<'a> Reader<'a> {
                     self.finish_polyline(polyline)?;
                 }
             }
+            // A record of a layout's paper the drawing has no entity for —
+            // a VIEWPORT — is kept as it is, to be written back (#191).
             (_, kind) if entities && !SUBORDINATE_RECORDS.contains(&kind) => {
-                self.report.count_unsupported(&kind_name(kind));
+                match (&mut self.open_block, &body.raw) {
+                    (Some(OpenBlock::Paper(paper)), Some(raw)) => paper.kept.push(RawEntity {
+                        kind: kind.to_owned(),
+                        groups: raw.clone(),
+                    }),
+                    _ => self.report.count_unsupported(&kind_name(kind)),
+                }
             }
             (RecordContext::Tables, "LAYER") => self.table_layer(body)?,
             (RecordContext::Tables, "LTYPE") => self.table_linetype(body)?,
@@ -870,10 +888,10 @@ impl<'a> Reader<'a> {
     fn open_block(&mut self, body: &RecordBody) {
         let name = body.name.as_deref().unwrap_or("");
         if is_paper_space(name) {
-            self.open_block = Some(OpenBlock::Paper {
+            self.open_block = Some(OpenBlock::Paper(PaperBlock {
                 name: name.to_owned(),
-                entities: Vec::new(),
-            });
+                ..PaperBlock::default()
+            }));
             return;
         }
         if body.name_is_reserved {
@@ -900,13 +918,13 @@ impl<'a> Reader<'a> {
     /// An ENDBLK record: the definition is complete. A polyline left open
     /// inside it is finished with it.
     fn close_block(&mut self) -> Result<(), DxfError> {
-        if let Some(OpenBlock::Paper { .. }) = &self.open_block
-            && let Some(OpenBlock::Paper { name, entities }) = self.open_block.take()
+        self.open_polyline = None;
+        if let Some(OpenBlock::Paper(_)) = &self.open_block
+            && let Some(OpenBlock::Paper(paper)) = self.open_block.take()
         {
-            self.paper_blocks.push((name, entities));
+            self.paper_blocks.push(paper);
             return Ok(());
         }
-        self.open_polyline = None;
         if let Some(OpenBlock::User(block)) = self.open_block.take() {
             self.tables
                 .add_block(block)
@@ -1281,7 +1299,8 @@ impl<'a> Reader<'a> {
     fn attach_attribute(&mut self, tag: &str, value: &str) {
         let last = match &mut self.open_block {
             Some(OpenBlock::User(block)) => block.entities.last_mut(),
-            Some(OpenBlock::Skipped | OpenBlock::Paper { .. }) => None,
+            Some(OpenBlock::Paper(paper)) => paper.entities.last_mut(),
+            Some(OpenBlock::Skipped) => None,
             None => self.entities.last_mut(),
         };
         if let Some((Entity::BlockRef(reference), _)) = last {
@@ -1301,8 +1320,9 @@ impl<'a> Reader<'a> {
         self.total += 1;
         match &mut self.open_block {
             Some(OpenBlock::User(block)) => block.entities.push((entity, properties)),
-            Some(OpenBlock::Skipped | OpenBlock::Paper { .. }) => {}
-            None => {
+            Some(OpenBlock::Skipped) => {}
+            // A layout's entities count as the drawing's: they are (#191).
+            Some(OpenBlock::Paper(_)) | None => {
                 match &entity {
                     Entity::Line(_) => self.report.lines += 1,
                     Entity::Circle(_) => self.report.circles += 1,
@@ -1317,10 +1337,35 @@ impl<'a> Reader<'a> {
                     Entity::Dimension(_) => self.report.dimensions += 1,
                     Entity::Hatch(_) => self.report.hatches += 1,
                 }
-                self.entities.push((entity, properties));
+                match &mut self.open_block {
+                    Some(OpenBlock::Paper(paper)) => paper.entities.push((entity, properties)),
+                    // Flagged as paper (67) in the ENTITIES section: the
+                    // active layout's, whose block is `*Paper_Space`.
+                    _ if properties.paper => {
+                        self.active_paper().entities.push((entity, properties))
+                    }
+                    _ => self.entities.push((entity, properties)),
+                }
             }
         }
         Ok(())
+    }
+
+    /// The paper block of the active layout, for what the ENTITIES
+    /// section flags as paper: `*Paper_Space`, made if the file has none.
+    fn active_paper(&mut self) -> &mut PaperBlock {
+        let at = self
+            .paper_blocks
+            .iter()
+            .position(|block| is_active_paper_space(&block.name));
+        let at = at.unwrap_or_else(|| {
+            self.paper_blocks.push(PaperBlock {
+                name: "*Paper_Space".to_owned(),
+                ..PaperBlock::default()
+            });
+            self.paper_blocks.len() - 1
+        });
+        &mut self.paper_blocks[at]
     }
 
     fn finish_polyline(&mut self, polyline: PolylineBuilder) -> Result<(), DxfError> {
@@ -1399,11 +1444,14 @@ impl<'a> Reader<'a> {
     }
 
     /// Resolves every name against the tables and builds the drawing.
-    /// The layouts the file carried, other than the model's: each LAYOUT
-    /// object with the paper-space block its record names, paired by the
-    /// record's handle, in tab order (#184).
-    fn kept_layouts(&mut self) -> Vec<KeptLayout> {
-        let mut kept: Vec<(i64, KeptLayout)> = Vec::new();
+    /// The layouts the file carried, other than the model's, in tab order
+    /// (#184, #191): each LAYOUT object with the paper-space block its
+    /// record names, paired by the record's handle — the block's entities
+    /// as the layout's, its other records kept — and a layout for a paper
+    /// block with something in it that no LAYOUT object names.
+    fn layouts(&mut self) -> Vec<(Layout, PaperEntities)> {
+        let mut kept: Vec<(i64, Layout, PaperEntities)> = Vec::new();
+        let mut paper_blocks = std::mem::take(&mut self.paper_blocks);
         for groups in std::mem::take(&mut self.layouts) {
             // The AcDbLayout subclass holds the name (1), the tab order
             // (71), and the block record (330); the plot settings before
@@ -1422,32 +1470,68 @@ impl<'a> Reader<'a> {
             if name.is_empty() || name.eq_ignore_ascii_case("Model") {
                 continue;
             }
+            if kept
+                .iter()
+                .any(|(_, layout, _)| same_name(&layout.name, &name))
+                || check_name(&name).is_err()
+            {
+                continue;
+            }
             let block_record_handle = after(330).unwrap_or_default().to_uppercase();
             let block_name = self
                 .block_record_names
                 .get(&block_record_handle)
                 .cloned()
                 .unwrap_or_default();
-            let entities = self
-                .paper_blocks
+            let at = paper_blocks
                 .iter()
-                .find(|(block, _)| block.eq_ignore_ascii_case(&block_name))
-                .map(|(_, entities)| entities.clone())
-                .unwrap_or_default();
+                .position(|block| block.name.eq_ignore_ascii_case(&block_name));
+            let block = at.map(|at| paper_blocks.remove(at)).unwrap_or_default();
             let order = after(71).and_then(|v| v.parse().ok()).unwrap_or(0);
             kept.push((
                 order,
-                KeptLayout {
+                Layout {
                     name,
-                    block_name,
+                    kept: groups,
                     block_record_handle,
-                    layout: groups,
-                    entities,
+                    block_name,
+                    kept_entities: block.kept,
                 },
+                block.entities,
             ));
         }
         kept.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.name.cmp(&b.1.name)));
-        kept.into_iter().map(|(_, layout)| layout).collect()
+        let mut layouts: Vec<(Layout, PaperEntities)> = kept
+            .into_iter()
+            .map(|(_, layout, entities)| (layout, entities))
+            .collect();
+        // A paper block no LAYOUT object names — an R12 file's, or a
+        // file without an OBJECTS section — is a layout of its own when
+        // something is on it, named like a writer would name it.
+        for block in paper_blocks {
+            if block.entities.is_empty() && block.kept.is_empty() {
+                continue;
+            }
+            let name = (1..)
+                .map(|n| format!("Layout{n}"))
+                .find(|candidate| {
+                    !layouts
+                        .iter()
+                        .any(|(layout, _)| same_name(&layout.name, candidate))
+                })
+                .expect("some number is free");
+            layouts.push((
+                Layout {
+                    name,
+                    kept: Vec::new(),
+                    block_record_handle: String::new(),
+                    block_name: block.name,
+                    kept_entities: block.kept,
+                },
+                block.entities,
+            ));
+        }
+        layouts
     }
 
     fn finish(mut self) -> Result<Import, DxfError> {
@@ -1478,14 +1562,35 @@ impl<'a> Reader<'a> {
             blocks.push(Block::new(builder.name.clone(), builder.base, records));
         }
 
-        let mut entities: Vec<(Entity, Properties)> = Vec::with_capacity(self.entities.len());
+        let mut entities: Vec<(Entity, Properties, LayoutId)> =
+            Vec::with_capacity(self.entities.len());
         for (entity, pending) in std::mem::take(&mut self.entities) {
-            if let Some(resolved) = self.resolve(entity, pending) {
-                if matches!(resolved.0, Entity::BlockRef(_)) {
+            if let Some((entity, properties)) = self.resolve(entity, pending) {
+                if matches!(entity, Entity::BlockRef(_)) {
                     self.report.block_references += 1;
                 }
-                entities.push(resolved);
+                entities.push((entity, properties, LayoutId::MODEL));
             }
+        }
+        // The layouts after the model, in tab order, take the IDs 1, 2, …;
+        // each one's entities resolve like the model's (#191).
+        let mut layouts = Vec::new();
+        for (index, (layout, paper)) in self.layouts().into_iter().enumerate() {
+            let space = LayoutId::from_raw(index as u32 + 1);
+            let mut on_it = 0;
+            for (entity, pending) in paper {
+                if let Some((entity, properties)) = self.resolve(entity, pending) {
+                    if matches!(entity, Entity::BlockRef(_)) {
+                        self.report.block_references += 1;
+                    }
+                    entities.push((entity, properties, space));
+                    on_it += 1;
+                }
+            }
+            if on_it > 0 || !layout.kept_entities.is_empty() {
+                self.report.layouts.push(layout.name.clone());
+            }
+            layouts.push(layout);
         }
         // Layers made for entities come after the file's own.
         layers.extend(
@@ -1501,17 +1606,16 @@ impl<'a> Reader<'a> {
         let text_styles = std::mem::take(&mut self.tables.text_styles);
         let dim_styles = std::mem::take(&mut self.tables.dim_styles);
 
-        let drawing =
-            Drawing::from_tables(layers, linetypes, text_styles, dim_styles, blocks, entities)
-                .map_err(|error| DxfError::Tables(error.to_string()))?;
-        let mut drawing = drawing;
-        let kept = self.kept_layouts();
-        self.report.layouts = kept
-            .iter()
-            .filter(|layout| layout.has_content())
-            .map(|layout| layout.name.clone())
-            .collect();
-        drawing.keep_layouts(kept);
+        let drawing = Drawing::from_spaces(
+            layers,
+            linetypes,
+            text_styles,
+            dim_styles,
+            blocks,
+            layouts,
+            entities,
+        )
+        .map_err(|error| DxfError::Tables(error.to_string()))?;
         self.report.layers = drawing.layers().len() - 1;
         self.report.linetypes = drawing.linetypes().len() - 1;
         self.report.text_styles = drawing.text_styles().len() - 1;
@@ -1667,6 +1771,8 @@ struct RecordBody {
     halign: Option<i64>,
     valign: Option<i64>,
     has_dropped_properties: bool,
+    /// Group 67: the record is in paper space (#191).
+    paper: bool,
 }
 
 impl RecordBody {
@@ -1737,6 +1843,7 @@ impl RecordBody {
                 Ok(code) if lineweight_from_dxf(code).is_some() => self.lineweight = Some(code),
                 _ => self.has_dropped_properties = true,
             },
+            67 => self.paper = group.value.trim() == "1",
             420 => self.true_color = group.value.parse::<i64>().ok(),
             49 => self.elements.push(real(group)?),
             74 => self.has_shapes |= group.value.parse::<i64>().unwrap_or(0) != 0,
@@ -1784,6 +1891,7 @@ impl RecordBody {
             dim_style: None,
             block: None,
             dropped: self.has_dropped_properties || true_colour_dropped,
+            paper: self.paper,
         }
     }
 
@@ -1955,6 +2063,14 @@ fn required(
 fn is_paper_space(name: &str) -> bool {
     let upper = name.to_uppercase();
     upper.starts_with("*PAPER_SPACE") || upper == "$PAPER_SPACE"
+}
+
+/// The paper block of the active layout, where an entity flagged as paper
+/// in the ENTITIES section belongs: `*Paper_Space` itself, not the
+/// numbered ones.
+fn is_active_paper_space(name: &str) -> bool {
+    let upper = name.to_uppercase();
+    upper == "*PAPER_SPACE" || upper == "$PAPER_SPACE"
 }
 
 /// Block names that are part of the file's structure rather than user

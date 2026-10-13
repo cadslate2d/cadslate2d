@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 
 use cad_core::{Aabb, EntityId, LengthUnit, PixelTolerance, Point2, ScreenPoint, View};
-use cad_document::{Color, Drawing, FOREGROUND_INDEX, Paint, Revision, index_paint};
+use cad_document::{Color, Drawing, FOREGROUND_INDEX, LayoutId, Paint, Revision, index_paint};
 use cad_geometry::SelectionShape;
 use cad_input::{ExpectedInput, Input, InputKind, Keyword};
 
@@ -413,12 +413,16 @@ impl Session {
             unsaved_changes: self.drawing.revision() != self.saved_revision,
             revision: self.drawing.revision().as_u64(),
             export_losses: self.export_losses.clone(),
-            kept_layouts: self
+            layouts: self
                 .drawing
-                .kept_layouts()
+                .layouts()
                 .iter()
-                .filter(|layout| layout.has_content())
-                .map(|layout| layout.name.clone())
+                .filter(|(id, layout)| {
+                    *id != LayoutId::MODEL
+                        && (!layout.kept_entities.is_empty()
+                            || self.drawing.entities_in(*id).next().is_some())
+                })
+                .map(|(_, layout)| layout.name.clone())
                 .collect(),
             import_report: self.import_report.clone(),
             layers: self.layer_rows(),

@@ -18,9 +18,9 @@ use cad_core::{EntityId, LengthUnit, Point2};
 use cad_document::{
     ArcEntity, AttributeDefinitionEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity,
     Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity,
-    EntityRecord, HatchEntity, HatchStyle, Justification, KeptLayout, Layer, LineEntity, Linetype,
-    LinetypeDef, LinetypeTable, Lineweight, MTextEntity, Measure, PolylineEntity, Properties,
-    Revision, SplineEntity, TextEntity, TextStyle, TextStyleTable,
+    EntityRecord, HatchEntity, HatchStyle, Justification, Layer, LayoutId, LayoutTable, LineEntity,
+    Linetype, LinetypeDef, LinetypeTable, Lineweight, MTextEntity, Measure, PolylineEntity,
+    Properties, Revision, SplineEntity, TextEntity, TextStyle, TextStyleTable,
 };
 
 use crate::properties::{
@@ -68,12 +68,15 @@ impl Handles {
     }
 }
 
-/// A kept layout's records in the file being written (#184): its block
-/// record, its LAYOUT object, and one handle per entity of its block.
-struct KeptHandles {
+/// A layout's records in the file being written (#184, #191): its block
+/// record, its LAYOUT object, the name of its paper block, and one
+/// handle per record kept on it.
+struct SheetHandles {
+    id: LayoutId,
     record: Handle,
     layout: Handle,
-    entities: Vec<Handle>,
+    block_name: String,
+    kept: Vec<Handle>,
 }
 
 /// Group codes that hold a handle of another record: pointers and
@@ -95,16 +98,16 @@ struct Structure {
     paper_layout: Handle,
     model_space: Handle,
     paper_space: Handle,
-    /// The kept layouts' records, in the drawing's order; when there are
-    /// any, they stand in for the one `Layout1` of a drawing with none.
-    kept: Vec<KeptHandles>,
+    /// The layouts' records, in tab order; when there are any, they stand
+    /// in for the one `Layout1` of a drawing with none.
+    sheets: Vec<SheetHandles>,
     /// Handles the file's kept records had, uppercase, to the handles
     /// they have now.
     remap: HashMap<String, Handle>,
 }
 
 impl Structure {
-    fn allocate(handles: &mut Handles, kept_layouts: &[KeptLayout]) -> Self {
+    fn allocate(handles: &mut Handles, layouts: &LayoutTable) -> Self {
         let mut structure = Self {
             root: handles.take(),
             groups: handles.take(),
@@ -115,40 +118,78 @@ impl Structure {
             paper_layout: handles.take(),
             model_space: handles.take(),
             paper_space: handles.take(),
-            kept: Vec::new(),
+            sheets: Vec::new(),
             remap: HashMap::new(),
         };
-        for (index, layout) in kept_layouts.iter().enumerate() {
-            // The first kept layout takes the handles a drawing without
-            // any gives its one `Layout1`, so a file of ours read back
-            // writes the same bytes again.
+        // A layout's paper block keeps the name the file gave it; one
+        // made here takes the next name a writer would give it.
+        let mut block_names: Vec<String> = layouts
+            .iter()
+            .filter(|(id, _)| *id != LayoutId::MODEL)
+            .map(|(_, layout)| layout.block_name.to_uppercase())
+            .filter(|name| !name.is_empty())
+            .collect();
+        let sheets = layouts.iter().filter(|(id, _)| *id != LayoutId::MODEL);
+        for (index, (id, layout)) in sheets.enumerate() {
+            // The first layout takes the handles a drawing without any
+            // gives its one `Layout1`, so a file of ours read back writes
+            // the same bytes again.
             let (record, layout_handle) = if index == 0 {
                 (structure.paper_space, structure.paper_layout)
             } else {
                 (handles.take(), handles.take())
             };
-            let entities: Vec<Handle> = layout.entities.iter().map(|_| handles.take()).collect();
-            structure
-                .remap
-                .insert(layout.block_record_handle.clone(), record);
-            if let Some((_, old)) = layout.layout.iter().find(|(code, _)| *code == 5) {
+            let block_name = if layout.block_name.is_empty() {
+                let name = std::iter::once("*Paper_Space".to_owned())
+                    .chain((0..).map(|n| format!("*Paper_Space{n}")))
+                    .find(|name| !block_names.contains(&name.to_uppercase()))
+                    .expect("some name is free");
+                block_names.push(name.to_uppercase());
+                name
+            } else {
+                layout.block_name.clone()
+            };
+            let kept: Vec<Handle> = layout
+                .kept_entities
+                .iter()
+                .map(|_| handles.take())
+                .collect();
+            if !layout.block_record_handle.is_empty() {
+                structure
+                    .remap
+                    .insert(layout.block_record_handle.clone(), record);
+            }
+            if let Some((_, old)) = layout.kept.iter().find(|(code, _)| *code == 5) {
                 structure
                     .remap
                     .insert(old.trim().to_uppercase(), layout_handle);
             }
-            for (entity, handle) in layout.entities.iter().zip(&entities) {
+            for (entity, handle) in layout.kept_entities.iter().zip(&kept) {
                 if let Some((_, old)) = entity.groups.iter().find(|(code, _)| *code == 5) {
                     structure.remap.insert(old.trim().to_uppercase(), *handle);
                 }
             }
-            structure.kept.push(KeptHandles {
+            structure.sheets.push(SheetHandles {
+                id,
                 record,
                 layout: layout_handle,
-                entities,
+                block_name,
+                kept,
             });
         }
         structure
     }
+}
+
+/// The entities of `space`, in ID order: how a space's records are written.
+fn records_in(drawing: &Drawing, space: LayoutId) -> Vec<EntityId> {
+    let mut ids: Vec<EntityId> = drawing
+        .records()
+        .filter(|(_, record)| record.space == space)
+        .map(|(id, _)| id)
+        .collect();
+    ids.sort_unstable();
+    ids
 }
 
 /// Serialises the drawing as ASCII DXF.
@@ -213,7 +254,7 @@ impl Export {
     /// and the block definitions.
     pub fn begin(drawing: &Drawing) -> Self {
         let mut handles = Handles(1);
-        let structure = Structure::allocate(&mut handles, drawing.kept_layouts());
+        let structure = Structure::allocate(&mut handles, drawing.layouts());
         // One block record per definition, in table order; the record is
         // what a definition's entities name as their owner.
         let block_records: Vec<Handle> = drawing
@@ -230,6 +271,7 @@ impl Export {
             out: String::new(),
             handles,
             dimensions_named: 0,
+            paper: false,
         };
         body.group(0, "SECTION");
         body.group(2, "CLASSES");
@@ -240,8 +282,9 @@ impl Export {
         body.group(0, "SECTION");
         body.group(2, "BLOCKS");
         body.blocks(drawing, &structure, &block_records);
-        let mut ids: Vec<EntityId> = drawing.records().map(|(id, _)| id).collect();
-        ids.sort_unstable();
+        // The ENTITIES section is the model's; a layout's entities are in
+        // its paper block (#191).
+        let ids = records_in(drawing, LayoutId::MODEL);
         Self {
             body,
             revision: drawing.revision(),
@@ -315,6 +358,7 @@ impl Export {
             out: String::new(),
             handles: Handles(0),
             dimensions_named: 0,
+            paper: false,
         };
         header.section("HEADER", |w| w.header(drawing, self.body.handles.seed()));
         Ok(header.out + &self.body.out)
@@ -328,11 +372,14 @@ struct Writer {
     /// this number plus one, which is the order `dimension_blocks` writes
     /// them in.
     dimensions_named: usize,
+    /// Inside a layout's paper block: every entity is flagged as paper (67).
+    paper: bool,
 }
 
 /// Every dimension, with its properties, in the order their DIMENSION
 /// records are written: those inside block definitions first, in table
-/// order, then the drawing's own in ID order — so that the n-th DIMENSION
+/// order, then each layout's in ID order, then the model's in ID order —
+/// the order their records are written — so that the n-th DIMENSION
 /// written owns the n-th anonymous block.
 fn dimensions_in_write_order(drawing: &Drawing) -> Vec<(DimensionEntity, Properties)> {
     let mut out = Vec::new();
@@ -346,15 +393,39 @@ fn dimensions_in_write_order(drawing: &Drawing) -> Vec<(DimensionEntity, Propert
             block.entities.iter().for_each(&mut take);
         }
     }
-    let mut records: Vec<(EntityId, &EntityRecord)> = drawing.records().collect();
-    records.sort_unstable_by_key(|(id, _)| *id);
-    records.into_iter().for_each(|(_, record)| take(record));
+    let spaces = drawing
+        .layouts()
+        .iter()
+        .map(|(id, _)| id)
+        .filter(|id| *id != LayoutId::MODEL)
+        .chain(std::iter::once(LayoutId::MODEL));
+    for space in spaces {
+        for id in records_in(drawing, space) {
+            if let Some(record) = drawing.record(id) {
+                take(record);
+            }
+        }
+    }
     out
 }
 
 /// The name of the n-th dimension's anonymous block, counting from one.
 fn dimension_block_name(n: usize) -> String {
     format!("*D{n}")
+}
+
+/// A kept LAYOUT's groups with the name the layout has now: the first
+/// group 1 after the `AcDbLayout` marker.
+fn renamed_layout_groups(groups: &[(i32, String)], name: &str) -> Vec<(i32, String)> {
+    let mut out = groups.to_vec();
+    let start = out
+        .iter()
+        .position(|(code, value)| *code == 100 && value.trim() == "AcDbLayout")
+        .unwrap_or(0);
+    if let Some(slot) = out[start..].iter_mut().find(|(code, _)| *code == 1) {
+        slot.1 = name.to_owned();
+    }
+    out
 }
 
 impl Writer {
@@ -507,8 +578,12 @@ impl Writer {
             }
         });
         let blocks = drawing.blocks();
-        let kept = drawing.kept_layouts();
-        let spaces = if kept.is_empty() { 2 } else { 1 + kept.len() };
+        let sheets = &structure.sheets;
+        let spaces = if sheets.is_empty() {
+            2
+        } else {
+            1 + sheets.len()
+        };
         let rows = blocks.len() - 1 + spaces + dimension_records.len();
         self.table("BLOCK_RECORD", rows, |w, table| {
             w.block_record(
@@ -517,7 +592,7 @@ impl Writer {
                 "*Model_Space",
                 structure.model_layout,
             );
-            if kept.is_empty() {
+            if sheets.is_empty() {
                 w.block_record(
                     table,
                     structure.paper_space,
@@ -525,8 +600,8 @@ impl Writer {
                     structure.paper_layout,
                 );
             }
-            for (layout, handles) in kept.iter().zip(&structure.kept) {
-                w.block_record(table, handles.record, &layout.block_name, handles.layout);
+            for sheet in sheets {
+                w.block_record(table, sheet.record, &sheet.block_name, sheet.layout);
             }
             let user = blocks.iter().filter(|(id, _)| *id != BlockId::FIRST);
             for ((_, block), record) in user.zip(block_records) {
@@ -727,8 +802,7 @@ impl Writer {
             structure.model_space,
             |_| {},
         );
-        let kept = drawing.kept_layouts();
-        if kept.is_empty() {
+        if structure.sheets.is_empty() {
             self.block(
                 "*Paper_Space",
                 Point2::ORIGIN,
@@ -737,13 +811,25 @@ impl Writer {
                 |_| {},
             );
         }
-        for (layout, handles) in kept.iter().zip(&structure.kept) {
-            self.block(&layout.block_name, Point2::ORIGIN, 0, handles.record, |w| {
-                for (entity, handle) in layout.entities.iter().zip(&handles.entities) {
+        // Each layout's paper block (#191): its entities, flagged as
+        // paper (67), then the records kept on it as the file held them.
+        for sheet in &structure.sheets {
+            let Some(layout) = drawing.layouts().get(sheet.id) else {
+                continue;
+            };
+            self.paper = true;
+            self.block(&sheet.block_name, Point2::ORIGIN, 0, sheet.record, |w| {
+                for id in records_in(drawing, sheet.id) {
+                    if let Some(record) = drawing.record(id) {
+                        w.record(record, sheet.record, drawing);
+                    }
+                }
+                for (entity, handle) in layout.kept_entities.iter().zip(&sheet.kept) {
                     w.group(0, &entity.kind);
-                    w.kept_groups(&entity.groups, *handle, handles.record, &structure.remap);
+                    w.kept_groups(&entity.groups, *handle, sheet.record, &structure.remap);
                 }
             });
+            self.paper = false;
         }
         let user = drawing
             .blocks()
@@ -1021,6 +1107,9 @@ impl Writer {
         self.handle(5, handle);
         self.handle(330, owner);
         self.group(100, "AcDbEntity");
+        if self.paper {
+            self.group(67, "1");
+        }
         self.group(8, layer);
         if properties.linetype != Linetype::ByLayer {
             self.group(6, &linetype_name(properties.linetype, table));
@@ -1285,7 +1374,6 @@ impl Writer {
     /// entries the release expects; the two layouts, one per space; and
     /// the one plot style, a placeholder.
     fn objects(&mut self, structure: &Structure, drawing: &Drawing) {
-        let kept = drawing.kept_layouts();
         self.dictionary(structure.root, Handle::NONE);
         self.group(3, "ACAD_GROUP");
         self.handle(350, structure.groups);
@@ -1297,13 +1385,15 @@ impl Writer {
         self.dictionary(structure.groups, structure.root);
 
         self.dictionary(structure.layouts, structure.root);
-        if structure.kept.is_empty() {
+        if structure.sheets.is_empty() {
             self.group(3, "Layout1");
             self.handle(350, structure.paper_layout);
         }
-        for (layout, handles) in kept.iter().zip(&structure.kept) {
-            self.group(3, &layout.name);
-            self.handle(350, handles.layout);
+        for sheet in &structure.sheets {
+            if let Some(layout) = drawing.layouts().get(sheet.id) {
+                self.group(3, &layout.name);
+                self.handle(350, sheet.layout);
+            }
         }
         self.group(3, "Model");
         self.handle(350, structure.model_layout);
@@ -1327,25 +1417,36 @@ impl Writer {
             structure.layouts,
             "Model",
             structure.model_space,
-            true,
+            0,
         );
-        if structure.kept.is_empty() {
+        if structure.sheets.is_empty() {
             self.layout(
                 structure.paper_layout,
                 structure.layouts,
                 "Layout1",
                 structure.paper_space,
-                false,
+                1,
             );
         }
-        for (layout, handles) in kept.iter().zip(&structure.kept) {
-            self.group(0, "LAYOUT");
-            self.kept_groups(
-                &layout.layout,
-                handles.layout,
-                structure.layouts,
-                &structure.remap,
-            );
+        // A layout the file gave its LAYOUT object keeps it, under the
+        // name it has now; one made here gets a sheet of its own (#191).
+        for (index, sheet) in structure.sheets.iter().enumerate() {
+            let Some(layout) = drawing.layouts().get(sheet.id) else {
+                continue;
+            };
+            if layout.kept.is_empty() {
+                self.layout(
+                    sheet.layout,
+                    structure.layouts,
+                    &layout.name,
+                    sheet.record,
+                    index as i64 + 1,
+                );
+            } else {
+                self.group(0, "LAYOUT");
+                let groups = renamed_layout_groups(&layout.kept, &layout.name);
+                self.kept_groups(&groups, sheet.layout, structure.layouts, &structure.remap);
+            }
         }
     }
 
@@ -1389,8 +1490,10 @@ impl Writer {
     }
 
     /// A LAYOUT: A3 plot settings nobody uses, and the layout proper,
-    /// which names its block record.
-    fn layout(&mut self, handle: Handle, owner: Handle, name: &str, space: Handle, model: bool) {
+    /// which names its block record. `order` is the tab's place; 0 is
+    /// the model's.
+    fn layout(&mut self, handle: Handle, owner: Handle, name: &str, space: Handle, order: i64) {
+        let model = order == 0;
         self.group(0, "LAYOUT");
         self.handle(5, handle);
         self.handle(330, owner);
@@ -1432,7 +1535,7 @@ impl Writer {
         self.group(100, "AcDbLayout");
         self.group(1, name);
         self.group(70, "1");
-        self.group(71, if model { "0" } else { "1" });
+        self.int(71, order);
         self.real(10, 0.0);
         self.real(20, 0.0);
         self.real(11, 420.0);

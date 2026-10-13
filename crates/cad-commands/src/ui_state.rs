@@ -57,8 +57,9 @@ pub struct UiState {
     /// export reproduces the drawing whole; the host warns before exporting
     /// otherwise (DESIGN §24.2).
     pub export_losses: Vec<String>,
-    /// Layouts a file carried, kept and written back, not drawn (#184).
-    pub kept_layouts: Vec<String>,
+    /// The layouts with something on them, by name: not drawn yet (#184,
+    /// #191).
+    pub layouts: Vec<String>,
     /// The account of the last import, for the host to show until it is
     /// dismissed or another drawing is opened.
     pub import_report: Option<ImportReport>,

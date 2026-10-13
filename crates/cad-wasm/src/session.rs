@@ -84,7 +84,7 @@ struct UiStateDto {
     unsaved_changes: bool,
     revision: f64,
     export_losses: Vec<String>,
-    kept_layouts: Vec<String>,
+    layouts: Vec<String>,
     import_report: Option<ImportReportDto>,
     layers: Vec<LayerRowDto>,
     linetypes: Vec<String>,
@@ -186,7 +186,7 @@ impl From<UiState> for UiStateDto {
             unsaved_changes: state.unsaved_changes,
             revision: state.revision as f64,
             export_losses: state.export_losses,
-            kept_layouts: state.kept_layouts,
+            layouts: state.layouts,
             unit: state.unit.unwrap_or("").to_owned(),
             user_aliases: state.user_aliases,
             import_report: state.import_report.map(|report| ImportReportDto {

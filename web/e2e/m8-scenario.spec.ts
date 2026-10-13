@@ -208,14 +208,14 @@ test("the M8 scenario: a file from another program opened whole, edited, plotted
     buffer: Buffer.from(scenarioDxf()),
   });
   await expect(
-    logLines(page).filter({ hasText: "Imported 1 line, 1 ellipse, 1 spline, 1 block reference." }),
+    logLines(page).filter({ hasText: "Imported 3 lines, 1 ellipse, 1 spline, 1 block reference." }),
   ).toHaveCount(1);
   await expect(
-    logLines(page).filter({ hasText: "Kept 2 layouts, not drawn: Layout1, Layout2." }),
+    logLines(page).filter({ hasText: "2 layouts, not drawn yet: Layout1, Layout2." }),
   ).toHaveCount(1);
   await expect(logLines(page).filter({ hasText: "Not imported" })).toHaveCount(0);
   await expect(page.getByTestId("lossy")).toHaveCount(0);
-  await expect(page.getByTestId("layouts")).toHaveText("2 layouts kept");
+  await expect(page.getByTestId("layouts")).toHaveText("2 layouts");
   await page.getByRole("button", { name: "Dismiss the import report" }).click();
 
   // 2. The attribute, read from the file, edited in place.

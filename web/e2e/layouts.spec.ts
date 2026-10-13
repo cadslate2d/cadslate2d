@@ -12,11 +12,11 @@ test("a file's layouts are kept, named, and written back", async ({ page }) => {
     mimeType: "application/dxf",
     buffer: Buffer.from(text),
   });
-  await expect(logLines(page).filter({ hasText: "Imported 1 line." })).toHaveCount(1);
+  await expect(logLines(page).filter({ hasText: "Imported 3 lines." })).toHaveCount(1);
   await expect(
-    logLines(page).filter({ hasText: "Kept 2 layouts, not drawn: Layout1, Layout2." }),
+    logLines(page).filter({ hasText: "2 layouts, not drawn yet: Layout1, Layout2." }),
   ).toHaveCount(1);
-  await expect(page.getByTestId("layouts")).toHaveText("2 layouts kept");
+  await expect(page.getByTestId("layouts")).toHaveText("2 layouts");
   await expect(page.getByTestId("lossy")).toHaveCount(0);
 
   const file = await downloadFrom(page, () => enter(page, "DXFOUT"));

@@ -20,7 +20,8 @@ use std::collections::{BTreeSet, HashMap};
 
 use cad_core::{Aabb, EntityId, Point2};
 use cad_document::{
-    Drawing, Entity, Linetype, LinetypeDef, LinetypeId, Paint, Properties, Revision, Weight,
+    Drawing, Entity, LayoutId, Linetype, LinetypeDef, LinetypeId, Paint, Properties, Revision,
+    Weight,
 };
 
 use crate::{PackedFrame, StyleRole};
@@ -547,7 +548,8 @@ impl RenderScene {
                 continue;
             };
             // Objects on a layer that is off are not drawn: no instances.
-            if !drawing.is_shown(id) {
+            // Nor is what is on a layout: the scene is the model's (#191).
+            if !drawing.is_shown_in(id, LayoutId::MODEL) {
                 continue;
             }
             let properties = drawing.properties(id).unwrap_or_default();
