@@ -420,3 +420,29 @@ export function entitiesSection(text: string): string {
   const end = text.indexOf("  0\nENDSEC\n", start);
   return text.slice(start, end);
 }
+
+/**
+ * The view's mapping, read off the status bar: the world coordinates under
+ * two screen points give the scale and where the centre is.
+ */
+export async function mapping(
+  page: Page,
+  canvas: Locator,
+): Promise<(x: number, y: number) => { x: number; y: number }> {
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error("no canvas");
+  const readout = page.getByTestId("coordinates");
+  const at = async (sx: number, sy: number) => {
+    const stale = await readout.textContent();
+    await page.mouse.move(box.x + sx, box.y + sy);
+    await settle(page);
+    // The readout follows the pointer a frame later.
+    await expect.poll(() => readout.textContent()).not.toBe(stale);
+    const [x, y] = (await readout.textContent())?.split(",").map(Number) ?? [];
+    return { x: x ?? 0, y: y ?? 0 };
+  };
+  const a = await at(100, 100);
+  const b = await at(300, 100);
+  const scale = 200 / (b.x - a.x);
+  return (x, y) => ({ x: box.x + 100 + (x - a.x) * scale, y: box.y + 100 - (y - a.y) * scale });
+}

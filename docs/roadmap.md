@@ -14,7 +14,28 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M5 — DXF Compatibility | Complete and closed ([review](reviews/m5-exit-review.md)). |
 | M6 — Annotation and Hatch | Complete and closed ([review](reviews/m6-exit-review.md)). |
 | M7 — Rendering and Performance Hardening | Complete and closed ([review](reviews/m7-exit-review.md)); the text atlas (#175) waits on real GPUs and moved to M8 with the other person-blocked items. |
-| M8 — Compatibility Expansion | Next. Broken into issues at the M7 exit. |
+| M8 — Compatibility Expansion | Complete and closed ([review](reviews/m8-exit-review.md)). |
+| M9 — Paper Space | Next. Broken into issues at the M8 exit. |
+
+## M9, as broken down after M8
+
+Layouts were kept through a round trip in M8 (ADR-0025) and model space reached paper (ADR-0027). M9 draws the layouts: the spaces a file has, viewports onto model space, drafting in either space, a layout's sheet to PDF. The [M8 review](reviews/m8-exit-review.md) says what M8 left; the epic is #190.
+
+### Order of work
+
+1. **Spaces** (#191): every entity in the model or a layout; a `Layout` row; paper-space entities read and written as entities of their layout.
+2. **Viewports** (#192): a window on paper onto model space at a scale, the committed scene drawn again, clipped; `MVIEW`; DXF `VIEWPORT`.
+3. **Layout tabs and the current space** (#193): `LAYOUT`, `MODEL`, `PSPACE`, `MSPACE`; a view per space; the tabs of the visual identity.
+4. **Plotting a layout** (#194): the sheet, the viewports at their scale, paper at one to one.
+5. **Exit** (#195): the scenario, the review, and what follows.
+
+### Not in M9
+
+- SHX fonts, xrefs, scripting, plugins, native packaging, a DWG strategy, a native project format (§39), a WebGPU adapter (§38), associative dimensions, advanced hatch.
+
+### Needs a person
+
+- #109 WebKit, #110 real GPUs (and #175, which waits on it), #111 the R-tree crash upstream.
 
 ## M8, as broken down after M7
 

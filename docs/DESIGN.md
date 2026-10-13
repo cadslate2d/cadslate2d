@@ -2058,6 +2058,8 @@ Possible work:
 Nothing in M8 should constrain M0.
 
 > **Broken down at the M7 exit:** the order of work and the issues are in the [roadmap](roadmap.md) and the [M7 review](reviews/m7-exit-review.md): view commands, ellipses and splines, block attributes, layouts kept through a round trip, advanced selection, user aliases and settings, PDF export, and chunk origins. SHX fonts, xrefs, scripting, plugins, packaging, and DWG stay ideas on the epic.
+>
+> **Complete (2026-10-13):** every item shipped and tested ([M8 review](reviews/m8-exit-review.md); ADR-0025 to ADR-0028). M9 is paper space — layouts drawn, viewports, the current space, plotting a layout — broken down in the [roadmap](roadmap.md) (epic #190).
 
 ---
 
