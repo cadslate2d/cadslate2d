@@ -15,9 +15,35 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M6 — Annotation and Hatch | Complete and closed ([review](reviews/m6-exit-review.md)). |
 | M7 — Rendering and Performance Hardening | Complete and closed ([review](reviews/m7-exit-review.md)); the text atlas (#175) waits on real GPUs and moved to M8 with the other person-blocked items. |
 | M8 — Compatibility Expansion | Complete and closed ([review](reviews/m8-exit-review.md)). |
-| M9 — Paper Space | Next. Broken into issues at the M8 exit. |
+| M9 — Paper Space | Complete and closed ([review](reviews/m9-exit-review.md)). |
+| M10 — Daily Drafting | Next. Broken into issues at the M9 exit. |
+
+## M10, as broken down after M9
+
+Every milestone DESIGN Part IV planned has shipped. The [M9 review](reviews/m9-exit-review.md) asks whether the product is complete for its purpose and answers: a drafter can open, draft on the model and on sheets, and print, but still cannot ask the drawing a question, put a point down, array a thing, match properties, purge a file, or set a length. M10 adds those classic commands on the machinery that exists; the epic is #196.
+
+### Order of work
+
+1. **Inquiry** (#197): `DIST`, `ID`, `AREA`, `LIST`; no transaction, the revision unchanged.
+2. **Points** (#198): a point entity with the drawing's point style, the `NODe` snap, `POINT`, `DIVIDE`, `MEASURE`, DXF `POINT`.
+3. **ARRAY** (#199): rectangular and polar, previewed, one transaction, not associative.
+4. **MATCHPROP, PURGE, RENAME** (#200): through the one history; the history property test gains `PURGE`.
+5. **LENGTHEN, ALIGN, POLYGON** (#201): the modify matrix grows.
+6. **Exit** (#202): a day's drafting as a scenario, the review, and what follows.
+
+### Not in M10
+
+- `XLINE` and `RAY` — an entity without bounds does not fit a view-independent committed scene (ADR-0003) without an ADR; `PEDIT`, polyline width, `DONUT`; leaders, tables, fields.
+- A layout's margins, scale, and plot area on the page (ADR-0027); `QSELECT` on several properties.
+- SHX fonts, xrefs, scripting, plugins, native packaging, a DWG strategy, a native project format (§39), a WebGPU adapter (§38), associative dimensions, advanced hatch, plot style tables, searchable PDF text.
+
+### Needs a person
+
+- #109 WebKit, #110 real GPUs (and #175, which waits on it), #111 the R-tree crash upstream; the PDF of a layout in a desktop viewer.
 
 ## M9, as broken down after M8
+
+Kept for the record; the [review](reviews/m9-exit-review.md) says how it went.
 
 Layouts were kept through a round trip in M8 (ADR-0025) and model space reached paper (ADR-0027). M9 draws the layouts: the spaces a file has, viewports onto model space, drafting in either space, a layout's sheet to PDF. The [M8 review](reviews/m8-exit-review.md) says what M8 left; the epic is #190.
 
