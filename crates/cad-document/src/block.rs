@@ -15,6 +15,7 @@
 //! removed, so that a default `BlockId` always names a row, as for every
 //! table (ADR-0013).
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -194,37 +195,61 @@ impl BlockTable {
     /// of curves alone, 1 for one that places such definitions, and so on,
     /// counted no further than one past [`Self::MAX_NESTING`].
     pub fn nesting_depth(&self, block: BlockId) -> usize {
-        self.nesting_depth_within(block, 0)
+        let mut known = HashMap::new();
+        self.nesting_depth_within(block, &mut known, 0)
     }
 
-    fn nesting_depth_within(&self, block: BlockId, depth: usize) -> usize {
+    /// Each block's depth is worked out once (`known`), so a definition
+    /// placed many times — or one that places itself, in a table not yet
+    /// checked for cycles — costs its size, not its size to the power of
+    /// the nesting (a fuzzer finding, #177). A block on the path being
+    /// followed is a cycle: deeper than the limit, like anything past it.
+    fn nesting_depth_within(
+        &self,
+        block: BlockId,
+        known: &mut HashMap<BlockId, Option<usize>>,
+        depth: usize,
+    ) -> usize {
         if depth > MAX_DEPTH {
             return depth;
         }
-        self.get(block).map_or(0, |definition| {
+        match known.get(&block) {
+            Some(Some(found)) => return *found,
+            Some(None) => return MAX_DEPTH + 1, // on the path: a cycle
+            None => {}
+        }
+        known.insert(block, None);
+        let found = self.get(block).map_or(0, |definition| {
             definition
                 .references()
-                .map(|inner| 1 + self.nesting_depth_within(inner, depth + 1))
+                .map(|inner| 1 + self.nesting_depth_within(inner, known, depth + 1))
                 .max()
                 .unwrap_or(0)
-        })
+        });
+        known.insert(block, Some(found));
+        found
     }
 
     /// Whether `block` holds, directly or through the blocks it holds, a
-    /// reference to `target`.
+    /// reference to `target`. Each block is looked into once.
     pub fn reaches(&self, block: BlockId, target: BlockId) -> bool {
-        self.reaches_within(block, target, 0)
-    }
-
-    fn reaches_within(&self, block: BlockId, target: BlockId, depth: usize) -> bool {
-        if depth > MAX_DEPTH {
-            return false;
+        let mut seen = HashSet::new();
+        let mut pending = vec![block];
+        while let Some(next) = pending.pop() {
+            if !seen.insert(next) {
+                continue;
+            }
+            let Some(definition) = self.get(next) else {
+                continue;
+            };
+            for inner in definition.references() {
+                if inner == target {
+                    return true;
+                }
+                pending.push(inner);
+            }
         }
-        self.get(block).is_some_and(|definition| {
-            definition
-                .references()
-                .any(|inner| inner == target || self.reaches_within(inner, target, depth + 1))
-        })
+        false
     }
 
     /// Whether `contents` — a definition being made or remade as `id` —

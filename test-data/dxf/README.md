@@ -84,6 +84,7 @@ The files here are generated — `generate.py`, which needs ezdxf (`python3 -m v
 | `binary-sentinel.dxf` | binary DXF not supported |
 | `cyclic-blocks.dxf` | tables: block A places B, which places A |
 | `long-value.dxf` | value too long: a layer name of 70,000 characters, over the 64 KiB a value may have |
+| `self-referencing-block-fanout.dxf` | hand-written, from a CI fuzz finding (#177) | Block `A` places `B`, and `B` places itself forty times: a cycle, refused — and refused at once, where following every reference afresh took forty to the power of the nesting limit. |
 
 ## Checking the writer with another reader
 
