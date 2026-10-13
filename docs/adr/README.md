@@ -35,6 +35,7 @@ There are two kinds:
 | [0022](0022-scene-chunks.md) | Scene chunks: an edit re-packs the chunk that holds what changed, and the frame uploads the ranges that moved | Accepted | Evidence |
 | [0023](0023-viewport-culling.md) | Viewport culling: not taken up — zoomed-in frames are the cheaper ones, and the floor is the rasteriser's per-instance work | Accepted | Evidence |
 | [0024](0024-autosave-in-slices.md) | No worker; the autosave is written in slices on the main thread, a change under it abandoning the job | Accepted | Evidence |
+| [0025](0025-kept-layouts.md) | Layouts and paper space are kept as the file's own groups, their handles remapped, written back and not drawn | Accepted | Design |
 
 ## Expected evidence ADRs
 

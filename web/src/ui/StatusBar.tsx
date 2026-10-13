@@ -22,6 +22,15 @@ export function StatusBar({ app }: { app: CadApp }) {
         {ui.documentName ?? "Untitled"}
         {ui.unsavedChanges ? " •" : ""}
       </span>
+      {ui.keptLayouts.length > 0 && (
+        <span
+          className="status__chip"
+          data-testid="layouts"
+          title={`Kept, not drawn: ${ui.keptLayouts.join(", ")}`}
+        >
+          {ui.keptLayouts.length === 1 ? "1 layout kept" : `${ui.keptLayouts.length} layouts kept`}
+        </span>
+      )}
       {ui.exportLosses.length > 0 && (
         <span
           className="status__chip status__lossy"

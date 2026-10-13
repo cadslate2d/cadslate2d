@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 919503326291f6ddb8158987787909a8ae44ca0b8d61c8574239e100484caa9b # shrinks to coordinates = [(0.0, 0.0, 0.0, 1.7969304730017978e308)]
+cc 702024fe95312bafe0a5bd39219e9b8aaf83c0e04164ec4692400566a1ce51aa # shrinks to rows = [], lines = [], texts = []

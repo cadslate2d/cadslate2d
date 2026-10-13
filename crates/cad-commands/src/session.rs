@@ -301,6 +301,13 @@ impl Session {
             unsaved_changes: self.drawing.revision() != self.saved_revision,
             revision: self.drawing.revision().as_u64(),
             export_losses: self.export_losses.clone(),
+            kept_layouts: self
+                .drawing
+                .kept_layouts()
+                .iter()
+                .filter(|layout| layout.has_content())
+                .map(|layout| layout.name.clone())
+                .collect(),
             import_report: self.import_report.clone(),
             layers: self.layer_rows(),
             linetypes: self

@@ -2040,7 +2040,7 @@ Possible work:
 - attributes;
 - xrefs;
 - paper space;
-- layouts;
+- layouts (kept through a round trip and named, not drawn, since M8 #184 — [ADR-0025](adr/0025-kept-layouts.md); drawing them is a space of its own, later);
 - plotting;
 - PDF export;
 - scripting;

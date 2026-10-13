@@ -11,6 +11,7 @@ use crate::dim_style::{DimStyle, DimStyleError, DimStyleId, DimStyleTable, initi
 use crate::dimension::DimensionError;
 use crate::history::History;
 use crate::id_alloc::EntityIdAllocator;
+use crate::kept::KeptLayout;
 use crate::layer::{Layer, LayerId, LayerTable, initial_layers};
 use crate::linetype::{LinetypeDef, LinetypeError, LinetypeId, LinetypeTable, initial_linetypes};
 use crate::names::{NameError, check_name, same_name};
@@ -53,6 +54,9 @@ pub struct Drawing {
     /// such as the render scene asks [`Drawing::shown_changes_since`] what
     /// to redo instead of redoing all of it (ADR-0022).
     journal: VecDeque<(Revision, Revision, Option<Vec<EntityId>>)>,
+    /// Layouts a file carried, kept opaque and written back (#184).
+    /// Not part of the history: nothing edits them.
+    kept_layouts: Vec<KeptLayout>,
 }
 
 /// How many changes the journal remembers; a scene further behind than
@@ -248,6 +252,7 @@ impl Drawing {
             revision: Revision::next(),
             shown_revision: Revision::next(),
             journal: VecDeque::new(),
+            kept_layouts: Vec::new(),
         }
     }
 
@@ -517,6 +522,17 @@ impl Drawing {
     /// The layer, colour, linetype, and lineweight of an entity.
     pub fn properties(&self, id: EntityId) -> Option<Properties> {
         self.entities.record(id).map(|record| record.properties)
+    }
+
+    /// The layouts a file carried, kept to be written back (#184).
+    pub fn kept_layouts(&self) -> &[KeptLayout] {
+        &self.kept_layouts
+    }
+
+    /// Keeps `layouts` to be written back: what a file carried, as it
+    /// carried them. Outside the history, like the drawing's name.
+    pub fn keep_layouts(&mut self, layouts: Vec<KeptLayout>) {
+        self.kept_layouts = layouts;
     }
 
     /// The stored record of an entity: its geometry and its properties.

@@ -94,6 +94,8 @@ export interface UiState {
    * reproduces the drawing whole; otherwise warn first (DESIGN §24.2).
    */
   readonly exportLosses: readonly string[];
+  /** Layouts a file carried, kept and written back, not drawn (#184). */
+  readonly keptLayouts: readonly string[];
   /** The last import's account, shown until dismissed or the drawing is replaced (#157). */
   readonly importReport?: ImportReport;
   /** The layers as the Layers panel shows them, in table order (#140). */

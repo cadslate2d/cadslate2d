@@ -18,10 +18,10 @@ use cad_core::{LengthUnit, Point2, Vec2};
 use cad_document::{
     ArcEntity, AttributeDefinitionEntity, Block, BlockId, BlockReferenceEntity, BlockTable,
     CircleEntity, Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings,
-    EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Justification, Layer, LayerId,
-    LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity, Measure,
-    PolylineEntity, Properties, TextEntity, TextStyle, TextStyleId, check_name, nearest_index,
-    same_name,
+    EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Justification, KeptLayout, Layer,
+    LayerId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity, Measure,
+    PolylineEntity, Properties, RawEntity, RawGroup, TextEntity, TextStyle, TextStyleId,
+    check_name, nearest_index, same_name,
 };
 
 use crate::export::insunits_code;
@@ -152,6 +152,9 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
         open_polyline: None,
         open_block: None,
         total: 0,
+        paper_blocks: Vec::new(),
+        layouts: Vec::new(),
+        block_record_names: HashMap::new(),
     };
     reader.read_file()?;
     reader.finish()
@@ -338,6 +341,12 @@ struct BlockBuilder {
 enum OpenBlock {
     /// A definition the drawing will hold.
     User(BlockBuilder),
+    /// A paper-space block (#184): its entities are kept as the file held
+    /// them, to be written back with the layout they belong to.
+    Paper {
+        name: String,
+        entities: Vec<RawEntity>,
+    },
     /// Model space, paper space, an anonymous block, one with a name no
     /// block can have, or a second definition of a name: its entities are
     /// not user content and are skipped.
@@ -552,6 +561,12 @@ struct Reader<'a> {
     /// Entities read so far, in the drawing and in its blocks together,
     /// against the limit.
     total: usize,
+    /// Paper-space blocks, their entities as the file held them (#184).
+    paper_blocks: Vec<(String, Vec<RawEntity>)>,
+    /// LAYOUT objects as the file held them.
+    layouts: Vec<Vec<RawGroup>>,
+    /// Block record handles to their names, to pair a layout with its block.
+    block_record_names: HashMap<String, String>,
 }
 
 /// Collects a polyline that may span several records.
@@ -581,6 +596,7 @@ impl<'a> Reader<'a> {
                     "TABLES" if name.code == 2 => self.read_records(RecordContext::Tables)?,
                     "ENTITIES" if name.code == 2 => self.read_records(RecordContext::Entities)?,
                     "BLOCKS" if name.code == 2 => self.read_records(RecordContext::Blocks)?,
+                    "OBJECTS" if name.code == 2 => self.read_records(RecordContext::Objects)?,
                     _ => self.skip_section()?,
                 }
             }
@@ -654,7 +670,12 @@ impl<'a> Reader<'a> {
                 return Ok(());
             }
             let mut body = RecordBody::default();
-            if record.value == "HATCH" || record.value == "SPLINE" {
+            // Records read by walking their groups, and everything a kept
+            // layout holds (#184): a paper-space block's entities, LAYOUT
+            // objects, and BLOCK_RECORD rows, whose handles name the layouts' blocks.
+            let keep_raw = matches!(record.value, "HATCH" | "SPLINE" | "LAYOUT" | "BLOCK_RECORD")
+                || matches!(self.open_block, Some(OpenBlock::Paper { .. }));
+            if keep_raw {
                 body.raw = Some(Vec::new());
             }
             let mut groups = 0;
@@ -686,7 +707,8 @@ impl<'a> Reader<'a> {
         record: Group<'_>,
         body: &RecordBody,
     ) -> Result<(), DxfError> {
-        // In the BLOCKS section, only a user definition's entities count.
+        // In the BLOCKS section, only a user definition's entities count;
+        // a paper-space block's are kept as they are (#184).
         if matches!(context, RecordContext::Blocks) {
             match record.value {
                 "BLOCK" => {
@@ -694,9 +716,36 @@ impl<'a> Reader<'a> {
                     return Ok(());
                 }
                 "ENDBLK" => return self.close_block(),
+                _ if matches!(self.open_block, Some(OpenBlock::Paper { .. })) => {
+                    if let (Some(OpenBlock::Paper { entities, .. }), Some(raw)) =
+                        (&mut self.open_block, &body.raw)
+                    {
+                        entities.push(RawEntity {
+                            kind: record.value.to_owned(),
+                            groups: raw.clone(),
+                        });
+                    }
+                    return Ok(());
+                }
                 _ if !matches!(self.open_block, Some(OpenBlock::User(_))) => return Ok(()),
                 _ => {}
             }
+        }
+        if matches!(context, RecordContext::Objects) {
+            if record.value == "LAYOUT"
+                && let Some(raw) = &body.raw
+            {
+                self.layouts.push(raw.clone());
+            }
+            return Ok(());
+        }
+        if matches!(context, RecordContext::Tables)
+            && record.value == "BLOCK_RECORD"
+            && let (Some(raw), Some(name)) = (&body.raw, &body.name)
+            && let Some((_, handle)) = raw.iter().find(|(code, _)| *code == 5)
+        {
+            self.block_record_names
+                .insert(handle.trim().to_uppercase(), name.clone());
         }
         let entities = matches!(context, RecordContext::Entities | RecordContext::Blocks);
         match (context, record.value) {
@@ -820,6 +869,13 @@ impl<'a> Reader<'a> {
     /// a second definition of a name; the first counts.
     fn open_block(&mut self, body: &RecordBody) {
         let name = body.name.as_deref().unwrap_or("");
+        if is_paper_space(name) {
+            self.open_block = Some(OpenBlock::Paper {
+                name: name.to_owned(),
+                entities: Vec::new(),
+            });
+            return;
+        }
         if body.name_is_reserved {
             self.open_block = Some(OpenBlock::Skipped);
             return;
@@ -844,6 +900,12 @@ impl<'a> Reader<'a> {
     /// An ENDBLK record: the definition is complete. A polyline left open
     /// inside it is finished with it.
     fn close_block(&mut self) -> Result<(), DxfError> {
+        if let Some(OpenBlock::Paper { .. }) = &self.open_block
+            && let Some(OpenBlock::Paper { name, entities }) = self.open_block.take()
+        {
+            self.paper_blocks.push((name, entities));
+            return Ok(());
+        }
         self.open_polyline = None;
         if let Some(OpenBlock::User(block)) = self.open_block.take() {
             self.tables
@@ -1219,7 +1281,7 @@ impl<'a> Reader<'a> {
     fn attach_attribute(&mut self, tag: &str, value: &str) {
         let last = match &mut self.open_block {
             Some(OpenBlock::User(block)) => block.entities.last_mut(),
-            Some(OpenBlock::Skipped) => None,
+            Some(OpenBlock::Skipped | OpenBlock::Paper { .. }) => None,
             None => self.entities.last_mut(),
         };
         if let Some((Entity::BlockRef(reference), _)) = last {
@@ -1239,7 +1301,7 @@ impl<'a> Reader<'a> {
         self.total += 1;
         match &mut self.open_block {
             Some(OpenBlock::User(block)) => block.entities.push((entity, properties)),
-            Some(OpenBlock::Skipped) => {}
+            Some(OpenBlock::Skipped | OpenBlock::Paper { .. }) => {}
             None => {
                 match &entity {
                     Entity::Line(_) => self.report.lines += 1,
@@ -1337,6 +1399,57 @@ impl<'a> Reader<'a> {
     }
 
     /// Resolves every name against the tables and builds the drawing.
+    /// The layouts the file carried, other than the model's: each LAYOUT
+    /// object with the paper-space block its record names, paired by the
+    /// record's handle, in tab order (#184).
+    fn kept_layouts(&mut self) -> Vec<KeptLayout> {
+        let mut kept: Vec<(i64, KeptLayout)> = Vec::new();
+        for groups in std::mem::take(&mut self.layouts) {
+            // The AcDbLayout subclass holds the name (1), the tab order
+            // (71), and the block record (330); the plot settings before
+            // it hold a 1 of their own.
+            let start = groups
+                .iter()
+                .position(|(code, value)| *code == 100 && value.trim() == "AcDbLayout")
+                .unwrap_or(0);
+            let after = |code: i32| {
+                groups[start..]
+                    .iter()
+                    .find(|(c, _)| *c == code)
+                    .map(|(_, value)| value.trim().to_owned())
+            };
+            let name = after(1).unwrap_or_default();
+            if name.is_empty() || name.eq_ignore_ascii_case("Model") {
+                continue;
+            }
+            let block_record_handle = after(330).unwrap_or_default().to_uppercase();
+            let block_name = self
+                .block_record_names
+                .get(&block_record_handle)
+                .cloned()
+                .unwrap_or_default();
+            let entities = self
+                .paper_blocks
+                .iter()
+                .find(|(block, _)| block.eq_ignore_ascii_case(&block_name))
+                .map(|(_, entities)| entities.clone())
+                .unwrap_or_default();
+            let order = after(71).and_then(|v| v.parse().ok()).unwrap_or(0);
+            kept.push((
+                order,
+                KeptLayout {
+                    name,
+                    block_name,
+                    block_record_handle,
+                    layout: groups,
+                    entities,
+                },
+            ));
+        }
+        kept.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.name.cmp(&b.1.name)));
+        kept.into_iter().map(|(_, layout)| layout).collect()
+    }
+
     fn finish(mut self) -> Result<Import, DxfError> {
         // The file's layers first: their linetypes may make rows that
         // entities then use.
@@ -1391,6 +1504,14 @@ impl<'a> Reader<'a> {
         let drawing =
             Drawing::from_tables(layers, linetypes, text_styles, dim_styles, blocks, entities)
                 .map_err(|error| DxfError::Tables(error.to_string()))?;
+        let mut drawing = drawing;
+        let kept = self.kept_layouts();
+        self.report.layouts = kept
+            .iter()
+            .filter(|layout| layout.has_content())
+            .map(|layout| layout.name.clone())
+            .collect();
+        drawing.keep_layouts(kept);
         self.report.layers = drawing.layers().len() - 1;
         self.report.linetypes = drawing.linetypes().len() - 1;
         self.report.text_styles = drawing.text_styles().len() - 1;
@@ -1463,6 +1584,8 @@ enum RecordContext {
     Entities,
     Blocks,
     Tables,
+    /// The OBJECTS section: layouts to keep (#184).
+    Objects,
 }
 
 /// The groups of one record that matter to this reader.
@@ -1825,6 +1948,13 @@ fn required(
         entity,
         group,
     })
+}
+
+/// A paper-space block: `*Paper_Space`, `*Paper_Space0`, … or the R12
+/// spelling `$PAPER_SPACE`.
+fn is_paper_space(name: &str) -> bool {
+    let upper = name.to_uppercase();
+    upper.starts_with("*PAPER_SPACE") || upper == "$PAPER_SPACE"
 }
 
 /// Block names that are part of the file's structure rather than user

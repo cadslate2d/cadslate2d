@@ -303,6 +303,66 @@ fn splines_by_fit_points_and_by_control_points() {
     }
 }
 
+/// #184: two layouts with their paper-space blocks — a viewport and a
+/// title line in one, a line in the other — kept whole, written back with
+/// their groups as they were and their handles made this file's, and
+/// read again the same. Nothing of it is a loss.
+#[test]
+fn layouts_are_kept_through_a_round_trip() {
+    let import = load("valid", "layouts.dxf").unwrap();
+    let kept = import.drawing.kept_layouts();
+    let names: Vec<&str> = kept.iter().map(|layout| layout.name.as_str()).collect();
+    assert_eq!(names, ["Layout1", "Layout2"]);
+    assert_eq!(kept[0].block_name, "*Paper_Space");
+    assert_eq!(kept[1].block_name, "*Paper_Space0");
+    assert_eq!(kept[0].entities.len(), 2);
+    assert_eq!(kept[0].entities[0].kind, "VIEWPORT");
+    assert_eq!(kept[1].entities.len(), 1);
+    assert_eq!(import.report.layouts, vec!["Layout1", "Layout2"]);
+    assert_eq!(import.drawing.len(), 1, "model space holds the one line");
+    assert!(
+        import.report.losses().is_empty(),
+        "{:?}",
+        import.report.losses()
+    );
+    assert!(
+        import
+            .report
+            .summary()
+            .iter()
+            .any(|line| line == "Kept 2 layouts, not drawn: Layout1, Layout2."),
+        "{:?}",
+        import.report.summary()
+    );
+
+    let text = export(&import.drawing);
+    // The groups the file held, other than handles, are written as they were.
+    assert!(text.contains("\n  2\n*Paper_Space0\n"));
+    assert!(text.contains("\nVIEWPORT\n"));
+    assert!(
+        text.contains("\n 45\n200.0\n"),
+        "the viewport's view height"
+    );
+    assert!(text.contains("\n  8\nTITLE\n"), "the title line's layer");
+    assert!(text.contains("\n  1\nLayout2\n"));
+    assert!(
+        !text.contains("\n  3\nLayout1\n  3\nLayout1"),
+        "written once"
+    );
+    // The viewport the layout names as active is the one written, under its new handle.
+    let viewport_handle = text
+        .split("\nVIEWPORT\n  5\n")
+        .nth(1)
+        .and_then(|rest| rest.lines().next())
+        .expect("the viewport's handle");
+    assert!(text.contains(&format!("\n331\n{viewport_handle}\n")));
+
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(back.report.layouts, vec!["Layout1", "Layout2"]);
+    assert!(back.report.losses().is_empty());
+    assert_eq!(export(&back.drawing), text, "stable on the second pass");
+}
+
 #[test]
 fn crlf_and_exponent_notation() {
     let import = load("valid", "crlf-exponent-notation.dxf").unwrap();

@@ -17,6 +17,9 @@ pub struct ImportReport {
     pub splines: usize,
     /// Attribute definitions of the drawing itself: a block's are its own.
     pub attribute_definitions: usize,
+    /// Layouts with something on their paper, kept whole and not drawn
+    /// (#184), by name. An empty layout is kept without a word.
+    pub layouts: Vec<String>,
     /// POLYLINE and LWPOLYLINE entities imported.
     pub polylines: usize,
     /// TEXT and MTEXT entities imported.
@@ -137,6 +140,13 @@ impl ImportReport {
         } else {
             format!("Imported {}.", imported.join(", "))
         }];
+        if !self.layouts.is_empty() {
+            lines.push(format!(
+                "Kept {}, not drawn: {}.",
+                counted(self.layouts.len(), "layout", "layouts"),
+                self.layouts.join(", ")
+            ));
+        }
         lines.extend(self.unsupported_line());
         if self.layers + self.linetypes + self.text_styles + self.dim_styles + self.blocks > 0 {
             let tables: Vec<String> = [

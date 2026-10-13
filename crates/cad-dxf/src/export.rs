@@ -11,15 +11,16 @@
 //! handle and names its owner; handles follow entity IDs, so the output is
 //! deterministic.
 
+use std::collections::HashMap;
 use std::fmt::Write;
 
 use cad_core::{EntityId, LengthUnit, Point2};
 use cad_document::{
     ArcEntity, AttributeDefinitionEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity,
     Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity,
-    EntityRecord, HatchEntity, HatchStyle, Justification, Layer, LineEntity, Linetype, LinetypeDef,
-    LinetypeTable, Lineweight, MTextEntity, Measure, PolylineEntity, Properties, Revision,
-    SplineEntity, TextEntity, TextStyle, TextStyleTable,
+    EntityRecord, HatchEntity, HatchStyle, Justification, KeptLayout, Layer, LineEntity, Linetype,
+    LinetypeDef, LinetypeTable, Lineweight, MTextEntity, Measure, PolylineEntity, Properties,
+    Revision, SplineEntity, TextEntity, TextStyle, TextStyleTable,
 };
 
 use crate::properties::{
@@ -67,6 +68,21 @@ impl Handles {
     }
 }
 
+/// A kept layout's records in the file being written (#184): its block
+/// record, its LAYOUT object, and one handle per entity of its block.
+struct KeptHandles {
+    record: Handle,
+    layout: Handle,
+    entities: Vec<Handle>,
+}
+
+/// Group codes that hold a handle of another record: pointers and
+/// owners. A kept record's are mapped to the file being written, or to
+/// nothing when what they named was not kept.
+fn is_handle_reference(code: i32) -> bool {
+    (330..=369).contains(&code)
+}
+
 /// The records everything else points at. Allocated first, so their
 /// handles do not depend on the drawing.
 struct Structure {
@@ -79,11 +95,17 @@ struct Structure {
     paper_layout: Handle,
     model_space: Handle,
     paper_space: Handle,
+    /// The kept layouts' records, in the drawing's order; when there are
+    /// any, they stand in for the one `Layout1` of a drawing with none.
+    kept: Vec<KeptHandles>,
+    /// Handles the file's kept records had, uppercase, to the handles
+    /// they have now.
+    remap: HashMap<String, Handle>,
 }
 
 impl Structure {
-    fn allocate(handles: &mut Handles) -> Self {
-        Self {
+    fn allocate(handles: &mut Handles, kept_layouts: &[KeptLayout]) -> Self {
+        let mut structure = Self {
             root: handles.take(),
             groups: handles.take(),
             layouts: handles.take(),
@@ -93,7 +115,39 @@ impl Structure {
             paper_layout: handles.take(),
             model_space: handles.take(),
             paper_space: handles.take(),
+            kept: Vec::new(),
+            remap: HashMap::new(),
+        };
+        for (index, layout) in kept_layouts.iter().enumerate() {
+            // The first kept layout takes the handles a drawing without
+            // any gives its one `Layout1`, so a file of ours read back
+            // writes the same bytes again.
+            let (record, layout_handle) = if index == 0 {
+                (structure.paper_space, structure.paper_layout)
+            } else {
+                (handles.take(), handles.take())
+            };
+            let entities: Vec<Handle> = layout.entities.iter().map(|_| handles.take()).collect();
+            structure
+                .remap
+                .insert(layout.block_record_handle.clone(), record);
+            if let Some((_, old)) = layout.layout.iter().find(|(code, _)| *code == 5) {
+                structure
+                    .remap
+                    .insert(old.trim().to_uppercase(), layout_handle);
+            }
+            for (entity, handle) in layout.entities.iter().zip(&entities) {
+                if let Some((_, old)) = entity.groups.iter().find(|(code, _)| *code == 5) {
+                    structure.remap.insert(old.trim().to_uppercase(), *handle);
+                }
+            }
+            structure.kept.push(KeptHandles {
+                record,
+                layout: layout_handle,
+                entities,
+            });
         }
+        structure
     }
 }
 
@@ -159,7 +213,7 @@ impl Export {
     /// and the block definitions.
     pub fn begin(drawing: &Drawing) -> Self {
         let mut handles = Handles(1);
-        let structure = Structure::allocate(&mut handles);
+        let structure = Structure::allocate(&mut handles, drawing.kept_layouts());
         // One block record per definition, in table order; the record is
         // what a definition's entities name as their owner.
         let block_records: Vec<Handle> = drawing
@@ -243,7 +297,8 @@ impl Export {
                 Phase::Entities(_) => {
                     self.body.group(0, "ENDSEC");
                     let structure = &self.structure;
-                    self.body.section("OBJECTS", |w| w.objects(structure));
+                    self.body
+                        .section("OBJECTS", |w| w.objects(structure, drawing));
                     self.body.group(0, "EOF");
                     self.phase = Phase::Done;
                 }
@@ -452,21 +507,26 @@ impl Writer {
             }
         });
         let blocks = drawing.blocks();
-        let rows = blocks.len() + 1 + dimension_records.len();
+        let kept = drawing.kept_layouts();
+        let spaces = if kept.is_empty() { 2 } else { 1 + kept.len() };
+        let rows = blocks.len() - 1 + spaces + dimension_records.len();
         self.table("BLOCK_RECORD", rows, |w, table| {
-            for (name, record, layout) in [
-                (
-                    "*Model_Space",
-                    structure.model_space,
-                    structure.model_layout,
-                ),
-                (
-                    "*Paper_Space",
+            w.block_record(
+                table,
+                structure.model_space,
+                "*Model_Space",
+                structure.model_layout,
+            );
+            if kept.is_empty() {
+                w.block_record(
+                    table,
                     structure.paper_space,
+                    "*Paper_Space",
                     structure.paper_layout,
-                ),
-            ] {
-                w.block_record(table, record, name, layout);
+                );
+            }
+            for (layout, handles) in kept.iter().zip(&structure.kept) {
+                w.block_record(table, handles.record, &layout.block_name, handles.layout);
             }
             let user = blocks.iter().filter(|(id, _)| *id != BlockId::FIRST);
             for ((_, block), record) in user.zip(block_records) {
@@ -667,13 +727,24 @@ impl Writer {
             structure.model_space,
             |_| {},
         );
-        self.block(
-            "*Paper_Space",
-            Point2::ORIGIN,
-            0,
-            structure.paper_space,
-            |_| {},
-        );
+        let kept = drawing.kept_layouts();
+        if kept.is_empty() {
+            self.block(
+                "*Paper_Space",
+                Point2::ORIGIN,
+                0,
+                structure.paper_space,
+                |_| {},
+            );
+        }
+        for (layout, handles) in kept.iter().zip(&structure.kept) {
+            self.block(&layout.block_name, Point2::ORIGIN, 0, handles.record, |w| {
+                for (entity, handle) in layout.entities.iter().zip(&handles.entities) {
+                    w.group(0, &entity.kind);
+                    w.kept_groups(&entity.groups, *handle, handles.record, &structure.remap);
+                }
+            });
+        }
         let user = drawing
             .blocks()
             .iter()
@@ -1213,7 +1284,8 @@ impl Writer {
     /// The root dictionary with the groups, layouts, and plot-style
     /// entries the release expects; the two layouts, one per space; and
     /// the one plot style, a placeholder.
-    fn objects(&mut self, structure: &Structure) {
+    fn objects(&mut self, structure: &Structure, drawing: &Drawing) {
+        let kept = drawing.kept_layouts();
         self.dictionary(structure.root, Handle::NONE);
         self.group(3, "ACAD_GROUP");
         self.handle(350, structure.groups);
@@ -1225,8 +1297,14 @@ impl Writer {
         self.dictionary(structure.groups, structure.root);
 
         self.dictionary(structure.layouts, structure.root);
-        self.group(3, "Layout1");
-        self.handle(350, structure.paper_layout);
+        if structure.kept.is_empty() {
+            self.group(3, "Layout1");
+            self.handle(350, structure.paper_layout);
+        }
+        for (layout, handles) in kept.iter().zip(&structure.kept) {
+            self.group(3, &layout.name);
+            self.handle(350, handles.layout);
+        }
         self.group(3, "Model");
         self.handle(350, structure.model_layout);
 
@@ -1251,13 +1329,54 @@ impl Writer {
             structure.model_space,
             true,
         );
-        self.layout(
-            structure.paper_layout,
-            structure.layouts,
-            "Layout1",
-            structure.paper_space,
-            false,
-        );
+        if structure.kept.is_empty() {
+            self.layout(
+                structure.paper_layout,
+                structure.layouts,
+                "Layout1",
+                structure.paper_space,
+                false,
+            );
+        }
+        for (layout, handles) in kept.iter().zip(&structure.kept) {
+            self.group(0, "LAYOUT");
+            self.kept_groups(
+                &layout.layout,
+                handles.layout,
+                structure.layouts,
+                &structure.remap,
+            );
+        }
+    }
+
+    /// A kept record's groups (#184), as the file held them, with its own
+    /// handle (5) and owner (the first 330) made those of this file and
+    /// every other handle it names mapped to the record it names here —
+    /// or to nothing, when that was not kept.
+    fn kept_groups(
+        &mut self,
+        groups: &[(i32, String)],
+        own: Handle,
+        owner: Handle,
+        remap: &HashMap<String, Handle>,
+    ) {
+        let mut owner_written = false;
+        for (code, value) in groups {
+            match *code {
+                5 => self.handle(5, own),
+                330 if !owner_written => {
+                    owner_written = true;
+                    self.handle(330, owner);
+                }
+                code if is_handle_reference(code) => {
+                    match remap.get(&value.trim().to_uppercase()) {
+                        Some(handle) => self.handle(code, *handle),
+                        None => self.group(code, "0"),
+                    }
+                }
+                code => self.group(code, value),
+            }
+        }
     }
 
     fn dictionary(&mut self, handle: Handle, owner: Handle) {
