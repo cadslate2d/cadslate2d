@@ -6,11 +6,14 @@ import {
   FLOATS_PER_ARC_DISTANCE,
   FLOATS_PER_SEGMENT,
   FLOATS_PER_TRIANGLE,
+  FLOATS_PER_TRANSFORM,
+  FLOATS_PER_VIEWPORT_FRAME,
   StyleRole,
   WORDS_PER_REGION,
   dirtyRanges,
   type ClipTransform,
   type FrameBuffers,
+  type SceneViewports,
   type StyleTables,
 } from "../../cad/engine";
 import type { CanvasPalette } from "../palette";
@@ -120,12 +123,21 @@ class FrameLayers {
   }
 }
 
-/** The `[first, count]` run of `kind` in each region (#188). */
-function regionRuns(regions: Uint32Array, kind: DirtyKind): (readonly [number, number])[] {
+/**
+ * The `[first, count]` run of `kind` in each region (#188), with a count of
+ * zero for the regions not of `paper` — the model's runs are drawn through
+ * the viewports, a layout's own under the paper's transform (#193).
+ */
+function regionRuns(
+  regions: Uint32Array,
+  kind: DirtyKind,
+  paper: boolean,
+): (readonly [number, number])[] {
   const runs: (readonly [number, number])[] = [];
   for (let offset = 0; offset < regions.length; offset += WORDS_PER_REGION) {
     const at = offset + kind * 2;
-    runs.push([regions[at] ?? 0, regions[at + 1] ?? 0]);
+    const isPaper = (regions[offset + 6] ?? 0) === 1;
+    runs.push([regions[at] ?? 0, isPaper === paper ? (regions[at + 1] ?? 0) : 0]);
   }
   return runs;
 }
@@ -291,7 +303,11 @@ export class WebGlRenderer implements FrameSink {
     this.stats.overlayUploads += 1;
   }
 
-  draw(sceneTransform: ClipTransform, overlayTransform: ClipTransform): void {
+  draw(
+    sceneTransform: ClipTransform,
+    overlayTransform: ClipTransform,
+    viewports: SceneViewports,
+  ): void {
     const gl = this.#gl;
     const { pipelines, scene, overlay } = this.#resources;
     const [red, green, blue] = this.#palette.background;
@@ -318,29 +334,76 @@ export class WebGlRenderer implements FrameSink {
         [pipelines.segments, layers.segments, DirtyKind.Segments],
         [pipelines.arcs, layers.arcs, DirtyKind.Arcs],
       ] as const;
+      const { regions } = layers;
+      if (regions === undefined) {
+        // The overlay: its batches under the one transform.
+        for (const [pipeline, layer] of kinds) {
+          this.#usePipeline(pipeline);
+          this.stats.drawCalls += layer.draw(
+            pipeline.uniforms,
+            transform,
+            this.#palette,
+            this.#devicePixelRatio,
+            include,
+          );
+        }
+        continue;
+      }
+      // The committed scene (#188, #193): the model's regions through each
+      // viewport of the layout shown, scissored to its frame — or plainly,
+      // on the model, where no viewport is listed — then the layout's own
+      // regions under the paper's transform, over them.
+      const regionCount = regions.length / WORDS_PER_REGION;
+      const stride = FLOATS_PER_VIEWPORT_FRAME + FLOATS_PER_TRANSFORM * regionCount;
+      const onPaper = viewports.length > 0;
+      const stroke = this.#palette.strokes[StyleRole.Entity];
+      if (onPaper) {
+        gl.enable(gl.SCISSOR_TEST);
+        for (let at = 0; at + stride <= viewports.length; at += stride) {
+          this.#scissorClip(
+            viewports[at] ?? 0,
+            viewports[at + 1] ?? 0,
+            viewports[at + 2] ?? 0,
+            viewports[at + 3] ?? 0,
+          );
+          const transforms = viewports.subarray(at + FLOATS_PER_VIEWPORT_FRAME, at + stride);
+          for (const [pipeline, layer, kind] of kinds) {
+            this.#usePipeline(pipeline);
+            this.stats.drawCalls += layer.drawRegions(
+              pipeline.uniforms,
+              transforms,
+              regionRuns(regions, kind, false),
+              stroke,
+              this.#devicePixelRatio,
+            );
+          }
+        }
+        gl.disable(gl.SCISSOR_TEST);
+      }
       for (const [pipeline, layer, kind] of kinds) {
         this.#usePipeline(pipeline);
-        const { regions } = layers;
-        // The committed scene: each region's run under its own transform
-        // (#188). The overlay: its batches under the one transform.
-        this.stats.drawCalls += regions
-          ? layer.drawRegions(
-              pipeline.uniforms,
-              transform,
-              regionRuns(regions, kind),
-              this.#palette.strokes[StyleRole.Entity],
-              this.#devicePixelRatio,
-            )
-          : layer.draw(
-              pipeline.uniforms,
-              transform,
-              this.#palette,
-              this.#devicePixelRatio,
-              include,
-            );
+        this.stats.drawCalls += layer.drawRegions(
+          pipeline.uniforms,
+          transform,
+          regionRuns(regions, kind, onPaper),
+          stroke,
+          this.#devicePixelRatio,
+        );
       }
     }
     this.stats.frames += 1;
+  }
+
+  /** Limits drawing to a rectangle given in clip space. */
+  #scissorClip(x0: number, y0: number, x1: number, y1: number): void {
+    const gl = this.#gl;
+    const toPixels = (clip: number, size: number) => Math.round(((clip + 1) / 2) * size);
+    const [width, height] = [this.#canvas.width, this.#canvas.height];
+    const left = Math.max(0, Math.min(toPixels(x0, width), toPixels(x1, width)));
+    const right = Math.min(width, Math.max(toPixels(x0, width), toPixels(x1, width)));
+    const bottom = Math.max(0, Math.min(toPixels(y0, height), toPixels(y1, height)));
+    const top = Math.min(height, Math.max(toPixels(y0, height), toPixels(y1, height)));
+    gl.scissor(left, bottom, Math.max(0, right - left), Math.max(0, top - bottom));
   }
 
   /**

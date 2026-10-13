@@ -40,6 +40,11 @@ class FakeSource implements FrameSource {
     return new Float32Array([1, 1, 0, 0]);
   }
 
+  sceneViewports(): Float32Array {
+    this.calls += 1;
+    return new Float32Array();
+  }
+
   overlayTransform(): Float32Array {
     this.calls += 1;
     return new Float32Array([1, 1, 0, 0]);
@@ -139,7 +144,7 @@ describe("renderFrame", () => {
     renderFrame(source, sink);
     const afterFirst = source.calls;
     renderFrame(source, sink);
-    // Overlay read, scene transform, overlay transform — regardless of drawing size.
-    expect(source.calls - afterFirst).toBe(3);
+    // Overlay read, scene transform, viewports, overlay transform — regardless of drawing size.
+    expect(source.calls - afterFirst).toBe(4);
   });
 });

@@ -120,6 +120,22 @@ pub struct CommandContext<'a> {
     pub space: LayoutId,
     pub(crate) log: &'a mut CommandLog,
     pub(crate) host_request: &'a mut Option<HostRequest>,
+    pub(crate) space_request: &'a mut Option<SpaceRequest>,
+}
+
+/// Where a command sends the session (#193): the space, which the
+/// session owns with its views, changes after the step, like a host
+/// request is served after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpaceRequest {
+    /// Go to a space: the model, or a layout.
+    Go(LayoutId),
+    /// Work in the model through this viewport of the current layout
+    /// (`MSPACE`): the view is the viewport's.
+    ModelThrough(EntityId),
+    /// Back to the paper from the model worked through a viewport
+    /// (`PSPACE`); the viewport takes the view as it is now.
+    Paper,
 }
 
 impl CommandContext<'_> {
@@ -138,6 +154,12 @@ impl CommandContext<'_> {
     /// offer a download. The host picks the request up after this step.
     pub fn request_host(&mut self, request: HostRequest) {
         *self.host_request = Some(request);
+    }
+
+    /// Sends the session to a space, or through a viewport, after this
+    /// step (#193).
+    pub fn request_space(&mut self, request: SpaceRequest) {
+        *self.space_request = Some(request);
     }
 }
 

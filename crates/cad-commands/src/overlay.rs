@@ -63,4 +63,7 @@ pub enum OverlayItem {
     SnapMarker { mode: SnapMode, at: Point2 },
     /// The cursor crosshair at a world position.
     Crosshair { at: Point2 },
+    /// The frame of the viewport the model is worked through (#193), in
+    /// the model's coordinates: where the paper's window is.
+    ViewportFrame { corners: [Point2; 4] },
 }

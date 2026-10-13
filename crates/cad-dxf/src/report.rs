@@ -20,8 +20,8 @@ pub struct ImportReport {
     /// Viewports of the layouts (#192).
     pub viewports: usize,
     /// Layouts with something on their paper — entities of the drawing
-    /// since #191, or records kept as the file held them — by name. They
-    /// are not drawn yet. An empty layout is read without a word.
+    /// since #191, or records kept as the file held them — by name. An
+    /// empty layout is read without a word.
     pub layouts: Vec<String>,
     /// POLYLINE and LWPOLYLINE entities imported.
     pub polylines: usize,
@@ -146,7 +146,7 @@ impl ImportReport {
         }];
         if !self.layouts.is_empty() {
             lines.push(format!(
-                "{}, not drawn yet: {}.",
+                "{}: {}.",
                 counted(self.layouts.len(), "layout", "layouts"),
                 self.layouts.join(", ")
             ));

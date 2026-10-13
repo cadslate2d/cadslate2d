@@ -158,13 +158,13 @@ fn a_corner_grip_resizes_and_the_centre_grip_moves_a_viewport() {
     h.click_world(p(160.0, 85.0));
     h.click_world(p(200.0, 100.0));
     let viewport = viewports(&h, sheet)[0];
-    assert_eq!(viewport.center, p(200.0, 100.0));
+    assert!(viewport.center.distance_to(p(200.0, 100.0)) < 1e-9);
     assert_eq!((viewport.width, viewport.height), (300.0, 150.0));
     h.escape();
     // MOVE, like any entity; ROTATE keeps it square to the paper.
     h.click_world(p(50.0, 100.0));
     h.enter_all(&["M", "0,0", "10,0"]);
-    assert_eq!(viewports(&h, sheet)[0].center, p(210.0, 100.0));
+    assert!(viewports(&h, sheet)[0].center.distance_to(p(210.0, 100.0)) < 1e-9);
     h.click_world(p(60.0, 100.0));
     h.enter_all(&["RO", "0,0", "90"]);
     let turned = viewports(&h, sheet)[0];

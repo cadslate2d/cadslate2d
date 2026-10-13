@@ -57,9 +57,15 @@ pub struct UiState {
     /// export reproduces the drawing whole; the host warns before exporting
     /// otherwise (DESIGN §24.2).
     pub export_losses: Vec<String>,
-    /// The layouts with something on them, by name: not drawn yet (#184,
-    /// #191).
+    /// The layouts, by name, in tab order (#193).
     pub layouts: Vec<String>,
+    /// The name of the space the session is in — `Model`, or a layout's
+    /// — the layout's while the model is worked through its viewport.
+    pub space: String,
+    /// Whether the session is on a layout's paper.
+    pub paper: bool,
+    /// Whether the model is worked through a viewport (`MSPACE`).
+    pub through: bool,
     /// The account of the last import, for the host to show until it is
     /// dismissed or another drawing is opened.
     pub import_report: Option<ImportReport>,

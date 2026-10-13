@@ -105,8 +105,14 @@ export interface UiState {
    * reproduces the drawing whole; otherwise warn first (DESIGN §24.2).
    */
   readonly exportLosses: readonly string[];
-  /** The layouts with something on them, by name: not drawn yet (#184, #191). */
+  /** The layouts, by name, in tab order (#193). */
   readonly layouts: readonly string[];
+  /** The space the session is in, by name: `Model`, or a layout's. */
+  readonly space: string;
+  /** Whether the session is on a layout's paper. */
+  readonly paper: boolean;
+  /** Whether the model is worked through a viewport (MSPACE). */
+  readonly through: boolean;
   /** The last import's account, shown until dismissed or the drawing is replaced (#157). */
   readonly importReport?: ImportReport;
   /** The layers as the Layers panel shows them, in table order (#140). */
@@ -255,14 +261,26 @@ export interface FrameBuffers {
   /**
    * The runs of instances drawn under each transform of `sceneTransform`
    * (#188): `segmentFirst, segmentCount, arcFirst, arcCount, triangleFirst,
-   * triangleCount` per region — `WORDS_PER_REGION`. Only the committed
-   * scene has them; the overlay is one run under one transform. An owned copy.
+   * triangleCount, paper` per region — `WORDS_PER_REGION`. `paper` is 1 for
+   * a run of a layout's own entities, drawn under the paper's transform,
+   * and 0 for the model's, drawn through each viewport (#193). Only the
+   * committed scene has them; the overlay is one run under one transform.
+   * An owned copy.
    */
   readonly regions?: Uint32Array;
 }
 
-/** Words per scene region: first and count for segments, arcs, and triangles. */
-export const WORDS_PER_REGION = 6;
+/** Words per scene region: first and count for segments, arcs, and triangles, then the paper flag. */
+export const WORDS_PER_REGION = 7;
+
+/**
+ * The viewports of the layout shown (#193): per viewport, its frame in clip
+ * space — `x0, y0, x1, y1` — then one clip transform per scene region for
+ * the model seen through it. Empty on the model.
+ */
+export type SceneViewports = Float32Array;
+/** Floats per viewport before its transforms: the frame. */
+export const FLOATS_PER_VIEWPORT_FRAME = 4;
 
 /** What `snapshotStep` answers. */
 export const SnapshotStatus = {
@@ -563,6 +581,11 @@ export class CadEngine {
   /** Clip transforms for the committed scene, one per region. An owned copy, safe to keep. */
   sceneTransform(): ClipTransform {
     return this.#session.scene_transform();
+  }
+
+  /** The viewports of the layout shown, with the model's transforms through each (#193). An owned copy. */
+  sceneViewports(): SceneViewports {
+    return this.#session.scene_viewports();
   }
 
   /** Lends the transient overlay's buffers to `consume` for the duration of the call. */

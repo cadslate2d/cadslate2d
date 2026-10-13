@@ -18,10 +18,10 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use cad_core::{Aabb, EntityId, Point2};
+use cad_core::{Aabb, EntityId, Point2, View};
 use cad_document::{
     Drawing, Entity, LayoutId, Linetype, LinetypeDef, LinetypeId, Paint, Properties, Revision,
-    Weight,
+    ViewportEntity, Weight,
 };
 
 use crate::{PackedFrame, StyleRole};
@@ -61,6 +61,8 @@ struct ChunkCounts {
 struct Chunk {
     counts: ChunkCounts,
     origin: Point2,
+    /// A chunk of the layout shown, as against one of the model (#193).
+    paper: bool,
 }
 
 /// How far, in drawing units, a chunk's geometry may lie from the origin it
@@ -71,6 +73,17 @@ struct Chunk {
 /// so a drawing of ordinary size is one run per kind, as before.
 pub const MAX_ORIGIN_OFFSET: f64 = 100_000.0;
 
+/// The view of the model through `viewport` as seen on `paper`, the view
+/// of the layout (#193): the pixels inside the viewport's frame show the
+/// model points the viewport shows there. The model's scene is drawn
+/// under its clip transform, scissored to the frame.
+pub fn viewport_view(paper: &View, viewport: &ViewportEntity) -> View {
+    let mut view = paper.clone();
+    view.look_at(viewport.model_point(paper.center()));
+    view.set_height(paper.height_in_world() / viewport.scale);
+    view
+}
+
 /// A run of consecutive chunks packed against one origin: what the adapter
 /// draws under one translation (#188).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -80,6 +93,9 @@ pub struct SceneRegion {
     pub first: [u32; 3],
     /// How many instances of each kind.
     pub count: [u32; 3],
+    /// The layout's own entities, drawn under the paper's view, as
+    /// against the model's, drawn through each viewport (#193).
+    pub paper: bool,
 }
 
 /// Stable geometry derived from the canonical document.
@@ -91,6 +107,10 @@ pub struct SceneRegion {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderScene {
     revision: Revision,
+    /// The space shown (#193): the model's chunks come first; a layout's
+    /// own follow them, as many again.
+    space: LayoutId,
+    model_chunks: usize,
     frame: PackedFrame,
     /// The style index of each segment instance, in instance order.
     segment_styles: Vec<u16>,
@@ -143,6 +163,8 @@ impl RenderScene {
     fn empty(drawing: &Drawing) -> Self {
         Self {
             revision: drawing.shown_revision(),
+            space: LayoutId::MODEL,
+            model_chunks: 0,
             frame: PackedFrame::default(),
             segment_styles: Vec::new(),
             arc_styles: Vec::new(),
@@ -173,7 +195,7 @@ impl RenderScene {
                 chunk.counts.triangles,
             ];
             match regions.last_mut() {
-                Some(region) if region.origin == chunk.origin => {
+                Some(region) if region.origin == chunk.origin && region.paper == chunk.paper => {
                     for (total, added) in region.count.iter_mut().zip(count) {
                         *total += added;
                     }
@@ -182,6 +204,7 @@ impl RenderScene {
                     origin: chunk.origin,
                     first,
                     count,
+                    paper: chunk.paper,
                 }),
             }
             for (next, added) in first.iter_mut().zip(count) {
@@ -193,6 +216,7 @@ impl RenderScene {
                 origin: self.frame.origin(),
                 first: [0; 3],
                 count: [0; 3],
+                paper: false,
             });
         }
         regions
@@ -249,6 +273,23 @@ impl RenderScene {
                 triangles: after.triangles - before.triangles,
             },
             origin,
+            paper: chunk >= self.model_chunks,
+        }
+    }
+
+    /// The space the scene shows: the model, or a layout with the model
+    /// through its viewports (#193).
+    pub fn space(&self) -> LayoutId {
+        self.space
+    }
+
+    /// The space and the ID chunk a chunk of the scene packs: the model's
+    /// chunks first, then the layout's.
+    fn chunk_space(&self, chunk: usize) -> (LayoutId, usize) {
+        if chunk < self.model_chunks {
+            (LayoutId::MODEL, chunk)
+        } else {
+            (self.space, chunk - self.model_chunks)
         }
     }
 
@@ -339,7 +380,7 @@ impl RenderScene {
     /// The whole scene, afresh: every chunk packed in order, each against
     /// the origin of the chunk before it while that is within reach, and
     /// against its own extents' centre otherwise (#188).
-    fn rebuild_all(&mut self, drawing: &Drawing) {
+    fn rebuild_all(&mut self, drawing: &Drawing, space: LayoutId) {
         // Centre the first origin on the drawing so f32 offsets keep the
         // most precision where the geometry actually is.
         let origin = drawing
@@ -352,12 +393,25 @@ impl RenderScene {
         self.properties.clear();
         self.style_indices.clear();
         self.chunks.clear();
-        let chunk_count = drawing.id_bound().div_ceil(CHUNK_IDS) as usize;
+        self.space = space;
+        self.model_chunks = drawing.id_bound().div_ceil(CHUNK_IDS) as usize;
         let mut previous = origin;
-        for chunk in 0..chunk_count {
+        for chunk in 0..self.model_chunks {
             let packed = self.pack_chunk(drawing, chunk, &[previous]);
             previous = packed.origin;
             self.chunks.push(packed);
+        }
+        // A layout's own entities after the model's (#193), packed from
+        // the paper's own centre: a sheet is nowhere near the model.
+        if space != LayoutId::MODEL {
+            let mut previous = drawing
+                .extents_in(space)
+                .map_or(Point2::ORIGIN, |extents| extents.center());
+            for chunk in self.model_chunks..2 * self.model_chunks {
+                let packed = self.pack_chunk(drawing, chunk, &[previous]);
+                previous = packed.origin;
+                self.chunks.push(packed);
+            }
         }
         self.frame.batch_everything(StyleRole::Entity);
         self.dirty.clear();
@@ -369,6 +423,8 @@ impl RenderScene {
         let needed = drawing.id_bound().div_ceil(CHUNK_IDS) as usize;
         if self.chunks.len() < needed {
             // A new chunk starts from the origin of the one before it.
+            // (On a layout, a grown ID bound rebuilds the scene whole:
+            // the layout's chunks follow the model's.)
             let origin = self
                 .chunks
                 .last()
@@ -378,8 +434,10 @@ impl RenderScene {
                 Chunk {
                     counts: ChunkCounts::default(),
                     origin,
+                    paper: false,
                 },
             );
+            self.model_chunks = needed;
         }
         for &chunk in chunks {
             if chunk >= self.chunks.len() {
@@ -474,6 +532,7 @@ impl RenderScene {
             self.chunks[chunk] = Chunk {
                 counts: new,
                 origin,
+                paper: chunk >= self.model_chunks,
             };
             // What to upload: the chunk's run when its size held; from the
             // chunk to the end when what follows moved.
@@ -516,6 +575,8 @@ impl RenderScene {
         frame.reset(origin);
         Self {
             revision: self.revision,
+            space: self.space,
+            model_chunks: self.model_chunks,
             frame,
             segment_styles: Vec::new(),
             arc_styles: Vec::new(),
@@ -539,17 +600,19 @@ impl RenderScene {
         }
     }
 
-    /// Appends the shown entities of `chunk`, in ID order.
+    /// Appends the shown entities of `chunk`, in ID order: the model's
+    /// for a chunk of the model, the layout's for one of the layout.
     fn pack_chunk_into_frame(&mut self, drawing: &Drawing, chunk: usize) {
-        let first = chunk as u64 * CHUNK_IDS;
+        let (space, id_chunk) = self.chunk_space(chunk);
+        let first = id_chunk as u64 * CHUNK_IDS;
         for raw in first..first + CHUNK_IDS {
             let id = EntityId::from_raw(raw);
             let Some(entity) = drawing.entity(id) else {
                 continue;
             };
             // Objects on a layer that is off are not drawn: no instances.
-            // Nor is what is on a layout: the scene is the model's (#191).
-            if !drawing.is_shown_in(id, LayoutId::MODEL) {
+            // Nor is what is in another space (#191, #193).
+            if !drawing.is_shown_in(id, space) {
                 continue;
             }
             let properties = drawing.properties(id).unwrap_or_default();
@@ -685,21 +748,45 @@ impl SceneCache {
     /// the drawing can say which, else all of it; the style table is
     /// re-resolved if and only if the drawing changed at all.
     pub fn scene(&mut self, drawing: &Drawing) -> &RenderScene {
+        self.scene_in(drawing, LayoutId::MODEL)
+    }
+
+    /// The scene of `space` (#193): the model's entities — through a
+    /// layout's viewports, when `space` is a layout — and the layout's
+    /// own. A change of space rebuilds; a change of the drawing re-packs
+    /// the chunks it touched, in whichever part they lie.
+    pub fn scene_in(&mut self, drawing: &Drawing, space: LayoutId) -> &RenderScene {
         let stale = self
             .scene
             .as_ref()
-            .is_none_or(|scene| scene.revision != drawing.shown_revision());
+            .is_none_or(|scene| scene.revision != drawing.shown_revision() || scene.space != space);
         if stale {
-            let changed = self
-                .scene
-                .as_ref()
-                .and_then(|scene| drawing.shown_changes_since(scene.revision));
+            let needed = drawing.id_bound().div_ceil(CHUNK_IDS) as usize;
+            let changed = self.scene.as_ref().and_then(|scene| {
+                // A layout's chunks follow the model's: a grown ID bound
+                // moves them, so the scene is rebuilt whole then.
+                let same_shape = scene.space == space
+                    && (space == LayoutId::MODEL || scene.model_chunks == needed);
+                same_shape
+                    .then(|| drawing.shown_changes_since(scene.revision))
+                    .flatten()
+            });
             match (self.scene.as_mut(), changed) {
                 (Some(scene), Some(ids)) => {
-                    let chunks: BTreeSet<usize> = ids
-                        .iter()
-                        .map(|id| (id.raw() / CHUNK_IDS) as usize)
-                        .collect();
+                    // A changed entity's chunk in the part of its space;
+                    // one that is gone could have been in either.
+                    let model_chunks = scene.model_chunks.max(needed);
+                    let mut chunks: BTreeSet<usize> = BTreeSet::new();
+                    for id in &ids {
+                        let id_chunk = (id.raw() / CHUNK_IDS) as usize;
+                        let on_paper = drawing.space_of(*id).map(|at| at == space);
+                        if on_paper != Some(true) || space == LayoutId::MODEL {
+                            chunks.insert(id_chunk);
+                        }
+                        if space != LayoutId::MODEL && on_paper != Some(false) {
+                            chunks.insert(model_chunks + id_chunk);
+                        }
+                    }
                     scene.repack(drawing, &chunks);
                     scene.revision = drawing.shown_revision();
                     self.partial_builds += 1;
@@ -710,7 +797,7 @@ impl SceneCache {
                         .scene
                         .take()
                         .unwrap_or_else(|| RenderScene::empty(drawing));
-                    scene.rebuild_all(drawing);
+                    scene.rebuild_all(drawing, space);
                     scene.revision = drawing.shown_revision();
                     self.scene = Some(scene);
                 }
@@ -758,7 +845,7 @@ impl SceneCache {
 
 #[cfg(test)]
 mod tests {
-    use cad_document::LineEntity;
+    use cad_document::{Layout, LineEntity, ViewportEntity};
 
     use super::*;
     use crate::DrawBatch;
@@ -1273,6 +1360,115 @@ mod tests {
             "out of reach: the chunk's own centre"
         );
         assert!((regions[0].origin.y - 5e6).abs() < 1.0);
+    }
+
+    /// #193: a layout's scene is the model's chunks, then the layout's own,
+    /// each region saying which; a paper edit re-packs the paper's chunk
+    /// alone, and a model edit the model's; a change of space rebuilds.
+    #[test]
+    fn a_layouts_scene_holds_the_model_and_the_paper_in_their_own_regions() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+        tx.insert(LineEntity::new(
+            Point2::new(0.0, 0.0),
+            Point2::new(100.0, 0.0),
+        ))
+        .unwrap();
+        tx.insert_in(
+            sheet,
+            ViewportEntity::new(
+                Point2::new(100.0, 50.0),
+                200.0,
+                100.0,
+                Point2::new(50.0, 0.0),
+                0.5,
+            ),
+        )
+        .unwrap();
+        tx.insert_in(
+            sheet,
+            LineEntity::new(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0)),
+        )
+        .unwrap();
+        tx.commit();
+        let mut cache = SceneCache::new();
+        let model = cache.scene_in(&drawing, LayoutId::MODEL);
+        assert_eq!(model.space(), LayoutId::MODEL);
+        let regions = model.regions();
+        assert_eq!(regions.len(), 1);
+        assert!(!regions[0].paper);
+        assert_eq!(regions[0].count, [1, 0, 0], "the model's line alone");
+
+        let paper = cache.scene_in(&drawing, sheet);
+        assert_eq!(paper.space(), sheet);
+        let regions = paper.regions();
+        let before = paper.frame().segments().to_vec();
+        assert_eq!(cache.build_count(), 2, "a change of space rebuilds");
+        assert_eq!(regions.len(), 2, "{regions:?}");
+        assert!(!regions[0].paper && regions[1].paper);
+        assert_eq!(regions[0].count, [1, 0, 0], "the model's line");
+        assert_eq!(
+            regions[1].count,
+            [5, 0, 0],
+            "the viewport's frame and the line"
+        );
+        assert_eq!(regions[1].first, [1, 0, 0]);
+        let ranges = cache.take_dirty();
+        assert_eq!(ranges.len(), 3, "everything, after a rebuild");
+
+        // A line drawn on the paper re-packs the paper's chunk; the model's
+        // instances stay where they were.
+        let mut tx = drawing.transaction();
+        tx.insert_in(
+            sheet,
+            LineEntity::new(Point2::new(0.0, 20.0), Point2::new(10.0, 20.0)),
+        )
+        .unwrap();
+        tx.commit();
+        let paper = cache.scene_in(&drawing, sheet);
+        let regions = paper.regions();
+        let segments = paper.frame().segments().to_vec();
+        assert_eq!(cache.partial_build_count(), 1);
+        assert_eq!(regions[1].count, [6, 0, 0]);
+        assert_eq!(&segments[..4], &before[..4], "the model's line, untouched");
+        let ranges = cache.take_dirty();
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(
+            (ranges[0].first, ranges[0].count),
+            (1, 6),
+            "the paper's run"
+        );
+
+        // And back to the model: its scene alone, rebuilt.
+        let model = cache.scene_in(&drawing, LayoutId::MODEL);
+        let (regions, count) = (model.regions(), model.frame().segment_count());
+        assert_eq!(regions.len(), 1);
+        assert_eq!(count, 1);
+    }
+
+    /// #193: the view through a viewport shows, inside its frame, the
+    /// model points the viewport shows on the paper.
+    #[test]
+    fn the_view_through_a_viewport_maps_its_frame_to_its_model_view() {
+        let mut paper = View::new(800.0, 600.0);
+        paper.look_at(Point2::new(210.0, 148.5));
+        paper.set_height(297.0);
+        let window = ViewportEntity::new(
+            Point2::new(100.0, 50.0),
+            200.0,
+            100.0,
+            Point2::new(1000.0, 500.0),
+            0.5,
+        );
+        let view = viewport_view(&paper, &window);
+        for corner in window.corners() {
+            let on_screen = paper.world_to_screen(corner);
+            let seen = view.screen_to_world(on_screen);
+            let shown = window.model_point(corner);
+            assert!(seen.distance_to(shown) < 1e-6, "{seen:?} vs {shown:?}");
+        }
+        assert!((view.scale() - paper.scale() * 0.5).abs() < 1e-9);
     }
 
     #[test]

@@ -24,6 +24,7 @@ mod hatch;
 mod join;
 mod layer_command;
 mod layers;
+mod layouts;
 mod linetype;
 mod lweight;
 mod modify;

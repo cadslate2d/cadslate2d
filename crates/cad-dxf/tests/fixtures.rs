@@ -385,7 +385,7 @@ fn layouts_are_kept_through_a_round_trip() {
             .report
             .summary()
             .iter()
-            .any(|line| line == "2 layouts, not drawn yet: Layout1, Layout2."),
+            .any(|line| line == "2 layouts: Layout1, Layout2."),
         "{:?}",
         import.report.summary()
     );

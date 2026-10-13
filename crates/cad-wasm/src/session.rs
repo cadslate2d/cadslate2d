@@ -4,8 +4,9 @@ use cad_commands::{
     Dirty, HostRequest, KeyAction, LayerRow, Modifiers, PointerButton, SelectionSummary, Session,
     Toggle, Toggles, UiState,
 };
-use cad_core::{ClipTransform, LengthUnit, ScreenPoint};
-use cad_render::{OverlayFrame, SceneCache};
+use cad_core::{ClipTransform, LengthUnit, Point2, ScreenPoint};
+use cad_document::{Entity, LayoutId, ViewportEntity};
+use cad_render::{OverlayFrame, RenderScene, SceneCache, viewport_view};
 use js_sys::{Float32Array, Uint8Array, Uint16Array, Uint32Array};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -85,6 +86,11 @@ struct UiStateDto {
     revision: f64,
     export_losses: Vec<String>,
     layouts: Vec<String>,
+    /// The space the session is in, by name; whether it is paper; whether
+    /// the model is worked through a viewport (#193).
+    space: String,
+    paper: bool,
+    through: bool,
     import_report: Option<ImportReportDto>,
     layers: Vec<LayerRowDto>,
     linetypes: Vec<String>,
@@ -187,6 +193,9 @@ impl From<UiState> for UiStateDto {
             revision: state.revision as f64,
             export_losses: state.export_losses,
             layouts: state.layouts,
+            space: state.space,
+            paper: state.paper,
+            through: state.through,
             unit: state.unit.unwrap_or("").to_owned(),
             user_aliases: state.user_aliases,
             import_report: state.import_report.map(|report| ImportReportDto {
@@ -234,9 +243,19 @@ impl CadSession {
     fn sync_overlay(&mut self) {
         if std::mem::take(&mut self.overlay_stale) {
             let items = self.session.overlay();
-            self.overlay
-                .rebuild(&items, self.session.drawing(), self.session.view());
+            self.overlay.rebuild_in(
+                &items,
+                self.session.drawing(),
+                self.session.space(),
+                self.session.view(),
+            );
         }
+    }
+
+    /// The committed scene of the space the session is in (#193).
+    fn scene(&mut self) -> &RenderScene {
+        self.scene
+            .scene_in(self.session.drawing(), self.session.space())
     }
 }
 
@@ -459,8 +478,10 @@ impl CadSession {
     /// changes when what is shown changes — not when a layer is recoloured
     /// (ADR-0014). Cheap: does not build the scene.
     pub fn scene_revision(&self) -> f64 {
-        // Revisions are small sequential integers; f64 represents them exactly.
-        self.session.drawing().shown_revision().as_u64() as f64
+        // Revisions are small sequential integers, and the changes of
+        // space fewer: together they are exact in an f64 (#193).
+        let revision = self.session.drawing().shown_revision().as_u64();
+        (revision * (1 << 20) + self.session.space_epoch() % (1 << 20)) as f64
     }
 
     /// Identifies the style table. Re-upload it only when this differs from
@@ -477,7 +498,7 @@ impl CadSession {
     /// instance with style index `i` is drawn with. A view into WASM memory
     /// — consume before the next call.
     pub fn scene_styles(&mut self) -> Uint8Array {
-        u8_view(self.scene.scene(self.session.drawing()).styles())
+        u8_view(self.scene().styles())
     }
 
     /// The pattern table (ADR-0015): ten floats per row — the period, the
@@ -486,7 +507,7 @@ impl CadSession {
     /// Changes with the style table. A view into WASM memory — consume
     /// before the next call.
     pub fn scene_patterns(&mut self) -> Float32Array {
-        f32_view(self.scene.scene(self.session.drawing()).patterns())
+        f32_view(self.scene().patterns())
     }
 
     /// Per committed segment instance, the distance along its entity's
@@ -494,12 +515,7 @@ impl CadSession {
     /// (ADR-0015). Changes with the geometry. A view into WASM memory —
     /// consume before the next call.
     pub fn scene_segment_distances(&mut self) -> Float32Array {
-        f32_view(
-            self.scene
-                .scene(self.session.drawing())
-                .frame()
-                .segment_distances(),
-        )
+        f32_view(self.scene().frame().segment_distances())
     }
 
     /// Per committed arc instance, two floats: the distance along its
@@ -507,58 +523,43 @@ impl CadSession {
     /// for the direction the path runs round it. A view into WASM memory —
     /// consume before the next call.
     pub fn scene_arc_distances(&mut self) -> Float32Array {
-        f32_view(
-            self.scene
-                .scene(self.session.drawing())
-                .frame()
-                .arc_distances(),
-        )
+        f32_view(self.scene().frame().arc_distances())
     }
 
     /// One style index per committed segment instance. A view into WASM
     /// memory — consume before the next call.
     pub fn scene_segment_styles(&mut self) -> Uint16Array {
-        u16_view(self.scene.scene(self.session.drawing()).segment_styles())
+        u16_view(self.scene().segment_styles())
     }
 
     /// One style index per committed arc instance. A view into WASM memory —
     /// consume before the next call.
     pub fn scene_arc_styles(&mut self) -> Uint16Array {
-        u16_view(self.scene.scene(self.session.drawing()).arc_styles())
+        u16_view(self.scene().arc_styles())
     }
 
     /// Committed segment instances: `x0, y0, x1, y1` per segment, relative to
     /// the scene origin. A view into WASM memory — consume before the next call.
     pub fn scene_segments(&mut self) -> Float32Array {
-        f32_view(self.scene.scene(self.session.drawing()).frame().segments())
+        f32_view(self.scene().frame().segments())
     }
 
     /// Committed batches: `style, first, count` per batch. A view into WASM
     /// memory — consume before the next call.
     pub fn scene_batches(&mut self) -> Uint32Array {
-        u32_view(
-            self.scene
-                .scene(self.session.drawing())
-                .frame()
-                .batch_words(),
-        )
+        u32_view(self.scene().frame().batch_words())
     }
 
     /// Committed arc instances: `cx, cy, radius, start, sweep` per arc, relative
     /// to the scene origin. A view into WASM memory — consume before the next call.
     pub fn scene_arcs(&mut self) -> Float32Array {
-        f32_view(self.scene.scene(self.session.drawing()).frame().arcs())
+        f32_view(self.scene().frame().arcs())
     }
 
     /// Committed arc batches: `style, first, count` per batch. A view into WASM
     /// memory — consume before the next call.
     pub fn scene_arc_batches(&mut self) -> Uint32Array {
-        u32_view(
-            self.scene
-                .scene(self.session.drawing())
-                .frame()
-                .arc_batch_words(),
-        )
+        u32_view(self.scene().frame().arc_batch_words())
     }
 
     /// Clip transforms for the committed scene, one per region (#188):
@@ -566,9 +567,8 @@ impl CadSession {
     /// of `scene_regions`, a copy. Changes with the view; the scene does
     /// not. A drawing of ordinary size is one region.
     pub fn scene_transform(&mut self) -> Vec<f32> {
-        let view = self.session.view();
-        self.scene
-            .scene(self.session.drawing())
+        let view = self.session.view().clone();
+        self.scene()
             .regions()
             .iter()
             .flat_map(|region| transform_words(view.clip_transform(region.origin)))
@@ -581,8 +581,7 @@ impl CadSession {
     /// Changes with the scene; read it with the scene buffers. Owned.
     pub fn scene_regions(&mut self) -> Uint32Array {
         let words: Vec<u32> = self
-            .scene
-            .scene(self.session.drawing())
+            .scene()
             .regions()
             .iter()
             .flat_map(|region| {
@@ -593,10 +592,53 @@ impl CadSession {
                     region.count[1],
                     region.first[2],
                     region.count[2],
+                    u32::from(region.paper),
                 ]
             })
             .collect();
         Uint32Array::from(words.as_slice())
+    }
+
+    /// The viewports of the layout shown (#193), each as its frame in
+    /// clip space — `x0, y0, x1, y1` — then one clip transform per
+    /// region of `scene_regions` for the model seen through it. Empty on
+    /// the model, and for a viewport that is off. Changes with the view
+    /// and the drawing; a copy.
+    pub fn scene_viewports(&mut self) -> Vec<f32> {
+        let space = self.session.space();
+        if space == LayoutId::MODEL {
+            return Vec::new();
+        }
+        let paper = self.session.view().clone();
+        let windows: Vec<ViewportEntity> = self
+            .session
+            .drawing()
+            .shown_in(space)
+            .filter_map(|(_, entity)| match entity {
+                Entity::Viewport(viewport) if viewport.on => Some(*viewport),
+                _ => None,
+            })
+            .collect();
+        let regions = self.scene().regions();
+        let clip = paper.clip_transform(Point2::ORIGIN);
+        let to_clip = |point: Point2| {
+            [
+                (point.x as f32) * clip.scale[0] + clip.translate[0],
+                (point.y as f32) * clip.scale[1] + clip.translate[1],
+            ]
+        };
+        let mut out = Vec::new();
+        for window in windows {
+            let frame = window.frame();
+            let [x0, y0] = to_clip(frame.min());
+            let [x1, y1] = to_clip(frame.max());
+            out.extend([x0, y0, x1, y1]);
+            let view = viewport_view(&paper, &window);
+            for region in &regions {
+                out.extend(transform_words(view.clip_transform(region.origin)));
+            }
+        }
+        out
     }
 
     /// Transient segment instances (previews, highlights, crosshair). A view
@@ -628,24 +670,19 @@ impl CadSession {
     /// per filled triangle, relative to the scene origin. A view into WASM
     /// memory — consume before the next call.
     pub fn scene_triangles(&mut self) -> Float32Array {
-        f32_view(self.scene.scene(self.session.drawing()).frame().triangles())
+        f32_view(self.scene().frame().triangles())
     }
 
     /// Committed triangle batches: `style, first, count` per batch. A view
     /// into WASM memory — consume before the next call.
     pub fn scene_triangle_batches(&mut self) -> Uint32Array {
-        u32_view(
-            self.scene
-                .scene(self.session.drawing())
-                .frame()
-                .triangle_batch_words(),
-        )
+        u32_view(self.scene().frame().triangle_batch_words())
     }
 
     /// One style index per committed triangle instance. A view into WASM
     /// memory — consume before the next call.
     pub fn scene_triangle_styles(&mut self) -> Uint16Array {
-        u16_view(self.scene.scene(self.session.drawing()).triangle_styles())
+        u16_view(self.scene().triangle_styles())
     }
 
     /// Which committed instances changed since this was last called
@@ -655,7 +692,7 @@ impl CadSession {
     /// same frame and upload those ranges with `bufferSubData`; or the
     /// whole buffers, when the GPU holds no scene yet. Owned: safe to keep.
     pub fn scene_dirty_ranges(&mut self) -> Uint32Array {
-        self.scene.scene(self.session.drawing());
+        self.scene();
         let words: Vec<u32> = self
             .scene
             .take_dirty()

@@ -3,6 +3,7 @@
 //! them, and ZOOM Previous keeps a stack of its own.
 
 use cad_core::{Aabb, Point2, View};
+use cad_document::{Layout, LayoutId};
 use cad_input::{ExpectedInput, Keyword};
 
 use crate::{Command, CommandContext, CommandInput, Prompt, Step};
@@ -32,7 +33,13 @@ fn move_view(ctx: &mut CommandContext<'_>, next: View) {
 /// The view fitted to the drawing's extents; where there is nothing, the
 /// view as it is.
 fn extents(ctx: &mut CommandContext<'_>) -> Step {
-    match ctx.drawing.extents_in(ctx.space) {
+    // On a layout the extents are the sheet (#193).
+    let extents = if ctx.space == LayoutId::MODEL {
+        ctx.drawing.extents_in(ctx.space)
+    } else {
+        ctx.drawing.layouts().get(ctx.space).map(Layout::sheet)
+    };
+    match extents {
         Some(extents) => {
             let mut next = ctx.view.clone();
             next.fit(&extents);

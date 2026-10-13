@@ -20,4 +20,5 @@ pub use frame::{DrawBatch, GeometrySink, PackedFrame, StyleRole, walk_entity};
 pub use overlay::{FAR_CURVE_RADIUS_PIXELS, OverlayFrame};
 pub use scene::{
     CHUNK_IDS, DirtyRange, InstanceKind, MAX_ORIGIN_OFFSET, RenderScene, SceneCache, SceneRegion,
+    viewport_view,
 };

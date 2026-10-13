@@ -789,6 +789,24 @@ body {
   cursor: pointer;
 }
 
+/* The layout tabs (#193): the model and each layout, as chips. */
+.status__tabs {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.status__tab {
+  font: inherit;
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.status__tab:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .status__chip--active {
   border-color: var(--color-accent);
   background: var(--color-accent-soft);

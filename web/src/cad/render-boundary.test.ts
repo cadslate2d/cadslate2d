@@ -77,6 +77,8 @@ describe("WASM API surface", () => {
       "scene_triangle_batches",
       "scene_triangle_styles",
       "scene_triangles",
+      // #193: the viewports of the layout shown, with the model's transforms through each, every frame.
+      "scene_viewports",
       // ADR-0024: the autosave's snapshot in slices — begun, stepped by a budget of records, taken as one buffer.
       "snapshot_begin",
       "snapshot_bytes",
@@ -175,6 +177,7 @@ describe("calls across the boundary per frame", () => {
     expect(perFrame[2]).toEqual(perFrame[0]);
     // Two revision checks — geometry and style table — the overlay read,
     // and two transforms.
-    expect(perFrame[0]?.steady).toBe(5);
+    // Two revision checks, the overlay, the scene's transforms, the viewports (#193), the overlay's transform.
+    expect(perFrame[0]?.steady).toBe(6);
   });
 });

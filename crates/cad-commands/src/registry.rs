@@ -14,11 +14,12 @@ use crate::commands::{
     ChpropCommand, CircleCommand, ColorCommand, CornerCommand, DimAngularCommand, DimLinearCommand,
     DimRadialCommand, DimStyleCommand, EdgeCommand, EllipseCommand, EraseCommand, ExplodeCommand,
     ExportCommand, GridCommand, HatchCommand, HatchEditCommand, InsertCommand, JoinCommand,
-    LayerCommand, LineCommand, LinetypeCommand, LtscaleCommand, LweightCommand, MTextCommand,
-    MirrorCommand, MviewCommand, OffsetCommand, OpenCommand, OsnapCommand, PanCommand,
-    PlineCommand, PlotCommand, PolarAngleCommand, QselectCommand, RectangCommand, RedoCommand,
-    SaveCommand, SelectCommand, SettingsCommand, SplineCommand, StretchCommand, TextCommand,
-    TextEditCommand, TransformCommand, UndoCommand, UnitsCommand, ZoomCommand,
+    LayerCommand, LayoutCommand, LineCommand, LinetypeCommand, LtscaleCommand, LweightCommand,
+    MTextCommand, MirrorCommand, ModelCommand, MspaceCommand, MviewCommand, OffsetCommand,
+    OpenCommand, OsnapCommand, PanCommand, PlineCommand, PlotCommand, PolarAngleCommand,
+    PspaceCommand, QselectCommand, RectangCommand, RedoCommand, SaveCommand, SelectCommand,
+    SettingsCommand, SplineCommand, StretchCommand, TextCommand, TextEditCommand, TransformCommand,
+    UndoCommand, UnitsCommand, ZoomCommand,
 };
 
 type CommandFactory = fn() -> Box<dyn Command>;
@@ -54,9 +55,13 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 60] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 64] = [
             ("PLOT", &["PDFOUT"], || Box::new(PlotCommand::new())),
             ("MVIEW", &["MV"], || Box::new(MviewCommand::new())),
+            ("LAYOUT", &["LO"], || Box::new(LayoutCommand::new())),
+            ("MODEL", &[], || Box::new(ModelCommand)),
+            ("PSPACE", &["PS"], || Box::new(PspaceCommand)),
+            ("MSPACE", &["MS"], || Box::new(MspaceCommand)),
             ("ALIASEDIT", &[], || Box::new(AliasEditCommand::new())),
             ("SETTINGS", &[], || Box::new(SettingsCommand)),
             ("SELECT", &[], || Box::new(SelectCommand)),

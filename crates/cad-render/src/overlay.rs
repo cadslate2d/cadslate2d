@@ -9,7 +9,7 @@ use std::f64::consts::{PI, TAU};
 
 use cad_commands::{OverlayItem, SnapMode};
 use cad_core::{Aabb, Point2, Vec2, View};
-use cad_document::Drawing;
+use cad_document::{Drawing, LayoutId};
 use cad_geometry::{Arc, Primitive};
 
 use crate::{PackedFrame, StyleRole};
@@ -141,9 +141,21 @@ impl OverlayFrame {
     /// Unlike the committed scene, the overlay *does* depend on the view:
     /// screen-space decorations such as the crosshair are sized here.
     pub fn rebuild(&mut self, items: &[OverlayItem], drawing: &Drawing, view: &View) {
+        self.rebuild_in(items, drawing, LayoutId::MODEL, view);
+    }
+
+    /// [`rebuild`](Self::rebuild) for the session in `space` (#193): the
+    /// far curves it draws are the space's.
+    pub fn rebuild_in(
+        &mut self,
+        items: &[OverlayItem],
+        drawing: &Drawing,
+        space: LayoutId,
+        view: &View,
+    ) {
         // The overlay is rebuilt freely, so it can always sit on the view centre.
         self.frame.reset(view.center());
-        self.push_far_curves(drawing, view);
+        self.push_far_curves(drawing, space, view);
         for item in items {
             match item {
                 OverlayItem::Grid { spacing } => self.push_grid(*spacing, view),
@@ -236,6 +248,15 @@ impl OverlayFrame {
                 }
                 OverlayItem::SnapMarker { mode, at } => self.push_snap_marker(*mode, *at, view),
                 OverlayItem::Crosshair { at } => self.push_crosshair(*at, view),
+                OverlayItem::ViewportFrame { corners } => {
+                    for (index, corner) in corners.iter().enumerate() {
+                        self.frame.push_segment(
+                            StyleRole::SelectionWindow,
+                            *corner,
+                            corners[(index + 1) % corners.len()],
+                        );
+                    }
+                }
             }
         }
     }
@@ -246,13 +267,13 @@ impl OverlayFrame {
     /// the view tessellated here, in `f64` from the view centre, as
     /// segments; the shader draws nothing for such an instance. The
     /// committed scene is untouched, so pan and zoom upload nothing.
-    fn push_far_curves(&mut self, drawing: &Drawing, view: &View) {
+    fn push_far_curves(&mut self, drawing: &Drawing, space: LayoutId, view: &View) {
         let scale = view.scale();
         // A margin, so a stroke whose curve passes just outside is drawn.
         let bounds = view
             .visible_bounds()
             .expanded(view.pixels_to_world(FAR_CURVE_MARGIN_PIXELS));
-        for id in drawing.query_shown(&bounds) {
+        for id in drawing.query_shown_in(space, &bounds) {
             let Some(entity) = drawing.entity(id) else {
                 continue;
             };

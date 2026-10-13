@@ -43,6 +43,24 @@ impl Layout {
 }
 
 impl Layout {
+    /// The sheet, in paper units, from its origin: the paper width and
+    /// height the file gave the layout (44, 45), or an A3 landscape sheet
+    /// for a layout made here. What a layout's view fits to.
+    pub fn sheet(&self) -> Aabb {
+        let value = |code: i32| {
+            self.kept
+                .iter()
+                .find(|(c, _)| *c == code)
+                .and_then(|(_, v)| v.trim().parse::<f64>().ok())
+                .filter(|v| v.is_finite() && *v > 0.0)
+        };
+        let (width, height) = match (value(44), value(45)) {
+            (Some(w), Some(h)) => (w, h),
+            _ => (420.0, 297.0),
+        };
+        Aabb::from_points(Point2::ORIGIN, Point2::new(width, height))
+    }
+
     /// The sheet's printable area, in paper units: from the plot settings
     /// the file gave the layout — paper width and height (44, 45) less its
     /// margins (40 to 43) — or, for a layout made here, an A3 landscape

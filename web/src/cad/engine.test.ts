@@ -13,6 +13,7 @@ import {
   StyleRole,
   wasmMemory,
   type FrameBuffers,
+  WORDS_PER_REGION,
 } from "./engine";
 import { loadEngineForTests } from "./test-support";
 
@@ -526,5 +527,37 @@ describe("grips", () => {
     cad.key(KeyAction.Undo);
     expect(cad.snapshotDxf()).toContain(" 11\n100.0\n 21\n0.0\n");
     expect(cad.uiState().selectionCount).toBe(1);
+  });
+});
+
+// #193: a layout's scene carries the model's regions and the paper's, and
+// the viewports buffer is laid out per region of it.
+describe("paper space", () => {
+  test("a layout's regions, viewports, and transforms agree in shape", () => {
+    const cad = engine();
+    enter(cad, "REC", "0,0", "100,100");
+    enter(cad, "LAYOUT", "N", "Sheet");
+    enter(cad, "MVIEW", "20,20", "220,220", "MVIEW", "250,20", "350,120");
+    enter(cad, "L", "20,250", "350,250", "");
+    const regions = cad.readScene((frame) => Array.from(frame.regions ?? []));
+    const regionCount = regions.length / WORDS_PER_REGION;
+    expect(regionCount).toBe(2);
+    expect(regions[6]).toBe(0);
+    expect(regions[13]).toBe(1);
+    // The model's one polyline: four segments; the paper's: two frames and a line.
+    expect(regions.slice(0, 2)).toEqual([0, 4]);
+    expect(regions.slice(7, 9)).toEqual([4, 9]);
+    expect(cad.sceneTransform()).toHaveLength(4 * regionCount);
+    const viewports = cad.sceneViewports();
+    expect(viewports).toHaveLength(2 * (4 + 4 * regionCount));
+    // The first viewport's frame, in clip space, is inside the canvas.
+    for (const value of viewports.slice(0, 4)) {
+      expect(Math.abs(value)).toBeLessThanOrEqual(1);
+    }
+    expect(viewports[0]).toBeLessThan(viewports[2] ?? 0);
+    expect(viewports[1]).toBeLessThan(viewports[3] ?? 0);
+    enter(cad, "MODEL");
+    expect(cad.sceneViewports()).toHaveLength(0);
+    expect(cad.readScene((frame) => (frame.regions ?? []).length / WORDS_PER_REGION)).toBe(1);
   });
 });

@@ -1058,3 +1058,59 @@ fn the_scenes_text_segments_lie_inside_the_documents_text_box() {
         assert!(inside(segment[2], segment[3]), "{segment:?}");
     }
 }
+
+/// #193: the scene of a layout holds the model's regions and the paper's;
+/// a viewport moved re-packs the paper's chunk alone and leaves the
+/// model's instances where they were; pointer movement on the paper
+/// changes nothing committed.
+#[test]
+fn a_layouts_scene_is_the_model_through_its_viewports_and_the_paper_over_it() {
+    let mut h = Harness::new();
+    h.enter_all(&["REC", "0,0", "100,100"]);
+    h.enter_all(&["LAYOUT", "N", "Sheet"]);
+    h.enter_all(&["MVIEW", "20,20", "220,220", "MVIEW", "250,20", "350,120"]);
+    h.enter_all(&["L", "20,250", "350,250", ""]);
+    let space = h.session.space();
+    let mut cache = SceneCache::new();
+    let scene = cache.scene_in(h.session.drawing(), space);
+    let regions = scene.regions();
+    assert_eq!(regions.len(), 2, "{regions:?}");
+    assert!(!regions[0].paper && regions[1].paper);
+    assert_eq!(regions[0].count, [4, 0, 0], "the model's rectangle");
+    assert_eq!(regions[1].count, [9, 0, 0], "two frames and a line");
+    let model_bytes = scene.frame().segments()[..16].to_vec();
+    cache.take_dirty();
+
+    h.move_to(400.0, 300.0);
+    cache.scene_in(h.session.drawing(), space);
+    assert!(
+        cache.take_dirty().is_empty(),
+        "pointer movement changes nothing"
+    );
+    assert_eq!(cache.build_count(), 1);
+
+    // The second viewport moved: the paper's chunk alone is re-packed.
+    h.click_world(p(300.0, 120.0));
+    h.enter_all(&["M", "0,0", "0,10"]);
+    let scene = cache.scene_in(h.session.drawing(), space);
+    let regions = scene.regions();
+    let segments = scene.frame().segments().to_vec();
+    assert_eq!(cache.partial_build_count(), 1);
+    assert_eq!(regions[1].count, [9, 0, 0]);
+    assert_eq!(
+        &segments[..16],
+        &model_bytes[..],
+        "the model's instances, untouched"
+    );
+    let ranges = cache.take_dirty();
+    assert_eq!(ranges.len(), 1, "{ranges:?}");
+    assert_eq!(
+        (ranges[0].first, ranges[0].count),
+        (4, 9),
+        "the paper's run"
+    );
+}
+
+fn p(x: f64, y: f64) -> cad_core::Point2 {
+    cad_core::Point2::new(x, y)
+}

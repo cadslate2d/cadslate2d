@@ -41,8 +41,13 @@ export interface UiSnapshot {
   readonly unsavedChanges: boolean;
   /** What an export will not include; empty when nothing (DESIGN §24.2). */
   readonly exportLosses: readonly string[];
-  /** The layouts with something on them, by name: not drawn yet (#184, #191). */
+  /** The layouts, by name, in tab order (#193). */
   readonly layouts: readonly string[];
+  /** The space the session is in, by name: `Model`, or a layout's. */
+  readonly space: string;
+  /** Whether the session is on a layout's paper; whether the model is worked through a viewport. */
+  readonly paper: boolean;
+  readonly through: boolean;
   /** The last import's account, until dismissed or the drawing is replaced. */
   readonly importReport: ImportReport | undefined;
   /** The losses an export the user asked for would have; the warning dialog shows them. */
@@ -92,6 +97,9 @@ const INITIAL: UiSnapshot = {
   unsavedChanges: false,
   exportLosses: [],
   layouts: [],
+  space: "Model",
+  paper: false,
+  through: false,
   importReport: undefined,
   exportWarning: undefined,
   recovery: undefined,
@@ -170,6 +178,9 @@ export class UiStore {
       unsavedChanges: state.unsavedChanges,
       exportLosses: state.exportLosses,
       layouts: state.layouts,
+      space: state.space,
+      paper: state.paper,
+      through: state.through,
       importReport: state.importReport,
       exportWarning: this.#exportWarning,
       recovery: this.#recovery,

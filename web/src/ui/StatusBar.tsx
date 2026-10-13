@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { CadApp } from "../app/cad-app";
 import { STATUS_BAR } from "../app/toggles";
+import { LayoutTabs } from "./LayoutTabs";
 
 const COORDINATE_DECIMALS = 4;
 
@@ -13,7 +14,7 @@ export function StatusBar({ app }: { app: CadApp }) {
   const ui = useSyncExternalStore(app.ui.subscribe, app.ui.getSnapshot);
   return (
     <footer className="status" aria-label="Status bar">
-      <span className="status__chip status__chip--active">Model</span>
+      <LayoutTabs app={app} />
       <span
         className="status__chip status__document"
         data-testid="document"
@@ -22,15 +23,6 @@ export function StatusBar({ app }: { app: CadApp }) {
         {ui.documentName ?? "Untitled"}
         {ui.unsavedChanges ? " •" : ""}
       </span>
-      {ui.layouts.length > 0 && (
-        <span
-          className="status__chip"
-          data-testid="layouts"
-          title={`Not drawn yet: ${ui.layouts.join(", ")}`}
-        >
-          {ui.layouts.length === 1 ? "1 layout" : `${ui.layouts.length} layouts`}
-        </span>
-      )}
       {ui.exportLosses.length > 0 && (
         <span
           className="status__chip status__lossy"
@@ -84,7 +76,25 @@ export function StatusBar({ app }: { app: CadApp }) {
           </button>
         );
       })}
-      <span className="status__chip status__chip--active">MODEL</span>
+      <button
+        type="button"
+        className="status__chip status__toggle status__chip--active"
+        data-testid="space"
+        title={
+          ui.through
+            ? "The model, worked through a viewport of the layout. Click for PSPACE."
+            : ui.paper
+              ? "On the layout's paper. Click for MSPACE, the model through a viewport."
+              : "The model."
+        }
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => {
+          if (ui.through) app.run("PSPACE");
+          else if (ui.paper) app.run("MSPACE");
+        }}
+      >
+        {ui.paper ? "PAPER" : "MODEL"}
+      </button>
     </footer>
   );
 }

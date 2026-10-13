@@ -2,7 +2,7 @@
 // its revision changed, and the style table only when its own did (ADR-0014);
 // the small transient overlay is refreshed separately; everything else is a
 // transform update and a redraw.
-import type { ClipTransform, FrameBuffers, StyleTables } from "../cad/engine";
+import type { ClipTransform, FrameBuffers, SceneViewports, StyleTables } from "../cad/engine";
 
 /** What a frame needs from the CAD engine. */
 export interface FrameSource {
@@ -11,6 +11,8 @@ export interface FrameSource {
   readonly styleRevision: number;
   readStyles<T>(consume: (tables: StyleTables) => T): T;
   sceneTransform(): ClipTransform;
+  /** The viewports of the layout shown, with the model's transforms through each (#193). */
+  sceneViewports(): SceneViewports;
   readOverlay<T>(consume: (frame: FrameBuffers) => T): T;
   overlayTransform(): ClipTransform;
 }
@@ -24,7 +26,11 @@ export interface FrameSink {
   readonly styleRevision: number | undefined;
   updateStyles(revision: number, tables: StyleTables): void;
   updateOverlay(frame: FrameBuffers): void;
-  draw(sceneTransform: ClipTransform, overlayTransform: ClipTransform): void;
+  draw(
+    sceneTransform: ClipTransform,
+    overlayTransform: ClipTransform,
+    viewports: SceneViewports,
+  ): void;
 }
 
 /**
@@ -41,5 +47,5 @@ export function renderFrame(source: FrameSource, sink: FrameSink): void {
     source.readStyles((tables) => sink.updateStyles(styles, tables));
   }
   source.readOverlay((frame) => sink.updateOverlay(frame));
-  sink.draw(source.sceneTransform(), source.overlayTransform());
+  sink.draw(source.sceneTransform(), source.overlayTransform(), source.sceneViewports());
 }

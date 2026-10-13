@@ -1,9 +1,13 @@
 //! The session facade.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 use cad_core::{Aabb, EntityId, LengthUnit, PixelTolerance, Point2, ScreenPoint, View};
-use cad_document::{Color, Drawing, FOREGROUND_INDEX, LayoutId, Paint, Revision, index_paint};
+use cad_document::{
+    Color, Drawing, Entity, FOREGROUND_INDEX, Layout, LayoutId, Paint, Revision, ViewportEntity,
+    index_paint,
+};
 use cad_geometry::SelectionShape;
 use cad_input::{ExpectedInput, Input, InputKind, Keyword};
 
@@ -18,8 +22,17 @@ use crate::{
     Command, CommandContext, CommandInput, CommandRegistry, Dirty, DraftingSettings, Grip,
     HostRequest, HoveredObject, ImportReport, KeyAction, LayerRow, Modifiers, OverlayItem,
     PointerButton, Prompt, Selection, SelectionMethod, SelectionSummary, SnapModes, SnapPoint,
-    Step, Toggle, Toggles, UiState,
+    SpaceRequest, Step, Toggle, Toggles, UiState,
 };
+
+/// The model worked through a viewport of a layout (`MSPACE`, #193).
+#[derive(Clone, Debug)]
+struct Through {
+    layout: LayoutId,
+    viewport: EntityId,
+    /// The paper's view, to come back to.
+    paper_view: View,
+}
 
 const IDLE_PROMPT: &str = "Command:";
 /// Wheel delta (CSS pixels) to zoom exponent. One 100px notch zooms by ~22%.
@@ -161,10 +174,19 @@ pub struct Session {
     selection_box: Option<ScreenPoint>,
     /// A fence or polygon selection being drawn point by point (#185).
     selection_shape: Option<ShapeInProgress>,
-    /// The space the session is in (#191, #192): the model, or a layout.
+    /// The space the session is in (#191, #193): the model, or a layout.
     /// What the pointer finds, what commands make, and what the scene
-    /// shows are its. The seam #193's commands and tabs move.
+    /// shows are its.
     space: LayoutId,
+    /// Each other space's view, as it was left (#193).
+    views: BTreeMap<LayoutId, View>,
+    /// The model worked through a viewport of a layout (`MSPACE`).
+    through: Option<Through>,
+    /// Where the active command sent the session; applied after its step.
+    space_request: Option<SpaceRequest>,
+    /// Counts the changes of space, so a scene built for one is known
+    /// stale for another whatever the drawing's revision says.
+    space_epoch: u64,
     /// The selection the last command took, for `Previous`.
     previous_selection: Selection,
     /// `Remove` mode at a selection prompt: what the pointer or a keyword
@@ -231,6 +253,10 @@ impl Session {
             selection_box: None,
             selection_shape: None,
             space: LayoutId::MODEL,
+            views: BTreeMap::new(),
+            through: None,
+            space_request: None,
+            space_epoch: 0,
             previous_selection: Selection::default(),
             removing: false,
             log: CommandLog::new(),
@@ -423,13 +449,20 @@ impl Session {
                 .drawing
                 .layouts()
                 .iter()
-                .filter(|(id, layout)| {
-                    *id != LayoutId::MODEL
-                        && (!layout.kept_entities.is_empty()
-                            || self.drawing.entities_in(*id).next().is_some())
-                })
+                .filter(|(id, _)| *id != LayoutId::MODEL)
                 .map(|(_, layout)| layout.name.clone())
                 .collect(),
+            space: self
+                .drawing
+                .layouts()
+                .get(
+                    self.through
+                        .as_ref()
+                        .map_or(self.space, |through| through.layout),
+                )
+                .map_or_else(|| Layout::MODEL.to_owned(), |layout| layout.name.clone()),
+            paper: self.space != LayoutId::MODEL,
+            through: self.through.is_some(),
             import_report: self.import_report.clone(),
             layers: self.layer_rows(),
             linetypes: self
@@ -551,6 +584,13 @@ impl Session {
                 from: self.view.screen_to_world(start),
                 to: cursor,
                 crossing: is_crossing(start, self.cursor.unwrap_or(start)),
+            });
+        }
+        if let Some(through) = &self.through
+            && let Some(Entity::Viewport(window)) = self.drawing.entity(through.viewport)
+        {
+            items.push(OverlayItem::ViewportFrame {
+                corners: window.corners().map(|corner| window.model_point(corner)),
             });
         }
         if let Some(shape) = &self.selection_shape {
@@ -742,20 +782,159 @@ impl Session {
         self.space
     }
 
-    /// Goes to `space`, which must exist: the selection is cleared and
-    /// the scene is the space's. Nothing in the drawing changes.
+    /// Goes to `space`, which must exist: the selection is cleared, the
+    /// view is the space's as it was left — a layout's first view is its
+    /// sheet — and the scene is the space's. Nothing in the drawing
+    /// changes. The model worked through a viewport is left as `MODEL`
+    /// leaves it: the viewport takes the view.
     pub fn set_space(&mut self, space: LayoutId) -> Dirty {
         if !self.drawing.layouts().contains(space) {
             return self.notify("That layout does not exist.");
         }
+        let mut dirty = self.leave_viewport();
         if space == self.space {
-            return Dirty::NONE;
+            return dirty;
+        }
+        let fresh = self.fresh_view(space);
+        let left = std::mem::replace(&mut self.view, fresh);
+        self.views.insert(self.space, left);
+        if let Some(kept) = self.views.remove(&space) {
+            let (width, height) = (self.view.width(), self.view.height());
+            self.view = kept;
+            self.view.resize(width, height);
         }
         self.space = space;
+        self.space_epoch += 1;
+        self.previous_views.clear();
         self.selection.clear();
         self.selection_box = None;
         self.selection_shape = None;
-        Dirty::SCENE | Dirty::OVERLAY | Dirty::UI
+        dirty |= Dirty::SCENE | Dirty::OVERLAY | Dirty::VIEW | Dirty::UI;
+        dirty
+    }
+
+    /// How many times the space changed: with the drawing's shown
+    /// revision, what the committed scene is of.
+    pub fn space_epoch(&self) -> u64 {
+        self.space_epoch
+    }
+
+    /// The view a space is first seen in: a layout's sheet, the model's
+    /// extents.
+    fn fresh_view(&self, space: LayoutId) -> View {
+        let mut view = self.view.clone();
+        let bounds = if space == LayoutId::MODEL {
+            self.drawing.extents()
+        } else {
+            self.drawing.layouts().get(space).map(Layout::sheet)
+        };
+        if let Some(bounds) = bounds {
+            view.fit(&bounds);
+        }
+        view
+    }
+
+    /// The viewport the model is worked through, if any (`MSPACE`, #193).
+    pub fn viewport_through(&self) -> Option<EntityId> {
+        self.through.as_ref().map(|through| through.viewport)
+    }
+
+    /// Works in the model through `viewport`, an entity of the current
+    /// layout (`MSPACE`): the view becomes the viewport's — the pixels
+    /// inside its frame show the model points they showed on the paper —
+    /// and commands act in the model.
+    fn enter_model_through(&mut self, viewport: EntityId) -> Dirty {
+        let paper = self.space;
+        let Some(Entity::Viewport(window)) = self.drawing.entity(viewport).cloned() else {
+            return self.notify("That is not a viewport.");
+        };
+        if paper == LayoutId::MODEL || self.drawing.space_of(viewport) != Some(paper) {
+            return self.notify("Pick a viewport of this layout.");
+        }
+        let paper_view = self.view.clone();
+        let mut view = paper_view.clone();
+        view.look_at(window.model_point(paper_view.center()));
+        view.zoom_about(
+            ScreenPoint::new(view.width() / 2.0, view.height() / 2.0),
+            window.scale,
+        );
+        self.view = view;
+        self.through = Some(Through {
+            layout: paper,
+            viewport,
+            paper_view,
+        });
+        self.space = LayoutId::MODEL;
+        self.space_epoch += 1;
+        self.previous_views.clear();
+        self.selection.clear();
+        self.selection_box = None;
+        self.selection_shape = None;
+        Dirty::SCENE | Dirty::OVERLAY | Dirty::VIEW | Dirty::UI
+    }
+
+    /// Leaves the viewport the model is worked through, if any: the
+    /// viewport takes the view as it is now — where the model's view
+    /// went, it goes — in a transaction of its own.
+    fn leave_viewport(&mut self) -> Dirty {
+        let Some(through) = self.through.take() else {
+            return Dirty::NONE;
+        };
+        let Some(Entity::Viewport(window)) = self.drawing.entity(through.viewport).cloned() else {
+            return Dirty::NONE;
+        };
+        let paper_view = &through.paper_view;
+        let scale = self.view.scale() / paper_view.scale();
+        let frame_center = paper_view.world_to_screen(window.center);
+        let view_center = self.view.screen_to_world(frame_center);
+        let updated = ViewportEntity {
+            view_center,
+            scale,
+            ..window
+        };
+        if updated == window {
+            return Dirty::NONE;
+        }
+        self.drawing.begin_group();
+        let mut transaction = self.drawing.transaction();
+        let dirty = match transaction.replace(through.viewport, updated) {
+            Ok(()) => {
+                transaction.commit();
+                self.log
+                    .push("The viewport shows the model as you left it.".to_owned());
+                Dirty::SCENE | Dirty::UI
+            }
+            Err(_) => Dirty::NONE,
+        };
+        self.drawing.end_group();
+        dirty
+    }
+
+    /// Back to the paper from the model worked through a viewport
+    /// (`PSPACE`): the viewport takes the view, and the paper's view is
+    /// as it was.
+    fn back_to_paper(&mut self) -> Dirty {
+        let Some(through) = self.through.as_ref() else {
+            return self.notify("Not in a viewport: PSPACE needs MSPACE first.");
+        };
+        let (layout, paper_view) = (through.layout, through.paper_view.clone());
+        let dirty = self.leave_viewport();
+        self.view = paper_view;
+        self.space = layout;
+        self.space_epoch += 1;
+        self.previous_views.clear();
+        self.selection.clear();
+        dirty | Dirty::SCENE | Dirty::OVERLAY | Dirty::VIEW | Dirty::UI
+    }
+
+    /// Where the command that just ran sent the session.
+    fn apply_space_request(&mut self) -> Dirty {
+        match self.space_request.take() {
+            None => Dirty::NONE,
+            Some(SpaceRequest::Go(space)) => self.set_space(space),
+            Some(SpaceRequest::ModelThrough(viewport)) => self.enter_model_through(viewport),
+            Some(SpaceRequest::Paper) => self.back_to_paper(),
+        }
     }
 
     /// What the host kept between sessions, given back on start (#186):
@@ -891,6 +1070,11 @@ impl Session {
         self.selection_box = None;
         self.selection.clear();
         self.last_point = Point2::ORIGIN;
+        self.space = LayoutId::MODEL;
+        self.space_epoch += 1;
+        self.views.clear();
+        self.through = None;
+        self.previous_views.clear();
         if let Some(extents) = self.drawing.extents() {
             self.view.fit(&extents);
         }
@@ -1380,6 +1564,7 @@ impl Session {
             space: self.space,
             log: &mut self.log,
             host_request: &mut self.host_request,
+            space_request: &mut self.space_request,
         };
         if run(active.command.as_mut(), &mut ctx) == Step::Continue {
             self.active = Some(active);
@@ -1406,7 +1591,7 @@ impl Session {
         if self.host_request.is_some() {
             dirty |= Dirty::HOST;
         }
-        dirty
+        dirty | self.apply_space_request()
     }
 }
 
