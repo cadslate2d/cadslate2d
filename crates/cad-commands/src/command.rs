@@ -9,7 +9,7 @@ use std::fmt::Debug;
 
 use cad_core::{EntityId, Point2, Vec2, View};
 use cad_document::{Drawing, Entity};
-use cad_input::{ExpectedInput, Keyword};
+use cad_input::{CommandAliases, ExpectedInput, Keyword};
 
 use crate::log::CommandLog;
 use crate::{DraftingSettings, Grip, HostRequest, OverlayItem, Selection, Toggles};
@@ -113,6 +113,8 @@ pub struct CommandContext<'a> {
     pub view: &'a mut View,
     /// The views ZOOM and PAN moved away from, for ZOOM Previous.
     pub previous_views: &'a mut Vec<View>,
+    /// The command names and aliases, for ALIASEDIT to set the user's (#186).
+    pub aliases: &'a mut CommandAliases,
     pub(crate) log: &'a mut CommandLog,
     pub(crate) host_request: &'a mut Option<HostRequest>,
 }

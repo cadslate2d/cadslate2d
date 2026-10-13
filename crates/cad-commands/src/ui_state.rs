@@ -38,6 +38,10 @@ pub struct UiState {
     pub can_redo: bool,
     /// Drafting toggles that are on, one bit each (`Toggle::bit`).
     pub toggles: u32,
+    /// The drawing's unit as its suffix — `mm`, `in` — or none (#186).
+    pub unit: Option<&'static str>,
+    /// The user's command aliases, one per line, for the host to keep (#186).
+    pub user_aliases: String,
     /// Name of the file the drawing was opened from, if any.
     pub document_name: Option<String>,
     /// The drawing changed since it was opened or last exported.

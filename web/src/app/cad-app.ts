@@ -7,6 +7,8 @@ import {
   type AutosaveRecord,
   type FileTarget,
   type HostServices,
+  type Settings,
+  type Theme,
 } from "./host-services";
 import { UiStore } from "./ui-store";
 
@@ -40,13 +42,47 @@ export interface CadAppOptions {
   readonly autosaveDelay?: number;
 }
 
+/** What the settings panel shows and changes; the engine's part of the settings is in the UI snapshot. */
+export interface SettingsSnapshot {
+  /** Whether the panel is open: SETTINGS opens it. */
+  readonly open: boolean;
+  readonly theme: Theme;
+  readonly autosaveDelayMs: number;
+}
+
+/** The settings as the panel shows them (#186): an external store React subscribes to, like the UI state. */
+export class SettingsStoreView {
+  #snapshot: SettingsSnapshot;
+  readonly #listeners = new Set<() => void>();
+
+  constructor(snapshot: SettingsSnapshot) {
+    this.#snapshot = snapshot;
+  }
+
+  readonly subscribe = (listener: () => void): (() => void) => {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  };
+
+  readonly getSnapshot = (): SettingsSnapshot => this.#snapshot;
+
+  set(changes: Partial<SettingsSnapshot>): void {
+    this.#snapshot = { ...this.#snapshot, ...changes };
+    this.#listeners.forEach((listener) => listener());
+  }
+}
+
 export class CadApp {
   readonly engine: CadEngine;
   readonly ui = new UiStore();
   readonly loop: FrameLoop;
   readonly #host: HostServices;
   readonly #timer: Timer;
-  readonly #autosaveDelay: number;
+  #autosaveDelay: number;
+  /** The settings panel's state: the theme and the delay are the host's, kept here (#186). */
+  readonly settings: SettingsStoreView;
+  /** The settings as last kept, so they are written only when one changes. */
+  #keptSettings: Settings | undefined;
   /** Draws a frame. Set while a canvas is attached. */
   #render: (() => void) | undefined;
   /** The revision last kept, so an unchanged drawing is not written again. */
@@ -69,6 +105,11 @@ export class CadApp {
     this.#host = options.host ?? browserHost;
     this.#timer = options.timer ?? browserTimer;
     this.#autosaveDelay = options.autosaveDelay ?? AUTOSAVE_DELAY_MS;
+    this.settings = new SettingsStoreView({
+      open: false,
+      theme: "dark",
+      autosaveDelayMs: this.#autosaveDelay,
+    });
     this.loop = new FrameLoop(
       (sample) => engine.pointerMove(sample.x, sample.y, sample.modifiers),
       (dirty) => this.#onFrame(dirty),
@@ -160,14 +201,88 @@ export class CadApp {
   // ── autosave and recovery (DESIGN §25; ADR-0019) ──
 
   /**
-   * Looks for a drawing kept in the browser that no file holds — the work
+   * Gives the engine and the shell what the browser kept (#186), then
+   * looks for a drawing kept in the browser that no file holds — the work
    * of a tab that closed, a browser that crashed — and offers it.
    */
   async start(): Promise<void> {
+    this.#restoreSettings();
     const record = await this.#host.autosave.load().catch(() => undefined);
     if (!record || record.exported) return;
     this.#recoverable = record;
     this.ui.setRecovery({ name: record.name, savedAt: record.savedAt });
+  }
+
+  // ── settings (#186) ──
+
+  /** What the browser kept, given to the engine in one call and to the shell. */
+  #restoreSettings(): void {
+    const kept = this.#host.settings.load();
+    const current = this.ui.getSnapshot();
+    const theme = kept.theme ?? "dark";
+    this.#autosaveDelay = kept.autosaveDelayMs ?? this.#autosaveDelay;
+    this.settings.set({ theme, autosaveDelayMs: this.#autosaveDelay });
+    this.#host.applyTheme(theme);
+    if (!this.#failed) {
+      const dirty = this.engine.restoreSettings(
+        kept.toggles ?? current.toggles,
+        kept.unit ?? current.unit,
+        kept.aliases ?? current.userAliases,
+      );
+      this.loop.invalidate(dirty);
+      this.ui.refresh(this.engine);
+    }
+    this.#keptSettings = this.#currentSettings();
+  }
+
+  #currentSettings(): Settings {
+    const ui = this.ui.getSnapshot();
+    const shell = this.settings.getSnapshot();
+    return {
+      toggles: ui.toggles,
+      unit: ui.unit,
+      aliases: ui.userAliases,
+      autosaveDelayMs: shell.autosaveDelayMs,
+      theme: shell.theme,
+    };
+  }
+
+  /** Writes the settings when one has changed since they were last kept. */
+  #keepSettings(): void {
+    const kept = this.#keptSettings;
+    if (!kept) return;
+    const current = this.#currentSettings();
+    const same =
+      current.toggles === kept.toggles &&
+      current.unit === kept.unit &&
+      current.aliases === kept.aliases &&
+      current.autosaveDelayMs === kept.autosaveDelayMs &&
+      current.theme === kept.theme;
+    if (same) return;
+    this.#keptSettings = current;
+    this.#host.settings.save(current);
+  }
+
+  openSettings(): void {
+    this.settings.set({ open: true });
+  }
+
+  closeSettings(): void {
+    this.settings.set({ open: false });
+  }
+
+  setTheme(theme: Theme): void {
+    this.settings.set({ theme });
+    this.#host.applyTheme(theme);
+    this.#keepSettings();
+  }
+
+  /** The pause after a change before the drawing is kept, in milliseconds; never less than a tenth of a second. */
+  setAutosaveDelay(ms: number): void {
+    const delay = Math.max(100, Math.round(ms));
+    this.#autosaveDelay = delay;
+    this.settings.set({ autosaveDelayMs: delay });
+    this.#keepSettings();
   }
 
   /** Recovering is a normal open: the kept drawing replaces the current one. */
@@ -194,7 +309,10 @@ export class CadApp {
   #onFrame(dirty: number): void {
     // The UI state first: drawing reads it — whether lineweights are shown —
     // and must see what this frame's input changed, not the frame before's.
-    if (dirty & Dirty.Ui) this.ui.refresh(this.engine);
+    if (dirty & Dirty.Ui) {
+      this.ui.refresh(this.engine);
+      this.#keepSettings();
+    }
     if (dirty & RENDER_FLAGS) this.#render?.();
     if (dirty & Dirty.Scene) this.#scheduleAutosave();
   }
@@ -272,6 +390,9 @@ export class CadApp {
   }
 
   #afterInput(dirty: number): void {
+    // The next keystroke may arrive before the next frame: what it means —
+    // whether Space submits — must follow this input, not the frame before.
+    if (dirty & Dirty.Ui) this.ui.refresh(this.engine);
     this.loop.invalidate(dirty);
     // Handled now rather than on the next frame: opening a file picker must
     // happen while the browser still counts the key press as a user gesture.
@@ -286,6 +407,9 @@ export class CadApp {
         return this.#save(true);
       case HostRequest.SaveFile:
         return this.#save(false);
+      case HostRequest.Settings:
+        this.openSettings();
+        return;
       case HostRequest.None:
         return;
     }

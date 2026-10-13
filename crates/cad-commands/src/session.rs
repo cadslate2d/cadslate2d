@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 
-use cad_core::{Aabb, EntityId, PixelTolerance, Point2, ScreenPoint, View};
+use cad_core::{Aabb, EntityId, LengthUnit, PixelTolerance, Point2, ScreenPoint, View};
 use cad_document::{Color, Drawing, FOREGROUND_INDEX, Paint, Revision, index_paint};
 use cad_geometry::SelectionShape;
 use cad_input::{ExpectedInput, Input, InputKind, Keyword};
@@ -407,6 +407,8 @@ impl Session {
             can_undo: self.drawing.can_undo(),
             can_redo: self.drawing.can_redo(),
             toggles: self.toggles.bits(),
+            unit: self.drawing.unit().map(LengthUnit::suffix),
+            user_aliases: self.registry.aliases().user_aliases(),
             document_name: self.document_name.clone(),
             unsaved_changes: self.drawing.revision() != self.saved_revision,
             revision: self.drawing.revision().as_u64(),
@@ -723,6 +725,33 @@ impl Session {
 
     pub fn toggles(&self) -> Toggles {
         self.toggles
+    }
+
+    /// What the host kept between sessions, given back on start (#186):
+    /// the toggles as last left, the unit for a drawing not yet begun, and
+    /// the user's aliases, those that cannot be taken said in the log.
+    /// One call, so the host restores in one step and never per setting.
+    pub fn restore_settings(
+        &mut self,
+        toggles: Toggles,
+        unit: Option<LengthUnit>,
+        aliases: &str,
+    ) -> Dirty {
+        self.toggles = toggles;
+        // A drawing nothing has happened to takes the unit silently; one
+        // with content or history is what it is.
+        if unit.is_some()
+            && self.drawing.is_empty()
+            && !self.drawing.can_undo()
+            && self.drawing.revision() == self.saved_revision
+        {
+            self.drawing = std::mem::replace(&mut self.drawing, Drawing::new()).with_unit(unit);
+            self.saved_revision = self.drawing.revision();
+        }
+        for refusal in self.registry.aliases_mut().set_user_aliases(aliases) {
+            self.log.push(refusal);
+        }
+        Dirty::OVERLAY | Dirty::UI
     }
 
     /// Starts a command from the UI — a toolbar button or a menu item — and
@@ -1312,6 +1341,7 @@ impl Session {
             toggles: self.toggles,
             view: &mut self.view,
             previous_views: &mut self.previous_views,
+            aliases: self.registry.aliases_mut(),
             log: &mut self.log,
             host_request: &mut self.host_request,
         };

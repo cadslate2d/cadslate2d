@@ -22,6 +22,7 @@ macro_rules! immediate_command {
     };
 }
 
+mod aliases;
 mod arc;
 mod attributes;
 pub(crate) mod block;
@@ -73,6 +74,7 @@ mod keywords {
     pub(crate) const UNDO: Keyword = Keyword::new("Undo");
 }
 
+pub(crate) use aliases::{AliasEditCommand, SettingsCommand};
 pub(crate) use arc::ArcCommand;
 pub(crate) use attributes::{AttdefCommand, AtteditCommand};
 pub(crate) use block::{BlockCommand, ExplodeCommand, InsertCommand};

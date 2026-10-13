@@ -1553,6 +1553,8 @@ export / Save As
 
 ## 25.1 Persistence implementation
 
+> **M8 (#186):** the user's aliases and settings — the toggles as last left, the unit, the autosave delay, the theme — are one `localStorage` record, given back to the engine in one call on start ([ADR-0026](adr/0026-user-aliases-and-settings.md)); the autosave stays in IndexedDB (ADR-0019).
+
 **PROVISIONAL:**
 
 Evaluate browser-local persistence using:

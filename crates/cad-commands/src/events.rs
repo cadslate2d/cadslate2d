@@ -57,4 +57,7 @@ pub enum HostRequest {
     /// Save the drawing to a file the user chooses — a dialog, or a
     /// download where there is none.
     ExportFile,
+    /// Show the settings panel (#186): the toggles, the unit, the autosave
+    /// delay, the theme — what the host keeps between sessions.
+    Settings,
 }

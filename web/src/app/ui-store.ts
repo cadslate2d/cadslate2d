@@ -33,6 +33,10 @@ export interface UiSnapshot {
   readonly canRedo: boolean;
   /** Drafting toggles that are on; test with `ToggleBit`. */
   readonly toggles: number;
+  /** The drawing's unit as its suffix, or empty for unitless. */
+  readonly unit: string;
+  /** The user's command aliases, one per line, as the engine holds them. */
+  readonly userAliases: string;
   readonly documentName: string | undefined;
   readonly unsavedChanges: boolean;
   /** What an export will not include; empty when nothing (DESIGN §24.2). */
@@ -82,6 +86,8 @@ const INITIAL: UiSnapshot = {
   canUndo: false,
   canRedo: false,
   toggles: 0,
+  unit: "",
+  userAliases: "",
   documentName: undefined,
   unsavedChanges: false,
   exportLosses: [],
@@ -158,6 +164,8 @@ export class UiStore {
       canUndo: state.canUndo,
       canRedo: state.canRedo,
       toggles: state.toggles,
+      unit: state.unit,
+      userAliases: state.userAliases,
       documentName: state.documentName,
       unsavedChanges: state.unsavedChanges,
       exportLosses: state.exportLosses,

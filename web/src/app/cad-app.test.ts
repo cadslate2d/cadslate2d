@@ -1,9 +1,10 @@
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { CadEngine, Dirty, EngineFailure, KeyAction } from "../cad/engine";
+import { CadEngine, Dirty, EngineFailure, KeyAction, ToggleBit } from "../cad/engine";
 import { loadEngineForTests } from "../cad/test-support";
 import { AUTOSAVE_DELAY_MS, CadApp, DISCARD_CHANGES_MESSAGE, SNAPSHOT_SLICE } from "./cad-app";
 import type { AutosaveRecord, AutosaveStore, FileAccess, FileTarget } from "./host-services";
-import type { HostServices, PickedFile } from "./host-services";
+import { parseSettings } from "./host-services";
+import type { HostServices, PickedFile, Settings, SettingsStore, Theme } from "./host-services";
 
 beforeAll(loadEngineForTests);
 
@@ -78,12 +79,32 @@ class FakeFiles implements FileAccess {
   }
 }
 
+class FakeSettings implements SettingsStore {
+  kept: Partial<Settings> = {};
+  saves = 0;
+
+  load(): Partial<Settings> {
+    return this.kept;
+  }
+
+  save(settings: Settings): void {
+    this.kept = settings;
+    this.saves += 1;
+  }
+}
+
 class FakeHost implements HostServices {
   readonly autosave = new FakeAutosave();
   readonly files = new FakeFiles();
+  readonly settings = new FakeSettings();
+  themes: Theme[] = [];
   confirmAnswer = true;
   confirmations: string[] = [];
   reloads = 0;
+
+  applyTheme(theme: Theme): void {
+    this.themes.push(theme);
+  }
 
   reload(): void {
     this.reloads += 1;
@@ -238,12 +259,13 @@ describe("autosave and recovery", () => {
 });
 
 describe("CadApp", () => {
-  test("typed input reaches the engine and the UI store follows on the next frame", async () => {
+  test("typed input reaches the engine and the UI store follows at once", async () => {
     const { app, tick } = harness();
     app.submitText("L");
-    expect(app.ui.getSnapshot().prompt).toBe("Command:");
-    await tick();
+    // Before any frame: the next keystroke must already know the prompt.
     expect(app.ui.getSnapshot()).toMatchObject({ prompt: "Specify first point:", command: "LINE" });
+    expect(app.ui.getSnapshot().log).toEqual(["Command: L"]);
+    await tick();
     expect(app.ui.getSnapshot().log).toEqual(["Command: L"]);
   });
 
@@ -683,5 +705,113 @@ describe("the autosave in slices", () => {
     expect(kept).toContain("CIRCLE");
     expect(kept.split("\nAcDbLine\n").length - 1).toBe(SNAPSHOT_SLICE + 1);
     expect(app.ui.getSnapshot().unsavedChanges).toBe(true);
+  });
+});
+
+// #186: what the browser kept is given back on start, and kept again when it changes.
+describe("settings", () => {
+  test("the toggles, the unit, and the aliases come back as last left, and the theme is applied", async () => {
+    const { app, host, tick } = harness();
+    host.settings.kept = {
+      toggles: ToggleBit.Ortho | ToggleBit.Lineweight,
+      unit: "in",
+      aliases: "LL, LAYER\n",
+      autosaveDelayMs: 2500,
+      theme: "light",
+    };
+    await app.start();
+    await tick();
+    const ui = app.ui.getSnapshot();
+    expect(ui.toggles).toBe(ToggleBit.Ortho | ToggleBit.Lineweight);
+    expect(ui.unit).toBe("in");
+    expect(ui.userAliases).toBe("LL, LAYER\n");
+    expect(host.themes).toEqual(["light"]);
+    expect(app.settings.getSnapshot()).toMatchObject({ theme: "light", autosaveDelayMs: 2500 });
+    // Nothing changed: nothing was written back.
+    expect(host.settings.saves).toBe(0);
+
+    // The alias is a command; the delay is the kept one.
+    app.submitText("LL");
+    await tick();
+    expect(app.ui.getSnapshot().command).toBe("LAYER");
+    app.key(KeyAction.Escape);
+    app.submitText("L");
+    app.submitText("0,0");
+    app.submitText("10,0");
+    app.submitText("");
+    await tick();
+    expect(host.autosave.saves).toBe(0);
+  });
+
+  test("a toggle flipped, an alias defined, and a unit set are kept, once each", async () => {
+    const { app, host, tick } = harness();
+    await app.start();
+    await tick();
+    app.key(KeyAction.ToggleGrid);
+    await tick();
+    expect(host.settings.saves).toBe(1);
+    expect(host.settings.kept.toggles).toBe(ToggleBit.Osnap);
+    expect(host.settings.kept.theme).toBe("dark");
+
+    app.submitText("ALIASEDIT");
+    app.submitText("CC, CIRCLE");
+    await tick();
+    expect(host.settings.kept.aliases).toBe("CC, CIRCLE\n");
+    app.submitText("UNITS");
+    app.submitText("MM");
+    await tick();
+    expect(host.settings.kept.unit).toBe("mm");
+    expect(host.settings.saves).toBe(3);
+
+    // Pointer movement and drawing change no setting: nothing more is written.
+    app.submitText("L");
+    app.submitText("0,0");
+    app.submitText("10,0");
+    app.submitText("");
+    await tick();
+    expect(host.settings.saves).toBe(3);
+  });
+
+  test("SETTINGS opens the panel; the theme and the delay set there are applied and kept", async () => {
+    const { app, host, tick, timers, enter } = harness();
+    await app.start();
+    expect(app.settings.getSnapshot().open).toBe(false);
+    app.submitText("SETTINGS");
+    await tick();
+    expect(app.settings.getSnapshot().open).toBe(true);
+    app.closeSettings();
+    expect(app.settings.getSnapshot().open).toBe(false);
+
+    app.setTheme("light");
+    expect(host.themes).toEqual(["dark", "light"]);
+    expect(host.settings.kept.theme).toBe("light");
+    app.setAutosaveDelay(3000);
+    expect(host.settings.kept.autosaveDelayMs).toBe(3000);
+    app.setAutosaveDelay(5);
+    expect(app.settings.getSnapshot().autosaveDelayMs).toBe(100);
+
+    enter("L", "0,0", "100,50", "");
+    await tick();
+    expect(timers[0]?.ms).toBe(100);
+  });
+
+  test("settings a browser cannot read are nothing kept", () => {
+    expect(parseSettings(null)).toEqual({});
+    expect(parseSettings("not json")).toEqual({});
+    expect(parseSettings("[1]")).toEqual({});
+    expect(parseSettings('{"toggles":"x","unit":3,"theme":"blue","autosaveDelayMs":-1}')).toEqual(
+      {},
+    );
+    expect(
+      parseSettings(
+        '{"toggles":5,"unit":"mm","aliases":"A, LINE","theme":"light","autosaveDelayMs":0}',
+      ),
+    ).toEqual({
+      toggles: 5,
+      unit: "mm",
+      aliases: "A, LINE",
+      theme: "light",
+      autosaveDelayMs: 0,
+    });
   });
 });

@@ -55,7 +55,13 @@ export const ToggleBit = {
 } as const;
 
 /** Something only the host can do, requested by a command. */
-export const HostRequest = { None: 0, OpenFile: 1, ExportFile: 2, SaveFile: 3 } as const;
+export const HostRequest = {
+  None: 0,
+  OpenFile: 1,
+  ExportFile: 2,
+  SaveFile: 3,
+  Settings: 4,
+} as const;
 export type HostRequest = (typeof HostRequest)[keyof typeof HostRequest];
 
 /**
@@ -82,6 +88,10 @@ export interface UiState {
   readonly canRedo: boolean;
   /** Drafting toggles that are on; test with `ToggleBit`. */
   readonly toggles: number;
+  /** The drawing's unit as its suffix, or empty for unitless (#186). */
+  readonly unit: string;
+  /** The user's command aliases, one per line (#186). */
+  readonly userAliases: string;
   /** Name of the file the drawing was opened from, if any. */
   readonly documentName?: string;
   /** The drawing changed since it was opened or last exported. */
@@ -442,6 +452,15 @@ export class CadEngine {
    */
   loadDxf(bytes: Uint8Array, name: string): number {
     return this.#session.load_dxf(bytes, name);
+  }
+
+  /**
+   * What the browser kept between sessions, given back once on start
+   * (#186): the toggles' bits, the unit's suffix (empty for none), and the
+   * user's aliases as text. One coarse call (ADR-0002).
+   */
+  restoreSettings(toggles: number, unit: string, aliases: string): number {
+    return this.#session.restore_settings(toggles, unit, aliases);
   }
 
   /** The drawing as ASCII DXF, for a save or an autosave: marks nothing. */

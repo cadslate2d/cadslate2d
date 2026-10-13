@@ -2,9 +2,9 @@
 
 use cad_commands::{
     Dirty, HostRequest, KeyAction, LayerRow, Modifiers, PointerButton, SelectionSummary, Session,
-    Toggle, UiState,
+    Toggle, Toggles, UiState,
 };
-use cad_core::{ClipTransform, ScreenPoint};
+use cad_core::{ClipTransform, LengthUnit, ScreenPoint};
 use cad_render::{OverlayFrame, SceneCache};
 use js_sys::{Float32Array, Uint8Array, Uint16Array, Uint32Array};
 use serde::Serialize;
@@ -76,6 +76,10 @@ struct UiStateDto {
     can_undo: bool,
     can_redo: bool,
     toggles: u32,
+    /// The drawing's unit suffix, or empty for unitless (#186).
+    unit: String,
+    /// The user's command aliases, one per line (#186).
+    user_aliases: String,
     document_name: Option<String>,
     unsaved_changes: bool,
     revision: f64,
@@ -183,6 +187,8 @@ impl From<UiState> for UiStateDto {
             revision: state.revision as f64,
             export_losses: state.export_losses,
             kept_layouts: state.kept_layouts,
+            unit: state.unit.unwrap_or("").to_owned(),
+            user_aliases: state.user_aliases,
             import_report: state.import_report.map(|report| ImportReportDto {
                 serial: report.serial,
                 lines: report.lines,
@@ -332,14 +338,26 @@ impl CadSession {
 
     /// The request behind a `HOST` dirty flag: `0` none, `1` open a file,
     /// `2` save the drawing to a file the user chooses, `3` save it back to
-    /// its file. Taking it clears it.
+    /// its file, `4` show the settings panel. Taking it clears it.
     pub fn take_host_request(&mut self) -> u32 {
         match self.session.take_host_request() {
             None => 0,
             Some(HostRequest::OpenFile) => 1,
             Some(HostRequest::ExportFile) => 2,
             Some(HostRequest::SaveFile) => 3,
+            Some(HostRequest::Settings) => 4,
         }
+    }
+
+    /// What the browser kept between sessions, given back once on start
+    /// (#186): the toggles' bits, the unit's suffix (empty for none), and
+    /// the user's aliases as text. One coarse call (ADR-0002).
+    pub fn restore_settings(&mut self, toggles: u32, unit: &str, aliases: &str) -> u32 {
+        let unit = LengthUnit::from_suffix(unit);
+        let dirty = self
+            .session
+            .restore_settings(Toggles::from_bits(toggles), unit, aliases);
+        self.report(dirty)
     }
 
     /// Replaces the drawing with the contents of a DXF file. On failure the

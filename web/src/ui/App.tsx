@@ -12,6 +12,7 @@ import { LayersPanel } from "./LayersPanel";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { StatusBar } from "./StatusBar";
 import { TextEditor } from "./TextEditor";
+import { SettingsPanel } from "./SettingsPanel";
 import { Toolbar } from "./Toolbar";
 
 type CoreState =
@@ -112,6 +113,7 @@ export function App() {
         toolbar={toolbar}
         layers={layers}
         properties={properties}
+        settings={() => core.app.run("SETTINGS")}
       />
       {toolbar.visible && <Toolbar app={core.app} />}
       <CanvasView app={core.app} />
@@ -120,6 +122,7 @@ export function App() {
       <Recovery app={core.app} />
       <Failure app={core.app} />
       <TextEditor app={core.app} />
+      <SettingsPanel app={core.app} />
       <CommandLine app={core.app} />
       {panels && (
         <div className="panels">

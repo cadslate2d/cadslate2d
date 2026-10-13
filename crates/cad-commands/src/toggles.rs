@@ -92,6 +92,19 @@ impl Toggles {
     pub fn bits(self) -> u32 {
         self.bits
     }
+
+    /// The toggles a host kept, from their bits (#186): unknown bits are
+    /// dropped, and of two rivals both on, ORTHO stays.
+    pub fn from_bits(bits: u32) -> Self {
+        let known = Toggle::ALL
+            .iter()
+            .fold(0, |known, toggle| known | toggle.bit());
+        let mut toggles = Self { bits: bits & known };
+        if toggles.is_on(Toggle::Ortho) && toggles.is_on(Toggle::Polar) {
+            toggles.flip(Toggle::Polar);
+        }
+        toggles
+    }
 }
 
 #[cfg(test)]

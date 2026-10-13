@@ -57,12 +57,38 @@ export interface AutosaveStore {
   clear(): Promise<void>;
 }
 
+/** The look of the shell and the drawing area (DESIGN §7.1: theme is UI state). */
+export type Theme = "dark" | "light";
+
+/** What the browser keeps between sessions, for the user (#186). Nothing leaves the browser (§45). */
+export interface Settings {
+  /** The drafting toggles as last left, as their bits. */
+  readonly toggles: number;
+  /** The unit a new drawing starts in, as its suffix; empty for unitless. */
+  readonly unit: string;
+  /** The user's command aliases, one per line as `alias, command`. */
+  readonly aliases: string;
+  /** How long after the last change the drawing is kept. */
+  readonly autosaveDelayMs: number;
+  readonly theme: Theme;
+}
+
+/** Where the settings are kept: all of them, or nothing yet. */
+export interface SettingsStore {
+  load(): Partial<Settings>;
+  save(settings: Settings): void;
+}
+
 export interface HostServices {
   readonly files: FileAccess;
   /** Asks a yes/no question. */
   confirm(message: string): boolean;
   /** Where the autosave is kept. */
   readonly autosave: AutosaveStore;
+  /** Where the settings are kept. */
+  readonly settings: SettingsStore;
+  /** Gives the document its theme; the renderer reads the palette again afterwards. */
+  applyTheme(theme: Theme): void;
   /** Loads the page afresh: a new engine, and the kept drawing offered back. */
   reload(): void;
 }
@@ -250,6 +276,48 @@ export const indexedDbAutosave: AutosaveStore = {
 
 let chosenFiles: FileAccess | undefined;
 
+// ── settings: a small JSON record in localStorage ──
+
+const SETTINGS_KEY = "cadslate2d.settings";
+
+/** Reads the kept settings, taking only what is of the right shape; absent or unreadable storage is nothing kept. */
+export function parseSettings(text: string | null): Partial<Settings> {
+  if (!text) return {};
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return {};
+  }
+  if (typeof raw !== "object" || raw === null) return {};
+  const record = raw as Record<string, unknown>;
+  const settings: Record<string, unknown> = {};
+  if (typeof record.toggles === "number") settings.toggles = record.toggles;
+  if (typeof record.unit === "string") settings.unit = record.unit;
+  if (typeof record.aliases === "string") settings.aliases = record.aliases;
+  if (typeof record.autosaveDelayMs === "number" && record.autosaveDelayMs >= 0)
+    settings.autosaveDelayMs = record.autosaveDelayMs;
+  if (record.theme === "dark" || record.theme === "light") settings.theme = record.theme;
+  return settings as Partial<Settings>;
+}
+
+export const localStorageSettings: SettingsStore = {
+  load() {
+    try {
+      return parseSettings(localStorage.getItem(SETTINGS_KEY));
+    } catch {
+      return {};
+    }
+  },
+  save(settings) {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    } catch {
+      // Storage that refuses — private mode, a full quota — loses the preference, not the drawing.
+    }
+  },
+};
+
 export const browserHost: HostServices = {
   // Chosen on first use, when there is a window to ask.
   get files() {
@@ -262,5 +330,9 @@ export const browserHost: HostServices = {
   },
 
   autosave: indexedDbAutosave,
+  settings: localStorageSettings,
+  applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+  },
   reload: () => window.location.reload(),
 };

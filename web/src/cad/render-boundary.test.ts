@@ -46,6 +46,8 @@ describe("WASM API surface", () => {
       "pointer_move",
       "pointer_up",
       "resize",
+      // #186: what the browser kept between sessions, given back in one call.
+      "restore_settings",
       "scene_arc_batches",
       // ADR-0015: the path distance and direction of every arc instance, as one buffer.
       "scene_arc_distances",

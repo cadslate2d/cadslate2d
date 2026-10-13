@@ -148,7 +148,7 @@ export class WebGlRenderer implements FrameSink {
 
   readonly #canvas: HTMLCanvasElement;
   readonly #gl: WebGL2RenderingContext;
-  readonly #palette: CanvasPalette;
+  #palette: CanvasPalette;
   #resources: GpuResources;
   #sceneRevision: number | undefined;
   #styleRevision: number | undefined;
@@ -353,6 +353,12 @@ export class WebGlRenderer implements FrameSink {
     // Signal that we will handle restoration ourselves.
     event.preventDefault();
   };
+
+  /** A new theme's palette (#186): the styles are laid out again at the next frame. */
+  setPalette(palette: CanvasPalette): void {
+    this.#palette = palette;
+    this.#styleRevision = undefined;
+  }
 
   readonly #onContextRestored = (): void => {
     // Every GPU object died with the context: rebuild, and forget the uploaded

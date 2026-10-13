@@ -56,6 +56,7 @@ export class CanvasController {
   readonly #resizeObserver: ResizeObserver;
   readonly #abort = new AbortController();
   readonly #detachRenderer: () => void;
+  #unsubscribeSettings: () => void = () => {};
 
   /** Requires WebGL2; check `webGl2Available()` before constructing. */
   constructor(canvas: HTMLCanvasElement, app: CadApp) {
@@ -133,6 +134,15 @@ export class CanvasController {
     this.#resizeObserver = new ResizeObserver(this.#syncSize);
     this.#resizeObserver.observe(canvas);
     this.#syncSize();
+    // The theme's palette is read again when the theme changes (#186).
+    let theme = app.settings.getSnapshot().theme;
+    this.#unsubscribeSettings = app.settings.subscribe(() => {
+      const current = app.settings.getSnapshot().theme;
+      if (current === theme) return;
+      theme = current;
+      this.#renderer.setPalette(documentPalette());
+      app.loop.invalidate(Dirty.Scene | Dirty.Overlay);
+    });
     this.#detachRenderer = app.setRenderer(() => {
       // LWT is session state in Rust; how it looks is the renderer's business.
       this.#renderer.showLineweights = (app.ui.getSnapshot().toggles & ToggleBit.Lineweight) !== 0;
@@ -141,6 +151,7 @@ export class CanvasController {
   }
 
   dispose(): void {
+    this.#unsubscribeSettings();
     this.#detachRenderer();
     this.#abort.abort();
     this.#resizeObserver.disconnect();

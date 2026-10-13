@@ -87,3 +87,45 @@
   --size-panel: 440px;
   --command-visible-lines: 5;
 }
+
+/*
+ * The light theme (#186): the same tokens, on paper. The canvas tokens
+ * are read again by the renderer when the theme changes.
+ */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --color-surface-canvas: #f7f8fa;
+  --color-surface-app: #eef1f5;
+  --color-surface-panel: #ffffff;
+  --color-surface-raised: #e6eaf0;
+
+  --color-border: #cfd6e0;
+  --color-border-strong: #aeb8c6;
+
+  --color-text: #1b2230;
+  --color-text-muted: #4f5b6d;
+  --color-text-faint: #7d889a;
+
+  --color-accent: #1f6fe0;
+  --color-accent-soft: rgb(31 111 224 / 0.14);
+  --color-danger: #c8323c;
+  --color-snap: #b87400;
+  --color-tracking: #1b7f78;
+
+  --canvas-background: #f7f8fa;
+  --canvas-grid-minor: #e4e8ee;
+  --canvas-grid-major: #cdd4de;
+  --canvas-entity: #141a24;
+  --canvas-selection: #1f6fe0;
+  --canvas-preview: #5a6f8f;
+  --canvas-crosshair: #2a3444;
+  --canvas-selection-window: #1f6fe0;
+  --canvas-selection-crossing: #1f8a3a;
+  --canvas-grip: #1f6fe0;
+  --canvas-grip-hot: #d9442f;
+  --canvas-hover: #2a7fff;
+  --canvas-removal: #d9442f;
+  --canvas-snap-marker: #b87400;
+  --canvas-tracking: #1b7f78;
+}
