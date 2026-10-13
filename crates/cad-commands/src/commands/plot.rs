@@ -1,8 +1,14 @@
 //! PLOT (#187): a paper size, an area, a scale, and whether lineweights
 //! and colours are plotted; the page itself is `cad-plot`'s to make, and
 //! the download the host's. The last settings are the next defaults.
+//!
+//! On a layout (#194) the paper is the layout's sheet: the prompt offers
+//! the sheet as it is, and a paper named here becomes the sheet, kept on
+//! the layout's row as one undoable change. The area is the sheet or a
+//! window of it; a fit of the sheet is one to one.
 
-use cad_core::{Aabb, Point2};
+use cad_core::{Aabb, Point2, Vec2};
+use cad_document::LayoutId;
 use cad_input::{ExpectedInput, InputKind, Keyword};
 
 use crate::{
@@ -42,6 +48,9 @@ enum State {
 pub(crate) struct PlotCommand {
     state: State,
     settings: PlotSettings,
+    /// The layout plotted, with its name and sheet as the command found
+    /// them; `None` on the model.
+    layout: Option<(LayoutId, String, Vec2)>,
 }
 
 impl PlotCommand {
@@ -49,6 +58,51 @@ impl PlotCommand {
         Self {
             state: State::Paper,
             settings: PlotSettings::default(),
+            layout: None,
+        }
+    }
+
+    /// The paper a sheet is, by name, either way up; or its size.
+    fn describe_sheet(size: Vec2) -> String {
+        let same = |a: f64, b: f64| (a - b).abs() < 0.05;
+        Paper::ALL
+            .iter()
+            .find(|paper| {
+                let (w, h) = paper.size_mm();
+                (same(size.x, w) && same(size.y, h)) || (same(size.x, h) && same(size.y, w))
+            })
+            .map_or_else(
+                || format!("{} x {} mm", size.x, size.y),
+                |paper| paper.name().to_owned(),
+            )
+    }
+
+    /// `paper` held as the sheet is: landscape when the sheet is.
+    fn sheet_of(paper: Paper, like: Vec2) -> Vec2 {
+        let (w, h) = paper.size_mm();
+        if like.x > like.y {
+            Vec2::new(h, w)
+        } else {
+            Vec2::new(w, h)
+        }
+    }
+
+    /// On a layout, a paper named becomes its sheet, kept on the row.
+    fn take_paper(&mut self, paper: Paper, ctx: &mut CommandContext<'_>) {
+        match &mut self.layout {
+            None => self.settings.paper = paper,
+            Some((id, _, sheet)) => {
+                let size = Self::sheet_of(paper, *sheet);
+                if size != *sheet {
+                    let mut tx = ctx.transaction();
+                    if let Err(error) = tx.set_layout_sheet(*id, size) {
+                        ctx.message(format!("The sheet cannot be set: {error}."));
+                        return;
+                    }
+                    tx.commit();
+                    *sheet = size;
+                }
+            }
         }
     }
 
@@ -77,21 +131,45 @@ impl PlotCommand {
     }
 
     fn finish(&self, ctx: &mut CommandContext<'_>) -> Step {
-        ctx.settings.plot = self.settings;
+        // The layout's sheet is the layout's, not the next model plot's.
+        ctx.settings.plot = PlotSettings {
+            paper: match self.layout {
+                Some(_) => ctx.settings.plot.paper,
+                None => self.settings.paper,
+            },
+            ..self.settings
+        };
         ctx.request_host(HostRequest::Plot);
-        let area = match self.settings.area {
-            PlotArea::Extents => "the extents".to_owned(),
-            PlotArea::Window(_) => "the window".to_owned(),
+        let (area, paper) = match &self.layout {
+            None => (
+                match self.settings.area {
+                    PlotArea::Extents => "the extents",
+                    PlotArea::Window(_) => "the window",
+                },
+                self.settings.paper.name().to_owned(),
+            ),
+            Some((_, _, sheet)) => (
+                match self.settings.area {
+                    PlotArea::Extents => "the sheet",
+                    PlotArea::Window(_) => "the window",
+                },
+                Self::describe_sheet(*sheet),
+            ),
+        };
+        let space = match &self.layout {
+            None => "model space".to_owned(),
+            Some((_, name, _)) => format!("layout \"{name}\""),
         };
         ctx.message(format!(
-            "Plotting {} of {} on {}, {}.",
+            "Plotting {} of {}{} on {}, {}.",
             area,
+            space,
             if self.settings.monochrome {
-                "model space in black"
+                " in black"
             } else {
-                "model space"
+                ""
             },
-            self.settings.paper.name(),
+            paper,
             match self.settings.scale {
                 PlotScale::Fit => "to fit".to_owned(),
                 PlotScale::Ratio(denominator) => format!("at 1:{denominator}"),
@@ -104,12 +182,20 @@ impl PlotCommand {
 impl Command for PlotCommand {
     fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
         self.settings = ctx.settings.plot;
+        if ctx.space != LayoutId::MODEL
+            && let Some(layout) = ctx.drawing.layouts().get(ctx.space)
+        {
+            self.layout = Some((ctx.space, layout.name.clone(), layout.sheet_size()));
+        }
         Step::Continue
     }
 
     fn prompt(&self) -> Prompt {
         match self.state {
-            State::Paper => Prompt::new("Paper size").with_default(self.settings.paper.name()),
+            State::Paper => Prompt::new("Paper size").with_default(match &self.layout {
+                None => self.settings.paper.name().to_owned(),
+                Some((_, _, sheet)) => Self::describe_sheet(*sheet),
+            }),
             State::Area => Prompt::new("Plot area").with_default(match self.settings.area {
                 PlotArea::Extents => "Extents",
                 PlotArea::Window(_) => "Window",
@@ -164,7 +250,7 @@ impl Command for PlotCommand {
                     .find(|(_, name)| *name == keyword)
                     .map(|(paper, _)| *paper)
                 {
-                    self.settings.paper = paper;
+                    self.take_paper(paper, ctx);
                 }
                 self.state = State::Area;
             }

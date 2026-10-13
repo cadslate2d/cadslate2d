@@ -8,9 +8,9 @@ use cad_commands::{Paper, PlotArea, PlotScale, PlotSettings};
 use cad_core::{Aabb, LengthUnit, Point2, Vec2};
 use cad_document::{
     ArcEntity, Block, BlockReferenceEntity, CircleEntity, Color, DimensionEntity, Drawing,
-    EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Layer, LineEntity, Linetype,
-    LinetypeDef, Lineweight, MTextEntity, Measure, Path, PolylineEntity, Properties, SplineEntity,
-    TextEntity,
+    EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Layer, LayoutId, LineEntity,
+    Linetype, LinetypeDef, Lineweight, MTextEntity, Measure, Path, PolylineEntity, Properties,
+    SplineEntity, TextEntity, ViewportEntity,
 };
 use proptest::prelude::*;
 
@@ -26,6 +26,79 @@ fn line(x0: f64, y0: f64, x1: f64, y1: f64) -> Entity {
 
 fn settings() -> PlotSettings {
     PlotSettings::default()
+}
+
+/// A layout's plot, pulled apart (#194): what the paper draws, outside
+/// any viewport, and what each viewport's block draws — the lines
+/// between its `q` and `Q`, its clip first.
+struct LayoutPlot {
+    paper: String,
+    viewports: Vec<String>,
+}
+
+fn pull_apart(content: &str) -> LayoutPlot {
+    let mut plot = LayoutPlot {
+        paper: String::new(),
+        viewports: Vec::new(),
+    };
+    let mut depth = 0;
+    for line in content.lines() {
+        match line {
+            "q" => {
+                depth += 1;
+                if depth == 2 {
+                    plot.viewports.push(String::new());
+                }
+            }
+            "Q" => depth -= 1,
+            _ if depth >= 2 => {
+                let block = plot.viewports.last_mut().expect("inside a block");
+                block.push_str(line);
+                block.push('\n');
+            }
+            _ => {
+                plot.paper.push_str(line);
+                plot.paper.push('\n');
+            }
+        }
+    }
+    plot
+}
+
+/// The rectangle a block's first line clips to.
+fn clip_of(block: &str) -> Aabb {
+    let first = block.lines().next().expect("a clip");
+    let values: Vec<f64> = first
+        .split_whitespace()
+        .take(4)
+        .map(|v| v.parse().expect("a clip number"))
+        .collect();
+    assert!(first.ends_with(" re W n"), "a clip first: {first}");
+    Aabb::from_points(
+        p(values[0], values[1]),
+        p(values[0] + values[2], values[1] + values[3]),
+    )
+}
+
+fn close(a: Point2, b: Point2) -> bool {
+    (a.x - b.x).abs() < 0.002 && (a.y - b.y).abs() < 0.002
+}
+
+/// A drawing with a model line from the origin to (100, 0), a layout
+/// with the sheet given, and the viewports onto the model.
+fn layout_drawing(sheet: Option<Vec2>, viewports: &[ViewportEntity]) -> (Drawing, LayoutId) {
+    let mut drawing = Drawing::from_entities([line(0.0, 0.0, 100.0, 0.0)]);
+    let mut tx = drawing.transaction();
+    let mut layout = cad_document::Layout::named("Sheet");
+    if let Some(size) = sheet {
+        layout = layout.with_sheet(size);
+    }
+    let sheet = tx.add_layout(layout).unwrap();
+    for viewport in viewports {
+        tx.insert_in(sheet, *viewport).unwrap();
+    }
+    tx.commit();
+    (drawing, sheet)
 }
 
 /// The content stream of a plot: between `stream` and `endstream`.
@@ -531,6 +604,125 @@ fn the_sample_plot_for_a_reader() {
     std::fs::write(&path, pdf).unwrap();
 }
 
+/// #194: a layout plots on its sheet at one to one — the title line where
+/// it is on the paper, the sheet the page — and each viewport that is on
+/// draws the model at its own scale, clipped to its frame; the frame
+/// itself is not drawn, and a viewport that is off draws nothing.
+#[test]
+fn a_layout_plots_its_paper_at_one_to_one_and_the_model_through_each_viewport_at_its_scale() {
+    let full = ViewportEntity::new(p(100.0, 150.0), 150.0, 100.0, p(50.0, 0.0), 1.0);
+    let half = ViewportEntity::new(p(300.0, 150.0), 100.0, 100.0, p(50.0, 0.0), 0.5);
+    let mut off = ViewportEntity::new(p(300.0, 40.0), 50.0, 50.0, p(50.0, 0.0), 2.0);
+    off.on = false;
+    let (mut drawing, sheet) = layout_drawing(None, &[full, half, off]);
+    let mut tx = drawing.transaction();
+    tx.insert_in(sheet, line(10.0, 10.0, 200.0, 10.0)).unwrap();
+    tx.commit();
+
+    let pdf = plot_pdf_in(&drawing, sheet, &settings());
+    let mm = POINTS_PER_MM;
+    assert!(
+        close(media_box(&pdf).max(), p(420.0 * mm, 297.0 * mm)),
+        "the sheet is the page"
+    );
+    let plot = pull_apart(content_of(&pdf));
+    let paper = parse(&plot.paper);
+    assert_eq!(paper.points.len(), 2, "the title line alone: no frames");
+    assert!(close(paper.points[0], p(10.0 * mm, 10.0 * mm)));
+    assert!(close(paper.points[1], p(200.0 * mm, 10.0 * mm)));
+    assert_eq!(plot.viewports.len(), 2, "the one that is off draws nothing");
+
+    let first = clip_of(&plot.viewports[0]);
+    assert!(close(first.min(), p(25.0 * mm, 100.0 * mm)));
+    assert!(close(first.max(), p(175.0 * mm, 200.0 * mm)));
+    let ops = parse(&plot.viewports[0]);
+    assert_eq!(ops.points.len(), 2);
+    assert!(
+        close(ops.points[0], p(50.0 * mm, 150.0 * mm)),
+        "{:?}",
+        ops.points
+    );
+    assert!(close(ops.points[1], p(150.0 * mm, 150.0 * mm)));
+
+    let second = clip_of(&plot.viewports[1]);
+    assert!(close(second.min(), p(250.0 * mm, 100.0 * mm)));
+    assert!(close(second.max(), p(350.0 * mm, 200.0 * mm)));
+    let ops = parse(&plot.viewports[1]);
+    assert_eq!(ops.points.len(), 2);
+    assert!(
+        close(ops.points[0], p(275.0 * mm, 150.0 * mm)),
+        "{:?}",
+        ops.points
+    );
+    assert!(close(ops.points[1], p(325.0 * mm, 150.0 * mm)));
+    // The look is set afresh inside each block: a stroke colour each.
+    assert_eq!(ops.strokes.len(), 1);
+
+    // The model's own plot is as it was: one line, no blocks.
+    let model = pull_apart(content_of(&plot_pdf(&drawing, &settings())));
+    assert!(model.viewports.is_empty());
+    assert_eq!(parse(&model.paper).points.len(), 2);
+}
+
+/// #194: the page is the sheet the layout's row says — set here, or
+/// A3 landscape for one made here — whatever paper the settings name; a
+/// window of the paper is clipped to and fits; `1:2` halves the paper.
+#[test]
+fn a_layouts_page_is_its_sheet_and_a_window_or_a_ratio_scales_the_paper() {
+    let (drawing, sheet) = layout_drawing(Some(Vec2::new(210.0, 297.0)), &[]);
+    let plot = PlotSettings {
+        paper: Paper::A0,
+        ..settings()
+    };
+    let page = Page::in_space(&drawing, sheet, &plot);
+    assert!(!page.landscape);
+    assert!((page.width - 210.0 * POINTS_PER_MM).abs() < 1e-9);
+    assert!((page.height - 297.0 * POINTS_PER_MM).abs() < 1e-9);
+    assert!(
+        (page.scale - POINTS_PER_MM).abs() < 1e-9,
+        "a fit of the sheet is one to one"
+    );
+    assert!(close(page.to_page(Point2::ORIGIN), Point2::ORIGIN));
+
+    let window = Aabb::from_points(p(0.0, 0.0), p(105.0, 148.5));
+    let windowed = Page::in_space(
+        &drawing,
+        sheet,
+        &PlotSettings {
+            area: PlotArea::Window(window),
+            ..plot
+        },
+    );
+    assert_eq!(windowed.area, window);
+    assert!(
+        (windowed.scale - 2.0 * POINTS_PER_MM).abs() < 1e-9,
+        "the window fills the page"
+    );
+    let pdf = plot_pdf_in(
+        &drawing,
+        sheet,
+        &PlotSettings {
+            area: PlotArea::Window(window),
+            ..plot
+        },
+    );
+    assert!(pdf.contains("0 0 595.276 841.89 re W n\n"));
+
+    let halved = Page::in_space(
+        &drawing,
+        sheet,
+        &PlotSettings {
+            scale: PlotScale::Ratio(2.0),
+            ..plot
+        },
+    );
+    assert!((halved.scale - POINTS_PER_MM / 2.0).abs() < 1e-9);
+    assert_eq!(
+        Page::in_space(&drawing, LayoutId::MODEL, &plot),
+        Page::new(&drawing, &plot)
+    );
+}
+
 fn any_entity() -> impl Strategy<Value = Entity> {
     let coordinate = -500.0..500.0;
     let radius = 1.0..200.0;
@@ -601,6 +793,73 @@ proptest! {
         prop_assert!(!ops.points.is_empty());
         for point in &ops.points {
             prop_assert!(printable.contains_point(*point), "{point:?} outside {printable:?}");
+        }
+    }
+
+    /// #194: on a layout, every point the paper draws is on the sheet —
+    /// the page — and every viewport that is on draws the model inside a
+    /// clip to its frame, on the page, with every point it draws a model
+    /// point at the viewport's scale: mapped back, it is inside the
+    /// model's extents.
+    #[test]
+    fn every_primitive_of_a_layout_lands_on_the_sheet_and_the_model_through_each_viewport(
+        model in prop::collection::vec(any_entity(), 1..6),
+        paper in prop::collection::vec((0.0..420.0, 0.0..297.0, 0.0..420.0, 0.0..297.0), 1..4),
+        viewports in prop::collection::vec(
+            (0.0..320.0, 0.0..197.0, 20.0..100.0, 20.0..100.0, -500.0..500.0, -500.0..500.0, 0.05..5.0, any::<bool>()),
+            0..4,
+        ),
+    ) {
+        let windows: Vec<ViewportEntity> = viewports
+            .iter()
+            .map(|&(x, y, w, h, vx, vy, scale, on)| {
+                let mut viewport =
+                    ViewportEntity::new(p(x + w / 2.0, y + h / 2.0), w, h, p(vx, vy), scale);
+                viewport.on = on;
+                viewport
+            })
+            .collect();
+        let mut drawing = Drawing::from_entities(model);
+        let extents = drawing.extents().expect("a model with something in it");
+        let mut tx = drawing.transaction();
+        let sheet = tx.add_layout(cad_document::Layout::named("Sheet")).unwrap();
+        for window in &windows {
+            tx.insert_in(sheet, *window).unwrap();
+        }
+        for (x0, y0, x1, y1) in paper {
+            tx.insert_in(sheet, line(x0, y0, x1, y1)).unwrap();
+        }
+        tx.commit();
+
+        let pdf = plot_pdf_in(&drawing, sheet, &settings());
+        let media = media_box(&pdf);
+        prop_assert!(close(media.max(), p(420.0 * POINTS_PER_MM, 297.0 * POINTS_PER_MM)));
+        let page = media.expanded(0.5);
+        let plot = pull_apart(content_of(&pdf));
+        let paper = parse(&plot.paper);
+        prop_assert!(!paper.points.is_empty());
+        for point in &paper.points {
+            prop_assert!(page.contains_point(*point), "{point:?} off the sheet {page:?}");
+        }
+        let on: Vec<&ViewportEntity> = windows.iter().filter(|w| w.on).collect();
+        prop_assert_eq!(plot.viewports.len(), on.len());
+        let laid = Page::in_space(&drawing, sheet, &settings());
+        for (block, viewport) in plot.viewports.iter().zip(on) {
+            let clip = clip_of(block);
+            prop_assert!(page.contains_point(clip.min()) && page.contains_point(clip.max()));
+            let frame = viewport.frame();
+            prop_assert!(close(clip.min(), laid.to_page(frame.min())));
+            prop_assert!(close(clip.max(), laid.to_page(frame.max())));
+            let through = laid.through(viewport);
+            // Rounding to a thousandth of a point, and a quarter-turn
+            // Bézier's bulge, back in model units.
+            let within = extents.expanded(1.0 / through.scale + 0.1);
+            let ops = parse(block);
+            prop_assert!(!ops.points.is_empty());
+            for point in &ops.points {
+                let model = through.unmap(*point);
+                prop_assert!(within.contains_point(model), "{model:?} outside {within:?}");
+            }
         }
     }
 }

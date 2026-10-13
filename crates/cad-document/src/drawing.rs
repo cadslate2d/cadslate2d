@@ -4,7 +4,7 @@ use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::sync::Arc;
 
-use cad_core::{Aabb, EntityId, LengthUnit};
+use cad_core::{Aabb, EntityId, LengthUnit, Vec2};
 
 use crate::block::{Block, BlockId, BlockTable, initial_blocks};
 use crate::dim_style::{DimStyle, DimStyleError, DimStyleId, DimStyleTable, initial_dim_styles};
@@ -177,6 +177,8 @@ pub enum TransactionError {
     LayoutInUse(LayoutId),
     /// The name cannot be a layout's name.
     BadLayoutName(NameError),
+    /// A sheet is finite and positive both ways.
+    BadSheet,
     /// This layout already has the name, give or take its case.
     DuplicateLayoutName(LayoutId),
 }
@@ -244,6 +246,7 @@ impl fmt::Display for TransactionError {
                 "layout {id} has an entity this transaction already changed"
             ),
             Self::BadLayoutName(error) => write!(f, "{}", error.explain("layout")),
+            Self::BadSheet => write!(f, "a sheet's width and height must be positive"),
             Self::DuplicateLayoutName(id) => write!(f, "layout {id} already has that name"),
         }
     }
@@ -1211,6 +1214,25 @@ impl TransactionBuilder<'_> {
             name,
             ..before.clone()
         };
+        self.push_other(Change::Layout(TableChange::Replace { id, before, after }));
+        Ok(())
+    }
+
+    /// Sets a layout's sheet, in millimetres (#194): what its view fits
+    /// to and the page it plots on; the writer puts it in the layout's
+    /// plot settings. The model has no sheet.
+    pub fn set_layout_sheet(&mut self, id: LayoutId, size: Vec2) -> Result<(), TransactionError> {
+        if id == LayoutId::MODEL {
+            return Err(TransactionError::PermanentLayout);
+        }
+        if !Layout::sheet_size_allowed(size) {
+            return Err(TransactionError::BadSheet);
+        }
+        let before = self
+            .layout_now(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownLayout(id))?;
+        let after = before.clone().with_sheet(size);
         self.push_other(Change::Layout(TableChange::Replace { id, before, after }));
         Ok(())
     }
@@ -4331,6 +4353,47 @@ mod tests {
     }
 
     #[test]
+    fn a_layouts_sheet_is_set_as_one_change_and_the_model_has_none() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+        tx.commit();
+        assert_eq!(
+            drawing.layouts().get(sheet).unwrap().sheet_size(),
+            Vec2::new(420.0, 297.0),
+            "A3 landscape until set"
+        );
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.set_layout_sheet(LayoutId::MODEL, Vec2::new(210.0, 297.0)),
+            Err(TransactionError::PermanentLayout)
+        );
+        assert_eq!(
+            tx.set_layout_sheet(sheet, Vec2::new(0.0, 297.0)),
+            Err(TransactionError::BadSheet)
+        );
+        assert_eq!(
+            tx.set_layout_sheet(sheet, Vec2::new(210.0, f64::NAN)),
+            Err(TransactionError::BadSheet)
+        );
+        tx.set_layout_sheet(sheet, Vec2::new(297.0, 210.0)).unwrap();
+        tx.commit();
+        let row = drawing.layouts().get(sheet).unwrap();
+        assert_eq!(row.sheet_size(), Vec2::new(297.0, 210.0));
+        assert_eq!(row.sheet().max(), Point2::new(297.0, 210.0));
+        assert!(drawing.undo().is_some());
+        assert_eq!(
+            drawing.layouts().get(sheet).unwrap().sheet_size(),
+            Vec2::new(420.0, 297.0)
+        );
+        assert!(drawing.redo().is_some());
+        assert_eq!(
+            drawing.layouts().get(sheet).unwrap().sheet_size(),
+            Vec2::new(297.0, 210.0)
+        );
+    }
+
+    #[test]
     fn moving_an_entity_between_spaces_is_one_change() {
         let mut drawing = Drawing::new();
         let mut tx = drawing.transaction();
@@ -4500,6 +4563,7 @@ mod tests {
         /// a line drawn in a space by index; an entity moved to a space.
         AddLayout(u8),
         RenameLayout(usize, u8),
+        SetLayoutSheet(usize, f64, f64),
         RemoveLayout(usize),
         CreateIn(usize, f64),
         MoveTo(usize, usize),
@@ -4542,6 +4606,8 @@ mod tests {
             1 => (0..4u8).prop_map(Op::AddLayout),
             1 => (any::<usize>(), 0..4u8).prop_map(|(i, name)| Op::RenameLayout(i, name)),
             1 => any::<usize>().prop_map(Op::RemoveLayout),
+            1 => (any::<usize>(), -10.0..500.0_f64, -10.0..500.0_f64)
+                .prop_map(|(i, w, h)| Op::SetLayoutSheet(i, w, h)),
             2 => (any::<usize>(), coordinate()).prop_map(|(i, x)| Op::CreateIn(i, x)),
             1 => (any::<usize>(), any::<usize>()).prop_map(|(i, space)| Op::MoveTo(i, space)),
             1 => (0..5u8).prop_map(Op::AddDimStyle),
@@ -4864,6 +4930,19 @@ mod tests {
                         prop_assert_eq!(renamed.is_ok(), allowed, "{:?}", renamed);
                         if allowed {
                             prop_assert_eq!(drawing.layouts().find(&name), Some(id));
+                        }
+                    }
+                    Op::SetLayoutSheet(pick, width, height) => {
+                        let layouts: Vec<LayoutId> = drawing.layouts().iter().map(|(id, _)| id).collect();
+                        let id = layouts[pick % layouts.len()];
+                        let size = Vec2::new(width, height);
+                        let mut tx = drawing.transaction();
+                        let set = tx.set_layout_sheet(id, size);
+                        tx.commit();
+                        let allowed = id != LayoutId::MODEL && Layout::sheet_size_allowed(size);
+                        prop_assert_eq!(set.is_ok(), allowed, "{:?}", set);
+                        if allowed {
+                            prop_assert_eq!(drawing.layouts().get(id).map(Layout::sheet_size), Some(size));
                         }
                     }
                     Op::RemoveLayout(pick) => {

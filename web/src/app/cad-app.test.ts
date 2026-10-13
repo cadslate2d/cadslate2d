@@ -835,4 +835,17 @@ describe("plot", () => {
     // Plotting is not saving: the drawing is still unexported.
     expect(app.ui.getSnapshot().unsavedChanges).toBe(true);
   });
+
+  // #194: a layout plots under the drawing's name and its own.
+  test("PLOT on a layout saves the sheet under the layout's name", async () => {
+    const { host, tick, enter } = harness();
+    enter("LAYOUT", "N", "Sheet one", "L", "10,10", "200,10", "", "PLOT", "", "", "", "", "");
+    await tick();
+    expect(host.files.saved).toHaveLength(1);
+    const [saved] = host.files.saved;
+    expect(saved?.name).toBe("drawing-Sheet one.pdf");
+    // An A3 landscape sheet, the title line at one to one.
+    expect(saved?.text).toContain("/MediaBox [0 0 1190.551 841.89]");
+    expect(saved?.text).toContain("\n28.346 28.346 m\n566.929 28.346 l\n");
+  });
 });

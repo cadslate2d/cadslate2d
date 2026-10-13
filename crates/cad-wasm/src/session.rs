@@ -370,11 +370,16 @@ impl CadSession {
         }
     }
 
-    /// Model space as a one-page PDF with the session's plot settings
-    /// (#187): ASCII, so it travels as text. The host offers it for
-    /// download under the drawing's name.
+    /// The space the session is in as a one-page PDF with the session's
+    /// plot settings (#187, #194): the model, or a layout's sheet with the
+    /// model through its viewports. ASCII, so it travels as text. The
+    /// host offers it for download under the drawing's name.
     pub fn plot_pdf(&self) -> String {
-        cad_plot::plot_pdf(self.session.drawing(), &self.session.settings().plot)
+        cad_plot::plot_pdf_in(
+            self.session.drawing(),
+            self.session.space(),
+            &self.session.settings().plot,
+        )
     }
 
     /// What the browser kept between sessions, given back once on start

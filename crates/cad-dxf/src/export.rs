@@ -14,13 +14,14 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use cad_core::{EntityId, LengthUnit, Point2};
+use cad_core::{EntityId, LengthUnit, Point2, Vec2};
 use cad_document::{
     ArcEntity, AttributeDefinitionEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity,
     Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity,
-    EntityRecord, HatchEntity, HatchStyle, Justification, Layer, LayoutId, LayoutTable, LineEntity,
-    Linetype, LinetypeDef, LinetypeTable, Lineweight, MTextEntity, Measure, PolylineEntity,
-    Properties, Revision, SplineEntity, TextEntity, TextStyle, TextStyleTable, ViewportEntity,
+    EntityRecord, HatchEntity, HatchStyle, Justification, Layer, Layout, LayoutId, LayoutTable,
+    LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight, MTextEntity, Measure,
+    PolylineEntity, Properties, Revision, SplineEntity, TextEntity, TextStyle, TextStyleTable,
+    ViewportEntity,
 };
 
 use crate::properties::{
@@ -436,14 +437,24 @@ fn dimension_block_name(n: usize) -> String {
 
 /// A kept LAYOUT's groups with the name the layout has now: the first
 /// group 1 after the `AcDbLayout` marker.
-fn renamed_layout_groups(groups: &[(i32, String)], name: &str) -> Vec<(i32, String)> {
+fn layout_groups_as_now(groups: &[(i32, String)], layout: &Layout) -> Vec<(i32, String)> {
     let mut out = groups.to_vec();
     let start = out
         .iter()
         .position(|(code, value)| *code == 100 && value.trim() == "AcDbLayout")
         .unwrap_or(0);
     if let Some(slot) = out[start..].iter_mut().find(|(code, _)| *code == 1) {
-        slot.1 = name.to_owned();
+        slot.1 = layout.name.clone();
+    }
+    // A sheet set here (#194) replaces the plot settings' paper size.
+    if layout.paper_size.is_some() {
+        let size = layout.sheet_size();
+        for (code, value) in [(44, size.x), (45, size.y)] {
+            match out.iter_mut().find(|(c, _)| *c == code) {
+                Some(slot) => slot.1 = format_real(value),
+                None => out.push((code, format_real(value))),
+            }
+        }
     }
     out
 }
@@ -1497,6 +1508,7 @@ impl Writer {
             "Model",
             structure.model_space,
             0,
+            Vec2::new(420.0, 297.0),
         );
         if structure.sheets.is_empty() {
             self.layout(
@@ -1505,6 +1517,7 @@ impl Writer {
                 "Layout1",
                 structure.paper_space,
                 1,
+                Vec2::new(420.0, 297.0),
             );
         }
         // A layout the file gave its LAYOUT object keeps it, under the
@@ -1520,10 +1533,11 @@ impl Writer {
                     &layout.name,
                     sheet.record,
                     index as i64 + 1,
+                    layout.sheet_size(),
                 );
             } else {
                 self.group(0, "LAYOUT");
-                let groups = renamed_layout_groups(&layout.kept, &layout.name);
+                let groups = layout_groups_as_now(&layout.kept, layout);
                 self.kept_groups(&groups, sheet.layout, structure.layouts, &structure.remap);
             }
         }
@@ -1572,22 +1586,37 @@ impl Writer {
     /// A LAYOUT: A3 plot settings nobody uses, and the layout proper,
     /// which names its block record. `order` is the tab's place; 0 is
     /// the model's.
-    fn layout(&mut self, handle: Handle, owner: Handle, name: &str, space: Handle, order: i64) {
+    /// A LAYOUT object of this file's own: a sheet of `sheet` millimetres
+    /// with the margins a layout made here has.
+    fn layout(
+        &mut self,
+        handle: Handle,
+        owner: Handle,
+        name: &str,
+        space: Handle,
+        order: i64,
+        sheet: Vec2,
+    ) {
         let model = order == 0;
         self.group(0, "LAYOUT");
         self.handle(5, handle);
         self.handle(330, owner);
         self.group(100, "AcDbPlotSettings");
         self.group(1, "");
-        self.group(4, "A3");
+        let paper = if sheet == Vec2::new(420.0, 297.0) {
+            "A3".to_owned()
+        } else {
+            format!("{}_x_{}_mm", format_real(sheet.x), format_real(sheet.y))
+        };
+        self.group(4, &paper);
         self.group(6, "");
         for (code, value) in [
             (40, 7.5),
             (41, 20.0),
             (42, 7.5),
             (43, 20.0),
-            (44, 420.0),
-            (45, 297.0),
+            (44, sheet.x),
+            (45, sheet.y),
             (46, 0.0),
             (47, 0.0),
             (48, 0.0),
@@ -1618,8 +1647,8 @@ impl Writer {
         self.int(71, order);
         self.real(10, 0.0);
         self.real(20, 0.0);
-        self.real(11, 420.0);
-        self.real(21, 297.0);
+        self.real(11, sheet.x);
+        self.real(21, sheet.y);
         self.point(12, Point2::ORIGIN);
         // Extents not yet computed, as every writer leaves them.
         for code in [14, 24, 34] {

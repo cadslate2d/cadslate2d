@@ -503,7 +503,7 @@ export class CadEngine {
     return this.#session.snapshot_dxf();
   }
 
-  /** Model space as a one-page PDF with the session's plot settings (#187): ASCII text. */
+  /** The space shown as a one-page PDF with the session's plot settings (#187, #194): ASCII text. */
   plotPdf(): string {
     return this.#session.plot_pdf();
   }

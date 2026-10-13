@@ -1,7 +1,7 @@
 //! PLOT (#187): the prompts and their defaults, the window, the scale,
 //! the refusals, and the request to the host.
 
-use cad_core::{Aabb, Point2};
+use cad_core::{Aabb, Point2, Vec2};
 
 use crate::testing::Harness;
 use crate::{Dirty, HostRequest, Paper, PlotArea, PlotScale, PlotSettings};
@@ -132,5 +132,66 @@ fn a_window_needs_two_different_corners_and_takes_no_object_snap() {
     assert_eq!(
         h.session.settings().plot.area,
         PlotArea::Window(Aabb::from_points(p(-20.0, -20.0), p(98.0, 3.0)))
+    );
+}
+
+/// #194: on a layout, PLOT offers the sheet as the paper — A3 for a
+/// layout made here — and a paper named becomes the sheet, kept on the
+/// row as one undoable change; the model's own paper is not touched.
+#[test]
+fn on_a_layout_the_paper_is_the_sheet_and_a_paper_named_becomes_it() {
+    let mut h = Harness::new();
+    h.enter_all(&["L", "0,0", "100,0", ""]);
+    h.enter_all(&["LAYOUT", "N", "Sheet one"]);
+    let sheet = h.session.space();
+    h.enter("PLOT");
+    assert_eq!(
+        h.prompt(),
+        "Paper size or [A4/A3/A2/A1/A0/Letter/Tabloid] <A3>:"
+    );
+    h.enter("A4");
+    assert_eq!(h.prompt(), "Plot area or [Extents/Window] <Extents>:");
+    h.enter_all(&["", "", "", ""]);
+    assert_eq!(h.session.take_host_request(), Some(HostRequest::Plot));
+    assert_eq!(
+        last(&h),
+        "Plotting the sheet of layout \"Sheet one\" on A4, to fit."
+    );
+    let row = h.session.drawing().layouts().get(sheet).unwrap();
+    assert_eq!(
+        row.sheet_size(),
+        Vec2::new(297.0, 210.0),
+        "landscape, as the sheet was"
+    );
+    assert_eq!(
+        h.session.settings().plot.paper,
+        Paper::A4,
+        "the default, untouched"
+    );
+    assert_eq!(h.prompt(), "Command:");
+
+    // The sheet is the next default; Enter keeps it and changes nothing.
+    let revision = h.session.drawing().revision();
+    h.enter("PLOT");
+    assert_eq!(
+        h.prompt(),
+        "Paper size or [A4/A3/A2/A1/A0/Letter/Tabloid] <A4>:"
+    );
+    h.enter_all(&["", "", "", "", "M"]);
+    assert_eq!(h.session.drawing().revision(), revision);
+    assert_eq!(
+        last(&h),
+        "Plotting the sheet of layout \"Sheet one\" in black on A4, to fit."
+    );
+
+    // One undo takes the sheet back; the model plots as before.
+    h.undo();
+    let row = h.session.drawing().layouts().get(sheet).unwrap();
+    assert_eq!(row.sheet_size(), Vec2::new(420.0, 297.0));
+    h.enter("MODEL");
+    h.enter_all(&["PLOT", "", "", "", "", "C"]);
+    assert_eq!(
+        last(&h),
+        "Plotting the extents of model space on A4, to fit."
     );
 }

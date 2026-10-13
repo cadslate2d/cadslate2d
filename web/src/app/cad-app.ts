@@ -465,11 +465,16 @@ export class CadApp {
     this.loop.invalidate(this.engine.dismissImportReport());
   }
 
-  /** PLOT: the page the engine made, offered as a PDF under the drawing's name (#187). */
+  /**
+   * PLOT: the page the engine made, offered as a PDF under the drawing's
+   * name (#187) — and the layout's, when a layout is plotted (#194).
+   */
   async #plot(): Promise<void> {
     const pdf = this.engine.plotPdf();
-    const name = (this.engine.uiState().documentName ?? DEFAULT_FILE_NAME).replace(/\.dxf$/i, "");
-    await this.#host.files.saveAs(`${name}.pdf`, pdf, PDF_MIME_TYPE);
+    const state = this.engine.uiState();
+    const name = (state.documentName ?? DEFAULT_FILE_NAME).replace(/\.dxf$/i, "");
+    const file = state.paper ? `${name}-${state.space}.pdf` : `${name}.pdf`;
+    await this.#host.files.saveAs(file, pdf, PDF_MIME_TYPE);
   }
 
   async #performSave(ask: boolean): Promise<void> {

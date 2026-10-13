@@ -37,7 +37,7 @@ There are two kinds:
 | [0024](0024-autosave-in-slices.md) | No worker; the autosave is written in slices on the main thread, a change under it abandoning the job | Accepted | Evidence |
 | [0025](0025-kept-layouts.md) | Layouts and paper space are kept as the file's own groups, their handles remapped, written back and not drawn | Accepted | Design |
 | [0026](0026-user-aliases-and-settings.md) | User aliases under the built-in table, settings in `localStorage`, restored in one call; the theme is UI state | Accepted | Design |
-| [0027](0027-pdf-plot.md) | A PDF plot of model space is the renderer's entity walk written as a page by `cad-plot`; text as strokes, no fonts | Accepted | Design |
+| [0027](0027-pdf-plot.md) | A PDF plot of model space — or of a layout's sheet, the model through its viewports — is the renderer's entity walk written as a page by `cad-plot`; text as strokes, no fonts | Accepted | Design |
 | [0028](0028-chunk-origins.md) | Each scene chunk is packed against an origin within reach of its geometry; regions of chunks drawn under their own transforms | Accepted | Design |
 | [0029](0029-spaces.md) | Every entity is in a space; the model is the first row of the layout table; a file's paper entities are entities of their layout | Accepted | Design |
 | [0030](0030-viewports.md) | A viewport is an entity of a layout's paper; its contents are the model's committed scene drawn again under its own transform | Accepted | Design |

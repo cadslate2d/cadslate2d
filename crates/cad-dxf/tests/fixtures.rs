@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use cad_core::Point2;
+use cad_core::{Point2, Vec2};
 use cad_document::{
     BlockReferenceEntity, Color, DimStyleId, Drawing, Entity, Justification, Layer, LayerId,
     Layout, LayoutId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity,
@@ -483,6 +483,40 @@ fn a_layout_made_here_and_a_renamed_one_are_written_and_read_back() {
     assert!(!text.contains("\n  1\nLayout2\n"));
     let back = cad_dxf::import(text.as_bytes()).unwrap();
     assert_eq!(back.report.layouts, vec!["Layout1", "Details"]);
+}
+
+/// #194: a layout's sheet, set here, is the paper size its LAYOUT object
+/// carries (44, 45) — in the sheet the writer makes for a layout made
+/// here, and in the kept groups of a layout from a file — and is read
+/// back as the sheet.
+#[test]
+fn a_layouts_sheet_set_here_is_written_as_its_paper_size_and_read_back() {
+    let a4 = Vec2::new(297.0, 210.0);
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+    tx.set_layout_sheet(sheet, a4).unwrap();
+    tx.commit();
+    let text = export(&drawing);
+    assert!(text.contains("\n 44\n297.0\n 45\n210.0\n"), "the sheet");
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    let (id, row) = back.drawing.layouts().iter().nth(1).unwrap();
+    assert_eq!(row.sheet_size(), a4);
+    assert_eq!(back.drawing.layouts().get(id).unwrap().paper_size, None);
+    assert_eq!(export(&back.drawing), text, "stable on the second pass");
+
+    let mut imported = load("valid", "layouts.dxf").unwrap().drawing;
+    let (one, row) = imported.layouts().iter().nth(1).unwrap();
+    assert_eq!(row.sheet_size(), Vec2::new(420.0, 297.0));
+    let mut tx = imported.transaction();
+    tx.set_layout_sheet(one, a4).unwrap();
+    tx.commit();
+    let text = export(&imported);
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    let (_, row) = back.drawing.layouts().iter().nth(1).unwrap();
+    assert_eq!(row.sheet_size(), a4, "the kept groups carry the sheet");
+    let (_, other) = back.drawing.layouts().iter().nth(2).unwrap();
+    assert_eq!(other.sheet_size(), Vec2::new(420.0, 297.0));
 }
 
 /// #191: an entity the ENTITIES section flags as paper (67) — as R12 and

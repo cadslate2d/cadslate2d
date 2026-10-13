@@ -2,7 +2,17 @@
 // the tabs go between spaces and keep each one's view; MSPACE works the
 // model through a viewport and PSPACE hands it the view.
 import { expect, test, type Page } from "@playwright/test";
-import { downloadFrom, enter, entities, logLines, openApp, prompt } from "./support";
+import { readFileSync } from "node:fs";
+import {
+  chooseFile,
+  downloadFrom,
+  enter,
+  entities,
+  fixturePath,
+  logLines,
+  openApp,
+  prompt,
+} from "./support";
 
 const tab = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Layouts" }).getByRole("button", { name, exact: true });
@@ -84,3 +94,35 @@ async function clipOfCanvas(
   if (!box) throw new Error("no canvas");
   return { x: box.x, y: box.y, width: box.width, height: box.height };
 }
+
+// #194: the layouts fixture's Layout1 — an A3 sheet with a viewport onto
+// the model at 0.95 and a title line — plots as a page of the sheet: the
+// title line at one to one, the model line through the viewport at its
+// scale, inside a clip to the frame.
+test("PLOT on a layout plots its sheet, its viewport clipped at its scale, and its title line", async ({
+  page,
+}) => {
+  await openApp(page);
+  await chooseFile(page, () => enter(page, "OPEN"), {
+    name: "layouts.dxf",
+    mimeType: "application/dxf",
+    buffer: readFileSync(fixturePath("valid/layouts.dxf")),
+  });
+  await expect(logLines(page).filter({ hasText: "Imported 3 lines, 1 viewport." })).toHaveCount(1);
+  await page.getByRole("button", { name: "Dismiss the import report" }).click();
+  await tab(page, "Layout1").click();
+  await expect(space(page)).toHaveText("PAPER");
+  await enter(page, "PLOT");
+  await expect(prompt(page)).toHaveText("Paper size or [A4/A3/A2/A1/A0/Letter/Tabloid] <A3>:");
+  const file = await downloadFrom(page, () => enter(page, "", "", "", "", ""));
+  expect(file.name).toBe("layouts-Layout1.pdf");
+  expect(file.text).toContain("/MediaBox [0 0 1190.551 841.89]");
+  // The title line from (10, 10) to (287, 10), in points.
+  expect(file.text).toContain("\n28.346 28.346 m\n813.543 28.346 l\n");
+  // The viewport's frame as a clip, and the model's line through it.
+  expect(file.text).toContain("\nq\n28.346 28.346 785.197 538.583 re W n\n");
+  expect(file.text).toContain("\n286.299 230.315 m\n555.591 230.315 l\n");
+  await expect(logLines(page).last()).toHaveText(
+    'Plotting the sheet of layout "Layout1" on A3, to fit.',
+  );
+});

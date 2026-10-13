@@ -1504,6 +1504,7 @@ impl<'a> Reader<'a> {
                 order,
                 Layout {
                     name,
+                    paper_size: None,
                     kept: groups,
                     block_record_handle,
                     block_name,
@@ -1535,6 +1536,7 @@ impl<'a> Reader<'a> {
             layouts.push((
                 Layout {
                     name,
+                    paper_size: None,
                     kept: Vec::new(),
                     block_record_handle: String::new(),
                     block_name: block.name,
