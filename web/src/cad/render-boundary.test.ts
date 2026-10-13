@@ -71,7 +71,11 @@ describe("WASM API surface", () => {
       "scene_triangle_batches",
       "scene_triangle_styles",
       "scene_triangles",
+      // ADR-0024: the autosave's snapshot in slices — begun, stepped by a budget of records, taken as one buffer.
+      "snapshot_begin",
+      "snapshot_bytes",
       "snapshot_dxf",
+      "snapshot_step",
       "submit_text",
       "take_host_request",
       "ui_state",

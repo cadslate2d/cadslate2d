@@ -18,7 +18,8 @@ use cad_document::{
     ArcEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity, Color, DimStyle,
     DimStyleId, DimensionEntity, Drawing, DrawingSettings, Entity, EntityRecord, HatchEntity,
     HatchStyle, Justification, Layer, LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight,
-    MTextEntity, Measure, PolylineEntity, Properties, TextEntity, TextStyle, TextStyleTable,
+    MTextEntity, Measure, PolylineEntity, Properties, Revision, TextEntity, TextStyle,
+    TextStyleTable,
 };
 
 use crate::properties::{
@@ -102,53 +103,167 @@ impl Structure {
 /// handles in that order, and coordinates use the shortest decimal form
 /// that reads back to exactly the same `f64`.
 pub fn export(drawing: &Drawing) -> String {
-    let mut handles = Handles(1);
-    let structure = Structure::allocate(&mut handles);
-    // One block record per definition, in table order; the record is what
-    // a definition's entities name as their owner.
-    let block_records: Vec<Handle> = drawing
-        .blocks()
-        .iter()
-        .filter(|(id, _)| *id != BlockId::FIRST)
-        .map(|_| handles.take())
-        .collect();
-    // One anonymous block per dimension, holding its geometry as our
-    // layout draws it, for a reader that does not lay dimensions out.
-    let dimensions = dimensions_in_write_order(drawing);
-    let dimension_records: Vec<Handle> = dimensions.iter().map(|_| handles.take()).collect();
-    let mut body = Writer {
-        out: String::new(),
-        handles,
-        dimensions_named: 0,
-    };
-    body.group(0, "SECTION");
-    body.group(2, "CLASSES");
-    body.group(0, "ENDSEC");
-    body.section("TABLES", |w| {
-        w.tables(drawing, &structure, &block_records, &dimension_records);
-    });
-    body.section("BLOCKS", |w| {
-        w.blocks(drawing, &structure, &block_records);
-        w.dimension_blocks(drawing, &dimensions, &dimension_records);
-    });
-    body.section("ENTITIES", |w| {
-        let mut records: Vec<(EntityId, &EntityRecord)> = drawing.records().collect();
-        records.sort_unstable_by_key(|(id, _)| *id);
-        for (_, record) in records {
-            w.record(record, structure.model_space, drawing);
-        }
-    });
-    body.section("OBJECTS", |w| w.objects(&structure));
-    body.group(0, "EOF");
+    Export::begin(drawing)
+        .finish(drawing)
+        .expect("a borrowed drawing cannot change")
+}
 
-    // The header names the first free handle, so it is written last.
-    let mut header = Writer {
-        out: String::new(),
-        handles: Handles(0),
-        dimensions_named: 0,
-    };
-    header.section("HEADER", |w| w.header(drawing, body.handles.seed()));
-    header.out + &body.out
+/// The drawing changed while an export in slices was under way: what was
+/// written no longer describes it, and the job is over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DrawingChanged;
+
+/// Where an export in slices has got to.
+enum Phase {
+    /// The next dimension's anonymous block to write, in BLOCKS.
+    DimensionBlocks(usize),
+    /// The next record to write, in ENTITIES.
+    Entities(usize),
+    Done,
+}
+
+/// An export in slices (#178, ADR-0024): begun at one revision of the
+/// drawing, it writes as many records per step as it is given, so an
+/// autosave can share the main thread with the frames between steps. A
+/// change to the drawing meanwhile ends it. Stepped to the end in one go,
+/// it is [`export`].
+pub struct Export {
+    body: Writer,
+    revision: Revision,
+    structure: Structure,
+    dimensions: Vec<(DimensionEntity, Properties)>,
+    dimension_records: Vec<Handle>,
+    /// Every entity's ID, in the order their records are written.
+    ids: Vec<EntityId>,
+    phase: Phase,
+}
+
+impl std::fmt::Debug for Export {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (phase, at) = match self.phase {
+            Phase::DimensionBlocks(n) => ("dimension blocks", n),
+            Phase::Entities(n) => ("entities", n),
+            Phase::Done => ("done", 0),
+        };
+        f.debug_struct("Export")
+            .field("revision", &self.revision)
+            .field("phase", &phase)
+            .field("at", &at)
+            .field("written", &self.body.out.len())
+            .finish()
+    }
+}
+
+impl Export {
+    /// Writes everything before the first record: the classes, the tables,
+    /// and the block definitions.
+    pub fn begin(drawing: &Drawing) -> Self {
+        let mut handles = Handles(1);
+        let structure = Structure::allocate(&mut handles);
+        // One block record per definition, in table order; the record is
+        // what a definition's entities name as their owner.
+        let block_records: Vec<Handle> = drawing
+            .blocks()
+            .iter()
+            .filter(|(id, _)| *id != BlockId::FIRST)
+            .map(|_| handles.take())
+            .collect();
+        // One anonymous block per dimension, holding its geometry as our
+        // layout draws it, for a reader that does not lay dimensions out.
+        let dimensions = dimensions_in_write_order(drawing);
+        let dimension_records: Vec<Handle> = dimensions.iter().map(|_| handles.take()).collect();
+        let mut body = Writer {
+            out: String::new(),
+            handles,
+            dimensions_named: 0,
+        };
+        body.group(0, "SECTION");
+        body.group(2, "CLASSES");
+        body.group(0, "ENDSEC");
+        body.section("TABLES", |w| {
+            w.tables(drawing, &structure, &block_records, &dimension_records);
+        });
+        body.group(0, "SECTION");
+        body.group(2, "BLOCKS");
+        body.blocks(drawing, &structure, &block_records);
+        let mut ids: Vec<EntityId> = drawing.records().map(|(id, _)| id).collect();
+        ids.sort_unstable();
+        Self {
+            body,
+            revision: drawing.revision(),
+            structure,
+            dimensions,
+            dimension_records,
+            ids,
+            phase: Phase::DimensionBlocks(0),
+        }
+    }
+
+    /// Writes up to `budget` more records — a dimension's block counts as
+    /// one — and says whether the file is complete.
+    pub fn step(&mut self, drawing: &Drawing, budget: usize) -> Result<bool, DrawingChanged> {
+        if drawing.revision() != self.revision {
+            return Err(DrawingChanged);
+        }
+        let mut left = budget;
+        loop {
+            match self.phase {
+                Phase::DimensionBlocks(n) if n < self.dimensions.len() => {
+                    if left == 0 {
+                        return Ok(false);
+                    }
+                    let (dimension, properties) = &self.dimensions[n];
+                    self.body.dimension_block(
+                        drawing,
+                        n,
+                        dimension,
+                        *properties,
+                        self.dimension_records[n],
+                    );
+                    self.phase = Phase::DimensionBlocks(n + 1);
+                    left -= 1;
+                }
+                Phase::DimensionBlocks(_) => {
+                    self.body.group(0, "ENDSEC");
+                    self.body.group(0, "SECTION");
+                    self.body.group(2, "ENTITIES");
+                    self.phase = Phase::Entities(0);
+                }
+                Phase::Entities(n) if n < self.ids.len() => {
+                    if left == 0 {
+                        return Ok(false);
+                    }
+                    if let Some(record) = drawing.record(self.ids[n]) {
+                        self.body
+                            .record(record, self.structure.model_space, drawing);
+                    }
+                    self.phase = Phase::Entities(n + 1);
+                    left -= 1;
+                }
+                Phase::Entities(_) => {
+                    self.body.group(0, "ENDSEC");
+                    let structure = &self.structure;
+                    self.body.section("OBJECTS", |w| w.objects(structure));
+                    self.body.group(0, "EOF");
+                    self.phase = Phase::Done;
+                }
+                Phase::Done => return Ok(true),
+            }
+        }
+    }
+
+    /// Writes whatever is left and returns the file: the header, which
+    /// names the first free handle, in front of the body.
+    pub fn finish(mut self, drawing: &Drawing) -> Result<String, DrawingChanged> {
+        self.step(drawing, usize::MAX)?;
+        let mut header = Writer {
+            out: String::new(),
+            handles: Handles(0),
+            dimensions_named: 0,
+        };
+        header.section("HEADER", |w| w.header(drawing, self.body.handles.seed()));
+        Ok(header.out + &self.body.out)
+    }
 }
 
 struct Writer {
@@ -569,36 +684,6 @@ impl Writer {
         }
     }
 
-    /// The anonymous blocks (flag 1) of the dimensions, in the order their
-    /// records are written: each holds what the dimension's style lays out
-    /// — lines, arrowhead outlines, the arc, the text — with the
-    /// dimension's properties, as EXPLODE would make them (ADR-0020).
-    fn dimension_blocks(
-        &mut self,
-        drawing: &Drawing,
-        dimensions: &[(DimensionEntity, Properties)],
-        dimension_records: &[Handle],
-    ) {
-        for (n, ((dimension, properties), owner)) in
-            dimensions.iter().zip(dimension_records).enumerate()
-        {
-            let parts = Entity::from(dimension.clone())
-                .exploded(*properties, drawing.tables())
-                .unwrap_or_default();
-            self.block(
-                &dimension_block_name(n + 1),
-                Point2::ORIGIN,
-                1,
-                *owner,
-                |w| {
-                    for (part, properties) in parts {
-                        w.record(&EntityRecord::new(part, properties), *owner, drawing);
-                    }
-                },
-            );
-        }
-    }
-
     fn block(
         &mut self,
         name: &str,
@@ -629,9 +714,34 @@ impl Writer {
         self.group(100, "AcDbBlockEnd");
     }
 
-    // ── ENTITIES ──
+    /// The anonymous block (flag 1) of the n-th dimension, in the order
+    /// their records are written: it holds what the dimension's style lays
+    /// out — lines, arrowhead outlines, the arc, the text — with the
+    /// dimension's properties, as EXPLODE would make them (ADR-0020).
+    fn dimension_block(
+        &mut self,
+        drawing: &Drawing,
+        n: usize,
+        dimension: &DimensionEntity,
+        properties: Properties,
+        owner: Handle,
+    ) {
+        let parts = Entity::from(dimension.clone())
+            .exploded(properties, drawing.tables())
+            .unwrap_or_default();
+        self.block(
+            &dimension_block_name(n + 1),
+            Point2::ORIGIN,
+            1,
+            owner,
+            |w| {
+                for (part, properties) in parts {
+                    w.record(&EntityRecord::new(part, properties), owner, drawing);
+                }
+            },
+        );
+    }
 
-    /// One entity with its properties, as a record of ENTITIES or of a block.
     fn record(&mut self, record: &EntityRecord, owner: Handle, drawing: &Drawing) {
         let layer = drawing
             .layers()

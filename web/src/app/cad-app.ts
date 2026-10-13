@@ -1,6 +1,6 @@
 // The application object: one engine session, one UI store, one frame loop.
 // React components and the canvas binding talk to the engine only through it.
-import { Dirty, HostRequest, type CadEngine, type KeyAction } from "../cad/engine";
+import { Dirty, HostRequest, SnapshotStatus, type CadEngine, type KeyAction } from "../cad/engine";
 import { FrameLoop, type ScheduleFrame } from "./frame-loop";
 import {
   browserHost,
@@ -17,6 +17,11 @@ const DEFAULT_FILE_NAME = "drawing.dxf";
 const RECOVERED_FILE_NAME = "recovered.dxf";
 /** How long after the last change the drawing is kept (ADR-0019). */
 export const AUTOSAVE_DELAY_MS = 1000;
+/**
+ * Records the snapshot writes per slice (ADR-0024): about ten milliseconds
+ * of a large drawing, so the frames between slices are kept.
+ */
+export const SNAPSHOT_SLICE = 2000;
 
 /** Runs `callback` after `ms`; returns what cancels it. `setTimeout`, injectable for tests. */
 export type Timer = (callback: () => void, ms: number) => () => void;
@@ -171,10 +176,7 @@ export class CadApp {
     this.#recoverable = undefined;
     this.ui.setRecovery(undefined);
     if (!record || this.#failed) return;
-    const dirty = this.engine.loadDxf(
-      new TextEncoder().encode(record.text),
-      record.name ?? RECOVERED_FILE_NAME,
-    );
+    const dirty = this.engine.loadDxf(record.bytes, record.name ?? RECOVERED_FILE_NAME);
     this.loop.invalidate(dirty);
     this.#target =
       record.handle && record.name ? { name: record.name, handle: record.handle } : undefined;
@@ -214,6 +216,13 @@ export class CadApp {
     const state = this.engine.uiState();
     if (!exported && !state.unsavedChanges) return;
     this.#keptRevision = state.revision;
+    // The drawing changed while the snapshot was being written: what the
+    // next pause keeps will have the change too.
+    const bytes = await this.#snapshot();
+    if (!bytes) {
+      this.#keptRevision = undefined;
+      return;
+    }
     try {
       // Only a real handle survives the structured clone into storage.
       const handle = this.#target?.handle;
@@ -223,7 +232,7 @@ export class CadApp {
       await this.#host.autosave.save({
         name: state.documentName,
         handle: storable ? handle : undefined,
-        text: this.engine.snapshotDxf(),
+        bytes,
         savedAt,
         exported,
       });
@@ -232,6 +241,34 @@ export class CadApp {
       // Storage refused: the drawing is still on screen; the next change tries again.
       this.#keptRevision = undefined;
     }
+  }
+
+  /**
+   * The drawing as DXF, written a slice per turn of the event loop
+   * (ADR-0024), so frames are drawn between; `undefined` when the drawing
+   * changed meanwhile, or the engine stopped.
+   */
+  #snapshot(): Promise<Uint8Array | undefined> {
+    this.engine.snapshotBegin();
+    return new Promise((resolve) => {
+      const slice = () => {
+        if (this.#failed) {
+          resolve(undefined);
+          return;
+        }
+        switch (this.engine.snapshotStep(SNAPSHOT_SLICE)) {
+          case SnapshotStatus.Running:
+            this.#timer(slice, 0);
+            return;
+          case SnapshotStatus.Done:
+            resolve(this.engine.snapshotBytes());
+            return;
+          case SnapshotStatus.Changed:
+            resolve(undefined);
+        }
+      };
+      slice();
+    });
   }
 
   #afterInput(dirty: number): void {

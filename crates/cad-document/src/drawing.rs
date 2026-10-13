@@ -519,6 +519,11 @@ impl Drawing {
         self.entities.record(id).map(|record| record.properties)
     }
 
+    /// The stored record of an entity: its geometry and its properties.
+    pub fn record(&self, id: EntityId) -> Option<&EntityRecord> {
+        self.entities.record(id)
+    }
+
     /// Every entity with its properties, in dense storage order.
     pub fn records(&self) -> impl Iterator<Item = (EntityId, &EntityRecord)> {
         self.entities.records()

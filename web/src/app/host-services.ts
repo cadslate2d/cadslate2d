@@ -42,8 +42,8 @@ export interface AutosaveRecord {
   readonly name: string | undefined;
   /** Its handle, where the browser gave one, so a recovered drawing knows its file. */
   readonly handle?: FileSystemFileHandle;
-  /** The drawing as DXF. */
-  readonly text: string;
+  /** The drawing as DXF, in UTF-8 bytes: what the engine writes in slices (ADR-0024) and reads back. */
+  readonly bytes: Uint8Array;
   /** When it was kept, in milliseconds since the epoch. */
   readonly savedAt: number;
   /** Whether a file holds this state too: then there is nothing to recover. */
@@ -229,10 +229,16 @@ async function autosaveTransaction<T>(
  * main-thread time. A file handle in the record survives the reload with it.
  */
 export const indexedDbAutosave: AutosaveStore = {
-  load() {
-    return autosaveTransaction<AutosaveRecord | undefined>("readonly", (store) =>
-      store.get(AUTOSAVE_KEY),
-    );
+  async load() {
+    const stored = await autosaveTransaction<
+      (AutosaveRecord & { readonly text?: string }) | undefined
+    >("readonly", (store) => store.get(AUTOSAVE_KEY));
+    if (!stored) return undefined;
+    // A record kept before the snapshot was bytes holds the DXF as text.
+    if (stored.bytes === undefined && typeof stored.text === "string") {
+      return { ...stored, bytes: new TextEncoder().encode(stored.text) };
+    }
+    return stored;
   },
   async save(record) {
     await autosaveTransaction("readwrite", (store) => store.put(record, AUTOSAVE_KEY));

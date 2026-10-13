@@ -6,6 +6,7 @@ import type { LinetypeReport } from "../renderer/webgl/linetype-probe";
 import type { StyleReport } from "../renderer/webgl/style-probe";
 import type { TextCandidate, TextReport } from "../renderer/webgl/text-probe";
 import type { TransportReport } from "../renderer/webgl/transport-probe";
+import type { MainThreadReport } from "./main-thread-probe";
 import type { PersistenceReport } from "./persistence-probe";
 import type { RendererStats } from "../renderer/webgl/webgl-renderer";
 
@@ -31,6 +32,8 @@ export interface DebugHandle {
   readonly textPictures: () => Promise<({ zoom: number } & Record<TextCandidate, string>)[]>;
   /** Runs the local-persistence experiment (ADR-0019): `text` written to each browser store. */
   readonly probePersistence: (text: string) => Promise<PersistenceReport>;
+  /** Measures what opening, exporting, and autosaving `text` hold the main thread for (#178). */
+  readonly probeMainThread: (text: string) => Promise<MainThreadReport>;
   /** Runs the colour-transport experiment (ADR-0014) on generated segments. */
   readonly probeStyles: (
     segments: number,

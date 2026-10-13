@@ -6,6 +6,7 @@ import {
   DirtyKind,
   dirtyRanges,
   KeyAction,
+  SnapshotStatus,
   STYLE_FOREGROUND,
   STYLE_RGB,
   STYLE_WEIGHT_DEFAULT,
@@ -151,6 +152,24 @@ describe("commands", () => {
       (frame) => frame.dirty && dirtyRanges(frame.dirty, DirtyKind.Segments),
     );
     expect(after).toEqual([[0, 3]]);
+  });
+
+  test("the snapshot in slices is the snapshot, and ends when the drawing changes (ADR-0024)", () => {
+    const cad = engine();
+    enter(cad, "L", "0,0", "100,0", "100,50", "0,50", "");
+    enter(cad, "C", "20,20", "5");
+    cad.snapshotBegin();
+    let steps = 0;
+    while (cad.snapshotStep(2) === SnapshotStatus.Running) steps += 1;
+    expect(steps).toBeGreaterThan(0);
+    expect(new TextDecoder().decode(cad.snapshotBytes())).toBe(cad.snapshotDxf());
+    expect(cad.snapshotBytes().length, "taken once").toBe(0);
+
+    cad.snapshotBegin();
+    expect(cad.snapshotStep(1)).toBe(SnapshotStatus.Running);
+    enter(cad, "L", "0,0", "1,1", "");
+    expect(cad.snapshotStep(1)).toBe(SnapshotStatus.Changed);
+    expect(cad.snapshotStep(1), "and it is over").toBe(SnapshotStatus.Changed);
   });
 
   test("ui state follows the command", () => {

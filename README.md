@@ -135,7 +135,7 @@ And a layer has a linetype (`LAYER`, `LType`), as an object can (`LINETYPE`). A 
 
 Layers, colours, linetypes, lineweights, text styles, blocks, and the settings for new objects are written to DXF (release 2000) and read back from any release. What every record, table, and header variable becomes, read and written, is one page: [`docs/dxf-matrix.md`](docs/dxf-matrix.md).
 
-The drawing is also kept in the browser: a second after the last change it is autosaved to IndexedDB as DXF, and a drawing that was not saved before the tab was closed is offered back on the next start — *Recover* or *Discard* ([ADR-0019](docs/adr/0019-local-persistence.md)). Saving marks it as held by a file. Nothing leaves the browser. Should the engine itself fail — a Rust panic — the page says so, stops, and offers a reload; the autosave is not written again, so the reload offers the drawing as it was last kept, a second or less before the failure.
+The drawing is also kept in the browser: a second after the last change it is autosaved to IndexedDB as DXF — written a few thousand records per turn of the event loop, so a large drawing's autosave never freezes the page, and started over if the drawing changes meanwhile ([ADR-0024](docs/adr/0024-autosave-in-slices.md)) — and a drawing that was not saved before the tab was closed is offered back on the next start — *Recover* or *Discard* ([ADR-0019](docs/adr/0019-local-persistence.md)). Saving marks it as held by a file. Nothing leaves the browser. Should the engine itself fail — a Rust panic — the page says so, stops, and offers a reload; the autosave is not written again, so the reload offers the drawing as it was last kept, a second or less before the failure.
 
 What each browser gets (DESIGN §25.3): in Chromium-based browsers, `OPEN` keeps a handle to the file and `SAVE` writes back to it, asking only the first time, and a recovered drawing remembers its file; in Firefox and Safari, which have no writable file handles on the page, `OPEN` is a file chooser and every save is a download — the same import, autosave, and export, with the file landing in the downloads folder. The page title and the status bar show the file's name and a `•` while the drawing has changes no file holds.
 
@@ -198,6 +198,7 @@ pnpm --dir web dev
 | Production bundle | `pnpm --dir web build` → `web/dist/` |
 | End-to-end tests (needs a production bundle) | `pnpm --dir web e2e` |
 | Rust benchmarks (store, index, scene, snapping, grips, offset, blocks, annotation, the mixed drawing) | `cargo bench -p cad-benchmarks` |
+| Coverage-guided fuzzing of the DXF reader and the input grammar (#177), each target for a bounded time; needs `rustup toolchain install nightly && cargo install cargo-fuzz`; a crash lands in `fuzz/artifacts/` and becomes a fixture and a fix | `scripts/fuzz.sh [seconds] [target …]` |
 | Re-record visual baselines (Chromium) | `E2E_BROWSERS=chromium pnpm --dir web exec playwright test --update-snapshots` |
 | Generate a benchmark drawing | `cargo run --release -p cad-benchmarks --bin generate-drawing -- 100000 benches/generated-drawings/lines-100k.dxf` |
 | Render-transport measurement in the browser | `pnpm --dir web bench:transport` (after `build` and generating `lines-1k`, `-10k`, `-100k`) |

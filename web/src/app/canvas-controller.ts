@@ -81,6 +81,10 @@ export class CanvasController {
         const { probePersistence } = await import("./persistence-probe");
         return probePersistence(text);
       },
+      probeMainThread: async (text) => {
+        const { probeMainThread } = await import("./main-thread-probe");
+        return probeMainThread(text);
+      },
       probeCurves: async (arcCount) => {
         const { probeCurves } = await import("../renderer/webgl/curve-probe");
         return probeCurves(arcCount);

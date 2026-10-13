@@ -111,6 +111,39 @@ fn every_valid_fixture_round_trips_stably() {
     }
 }
 
+/// ADR-0024: the export in slices, however small the slices, is the export.
+#[test]
+fn every_valid_fixture_exports_the_same_in_slices() {
+    for (name, bytes) in each("valid") {
+        let drawing = import(&bytes).unwrap().drawing;
+        let mut job = cad_dxf::Export::begin(&drawing);
+        let mut steps = 0;
+        while !job.step(&drawing, 3).unwrap() {
+            steps += 1;
+        }
+        assert_eq!(job.finish(&drawing).unwrap(), export(&drawing), "{name}");
+        // Three records fit one step; the transition after them costs none.
+        assert!(steps > 0 || drawing.len() <= 3, "{name}: {steps} steps");
+    }
+}
+
+#[test]
+fn a_change_ends_an_export_in_slices() {
+    let mut drawing = import(&fs::read(fixtures("valid").join("minimal-line.dxf")).unwrap())
+        .unwrap()
+        .drawing;
+    let mut job = cad_dxf::Export::begin(&drawing);
+    let mut tx = drawing.transaction();
+    tx.insert(line(0.0, 0.0, 1.0, 1.0)).unwrap();
+    tx.commit();
+    assert_eq!(job.step(&drawing, 1), Err(cad_dxf::DrawingChanged));
+    assert_eq!(
+        cad_dxf::Export::begin(&drawing).finish(&drawing).unwrap(),
+        export(&drawing),
+        "begun afresh, it is the drawing as it is now"
+    );
+}
+
 #[test]
 fn every_malformed_fixture_is_rejected_without_panicking() {
     for (name, bytes) in each("malformed") {

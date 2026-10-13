@@ -239,6 +239,17 @@ export interface FrameBuffers {
   readonly dirty?: Uint32Array;
 }
 
+/** What `snapshotStep` answers. */
+export const SnapshotStatus = {
+  /** More to write: step again. */
+  Running: 0,
+  /** The file is complete: `snapshotBytes` has it. */
+  Done: 1,
+  /** The drawing changed since the snapshot began, or none was begun: begin again after the next pause. */
+  Changed: 2,
+} as const;
+export type SnapshotStatus = (typeof SnapshotStatus)[keyof typeof SnapshotStatus];
+
 /** The instance kind a dirty range names. */
 export const DirtyKind = {
   Segments: 0,
@@ -432,6 +443,21 @@ export class CadEngine {
   /** The drawing as ASCII DXF, for a save or an autosave: marks nothing. */
   snapshotDxf(): string {
     return this.#session.snapshot_dxf();
+  }
+
+  /** Begins the same snapshot in slices (ADR-0024): `snapshotStep` writes it a few records at a time. */
+  snapshotBegin(): void {
+    this.#session.snapshot_begin();
+  }
+
+  /** Writes up to `budget` more records of the snapshot under way; see `SnapshotStatus`. */
+  snapshotStep(budget: number): SnapshotStatus {
+    return this.#session.snapshot_step(budget) as SnapshotStatus;
+  }
+
+  /** The completed snapshot as UTF-8 bytes, owned. Empty when none is complete. */
+  snapshotBytes(): Uint8Array {
+    return this.#session.snapshot_bytes();
   }
 
   /** Records that the drawing was saved — to `name`, when it has a file now. */

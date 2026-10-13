@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { CadEngine, Dirty, EngineFailure, KeyAction } from "../cad/engine";
 import { loadEngineForTests } from "../cad/test-support";
-import { AUTOSAVE_DELAY_MS, CadApp, DISCARD_CHANGES_MESSAGE } from "./cad-app";
+import { AUTOSAVE_DELAY_MS, CadApp, DISCARD_CHANGES_MESSAGE, SNAPSHOT_SLICE } from "./cad-app";
 import type { AutosaveRecord, AutosaveStore, FileAccess, FileTarget } from "./host-services";
 import type { HostServices, PickedFile } from "./host-services";
 
@@ -117,19 +117,25 @@ function harness() {
     scheduled.splice(0).forEach((callback) => callback());
   };
   /** Fires every pending timer, as if the time had passed. */
+  /** Fires every pending timer, and what those schedule, as if the time had passed. */
   const elapse = async () => {
-    timers.splice(0).forEach((timer) => timer.callback());
+    for (let round = 0; round < 100 && timers.length > 0; round += 1) {
+      timers.splice(0).forEach((timer) => timer.callback());
+      await tick();
+    }
     await tick();
   };
+  const decode = (record: AutosaveRecord | undefined) =>
+    record ? new TextDecoder().decode(record.bytes) : undefined;
   const enter = (...lines: string[]) => lines.forEach((line) => app.submitText(line));
   const segmentCount = () => engine.readScene((frame) => frame.segments.length / 4);
-  return { app, engine, host, tick, elapse, timers, scheduled, enter, segmentCount };
+  return { app, engine, host, tick, elapse, timers, scheduled, enter, segmentCount, decode };
 }
 
 // DESIGN §25, ADR-0019: the drawing is kept in the browser and offered back.
 describe("autosave and recovery", () => {
   test("a pause after a change keeps the drawing once, as unexported", async () => {
-    const { app, host, tick, elapse, timers, enter } = harness();
+    const { app, host, tick, elapse, timers, enter, decode } = harness();
     await tick();
     expect(timers).toHaveLength(0);
     enter("L", "0,0", "100,50", "");
@@ -147,7 +153,7 @@ describe("autosave and recovery", () => {
     const record = host.autosave.record;
     expect(record?.exported).toBe(false);
     expect(record?.name).toBeUndefined();
-    expect(record?.text).toContain("CIRCLE");
+    expect(decode(record)).toContain("CIRCLE");
     expect(app.ui.getSnapshot().unsavedChanges).toBe(true);
 
     // Nothing changed since: a redraw schedules nothing more.
@@ -157,12 +163,12 @@ describe("autosave and recovery", () => {
   });
 
   test("exporting keeps the drawing as exported, so a reload has nothing to recover", async () => {
-    const { host, tick, elapse, enter } = harness();
+    const { host, tick, elapse, enter, decode } = harness();
     enter("L", "0,0", "100,50", "", "DXFOUT");
     await tick();
     expect(host.files.saved).toHaveLength(1);
     expect(host.autosave.record?.exported).toBe(true);
-    expect(host.autosave.record?.text).toBe(host.files.saved[0]?.text);
+    expect(decode(host.autosave.record)).toBe(host.files.saved[0]?.text);
     // The pending autosave was cancelled by the export.
     await elapse();
     expect(host.autosave.saves).toBe(1);
@@ -172,7 +178,7 @@ describe("autosave and recovery", () => {
     const { app, host, tick, enter, segmentCount } = harness();
     host.autosave.record = {
       name: "plan.dxf",
-      text: cleanFile,
+      bytes: encode(cleanFile),
       savedAt: 1_700_000_000_000,
       exported: false,
     };
@@ -198,7 +204,12 @@ describe("autosave and recovery", () => {
 
   test("a kept drawing can be declined, which frees the slot", async () => {
     const { app, host } = harness();
-    host.autosave.record = { name: undefined, text: cleanFile, savedAt: 1, exported: false };
+    host.autosave.record = {
+      name: undefined,
+      bytes: encode(cleanFile),
+      savedAt: 1,
+      exported: false,
+    };
     await app.start();
     expect(app.ui.getSnapshot().recovery).toBeDefined();
     app.discardRecovery();
@@ -209,7 +220,12 @@ describe("autosave and recovery", () => {
 
   test("an exported record is not offered, and opening a file replaces the kept drawing", async () => {
     const { app, host, tick, enter } = harness();
-    host.autosave.record = { name: "old.dxf", text: cleanFile, savedAt: 1, exported: true };
+    host.autosave.record = {
+      name: "old.dxf",
+      bytes: encode(cleanFile),
+      savedAt: 1,
+      exported: true,
+    };
     await app.start();
     expect(app.ui.getSnapshot().recovery).toBeUndefined();
 
@@ -629,5 +645,43 @@ describe("a panic in the engine", () => {
     app.reload();
     expect(host.reloads).toBe(1);
     expect(() => app.dispose()).not.toThrow();
+  });
+});
+
+// #178, ADR-0024: the snapshot is written in slices, a turn of the event
+// loop apart, and abandoned when the drawing changes under it.
+describe("the autosave in slices", () => {
+  test("a change while the snapshot is being written abandons it; the next pause keeps both", async () => {
+    const { app, host, tick, timers, enter, decode } = harness();
+    await tick();
+    // Many entities: more than one slice.
+    enter("L");
+    for (let i = 0; i <= SNAPSHOT_SLICE + 1; i += 1) enter(`${i},0`);
+    enter("");
+    await tick();
+    expect(timers).toHaveLength(1);
+    // The pause ends: the first slice runs and schedules the next.
+    timers.splice(0).forEach((timer) => timer.callback());
+    expect(timers.map((timer) => timer.ms)).toEqual([0]);
+    expect(host.autosave.saves).toBe(0);
+
+    // A change now: the slice under way finds the drawing changed.
+    enter("C", "10,10", "5");
+    await tick();
+    const slice = timers.findIndex((timer) => timer.ms === 0);
+    timers.splice(slice, 1).forEach((timer) => timer.callback());
+    await tick();
+    expect(host.autosave.saves, "abandoned, not written").toBe(0);
+    // The change scheduled its own pause; when it ends, the whole drawing is kept.
+    expect(timers.map((timer) => timer.ms)).toEqual([AUTOSAVE_DELAY_MS]);
+    for (let round = 0; round < 100 && timers.length > 0; round += 1) {
+      timers.splice(0).forEach((timer) => timer.callback());
+      await tick();
+    }
+    expect(host.autosave.saves).toBe(1);
+    const kept = decode(host.autosave.record) ?? "";
+    expect(kept).toContain("CIRCLE");
+    expect(kept.split("\nAcDbLine\n").length - 1).toBe(SNAPSHOT_SLICE + 1);
+    expect(app.ui.getSnapshot().unsavedChanges).toBe(true);
   });
 });

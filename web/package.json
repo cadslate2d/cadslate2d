@@ -20,7 +20,8 @@
     "bench:linetypes": "playwright test --config playwright.bench.config.ts --project=chromium linetypes",
     "bench:text": "playwright test --config playwright.bench.config.ts --project=chromium text",
     "bench:persistence": "playwright test --config playwright.bench.config.ts persistence",
-    "bench:mixed": "playwright test --config playwright.bench.config.ts mixed"
+    "bench:mixed": "playwright test --config playwright.bench.config.ts mixed",
+    "bench:main-thread": "playwright test --config playwright.bench.config.ts main-thread"
   },
   "dependencies": {
     "react": "^19.3.0",

@@ -22,6 +22,6 @@ mod report;
 mod text_codes;
 
 pub use error::DxfError;
-pub use export::export;
+pub use export::{DrawingChanged, Export, export};
 pub use import::{Import, ImportLimits, import, import_with_limits};
 pub use report::ImportReport;

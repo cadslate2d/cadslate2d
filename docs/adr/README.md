@@ -34,6 +34,7 @@ There are two kinds:
 | [0021](0021-filled-regions.md) | Filled regions: triangles as a third committed instance kind, cut from the boundary when asked | Accepted | Evidence |
 | [0022](0022-scene-chunks.md) | Scene chunks: an edit re-packs the chunk that holds what changed, and the frame uploads the ranges that moved | Accepted | Evidence |
 | [0023](0023-viewport-culling.md) | Viewport culling: not taken up — zoomed-in frames are the cheaper ones, and the floor is the rasteriser's per-instance work | Accepted | Evidence |
+| [0024](0024-autosave-in-slices.md) | No worker; the autosave is written in slices on the main thread, a change under it abandoning the job | Accepted | Evidence |
 
 ## Expected evidence ADRs
 

@@ -72,6 +72,20 @@ Sixty frames at 10k; at 50k and 100k the run is not attempted by default, a fram
 
 Three seconds a frame is SwiftShader rasterising 143,000 segments, 4,000 arcs, and 13,600 triangles: about 20 µs an instance, where Firefox's software renderer takes 60 ns and ADR-0009 measured 10k plain arcs at 175 ms in the same Chromium. The open, which is the engine alone, is the same as Firefox's.
 
+## The main thread (2026-10-12, #178)
+
+`pnpm --dir web bench:main-thread`: the mixed drawings opened, exported, and autosaved in a throwaway engine, each measured as the time the main thread is held; for an autosave, the longest gap between two animation frames while it runs. Two cores were busy fuzzing during the "whole" rows.
+
+| | 10k | 50k | 100k |
+| --- | --- | --- | --- |
+| Open, Firefox / Chromium | 64 / 98 ms | 313 / 305 ms | 447 / 436 ms |
+| Export, Firefox / Chromium | 55 / 46 ms | 269 / 256 ms | 531 / 416 ms |
+| Autosave, whole: the thread held, Firefox / Chromium | 50 / 70 ms | 268 / 244 ms | 539 / 424 ms |
+| Autosave in slices (ADR-0024): the thread held, Firefox / Chromium | 18 / 18 ms | 42 / 48 ms | 64 / 54 ms |
+| Autosave in slices: until durable, Firefox / Chromium | 73 / 51 ms | 463 / 389 ms | 935 / 704 ms |
+
+The open and the export are user actions within a second at 100k; the autosave recurred after every pause and held the thread for as long as the export, which is why it is now written in slices ([ADR-0024](adr/0024-autosave-in-slices.md)): the thread is held for the last step alone, the file taken as one buffer and put into IndexedDB. No worker: the drawing stays where it is.
+
 ## Against the targets
 
 | Target | 10k effortless | 50k smooth | 100k usable |

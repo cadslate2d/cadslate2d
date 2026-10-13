@@ -29,7 +29,9 @@ const KEY = "probe";
 const FILE = "probe.dxf";
 
 /** Watches animation frames while `work` runs: the longest gap is how long the thread was held. */
-async function withFrameWatch<T>(work: () => Promise<T>): Promise<{ result: T; gap: number }> {
+export async function withFrameWatch<T>(
+  work: () => Promise<T>,
+): Promise<{ result: T; gap: number }> {
   let last = performance.now();
   let gap = 0;
   let watching = true;

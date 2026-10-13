@@ -197,6 +197,8 @@ impl From<UiState> for UiStateDto {
 pub struct CadSession {
     session: Session,
     scene: SceneCache,
+    /// An autosave snapshot under way, in slices (#178).
+    snapshot: Option<cad_dxf::Export>,
     overlay: OverlayFrame,
     /// Set by any input that reports `Dirty::OVERLAY`; cleared when rebuilt.
     overlay_stale: bool,
@@ -234,6 +236,7 @@ impl CadSession {
         Self {
             session: Session::new(),
             scene: SceneCache::new(),
+            snapshot: None,
             overlay: OverlayFrame::new(),
             overlay_stale: true,
         }
@@ -359,6 +362,43 @@ impl CadSession {
     /// marks nothing, so what the user has and has not exported stays true.
     pub fn snapshot_dxf(&self) -> String {
         cad_dxf::export(self.session.drawing())
+    }
+
+    /// Begins a snapshot in slices (#178, ADR-0024): the same file as
+    /// `snapshot_dxf`, written a few records per `snapshot_step`, so the
+    /// autosave of a large drawing shares the main thread with the frames
+    /// between. Begins afresh if one was under way.
+    pub fn snapshot_begin(&mut self) {
+        self.snapshot = Some(cad_dxf::Export::begin(self.session.drawing()));
+    }
+
+    /// Writes up to `budget` more records of the snapshot: 0 while there
+    /// is more to write, 1 when the file is complete, 2 when the drawing
+    /// changed since the snapshot began — it is dropped, and the next pause
+    /// begins another — or none was begun.
+    pub fn snapshot_step(&mut self, budget: u32) -> u32 {
+        let Some(job) = self.snapshot.as_mut() else {
+            return 2;
+        };
+        match job.step(self.session.drawing(), budget as usize) {
+            Ok(true) => 1,
+            Ok(false) => 0,
+            Err(_) => {
+                self.snapshot = None;
+                2
+            }
+        }
+    }
+
+    /// The completed snapshot as UTF-8 bytes, which ends it; empty when
+    /// none is complete. Owned: safe to keep.
+    pub fn snapshot_bytes(&mut self) -> Uint8Array {
+        let text = self
+            .snapshot
+            .take()
+            .and_then(|job| job.finish(self.session.drawing()).ok())
+            .unwrap_or_default();
+        Uint8Array::from(text.as_bytes())
     }
 
     /// Records that the host has saved the drawing (the text of
