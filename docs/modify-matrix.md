@@ -70,6 +70,8 @@ A spline is read as its chords too (#182), subdivided until flat to a quarter of
 
 A hatch is an area, not a curve ([ADR-0021](adr/0021-filled-regions.md)): it is picked by its fill and its boundary; nothing snaps to, intersects, or trims against it. Tests: `cad-commands/src/tests/hatch.rs`, `cad-document/src/hatch.rs`.
 
+A leader (#205) is annotation like a dimension: laid out by its dimension style, picked by its lines, arrowhead, and note's box, snapping at its vertices and its note's insertion point, moved, turned, scaled, and mirrored whole, stretched by its vertices, and refused by every curve command.
+
 A dimension is not geometry of the drawing ([ADR-0020](adr/0020-dimensions.md)): nothing snaps to, intersects, trims against, or extends to its lines. It is picked by its lines, arrowheads, and text box; it offers the points it measures, its vertex or centre, and its text's insertion point to snap to. Tests: `cad-commands/src/tests/dimension.rs`, `cad-document/src/dimension.rs`.
 | [EXPLODE](#explode) | no | no | no | no | no | its lines and arcs | its lines and arcs | no | its definition's objects, placed; one level |
 

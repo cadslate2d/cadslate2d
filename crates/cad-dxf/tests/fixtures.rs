@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use cad_core::{Point2, Vec2};
 use cad_document::{
     BlockReferenceEntity, Color, DimStyleId, Drawing, Entity, Justification, Layer, LayerId,
-    Layout, LayoutId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity,
-    PointStyle, Properties, PurgeScope, TextEntity, TextStyleId, ViewportEntity,
+    Layout, LayoutId, LeaderEntity, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight,
+    MTextEntity, PointStyle, Properties, PurgeScope, TextEntity, TextStyleId, ViewportEntity,
 };
 use cad_dxf::{DxfError, Import, export, import};
 
@@ -483,6 +483,68 @@ fn a_layout_made_here_and_a_renamed_one_are_written_and_read_back() {
     assert!(!text.contains("\n  1\nLayout2\n"));
     let back = cad_dxf::import(text.as_bytes()).unwrap();
     assert_eq!(back.report.layouts, vec!["Layout1", "Details"]);
+}
+
+/// #205: leaders from another writer — one with an MTEXT note named by
+/// handle, which becomes the leader's words and no entity of its own;
+/// one with no note, ending leftwards; one with a spline path, read
+/// straight — in their styles; a paragraph that is no note stays one;
+/// written back with the note as an MTEXT under the leader's 340.
+#[test]
+fn leaders_from_another_writer_take_their_notes_and_round_trip() {
+    let import = load("valid", "ezdxf-r2010-leaders.dxf").unwrap();
+    assert_eq!(import.report.leaders, 3);
+    assert_eq!(
+        import.report.texts, 1,
+        "the note is the leader's, the paragraph its own"
+    );
+    assert!(
+        !import.report.has_unsupported_content(),
+        "{:?}",
+        import.report
+    );
+    let drawing = &import.drawing;
+    let leaders: Vec<&LeaderEntity> = drawing
+        .shown()
+        .filter_map(|(_, entity)| match entity {
+            Entity::Leader(leader) => Some(leader),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(leaders.len(), 3);
+    assert_eq!(leaders[0].text.as_deref(), Some("See detail"));
+    assert_eq!(
+        leaders[0].vertices,
+        vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(10.0, 10.0),
+            Point2::new(20.0, 10.0)
+        ]
+    );
+    let notes = drawing.dim_styles().find("NOTES").unwrap();
+    assert_eq!(leaders[0].style, notes);
+    assert_eq!(drawing.dim_styles().get(notes).unwrap().arrow_size, 3.0);
+    assert_eq!(leaders[1].text, None);
+    assert_eq!(leaders[1].style, DimStyleId::FIRST);
+    assert_eq!(leaders[2].vertices.len(), 3, "a spline path, read straight");
+    assert_eq!(drawing.shown().count(), 4);
+
+    let text = export(drawing);
+    assert!(text.contains("\n  0\nLEADER\n"));
+    assert!(text.contains("\n 73\n0\n") && text.contains("\n 73\n3\n"));
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(back.report.leaders, 3);
+    assert_eq!(back.report.texts, 1);
+    let again: Vec<Option<String>> = back
+        .drawing
+        .shown()
+        .filter_map(|(_, entity)| match entity {
+            Entity::Leader(leader) => Some(leader.text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(again, vec![Some("See detail".to_owned()), None, None]);
+    assert_eq!(export(&back.drawing), text, "stable on the second pass");
 }
 
 /// #204: a polyline's constant width from another writer — an

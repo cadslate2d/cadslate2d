@@ -163,6 +163,20 @@ pub fn entity_snap_points(entity: &Entity, mode: SnapMode, tables: Tables<'_>) -
             _ => Vec::new(),
         };
     }
+    // A leader offers its vertices as endpoints and its note's insertion
+    // point (#205): annotation, like a dimension.
+    if let Entity::Leader(leader) = entity {
+        return match mode {
+            SnapMode::Endpoint => leader.vertices.clone(),
+            SnapMode::Insertion => leader
+                .layout(tables.dim_style(leader.style))
+                .text
+                .map(|text| text.insertion)
+                .into_iter()
+                .collect(),
+            _ => Vec::new(),
+        };
+    }
     // A point offers its place as a node and nothing else (#198).
     if let Entity::Point(point) = entity {
         return match mode {

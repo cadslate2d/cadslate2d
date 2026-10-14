@@ -594,6 +594,16 @@ pub fn walk_entity(entity: &Entity, tables: Tables<'_>, sink: &mut impl Geometry
             }
             walk_strokes(sink, layout.text.strokes());
         }
+        // A leader is laid out by its style like a dimension (#205).
+        Entity::Leader(leader) => {
+            let layout = leader.layout(tables.dim_style(leader.style));
+            for segment in layout.segments() {
+                sink.segment(segment.start, segment.end, 0.0);
+            }
+            if let Some(text) = &layout.text {
+                walk_strokes(sink, text.strokes());
+            }
+        }
     }
 }
 

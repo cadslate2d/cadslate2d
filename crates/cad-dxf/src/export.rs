@@ -19,9 +19,9 @@ use cad_document::{
     ArcEntity, AttributeDefinitionEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity,
     Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity,
     EntityRecord, HatchEntity, HatchStyle, Justification, Layer, Layout, LayoutId, LayoutTable,
-    LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight, MTextEntity, Measure,
-    PointEntity, PolylineEntity, Properties, Revision, SplineEntity, TextEntity, TextStyle,
-    TextStyleTable, ViewportEntity,
+    LeaderEntity, LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight, MTextEntity,
+    Measure, PointEntity, PolylineEntity, Properties, Revision, SplineEntity, TextEntity,
+    TextStyle, TextStyleTable, ViewportEntity,
 };
 
 use crate::properties::{
@@ -973,6 +973,7 @@ impl Writer {
             Entity::Hatch(_) => "HATCH",
             Entity::Viewport(_) => "VIEWPORT",
             Entity::Point(_) => "POINT",
+            Entity::Leader(_) => "LEADER",
         };
         self.entity(kind, owner, layer, &record.properties, drawing.linetypes());
         match &*record.entity {
@@ -995,6 +996,63 @@ impl Writer {
             Entity::Hatch(hatch) => self.hatch(hatch),
             Entity::Viewport(viewport) => self.viewport_entity(viewport),
             Entity::Point(point) => self.point_entity(point),
+            Entity::Leader(leader) => {
+                self.leader(leader, owner, layer, &record.properties, drawing)
+            }
+        }
+    }
+
+    /// A LEADER (#205): its style (3), whether it has a note (73: 0 for
+    /// an MTEXT, 3 for none), its vertices (76, then 10, 20, 30 each),
+    /// and the handle of its note (340); then the note as an MTEXT of
+    /// its own, laid out by the style, under that handle.
+    fn leader(
+        &mut self,
+        leader: &LeaderEntity,
+        owner: Handle,
+        layer: &str,
+        properties: &Properties,
+        drawing: &Drawing,
+    ) {
+        let style = drawing.tables().dim_style(leader.style);
+        let layout = leader.layout(style);
+        let note = layout
+            .text
+            .as_ref()
+            .map(|text| (self.handles.take(), text.clone()));
+        self.group(100, "AcDbLeader");
+        self.group(3, &style.name);
+        self.int(71, 1);
+        self.int(72, 0);
+        self.int(73, if note.is_some() { 0 } else { 3 });
+        self.int(74, 0);
+        self.int(75, 0);
+        self.real(40, style.text_height);
+        self.real(41, layout.text.as_ref().map_or(0.0, TextEntity::width));
+        self.int(76, leader.vertices.len() as i64);
+        for vertex in &leader.vertices {
+            self.point(10, *vertex);
+        }
+        if let Some((handle, text)) = note {
+            self.handle(340, handle);
+            // The note's top left: the text's insertion is its baseline.
+            let top_left = text.start() + Vec2::new(0.0, text.height);
+            let paragraph = MTextEntity::new(
+                top_left,
+                text.width(),
+                text.height,
+                0.0,
+                text.content.clone(),
+            );
+            self.entity_with(
+                handle,
+                "MTEXT",
+                owner,
+                layer,
+                properties,
+                drawing.linetypes(),
+            );
+            self.mtext(&paragraph, drawing.text_styles());
         }
     }
 
@@ -1211,6 +1269,20 @@ impl Writer {
         table: &LinetypeTable,
     ) {
         let handle = self.handles.take();
+        self.entity_with(handle, kind, owner, layer, properties, table);
+    }
+
+    /// An entity record under a handle taken earlier: a LEADER's note,
+    /// which the leader names before the note is written (#205).
+    fn entity_with(
+        &mut self,
+        handle: Handle,
+        kind: &str,
+        owner: Handle,
+        layer: &str,
+        properties: &Properties,
+        table: &LinetypeTable,
+    ) {
         self.group(0, kind);
         self.handle(5, handle);
         self.handle(330, owner);

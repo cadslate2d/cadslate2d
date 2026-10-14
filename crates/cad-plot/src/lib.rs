@@ -368,6 +368,7 @@ impl Painter<'_> {
                         | Entity::Dimension(_)
                         | Entity::Hatch(_)
                         | Entity::Point(_)
+                        | Entity::Leader(_)
                 ) {
                     properties.linetype = Linetype::CONTINUOUS;
                 }

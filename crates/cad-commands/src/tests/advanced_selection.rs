@@ -509,7 +509,7 @@ fn qselect_refuses_what_makes_no_sense_and_asks_again() {
     assert_eq!(
         last(&h),
         "No kind named \"bogus\". The kinds are line, circle, arc, ellipse, spline, polyline, \
-         text, multiline text, attribute definition, block reference, dimension, hatch, viewport, point."
+         text, multiline text, attribute definition, block reference, dimension, hatch, viewport, point, leader."
     );
     assert_eq!(h.prompt(), "Object kind (line, circle, text, …) <all>:");
     h.enter_all(&["", "L", "< walls"]);

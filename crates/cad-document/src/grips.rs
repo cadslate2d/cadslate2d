@@ -125,6 +125,12 @@ impl Entity {
             Entity::Text(text) => vec![grip(GripKind::Insertion, text.insertion)],
             // A point's one grip moves it (#198).
             Entity::Point(point) => vec![grip(GripKind::Center, point.position)],
+            // A leader's every vertex (#205).
+            Entity::Leader(leader) => leader
+                .vertices
+                .iter()
+                .map(|vertex| grip(GripKind::Vertex, *vertex))
+                .collect(),
             Entity::MText(text) => vec![grip(GripKind::Insertion, text.insertion)],
             Entity::AttributeDefinition(definition) => {
                 vec![grip(GripKind::Insertion, definition.text.insertion)]
@@ -305,6 +311,7 @@ impl Entity {
                 )
             }
             Entity::Point(_) => (index == 0).then(|| PointEntity::new(to).into()),
+            Entity::Leader(leader) => leader.with_vertex(index, to).map(Entity::from),
             Entity::Text(text) => (index == 0).then(|| {
                 TextEntity {
                     insertion: to,

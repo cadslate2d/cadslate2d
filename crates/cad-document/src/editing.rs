@@ -19,7 +19,8 @@ use cad_geometry::{
 
 use crate::{
     ArcEntity, AttributeDefinitionEntity, BlockReferenceEntity, CircleEntity, EllipseEntity,
-    Entity, LineEntity, MTextEntity, PointEntity, PolylineEntity, TextEntity, ViewportEntity,
+    Entity, LeaderEntity, LineEntity, MTextEntity, PointEntity, PolylineEntity, TextEntity,
+    ViewportEntity,
 };
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
@@ -200,7 +201,8 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
-            | Entity::Point(_) => return Err(LengthenError::Unsupported(self.kind_name())),
+            | Entity::Point(_)
+            | Entity::Leader(_) => return Err(LengthenError::Unsupported(self.kind_name())),
         };
         let delta = match how {
             Lengthening::Delta(delta) if delta.is_finite() => delta,
@@ -291,6 +293,7 @@ impl Entity {
             // A viewport by its centre: it moves whole, or not at all.
             Entity::Viewport(viewport) => held(&[viewport.center]),
             Entity::Point(point) => held(&[point.position]),
+            Entity::Leader(leader) => held(&leader.vertices),
         }
     }
 
@@ -379,6 +382,13 @@ impl Entity {
                 .into(),
             ),
             Entity::Point(point) => Some(PointEntity::new(moved(point.position)).into()),
+            Entity::Leader(leader) => Some(
+                LeaderEntity {
+                    vertices: leader.vertices.iter().map(|v| moved(*v)).collect(),
+                    ..leader.clone()
+                }
+                .into(),
+            ),
             Entity::Hatch(hatch) => {
                 let stretched = hatch
                     .vertices()
@@ -497,7 +507,8 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
-            | Entity::Point(_) => Err(BreakError::Unsupported(self.kind_name())),
+            | Entity::Point(_)
+            | Entity::Leader(_) => Err(BreakError::Unsupported(self.kind_name())),
             Entity::Polyline(polyline) => {
                 let path = polyline.path();
                 path.broken(first, second, TOLERANCE)
@@ -561,7 +572,8 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
-            | Entity::Point(_) => Err(TrimError::Unsupported(self.kind_name())),
+            | Entity::Point(_)
+            | Entity::Leader(_) => Err(TrimError::Unsupported(self.kind_name())),
             Entity::Line(entity) => trim_segment_parts(&entity.segment(), cuts, pick, TOLERANCE)
                 .map(|parts| TrimParts {
                     kept: parts.kept.into_iter().map(line).collect(),
@@ -649,7 +661,8 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
-            | Entity::Point(_) => Err(ExtendError::Unsupported(self.kind_name())),
+            | Entity::Point(_)
+            | Entity::Leader(_) => Err(ExtendError::Unsupported(self.kind_name())),
             Entity::Polyline(polyline) => {
                 let from_end = polyline_end_is_nearer(polyline, pick);
                 polyline
@@ -718,7 +731,8 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
-            | Entity::Point(_) => None,
+            | Entity::Point(_)
+            | Entity::Leader(_) => None,
         }
     }
 
@@ -784,7 +798,8 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
-            | Entity::Point(_) => Err(CornerError::Unsupported(entity.kind_name())),
+            | Entity::Point(_)
+            | Entity::Leader(_) => Err(CornerError::Unsupported(entity.kind_name())),
         };
         let rebuilt = |original: &Entity, primitive: Primitive| -> Entity {
             match primitive {
@@ -894,6 +909,7 @@ impl Entity {
             Entity::Hatch(_) => "hatch",
             Entity::Viewport(_) => "viewport",
             Entity::Point(_) => "point",
+            Entity::Leader(_) => "leader",
         }
     }
 
@@ -950,7 +966,8 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
-            | Entity::Point(_) => Err(OffsetError::Unsupported(self.kind_name())),
+            | Entity::Point(_)
+            | Entity::Leader(_) => Err(OffsetError::Unsupported(self.kind_name())),
         }
     }
 
@@ -974,7 +991,8 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
-            | Entity::Point(_) => {
+            | Entity::Point(_)
+            | Entity::Leader(_) => {
                 return Err(OffsetError::Unsupported(self.kind_name()));
             }
         };

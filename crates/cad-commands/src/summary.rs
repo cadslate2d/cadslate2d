@@ -12,7 +12,7 @@ use cad_document::{Drawing, Entity, Properties};
 use crate::Selection;
 
 /// The kinds an entity can be, in the order they are listed.
-const KINDS: [(&str, &str); 14] = [
+const KINDS: [(&str, &str); 15] = [
     ("line", "lines"),
     ("circle", "circles"),
     ("arc", "arcs"),
@@ -27,6 +27,7 @@ const KINDS: [(&str, &str); 14] = [
     ("hatch", "hatches"),
     ("viewport", "viewports"),
     ("point", "points"),
+    ("leader", "leaders"),
 ];
 
 /// The kind named by `name` — singular or plural, any case — if any.
@@ -58,6 +59,7 @@ pub(crate) fn kind_index(entity: &Entity) -> usize {
         Entity::Hatch(_) => 11,
         Entity::Viewport(_) => 12,
         Entity::Point(_) => 13,
+        Entity::Leader(_) => 14,
     }
 }
 
@@ -302,6 +304,18 @@ pub(crate) fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, St
             row("On", if viewport.on { "yes" } else { "no" }.to_owned()),
         ],
         Entity::Point(place) => vec![row("Position", point(place.position))],
+        Entity::Leader(leader) => {
+            let style = drawing.tables().dim_style(leader.style);
+            vec![
+                row("Vertices", leader.vertices.len().to_string()),
+                row("Start", point(leader.vertices[0])),
+                row(
+                    "Text",
+                    leader.text.clone().unwrap_or_else(|| "(none)".to_owned()),
+                ),
+                row("Style", style.name.clone()),
+            ]
+        }
         Entity::Hatch(hatch) => {
             let mut rows = vec![row("Pattern", hatch.style.name().to_owned())];
             if let cad_document::HatchStyle::Pattern { angle, scale, .. } = &hatch.style {

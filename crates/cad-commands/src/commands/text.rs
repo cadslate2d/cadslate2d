@@ -200,6 +200,11 @@ enum EditState {
         id: cad_core::EntityId,
         old: String,
     },
+    /// A leader's note (#205): the new words are typed at the prompt.
+    Note {
+        id: cad_core::EntityId,
+        old: String,
+    },
 }
 
 #[derive(Debug)]
@@ -223,13 +228,18 @@ impl Command for TextEditCommand {
                 Prompt::new("Enter new text").with_default(old.clone())
             }
             EditState::Paragraph { .. } => Prompt::new("Edit the text in the editor"),
+            EditState::Note { old, .. } => {
+                Prompt::new("Enter new leader text").with_default(old.clone())
+            }
         }
     }
 
     fn expected(&self) -> ExpectedInput {
         match &self.state {
             EditState::Pick => ExpectedInput::object(),
-            EditState::Content { .. } | EditState::Paragraph { .. } => ExpectedInput::text(),
+            EditState::Content { .. } | EditState::Paragraph { .. } | EditState::Note { .. } => {
+                ExpectedInput::text()
+            }
         }
     }
 
@@ -247,6 +257,14 @@ impl Command for TextEditCommand {
                         self.state = EditState::Paragraph {
                             id: entity,
                             old: text.content.clone(),
+                        };
+                    }
+                    // A leader's note is edited like a text (#205); an
+                    // empty note takes the note away.
+                    Some(Entity::Leader(leader)) => {
+                        self.state = EditState::Note {
+                            id: entity,
+                            old: leader.text.clone().unwrap_or_default(),
                         };
                     }
                     Some(other) => {
@@ -283,7 +301,23 @@ impl Command for TextEditCommand {
                 }
                 return Step::Finished;
             }
-            (EditState::Content { .. } | EditState::Paragraph { .. }, CommandInput::Accept) => {
+            (EditState::Note { id, old }, CommandInput::Text(content)) => {
+                if content != *old
+                    && let Some(Entity::Leader(leader)) = ctx.drawing.entity(*id)
+                {
+                    let edited = leader.clone().saying(Some(content));
+                    let mut transaction = ctx.transaction();
+                    transaction
+                        .replace(*id, edited)
+                        .expect("the picked leader is live and keeps its style");
+                    transaction.commit();
+                }
+                return Step::Finished;
+            }
+            (
+                EditState::Content { .. } | EditState::Paragraph { .. } | EditState::Note { .. },
+                CommandInput::Accept,
+            ) => {
                 return Step::Finished;
             }
             _ => {}

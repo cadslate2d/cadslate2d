@@ -15,14 +15,14 @@ use crate::commands::{
     CornerCommand, DimAngularCommand, DimLinearCommand, DimRadialCommand, DimStyleCommand,
     DistCommand, DivideCommand, DonutCommand, EdgeCommand, EllipseCommand, EraseCommand,
     ExplodeCommand, ExportCommand, GridCommand, HatchCommand, HatchEditCommand, IdCommand,
-    InsertCommand, JoinCommand, LayerCommand, LayoutCommand, LengthenCommand, LineCommand,
-    LinetypeCommand, ListCommand, LtscaleCommand, LweightCommand, MTextCommand, MatchpropCommand,
-    MeasureCommand, MirrorCommand, ModelCommand, MspaceCommand, MviewCommand, OffsetCommand,
-    OpenCommand, OsnapCommand, PanCommand, PeditCommand, PlineCommand, PlotCommand, PointCommand,
-    PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand, QselectCommand,
-    RectangCommand, RedoCommand, RenameCommand, SaveCommand, SelectCommand, SettingsCommand,
-    SplineCommand, StretchCommand, TextCommand, TextEditCommand, TransformCommand, UndoCommand,
-    UnitsCommand, ZoomCommand,
+    InsertCommand, JoinCommand, LayerCommand, LayoutCommand, LeaderCommand, LengthenCommand,
+    LineCommand, LinetypeCommand, ListCommand, LtscaleCommand, LweightCommand, MTextCommand,
+    MatchpropCommand, MeasureCommand, MirrorCommand, ModelCommand, MspaceCommand, MviewCommand,
+    OffsetCommand, OpenCommand, OsnapCommand, PanCommand, PeditCommand, PlineCommand, PlotCommand,
+    PointCommand, PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand,
+    QselectCommand, RectangCommand, RedoCommand, RenameCommand, SaveCommand, SelectCommand,
+    SettingsCommand, SplineCommand, StretchCommand, TextCommand, TextEditCommand, TransformCommand,
+    UndoCommand, UnitsCommand, ZoomCommand,
 };
 
 type CommandFactory = fn() -> Box<dyn Command>;
@@ -58,7 +58,8 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 81] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 82] = [
+            ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
             ("PEDIT", &["PE"], || Box::new(PeditCommand::new())),
             ("DONUT", &["DO", "DOUGHNUT"], || {
                 Box::new(DonutCommand::new())

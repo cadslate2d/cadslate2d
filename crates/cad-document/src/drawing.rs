@@ -13,6 +13,7 @@ use crate::history::History;
 use crate::id_alloc::EntityIdAllocator;
 use crate::layer::{Layer, LayerId, LayerTable, initial_layers};
 use crate::layout::{Layout, LayoutId, LayoutTable, initial_layouts};
+use crate::leader::LeaderError;
 use crate::linetype::{LinetypeDef, LinetypeError, LinetypeId, LinetypeTable, initial_linetypes};
 use crate::names::{NameError, check_name, same_name};
 use crate::point::{PointStyle, PointStyleError};
@@ -119,6 +120,8 @@ pub enum TransactionError {
     BadLtscale,
     /// The point style is not one the drawing can draw.
     BadPointStyle(PointStyleError),
+    /// A leader with too few points, or one that is not finite.
+    BadLeader(LeaderError),
     /// The dimension style does not exist, in the drawing or earlier in
     /// this transaction.
     UnknownDimStyle(DimStyleId),
@@ -215,6 +218,7 @@ impl fmt::Display for TransactionError {
             }
             Self::BadLtscale => write!(f, "LTSCALE must be a positive number"),
             Self::BadPointStyle(error) => write!(f, "{error}"),
+            Self::BadLeader(error) => write!(f, "{error}"),
             Self::UnknownDimStyle(id) => write!(f, "dimension style {id} does not exist"),
             Self::PermanentDimStyle => write!(f, "dimension style Standard cannot be removed"),
             Self::DimStyleInUse(id) => write!(f, "dimension style {id} is in use"),
@@ -595,6 +599,12 @@ impl Drawing {
             Entity::Dimension(dimension) if dimension.check().is_err() => Err(
                 TransactionError::BadDimension(dimension.check().unwrap_err()),
             ),
+            Entity::Leader(leader) if !drawing.dim_styles.contains(leader.style) => {
+                Err(TransactionError::UnknownDimStyle(leader.style))
+            }
+            Entity::Leader(leader) if leader.check().is_err() => {
+                Err(TransactionError::BadLeader(leader.check().unwrap_err()))
+            }
             Entity::BlockRef(reference)
                 if !(reference.scale.is_finite() && reference.scale > 0.0) =>
             {
@@ -1057,6 +1067,7 @@ impl Drawing {
                                 Entity::Dimension(dimension) if dimension.style == *id => {
                                     Some(entity_id)
                                 }
+                                Entity::Leader(leader) if leader.style == *id => Some(entity_id),
                                 _ => None,
                             })
                             .collect();
@@ -1959,7 +1970,11 @@ impl TransactionBuilder<'_> {
         if self.settings_now().current_dim_style == id {
             return Err(TransactionError::DimStyleInUse(id));
         }
-        let uses = |entity: &Entity| matches!(entity, Entity::Dimension(dimension) if dimension.style == id);
+        let uses = |entity: &Entity| match entity {
+            Entity::Dimension(dimension) => dimension.style == id,
+            Entity::Leader(leader) => leader.style == id,
+            _ => false,
+        };
         let pending = self.changes.iter().any(|change| match change {
             Change::Entity(EntityChange::Insert { record, .. }) => uses(&record.entity),
             Change::Entity(EntityChange::Replace { after, .. }) => uses(&after.entity),

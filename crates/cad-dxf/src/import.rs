@@ -19,9 +19,9 @@ use cad_document::{
     ArcEntity, AttributeDefinitionEntity, Block, BlockId, BlockReferenceEntity, BlockTable,
     CircleEntity, Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings,
     EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Justification, Layer, LayerId,
-    Layout, LayoutId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity,
-    Measure, PointEntity, PointStyle, PolylineEntity, Properties, RawEntity, RawGroup, TextEntity,
-    TextStyle, TextStyleId, ViewportEntity, check_name, nearest_index, same_name,
+    Layout, LayoutId, LeaderEntity, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight,
+    MTextEntity, Measure, PointEntity, PointStyle, PolylineEntity, Properties, RawEntity, RawGroup,
+    TextEntity, TextStyle, TextStyleId, ViewportEntity, check_name, nearest_index, same_name,
 };
 
 use crate::export::insunits_code;
@@ -269,6 +269,11 @@ struct Pending {
     dropped: bool,
     /// Group 67: the entity is in paper space (#191).
     paper: bool,
+    /// Group 5: the record's own handle, by which a leader names its
+    /// note (#205).
+    handle: Option<String>,
+    /// Group 340 of a LEADER: the handle of its MTEXT note.
+    annotation: Option<String>,
 }
 
 impl Default for Pending {
@@ -283,6 +288,8 @@ impl Default for Pending {
             block: None,
             dropped: false,
             paper: false,
+            handle: None,
+            annotation: None,
         }
     }
 }
@@ -586,6 +593,53 @@ struct Reader<'a> {
     block_record_names: HashMap<String, String>,
 }
 
+/// Gives every leader its note (#205): the MTEXT the leader names by
+/// handle, among the same entities, becomes the leader's words and is no
+/// longer an entity of its own. A leader naming no MTEXT here keeps none.
+/// Returns the list and how many notes were taken, which the report
+/// counted as texts.
+fn attach_leader_notes(mut list: Vec<(Entity, Pending)>) -> (Vec<(Entity, Pending)>, usize) {
+    let notes: HashMap<String, usize> = list
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (entity, pending))| match entity {
+            Entity::MText(_) => pending.handle.clone().map(|handle| (handle, index)),
+            _ => None,
+        })
+        .collect();
+    let mut taken = vec![false; list.len()];
+    for index in 0..list.len() {
+        let Some(note) = list[index]
+            .1
+            .annotation
+            .as_ref()
+            .and_then(|handle| notes.get(handle))
+            .copied()
+        else {
+            continue;
+        };
+        if note == index || taken[note] {
+            continue;
+        }
+        let words = match &list[note].0 {
+            Entity::MText(text) => text.content.clone(),
+            _ => continue,
+        };
+        if let Entity::Leader(leader) = &mut list[index].0 {
+            *leader = leader.clone().saying(Some(words));
+            taken[note] = true;
+        }
+    }
+    let notes_taken = taken.iter().filter(|taken| **taken).count();
+    (
+        list.into_iter()
+            .zip(taken)
+            .filter_map(|(item, taken)| (!taken).then_some(item))
+            .collect(),
+        notes_taken,
+    )
+}
+
 /// The one width a polyline's groups give (#204), and whether something
 /// was dropped to get it: the constant width (43), or the start and end
 /// widths when every one agrees; a width that varies along the polyline
@@ -874,6 +928,19 @@ impl<'a> Reader<'a> {
             }
             (_, "INSERT") if entities => self.insert(record, body)?,
             (_, "DIMENSION") if entities => self.dimension(body)?,
+            // A LEADER (#205): its vertices (10, 20 repeated), its style
+            // (3), and the handle of its MTEXT note (340), attached once
+            // every record is read. A spline path (72) is read straight.
+            (_, "LEADER") if entities => {
+                let vertices = body.points(record.line, "LEADER")?;
+                if vertices.len() < 2 {
+                    self.report.count_unsupported(INVALID);
+                } else {
+                    let mut pending = body.pending();
+                    pending.dim_style = body.description.clone();
+                    self.push(Entity::Leader(LeaderEntity::new(vertices)), pending)?;
+                }
+            }
             (_, "HATCH") if entities => self.hatch(body)?,
             (_, "SPLINE") if entities => match body.raw.as_deref().and_then(crate::spline::read) {
                 Some(spline) => self.import(Entity::Spline(spline), body)?,
@@ -1425,6 +1492,7 @@ impl<'a> Reader<'a> {
                     Entity::Hatch(_) => self.report.hatches += 1,
                     Entity::Viewport(_) => self.report.viewports += 1,
                     Entity::Point(_) => self.report.points += 1,
+                    Entity::Leader(_) => self.report.leaders += 1,
                 }
                 match &mut self.open_block {
                     Some(OpenBlock::Paper(paper)) => paper.entities.push((entity, properties)),
@@ -1496,6 +1564,13 @@ impl<'a> Reader<'a> {
             // A dimension's style likewise: the file's, or Standard.
             Entity::Dimension(dimension) => {
                 dimension.style = pending
+                    .dim_style
+                    .as_deref()
+                    .and_then(|name| self.tables.dim_style(name))
+                    .unwrap_or(DimStyleId::FIRST);
+            }
+            Entity::Leader(leader) => {
+                leader.style = pending
                     .dim_style
                     .as_deref()
                     .and_then(|name| self.tables.dim_style(name))
@@ -1649,7 +1724,8 @@ impl<'a> Reader<'a> {
         // the names stay in the table while each is built.
         let mut blocks: Vec<Block> = Vec::with_capacity(self.tables.blocks.len());
         for index in 0..self.tables.blocks.len() {
-            let entities = std::mem::take(&mut self.tables.blocks[index].entities);
+            let (entities, _) =
+                attach_leader_notes(std::mem::take(&mut self.tables.blocks[index].entities));
             let records = entities
                 .into_iter()
                 .filter_map(|(entity, pending)| self.resolve(entity, pending))
@@ -1661,7 +1737,9 @@ impl<'a> Reader<'a> {
 
         let mut entities: Vec<(Entity, Properties, LayoutId)> =
             Vec::with_capacity(self.entities.len());
-        for (entity, pending) in std::mem::take(&mut self.entities) {
+        let (model, notes) = attach_leader_notes(std::mem::take(&mut self.entities));
+        self.report.texts -= notes;
+        for (entity, pending) in model {
             if let Some((entity, properties)) = self.resolve(entity, pending) {
                 if matches!(entity, Entity::BlockRef(_)) {
                     self.report.block_references += 1;
@@ -1675,6 +1753,8 @@ impl<'a> Reader<'a> {
         for (index, (layout, paper)) in self.layouts().into_iter().enumerate() {
             let space = LayoutId::from_raw(index as u32 + 1);
             let mut on_it = 0;
+            let (paper, notes) = attach_leader_notes(paper);
+            self.report.texts -= notes;
             for (entity, pending) in paper {
                 if let Some((entity, properties)) = self.resolve(entity, pending) {
                     if matches!(entity, Entity::BlockRef(_)) {
@@ -1861,6 +1941,10 @@ struct RecordBody {
     dim_decimals: Option<i64>,
     /// Group 43: an LWPOLYLINE's constant width, which is dropped; a
     /// reference's Z scale, which a plane does without.
+    /// Group 5 and group 340 (#205): the record's handle, and a LEADER's
+    /// note.
+    handle: Option<String>,
+    annotation: Option<String>,
     constant_width: Option<f64>,
     /// Every group 40 and 41 in order (#204): an LWPOLYLINE's start and
     /// end widths, one per vertex, or a POLYLINE's or VERTEX's widths.
@@ -1983,6 +2067,8 @@ impl RecordBody {
                 _ => self.has_dropped_properties = true,
             },
             67 => self.paper = group.value.trim() == "1",
+            5 => self.handle = Some(group.value.trim().to_uppercase()),
+            340 => self.annotation = Some(group.value.trim().to_uppercase()),
             12 => self.view_center_x = Some(real(group)?),
             22 => self.view_center_y = Some(real(group)?),
             45 => self.view_height = Some(real(group)?),
@@ -2020,6 +2106,8 @@ impl RecordBody {
     fn pending(&self) -> Pending {
         let (color, true_colour_dropped) = self.colour();
         Pending {
+            handle: self.handle.clone(),
+            annotation: self.annotation.clone(),
             layer: self.layer.clone().unwrap_or_else(|| Layer::ZERO.to_owned()),
             color: color.unwrap_or(Color::ByLayer),
             linetype: self

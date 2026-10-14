@@ -10,6 +10,7 @@ use cad_geometry::{
 pub use crate::block::BlockReferenceEntity;
 use crate::dimension::DimensionEntity;
 use crate::hatch::HatchEntity;
+use crate::leader::LeaderEntity;
 pub use crate::mtext::MTextEntity;
 use crate::point::PointEntity;
 use crate::tables::Tables;
@@ -446,6 +447,8 @@ pub enum Entity {
     Viewport(ViewportEntity),
     /// A place, drawn as the drawing's point style (#198).
     Point(PointEntity),
+    /// A line to a note, with an arrowhead, laid out by a dimension style (#205).
+    Leader(LeaderEntity),
 }
 
 impl Entity {
@@ -477,6 +480,7 @@ impl Entity {
             Entity::Hatch(hatch) => hatch.bounds(),
             Entity::Viewport(viewport) => viewport.frame(),
             Entity::Point(point) => point.bounds(tables.point_style),
+            Entity::Leader(leader) => leader.layout(tables.dim_style(leader.style)).bounds(),
         }
     }
 
@@ -513,6 +517,10 @@ impl Entity {
             // A viewport by its frame: what shows through it is the model's.
             Entity::Viewport(viewport) => viewport.distance_to(point),
             Entity::Point(place) => place.distance_to(point),
+            // A leader by its lines, arrowhead, and note's box.
+            Entity::Leader(leader) => leader
+                .layout(tables.dim_style(leader.style))
+                .distance_to(point),
         }
     }
 
@@ -553,6 +561,8 @@ impl Entity {
             Entity::Viewport(_) => Vec::new(),
             // A point is a place: it snaps as a node and cuts nothing.
             Entity::Point(_) => Vec::new(),
+            // A leader is annotation, like a dimension (ADR-0020).
+            Entity::Leader(_) => Vec::new(),
             Entity::BlockRef(reference) => tables
                 .blocks
                 .flatten(reference, crate::Properties::default())
@@ -649,6 +659,19 @@ impl Entity {
                 point.position,
                 point.position,
             ))],
+            Entity::Leader(leader) => {
+                let layout = leader.layout(tables.dim_style(leader.style));
+                layout
+                    .segments()
+                    .map(Primitive::Segment)
+                    .chain(
+                        layout
+                            .text
+                            .iter()
+                            .flat_map(|text| frame_edges(&text.frame())),
+                    )
+                    .collect()
+            }
         }
     }
 
@@ -679,6 +702,10 @@ impl Entity {
             Entity::Hatch(hatch) => hatch.contains(point),
             Entity::Viewport(viewport) => viewport.contains(point),
             Entity::Point(_) => false,
+            Entity::Leader(leader) => leader
+                .layout(tables.dim_style(leader.style))
+                .text
+                .is_some_and(|text| text.frame().contains(point)),
         }
     }
 
@@ -765,6 +792,7 @@ impl Entity {
             Entity::Hatch(hatch) => hatch.transformed(transform).into(),
             Entity::Viewport(viewport) => viewport.transformed(transform).into(),
             Entity::Point(point) => point.transformed(transform).into(),
+            Entity::Leader(leader) => leader.transformed(transform).into(),
         }
     }
 
@@ -797,6 +825,12 @@ impl From<ViewportEntity> for Entity {
 impl From<PointEntity> for Entity {
     fn from(point: PointEntity) -> Self {
         Entity::Point(point)
+    }
+}
+
+impl From<LeaderEntity> for Entity {
+    fn from(leader: LeaderEntity) -> Self {
+        Entity::Leader(leader)
     }
 }
 
@@ -1002,6 +1036,7 @@ mod tests {
             Entity::Hatch(hatch) => hatch.vertices(),
             Entity::Viewport(viewport) => viewport.corners().to_vec(),
             Entity::Point(point) => vec![point.position],
+            Entity::Leader(leader) => leader.vertices.clone(),
         }
     }
 
