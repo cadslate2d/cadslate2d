@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b22110d468c3a06ae334d8da256ba75ae68e24b7960d79e67590777439df416d # shrinks to (outline, min, max) = (Path { vertices: [Point2 { x: 0.0, y: 0.0 }, Point2 { x: 2.4759213094703485, y: 0.0 }, Point2 { x: 2.4759213094703485, y: 8.995846260803559 }, Point2 { x: 0.0, y: 8.995846260803559 }], bulges: [0.0, -0.7288004995166263, 0.0, 0.0], closed: true }, 0.1, 1.0), reverse = true

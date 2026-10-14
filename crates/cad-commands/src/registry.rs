@@ -22,9 +22,9 @@ use crate::commands::{
     OffsetCommand, OpenCommand, OsnapCommand, PanCommand, PeditCommand, PickStyleCommand,
     PlineCommand, PlotCommand, PointCommand, PolarAngleCommand, PolygonCommand, PspaceCommand,
     PtypeCommand, PurgeCommand, QselectCommand, RayCommand, RectangCommand, RedoCommand,
-    RenameCommand, SaveCommand, SelectCommand, SettingsCommand, SplineCommand, StretchCommand,
-    TextCommand, TextEditCommand, TransformCommand, UndoCommand, UngroupCommand, UnitsCommand,
-    XLineCommand, ZoomCommand,
+    RenameCommand, RevCloudCommand, SaveCommand, SelectCommand, SettingsCommand, SplineCommand,
+    StretchCommand, TextCommand, TextEditCommand, TransformCommand, UndoCommand, UngroupCommand,
+    UnitsCommand, XLineCommand, ZoomCommand,
 };
 use crate::session::select_keywords;
 
@@ -61,7 +61,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 105] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 106] = [
             ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
             ("RAY", &[], || Box::new(RayCommand::new())),
             ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
@@ -195,6 +195,7 @@ impl CommandRegistry {
             ("DIMDIAMETER", &["DDI", "DIMDIA"], || {
                 Box::new(DimRadialCommand::diameter())
             }),
+            ("REVCLOUD", &[], || Box::new(RevCloudCommand::new())),
             ("GROUP", &["G"], || Box::new(GroupCommand::new())),
             ("UNGROUP", &[], || Box::new(UngroupCommand)),
             ("PICKSTYLE", &[], || Box::new(PickStyleCommand::new())),

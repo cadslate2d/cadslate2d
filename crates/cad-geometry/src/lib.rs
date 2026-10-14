@@ -7,6 +7,7 @@
 
 mod arc;
 mod band;
+mod cloud;
 mod construct;
 mod corner;
 mod crossing;
@@ -31,6 +32,7 @@ mod transform;
 mod trim;
 
 pub use arc::{Arc, Circle, normalize_angle};
+pub use cloud::{CLOUD_BULGE, MAX_CLOUD_ARCS};
 pub use corner::{Chamfer, Corner, CornerError, Fillet};
 pub use curve_fillet::{CurveFillet, fillet_curves};
 pub use dimension::{Arrowhead, foot_on_line, normalized, perpendicular, readable_angle};

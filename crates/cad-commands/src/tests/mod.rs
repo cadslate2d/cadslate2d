@@ -46,6 +46,7 @@ mod points;
 mod polygon;
 mod properties;
 mod reconciliation;
+mod revcloud;
 mod selection;
 mod selection_sets;
 mod snapping;

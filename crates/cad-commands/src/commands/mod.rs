@@ -75,6 +75,7 @@ mod points;
 mod polarang;
 mod polygon;
 mod rectang;
+mod revcloud;
 mod select;
 mod spline;
 mod stretch;
@@ -145,6 +146,7 @@ pub(crate) use points::{DivideCommand, MeasureCommand, PointCommand, PtypeComman
 pub(crate) use polarang::PolarAngleCommand;
 pub(crate) use polygon::PolygonCommand;
 pub(crate) use rectang::RectangCommand;
+pub(crate) use revcloud::RevCloudCommand;
 pub(crate) use select::{QselectCommand, SelectCommand};
 pub(crate) use spline::SplineCommand;
 pub(crate) use stretch::StretchCommand;

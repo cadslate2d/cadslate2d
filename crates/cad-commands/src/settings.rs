@@ -40,6 +40,8 @@ pub struct DraftingSettings {
     /// Whether picking a member of a selectable group selects the whole
     /// group (#214): `PICKSTYLE`, flipped by Ctrl+Shift+A.
     pub group_selection: bool,
+    /// The shortest and longest arc of a revision cloud (#215).
+    pub cloud_arcs: [f64; 2],
 }
 
 /// A paper size PLOT offers, by name.
@@ -150,6 +152,7 @@ impl Default for DraftingSettings {
             hatch_angle: 0.0,
             hatch_scale: 1.0,
             group_selection: true,
+            cloud_arcs: [7.5, 15.0],
         }
     }
 }
