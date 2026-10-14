@@ -17,9 +17,34 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M8 — Compatibility Expansion | Complete and closed ([review](reviews/m8-exit-review.md)). |
 | M9 — Paper Space | Complete and closed ([review](reviews/m9-exit-review.md)). |
 | M10 — Daily Drafting | Complete and closed ([review](reviews/m10-exit-review.md)). |
-| M11 — Polylines, Leaders, and Loose Ends | Next. Broken into issues at the M10 exit. |
+| M11 — Polylines, Leaders, and Loose Ends | Complete and closed ([review](reviews/m11-exit-review.md)). |
+| M12 — Drafting Conveniences | Next. Broken into issues at the M11 exit. |
+
+## M12, as broken down after M11
+
+The loose ends shipped in M11. The [M11 review](reviews/m11-exit-review.md) sweeps the registry against the commands a production drawing uses daily, not against what earlier reviews accepted, and finds five gaps no review had listed. M12 takes them up; the epic is #211.
+
+### Order of work
+
+1. **Dimension chains** (#212): `DIMBASELINE` and `DIMCONTINUE` for linear, aligned, and angular dimensions; the style's baseline spacing, DXF `DIMDLI`.
+2. **Layer tools by picking, and freeze kept** (#213): `LAYISO`, `LAYUNISO`, `LAYOFF`, `LAYON`, `LAYLCK`, `LAYULK`, `LAYMCUR`, `LAYFRZ`, `LAYTHW`; a frozen layer stays frozen through a DXF round trip.
+3. **Groups** (#214): a group table changed in transactions, `GROUP` and `UNGROUP`, a pick selecting the whole group, DXF `GROUP` objects.
+4. **Revision clouds** (#215): `REVCLOUD` from a rectangle, a polygon, or an object, as a closed bulged polyline.
+5. **Find and replace** (#216): `FIND` across every kind of text, in one transaction.
+6. **Exit** (#217): the scenario, the review, and what follows.
+
+### Not in M12
+
+- `DRAWORDER` and `WIPEOUT`, which need an ADR against ADR-0021's fills-beneath-strokes order; `DIMORDINATE`, `QDIM`; layer states, freezing in one viewport.
+- `MLEADER`, tables, fields; SHX fonts, xrefs, scripting, plugins, native packaging, a DWG strategy, a native project format (§39), a WebGPU adapter (§38), associative dimensions, advanced hatch, plot style tables, searchable PDF text.
+
+### Needs a person
+
+- #109 WebKit, #110 real GPUs (and #175, which waits on it), #111 the R-tree crash upstream; the PDF of a layout in a desktop viewer.
 
 ## M11, as broken down after M10
+
+Kept for the record; the [review](reviews/m11-exit-review.md) says how it went. The overlay's far-curve pass, found by #206's benchmark, was fixed in M11 as #210.
 
 The daily commands shipped in M10. The [M10 review](reviews/m10-exit-review.md) finds the product one milestone short of complete: the loose ends the M8 to M10 reviews accepted for now. M11 takes them up; the epic is #203.
 
