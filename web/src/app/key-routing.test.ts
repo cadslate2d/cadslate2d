@@ -40,6 +40,11 @@ describe("classifyKey", () => {
     expect(kind(key("s", { metaKey: true }))).toBe("save");
   });
 
+  test("Ctrl+Shift+A switches group selection; Ctrl+A stays the browser's", () => {
+    expect(kind(key("A", { ctrlKey: true, shiftKey: true }))).toBe("group-selection");
+    expect(kind(key("a", { ctrlKey: true }))).toBe("ignore");
+  });
+
   test("Delete erases the selection only when nothing is being typed", () => {
     expect(classifyKey(key("Delete"), true, true).kind).toBe("delete");
     expect(classifyKey(key("Delete"), true, false).kind).toBe("text");

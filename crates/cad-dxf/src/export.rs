@@ -11,17 +11,17 @@
 //! handle and names its owner; handles follow entity IDs, so the output is
 //! deterministic.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use cad_core::{Aabb, EntityId, LengthUnit, Point2, Vec2};
 use cad_document::{
     ArcEntity, AttributeDefinitionEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity,
     Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity,
-    EntityRecord, HatchEntity, HatchStyle, Justification, Layer, Layout, LayoutArea, LayoutId,
-    LayoutPlot, LayoutTable, LeaderEntity, LineEntity, Linetype, LinetypeDef, LinetypeTable,
-    Lineweight, MTextEntity, Measure, PointEntity, PolylineEntity, Properties, Revision,
-    SplineEntity, TextEntity, TextStyle, TextStyleTable, ViewportEntity,
+    EntityRecord, Group, HatchEntity, HatchStyle, Justification, Layer, Layout, LayoutArea,
+    LayoutId, LayoutPlot, LayoutTable, LeaderEntity, LineEntity, Linetype, LinetypeDef,
+    LinetypeTable, Lineweight, MTextEntity, Measure, PointEntity, PolylineEntity, Properties,
+    Revision, SplineEntity, TextEntity, TextStyle, TextStyleTable, ViewportEntity,
 };
 
 use crate::properties::{
@@ -281,7 +281,14 @@ impl Export {
             viewports_written: 0,
             active_viewport: None,
             viewport_links: HashMap::new(),
+            grouped: HashSet::new(),
+            member_handles: HashMap::new(),
         };
+        body.grouped = drawing
+            .groups()
+            .iter()
+            .flat_map(|(_, group)| group.members.iter().copied())
+            .collect();
         body.group(0, "SECTION");
         body.group(2, "CLASSES");
         body.group(0, "ENDSEC");
@@ -340,8 +347,12 @@ impl Export {
                         return Ok(false);
                     }
                     if let Some(record) = drawing.record(self.ids[n]) {
-                        self.body
-                            .record(record, self.structure.model_space, drawing);
+                        self.body.record_of(
+                            self.ids[n],
+                            record,
+                            self.structure.model_space,
+                            drawing,
+                        );
                     }
                     self.phase = Phase::Entities(n + 1);
                     left -= 1;
@@ -371,6 +382,8 @@ impl Export {
             viewports_written: 0,
             active_viewport: None,
             viewport_links: HashMap::new(),
+            grouped: HashSet::new(),
+            member_handles: HashMap::new(),
         };
         header.section("HEADER", |w| w.header(drawing, self.body.handles.seed()));
         Ok(header.out + &self.body.out)
@@ -395,6 +408,10 @@ struct Writer {
     /// the file gave it, to the handle of the first viewport written in
     /// the layout's block (#192).
     viewport_links: HashMap<String, Handle>,
+    /// The entities some group holds, and the handles they were written
+    /// under, which their GROUP objects name (#214).
+    grouped: HashSet<EntityId>,
+    member_handles: HashMap<EntityId, Handle>,
 }
 
 /// Every dimension, with its properties, in the order their DIMENSION
@@ -912,7 +929,7 @@ impl Writer {
             self.block(&sheet.block_name, Point2::ORIGIN, 0, sheet.record, |w| {
                 for id in records_in(drawing, sheet.id) {
                     if let Some(record) = drawing.record(id) {
-                        w.record(record, sheet.record, drawing);
+                        w.record_of(id, record, sheet.record, drawing);
                     }
                 }
                 for (entity, handle) in layout.kept_entities.iter().zip(&sheet.kept) {
@@ -999,6 +1016,16 @@ impl Writer {
                 }
             },
         );
+    }
+
+    /// [`record`](Self::record) for an entity of the drawing, noting the
+    /// handle it is written under when a group holds it (#214): the first
+    /// handle a record takes is its own.
+    fn record_of(&mut self, id: EntityId, record: &EntityRecord, owner: Handle, drawing: &Drawing) {
+        if self.grouped.contains(&id) {
+            self.member_handles.insert(id, Handle(self.handles.0));
+        }
+        self.record(record, owner, drawing);
     }
 
     fn record(&mut self, record: &EntityRecord, owner: Handle, drawing: &Drawing) {
@@ -1627,6 +1654,19 @@ impl Writer {
         self.handle(350, structure.plot_styles);
 
         self.dictionary(structure.groups, structure.root);
+        // Each group by name, then its GROUP object (#214).
+        let groups: Vec<(Handle, &Group)> = drawing
+            .groups()
+            .iter()
+            .map(|(_, group)| (self.handles.take(), group))
+            .collect();
+        for (handle, group) in &groups {
+            self.group(3, &group.name);
+            self.handle(350, *handle);
+        }
+        for (handle, group) in &groups {
+            self.group_object(*handle, structure.groups, group);
+        }
 
         self.dictionary(structure.layouts, structure.root);
         if structure.sheets.is_empty() {
@@ -1724,6 +1764,24 @@ impl Writer {
                     }
                 }
                 code => self.group(code, value),
+            }
+        }
+    }
+
+    /// A GROUP object: its description (300), whether it is unnamed (70)
+    /// and selectable (71), and its members by the handles they were
+    /// written under (340).
+    fn group_object(&mut self, handle: Handle, owner: Handle, group: &Group) {
+        self.group(0, "GROUP");
+        self.handle(5, handle);
+        self.handle(330, owner);
+        self.group(100, "AcDbGroup");
+        self.group(300, &group.description);
+        self.int(70, i64::from(group.is_unnamed()));
+        self.int(71, i64::from(group.selectable));
+        for member in &group.members {
+            if let Some(member) = self.member_handles.get(member).copied() {
+                self.handle(340, member);
             }
         }
     }

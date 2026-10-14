@@ -37,6 +37,9 @@ pub struct DraftingSettings {
     pub hatch_scale: f64,
     /// How PLOT last plotted, offered as its defaults (#187).
     pub plot: PlotSettings,
+    /// Whether picking a member of a selectable group selects the whole
+    /// group (#214): `PICKSTYLE`, flipped by Ctrl+Shift+A.
+    pub group_selection: bool,
 }
 
 /// A paper size PLOT offers, by name.
@@ -146,6 +149,7 @@ impl Default for DraftingSettings {
             hatch_pattern: 0,
             hatch_angle: 0.0,
             hatch_scale: 1.0,
+            group_selection: true,
         }
     }
 }

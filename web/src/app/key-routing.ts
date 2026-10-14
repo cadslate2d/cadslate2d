@@ -9,6 +9,8 @@ export type KeyIntent =
   | { kind: "redo" }
   | { kind: "open" }
   | { kind: "save" }
+  /** Ctrl+Shift+A: group selection on or off (#214). */
+  | { kind: "group-selection" }
   /** A drafting toggle's function key. */
   | { kind: "toggle"; toggle: "osnap" | "grid" | "ortho" | "polar" }
   /** Delete with nothing typed: erase the selection. */
@@ -50,6 +52,7 @@ export function classifyKey(event: KeyLike, spaceAccepts: boolean, inputEmpty = 
     if (key === "y") return { kind: "redo" };
     if (key === "o") return { kind: "open" };
     if (key === "s") return { kind: "save" };
+    if (key === "a" && event.shiftKey) return { kind: "group-selection" };
     // Reload, devtools, copy/paste, and every other browser shortcut stay with the browser.
     return { kind: "ignore" };
   }

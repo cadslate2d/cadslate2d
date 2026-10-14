@@ -137,6 +137,11 @@ export function PropertiesPanel({ app }: { app: CadApp }) {
             by {selection.method}
           </span>
         )}
+        {selection.groups.length > 0 && (
+          <span className="properties__method" data-testid="selection-groups">
+            in {selection.groups.length === 1 ? "group" : "groups"} {selection.groups.join(", ")}
+          </span>
+        )}
       </div>
       {selection.count > 0 && (
         <div className="properties__scroll">

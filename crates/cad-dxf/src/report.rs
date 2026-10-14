@@ -70,6 +70,8 @@ pub struct ImportReport {
     pub created_dim_styles: usize,
     /// Block definitions in the drawing after the import.
     pub blocks: usize,
+    /// Groups read (#214).
+    pub groups: usize,
     /// MTEXT entities whose formatting — fonts, heights, colours,
     /// stacking — was dropped, their words and breaks kept.
     pub formatting_dropped: usize,
@@ -176,13 +178,21 @@ impl ImportReport {
                     .to_owned(),
             );
         }
-        if self.layers + self.linetypes + self.text_styles + self.dim_styles + self.blocks > 0 {
+        if self.layers
+            + self.linetypes
+            + self.text_styles
+            + self.dim_styles
+            + self.blocks
+            + self.groups
+            > 0
+        {
             let tables: Vec<String> = [
                 (self.layers, "layer", "layers"),
                 (self.linetypes, "linetype", "linetypes"),
                 (self.text_styles, "text style", "text styles"),
                 (self.dim_styles, "dimension style", "dimension styles"),
                 (self.blocks, "block", "blocks"),
+                (self.groups, "group", "groups"),
             ]
             .into_iter()
             .filter(|(count, ..)| *count > 0)

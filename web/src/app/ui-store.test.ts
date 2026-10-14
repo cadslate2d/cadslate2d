@@ -23,7 +23,14 @@ class FakeSource implements UiSource {
     through: false,
     layers: [],
     linetypes: [],
-    selection: { count: 0, headline: "No selection", kinds: [], geometry: [], method: "" },
+    selection: {
+      count: 0,
+      headline: "No selection",
+      kinds: [],
+      geometry: [],
+      method: "",
+      groups: [],
+    },
     textEditor: undefined,
   };
   logReads = 0;

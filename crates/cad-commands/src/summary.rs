@@ -88,6 +88,9 @@ pub struct SelectionSummary {
     /// How the objects were selected — "window", "fence", "quick select" —
     /// or empty (#185).
     pub method: String,
+    /// The groups the selected objects are in, by name, in the order they
+    /// were made (#214).
+    pub groups: Vec<String>,
 }
 
 impl SelectionSummary {
@@ -98,10 +101,14 @@ impl SelectionSummary {
         let mut common: Option<Common> = None;
         let mut only: Option<&Entity> = None;
         let mut count = 0;
+        let mut groups = std::collections::BTreeMap::new();
         for id in selection.iter() {
             let Some(entity) = drawing.entity(id) else {
                 continue;
             };
+            for (group_id, group) in drawing.groups_of(id) {
+                groups.entry(group_id).or_insert_with(|| group.name.clone());
+            }
             let properties = drawing.properties(id).unwrap_or_default();
             counts[kind_index(entity)] += 1;
             count += 1;
@@ -129,6 +136,7 @@ impl SelectionSummary {
                 .map(|entity| geometry_of(entity, drawing))
                 .unwrap_or_default(),
             method: selection.method().describe().to_owned(),
+            groups: groups.into_values().collect(),
         }
     }
 

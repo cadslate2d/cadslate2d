@@ -24,6 +24,7 @@ mod edge;
 mod ellipse;
 mod far_from_origin;
 mod grips;
+mod groups;
 mod hatch;
 mod housekeeping;
 mod inquiry;

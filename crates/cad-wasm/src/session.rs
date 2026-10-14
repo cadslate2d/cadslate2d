@@ -49,6 +49,7 @@ fn key_action(code: u32) -> Option<KeyAction> {
         8 => Some(KeyAction::Toggle(Toggle::Ortho)),
         9 => Some(KeyAction::Toggle(Toggle::Polar)),
         10 => Some(KeyAction::Toggle(Toggle::Lineweight)),
+        11 => Some(KeyAction::GroupSelection),
         _ => None,
     }
 }
@@ -123,6 +124,8 @@ struct SelectionSummaryDto {
     geometry: Vec<(String, String)>,
     /// How the objects were selected, or empty (#185).
     method: String,
+    /// The groups the selected objects are in, by name (#214).
+    groups: Vec<String>,
 }
 
 impl From<SelectionSummary> for SelectionSummaryDto {
@@ -141,6 +144,7 @@ impl From<SelectionSummary> for SelectionSummaryDto {
             lineweight: summary.lineweight,
             geometry: summary.geometry,
             method: summary.method,
+            groups: summary.groups,
         }
     }
 }

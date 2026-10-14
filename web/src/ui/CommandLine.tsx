@@ -47,6 +47,9 @@ export function CommandLine({ app }: { app: CadApp }) {
         case "save":
           app.key(KeyAction.Save);
           break;
+        case "group-selection":
+          app.key(KeyAction.GroupSelection);
+          break;
         case "delete":
           app.key(KeyAction.Delete);
           break;

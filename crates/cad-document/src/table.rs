@@ -136,11 +136,21 @@ impl<Row> Table<Row> {
         }
     }
 
+    /// A table with no rows, whose first ID is never handed out: the
+    /// group table (#214), which has no permanent row.
+    pub(crate) fn empty() -> Self {
+        Self {
+            rows: BTreeMap::new(),
+            next: 1,
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.rows.len()
     }
 
-    /// Never true: the first row is always there.
+    /// Never true for a table with a permanent first row; true for the
+    /// group table when the drawing has no groups.
     pub fn is_empty(&self) -> bool {
         self.rows.is_empty()
     }

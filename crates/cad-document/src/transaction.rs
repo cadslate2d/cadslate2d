@@ -8,6 +8,7 @@ use cad_core::EntityId;
 
 use crate::block::BlockChange;
 use crate::dim_style::DimStyleChange;
+use crate::group::GroupChange;
 use crate::layer::LayerChange;
 use crate::layout::LayoutChange;
 use crate::linetype::LinetypeChange;
@@ -71,6 +72,7 @@ pub enum Change {
     DimStyle(DimStyleChange),
     Block(BlockChange),
     Layout(LayoutChange),
+    Group(GroupChange),
     Settings(SettingsChange),
 }
 
@@ -84,6 +86,7 @@ impl Change {
             Change::DimStyle(change) => Change::DimStyle(change.inverse()),
             Change::Block(change) => Change::Block(change.inverse()),
             Change::Layout(change) => Change::Layout(change.inverse()),
+            Change::Group(change) => Change::Group(change.inverse()),
             Change::Settings(change) => Change::Settings(change.inverse()),
         }
     }
@@ -238,6 +241,7 @@ mod tests {
                 Change::DimStyle(_) => "dimension style",
                 Change::Block(_) => "block",
                 Change::Layout(_) => "layout",
+                Change::Group(_) => "group",
                 Change::Settings(_) => "settings",
             })
             .collect();

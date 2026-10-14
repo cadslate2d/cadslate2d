@@ -9,6 +9,7 @@ use cad_core::{Aabb, EntityId, LengthUnit, Vec2};
 use crate::block::{Block, BlockId, BlockTable, initial_blocks};
 use crate::dim_style::{DimStyle, DimStyleError, DimStyleId, DimStyleTable, initial_dim_styles};
 use crate::dimension::DimensionError;
+use crate::group::{Group, GroupId, GroupTable, initial_groups};
 use crate::history::History;
 use crate::id_alloc::EntityIdAllocator;
 use crate::layer::{Layer, LayerId, LayerTable, initial_layers};
@@ -67,6 +68,8 @@ pub struct Drawing {
     journal: VecDeque<(Revision, Revision, Option<Vec<EntityId>>)>,
     /// The spaces: the model first, then the layouts (#191).
     layouts: LayoutTable,
+    /// Named sets of objects picked together (#214).
+    groups: GroupTable,
 }
 
 /// How many changes the journal remembers; a scene further behind than
@@ -92,6 +95,16 @@ pub struct ApplyReport {
 pub enum TransactionError {
     /// The entity does not exist in the drawing.
     UnknownEntity(EntityId),
+    /// The group does not exist, in the drawing or after this transaction.
+    UnknownGroup(GroupId),
+    /// The name cannot be a group's name.
+    BadGroupName(NameError),
+    /// This group already has the name, give or take its case.
+    DuplicateGroupName(GroupId),
+    /// A group must have at least one member.
+    EmptyGroup,
+    /// A group's member must be an entity of the drawing, given once.
+    BadGroupMember(EntityId),
     /// The entity was already changed earlier in this transaction.
     AlreadyChanged(EntityId),
     /// The layer does not exist, in the drawing or earlier in this transaction.
@@ -204,6 +217,16 @@ impl fmt::Display for TransactionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnknownEntity(id) => write!(f, "entity {id} does not exist"),
+            Self::UnknownGroup(id) => write!(f, "group {id} does not exist"),
+            Self::BadGroupName(error) => write!(f, "bad group name: {error:?}"),
+            Self::DuplicateGroupName(id) => write!(f, "group {id} already has that name"),
+            Self::EmptyGroup => write!(f, "a group needs a member"),
+            Self::BadGroupMember(id) => {
+                write!(
+                    f,
+                    "entity {id} cannot be a member: not there, or given twice"
+                )
+            }
             Self::AlreadyChanged(id) => {
                 write!(f, "entity {id} was already changed in this transaction")
             }
@@ -433,6 +456,7 @@ impl Drawing {
             shown_revision: Revision::next(),
             journal: VecDeque::new(),
             layouts: initial_layouts(),
+            groups: initial_groups(),
         }
     }
 
@@ -823,6 +847,36 @@ impl Drawing {
         &self.layouts
     }
 
+    /// The drawing's groups (#214), in the order they were made.
+    pub fn groups(&self) -> &GroupTable {
+        &self.groups
+    }
+
+    /// The groups `id` is a member of.
+    pub fn groups_of(&self, id: EntityId) -> impl Iterator<Item = (GroupId, &Group)> {
+        self.groups
+            .iter()
+            .filter(move |(_, group)| group.contains(id))
+    }
+
+    /// Adds a group without history: the import path, after
+    /// [`from_spaces`](Self::from_spaces), whose entities take the IDs 1,
+    /// 2, … in the order given. The group is checked as
+    /// [`TransactionBuilder::add_group`] checks it; a refused one leaves
+    /// the drawing as it was.
+    pub fn import_group(&mut self, group: Group) -> Result<GroupId, TransactionError> {
+        let mut tx = self.transaction();
+        let id = tx.add_group(group)?;
+        let changes = std::mem::take(&mut tx.changes);
+        drop(tx);
+        for change in &changes {
+            if let Change::Group(change) = change {
+                self.groups.apply(change);
+            }
+        }
+        Ok(id)
+    }
+
     /// The space an entity is in.
     pub fn space_of(&self, id: EntityId) -> Option<LayoutId> {
         self.entities.record(id).map(|record| record.space)
@@ -1151,7 +1205,9 @@ impl Drawing {
                 | Change::TextStyle(_)
                 | Change::DimStyle(_)
                 | Change::Block(_)
-                | Change::Layout(_) => false,
+                | Change::Layout(_)
+                // A group draws nothing (#214).
+                | Change::Group(_) => false,
             };
             match change {
                 Change::Entity(EntityChange::Insert { id, record }) => {
@@ -1208,6 +1264,10 @@ impl Drawing {
                 }
                 Change::Layout(change) => {
                     self.layouts.apply(change);
+                    report.tables_changed = true;
+                }
+                Change::Group(change) => {
+                    self.groups.apply(change);
                     report.tables_changed = true;
                 }
                 Change::DimStyle(change) => {
@@ -1525,10 +1585,76 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
-    /// Removes an existing entity.
+    /// Removes an existing entity. It leaves its groups in the same
+    /// transaction, and a group it leaves empty goes too (#214).
     pub fn remove(&mut self, id: EntityId) -> Result<(), TransactionError> {
         let record = self.existing(id)?;
         self.push(EntityChange::Remove { id, record });
+        for (group_id, group) in self.groups_now() {
+            if group.contains(id) {
+                let mut after = group.clone();
+                after.members.retain(|member| *member != id);
+                self.push_other(Change::Group(if after.members.is_empty() {
+                    TableChange::Remove {
+                        id: group_id,
+                        row: group,
+                    }
+                } else {
+                    TableChange::Replace {
+                        id: group_id,
+                        before: group,
+                        after,
+                    }
+                }));
+            }
+        }
+        Ok(())
+    }
+
+    /// Adds a group of existing entities and returns its ID (#214). A
+    /// named group's name must be allowed and not taken; an unnamed one
+    /// ([`Group::unnamed`]) is named `*A` and the first number no group
+    /// has. Its members must be entities the drawing has and keeps, each
+    /// given once, and at least one.
+    pub fn add_group(&mut self, mut group: Group) -> Result<GroupId, TransactionError> {
+        if group.name.is_empty() {
+            group.name = self.free_unnamed_group_name();
+        } else {
+            self.check_group_name(&group.name, None)?;
+        }
+        self.check_members(&group.members)?;
+        let id = self.drawing.groups.allocate();
+        self.push_other(Change::Group(TableChange::Insert { id, row: group }));
+        Ok(id)
+    }
+
+    /// Replaces a group by itself with something different: a name, a
+    /// description, its members, whether it is selectable. The same rules
+    /// hold as for [`add_group`](Self::add_group).
+    pub fn replace_group(&mut self, id: GroupId, group: Group) -> Result<(), TransactionError> {
+        let before = self
+            .group_now(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownGroup(id))?;
+        if group.name != before.name {
+            self.check_group_name(&group.name, Some(id))?;
+        }
+        self.check_members(&group.members)?;
+        self.push_other(Change::Group(TableChange::Replace {
+            id,
+            before,
+            after: group,
+        }));
+        Ok(())
+    }
+
+    /// Removes a group; its members stay.
+    pub fn remove_group(&mut self, id: GroupId) -> Result<(), TransactionError> {
+        let row = self
+            .group_now(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownGroup(id))?;
+        self.push_other(Change::Group(TableChange::Remove { id, row }));
         Ok(())
     }
 
@@ -1877,6 +2003,7 @@ impl TransactionBuilder<'_> {
             | Change::DimStyle(_)
             | Change::Block(_)
             | Change::Layout(_)
+            | Change::Group(_)
             | Change::Settings(_) => false,
         });
         if pending
@@ -2481,6 +2608,89 @@ impl TransactionBuilder<'_> {
             Some(id) => Err(TransactionError::DuplicateBlockName(id)),
             None => Ok(()),
         }
+    }
+
+    /// The group `id` as it will be once this transaction commits. Unlike
+    /// the other tables, a group may change more than once in one
+    /// transaction — erasing two of its members — each change from the
+    /// state the one before left: the newest is what it is.
+    fn group_now(&self, id: GroupId) -> Option<&Group> {
+        let change = self.others().rev().find_map(|change| match change {
+            Change::Group(change) if change.id() == id => Some(change),
+            _ => None,
+        });
+        match change {
+            Some(TableChange::Remove { .. }) => None,
+            Some(TableChange::Insert { row, .. }) => Some(row),
+            Some(TableChange::Replace { after, .. }) => Some(after),
+            None => self.drawing.groups.get(id),
+        }
+    }
+
+    /// Every group as it will be once this transaction commits.
+    fn groups_now(&self) -> Vec<(GroupId, Group)> {
+        let mut ids: BTreeSet<GroupId> = self.drawing.groups.iter().map(|(id, _)| id).collect();
+        ids.extend(self.others().filter_map(|change| match change {
+            Change::Group(change) => Some(change.id()),
+            _ => None,
+        }));
+        ids.into_iter()
+            .filter_map(|id| self.group_now(id).map(|group| (id, group.clone())))
+            .collect()
+    }
+
+    /// `*A` and the first number no group has.
+    fn free_unnamed_group_name(&self) -> String {
+        let taken: BTreeSet<u32> = self
+            .groups_now()
+            .iter()
+            .filter_map(|(_, group)| crate::group::unnamed_number(&group.name))
+            .collect();
+        let number = (1..).find(|n| !taken.contains(n)).expect("a free number");
+        format!("{}{number}", Group::UNNAMED_PREFIX)
+    }
+
+    /// Refuses a name a group cannot have, or another group has.
+    fn check_group_name(
+        &self,
+        name: &str,
+        except: Option<GroupId>,
+    ) -> Result<(), TransactionError> {
+        if crate::group::unnamed_number(name).is_none() {
+            check_name(name).map_err(TransactionError::BadGroupName)?;
+        }
+        match self
+            .groups_now()
+            .into_iter()
+            .find(|(id, group)| Some(*id) != except && same_name(&group.name, name))
+        {
+            Some((id, _)) => Err(TransactionError::DuplicateGroupName(id)),
+            None => Ok(()),
+        }
+    }
+
+    /// Refuses no members, a member given twice, and one that is not an
+    /// entity the drawing will have.
+    fn check_members(&self, members: &[EntityId]) -> Result<(), TransactionError> {
+        if members.is_empty() {
+            return Err(TransactionError::EmptyGroup);
+        }
+        let mut seen = HashSet::new();
+        for member in members {
+            // What this transaction touched is looked up in it; the rest
+            // in the drawing.
+            let there = if self.touched.contains(member) {
+                !self.changes.iter().any(|change| {
+                    matches!(change, Change::Entity(EntityChange::Remove { id, .. }) if id == member)
+                })
+            } else {
+                self.drawing.entities.record(*member).is_some()
+            };
+            if !there || !seen.insert(*member) {
+                return Err(TransactionError::BadGroupMember(*member));
+            }
+        }
+        Ok(())
     }
 
     /// The layout `id` as it will be once this transaction commits.
@@ -3683,6 +3893,117 @@ mod tests {
         let imported = Drawing::new().with_unit(Some(LengthUnit::Inches));
         assert_eq!(imported.unit(), Some(LengthUnit::Inches));
         assert!(!imported.can_undo());
+    }
+
+    #[test]
+    fn groups_hold_existing_entities_and_lose_them_as_they_are_removed() {
+        let mut drawing = Drawing::new();
+        let ids: Vec<EntityId> = (0..4)
+            .map(|i| create(&mut drawing, line(f64::from(i), 0.0, f64::from(i), 10.0)))
+            .collect();
+        let mut tx = drawing.transaction();
+        let door = tx
+            .add_group(Group::named("Door", vec![ids[0], ids[1]]))
+            .unwrap();
+        let first = tx.add_group(Group::unnamed(vec![ids[2]])).unwrap();
+        let second = tx.add_group(Group::unnamed(vec![ids[3], ids[2]])).unwrap();
+        tx.commit();
+        let names: Vec<&str> = drawing
+            .groups()
+            .iter()
+            .map(|(_, g)| g.name.as_str())
+            .collect();
+        assert_eq!(names, ["Door", "*A1", "*A2"]);
+        assert!(drawing.groups().get(first).unwrap().is_unnamed());
+        assert_eq!(
+            drawing
+                .groups_of(ids[2])
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>(),
+            vec![first, second]
+        );
+
+        // The refusals.
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.add_group(Group::named("DOOR", vec![ids[2]])),
+            Err(TransactionError::DuplicateGroupName(door))
+        );
+        assert_eq!(
+            tx.add_group(Group::named("a*b", vec![ids[2]])),
+            Err(TransactionError::BadGroupName(NameError::Forbidden('*')))
+        );
+        assert_eq!(
+            tx.add_group(Group::named("Empty", vec![])),
+            Err(TransactionError::EmptyGroup)
+        );
+        let gone = EntityId::from_raw(99);
+        assert_eq!(
+            tx.add_group(Group::named("Ghost", vec![gone])),
+            Err(TransactionError::BadGroupMember(gone))
+        );
+        assert_eq!(
+            tx.add_group(Group::named("Twice", vec![ids[0], ids[0]])),
+            Err(TransactionError::BadGroupMember(ids[0]))
+        );
+        tx.remove(ids[3]).unwrap();
+        assert_eq!(
+            tx.add_group(Group::named("Erased", vec![ids[3]])),
+            Err(TransactionError::BadGroupMember(ids[3])),
+            "a member removed in the same transaction"
+        );
+        drop(tx);
+
+        // Both members of the door erased in one transaction: the group goes.
+        let mut tx = drawing.transaction();
+        tx.remove(ids[0]).unwrap();
+        tx.remove(ids[1]).unwrap();
+        tx.remove(ids[2]).unwrap();
+        tx.commit();
+        assert!(!drawing.groups().contains(door));
+        assert!(!drawing.groups().contains(first));
+        assert_eq!(drawing.groups().get(second).unwrap().members, vec![ids[3]]);
+        drawing.undo();
+        assert_eq!(
+            drawing.groups().get(door).unwrap().members,
+            vec![ids[0], ids[1]]
+        );
+        assert_eq!(drawing.groups().len(), 3);
+
+        // Renamed, given a member back, made unselectable: one change.
+        let mut tx = drawing.transaction();
+        let mut renamed = drawing_group(&tx, door);
+        renamed.name = "Front door".to_owned();
+        renamed.selectable = false;
+        tx.replace_group(door, renamed).unwrap();
+        tx.commit();
+        assert_eq!(drawing.groups().find("front door"), Some(door));
+        assert!(!drawing.groups().get(door).unwrap().selectable);
+
+        // From a file: by position, with the same checks, and no history.
+        let mut imported = Drawing::from_entities([
+            line(0.0, 0.0, 1.0, 1.0).into(),
+            line(1.0, 1.0, 2.0, 0.0).into(),
+        ]);
+        let roof = Group::named("Roof", vec![EntityId::from_raw(1), EntityId::from_raw(2)]);
+        imported.import_group(roof.clone()).unwrap();
+        assert_eq!(imported.groups().len(), 1);
+        assert!(!imported.can_undo());
+        assert_eq!(
+            imported.import_group(roof),
+            Err(TransactionError::DuplicateGroupName(GroupId::from_raw(1)))
+        );
+        let ghost = EntityId::from_raw(7);
+        assert_eq!(
+            imported.import_group(Group::named("Shed", vec![ghost])),
+            Err(TransactionError::BadGroupMember(ghost))
+        );
+        assert_eq!(imported.groups().len(), 1, "a refused group leaves nothing");
+    }
+
+    /// A group as the transaction will leave it, for a test to edit.
+    fn drawing_group(tx: &TransactionBuilder<'_>, id: GroupId) -> Group {
+        tx.group_now(id).cloned().unwrap()
     }
 
     #[test]
@@ -5601,6 +5922,10 @@ mod tests {
         Purge,
         /// A layer, an entity on it, and an edit of another, as one step.
         Together(usize, f64),
+        Group(usize, usize, u8),
+        GroupAdd(usize, usize),
+        GroupRemove(usize, usize),
+        GroupRename(usize, u8),
         /// A layout by name; one renamed; one removed with what is on it;
         /// a line drawn in a space by index; an entity moved to a space.
         AddLayout(u8),
@@ -5693,6 +6018,10 @@ mod tests {
             1 => any::<usize>().prop_map(Op::RemoveDimStyle),
             1 => any::<usize>().prop_map(Op::SetDimStyle),
             1 => (any::<usize>(), coordinate()).prop_map(|(i, x)| Op::Together(i, x)),
+            2 => (any::<usize>(), any::<usize>(), 0..6u8).prop_map(|(a, b, name)| Op::Group(a, b, name)),
+            1 => (any::<usize>(), any::<usize>()).prop_map(|(g, e)| Op::GroupAdd(g, e)),
+            1 => (any::<usize>(), any::<usize>()).prop_map(|(g, e)| Op::GroupRemove(g, e)),
+            1 => (any::<usize>(), 0..6u8).prop_map(|(g, name)| Op::GroupRename(g, name)),
             3 => Just(Op::Undo),
             2 => Just(Op::Redo),
         ]
@@ -5708,6 +6037,7 @@ mod tests {
         Vec<(DimStyleId, DimStyle)>,
         Vec<(BlockId, Block)>,
         Vec<(LayoutId, Layout)>,
+        Vec<(GroupId, Group)>,
         DrawingSettings,
     );
 
@@ -5754,6 +6084,11 @@ mod tests {
             .iter()
             .map(|(id, layout)| (id, layout.clone()))
             .collect();
+        let groups = drawing
+            .groups()
+            .iter()
+            .map(|(id, group)| (id, group.clone()))
+            .collect();
         (
             entities,
             layers,
@@ -5762,6 +6097,7 @@ mod tests {
             dim_styles,
             blocks,
             layouts,
+            groups,
             drawing.settings(),
         )
     }
@@ -6301,12 +6637,72 @@ mod tests {
                         tx.commit();
                         layers_made.push(new_layer);
                     }
-                    Op::Erase(_) | Op::Modify(..) | Op::Restyle(..) | Op::Dash(..) => {}
+                    // A group of two (one when both picks are the same
+                    // entity), named or not: a name already taken is refused.
+                    Op::Group(a, b, name) if !live.is_empty() => {
+                        let mut members = vec![live[a % live.len()], live[b % live.len()]];
+                        members.dedup();
+                        let group = if name == 0 {
+                            Group::unnamed(members)
+                        } else {
+                            Group::named(format!("g{name}"), members)
+                        };
+                        let taken = name != 0 && drawing.groups().find(&group.name).is_some();
+                        let mut tx = drawing.transaction();
+                        let added = tx.add_group(group);
+                        tx.commit();
+                        prop_assert_eq!(added.is_ok(), !taken, "{:?}", added);
+                    }
+                    Op::GroupAdd(g, e) | Op::GroupRemove(g, e)
+                        if !drawing.groups().is_empty() && !live.is_empty() =>
+                    {
+                        let groups: Vec<GroupId> = drawing.groups().iter().map(|(id, _)| id).collect();
+                        let id = groups[g % groups.len()];
+                        let entity = live[e % live.len()];
+                        let mut group = drawing.groups().get(id).unwrap().clone();
+                        let adding = matches!(op, Op::GroupAdd(..));
+                        if adding {
+                            group.members.push(entity);
+                        } else {
+                            group.members.retain(|member| *member != entity);
+                        }
+                        let mut tx = drawing.transaction();
+                        let replaced = tx.replace_group(id, group.clone());
+                        tx.commit();
+                        let fine = !group.members.is_empty()
+                            && sorted(group.members.clone()).windows(2).all(|pair| pair[0] != pair[1]);
+                        prop_assert_eq!(replaced.is_ok(), fine, "{:?}", replaced);
+                    }
+                    Op::GroupRename(g, name) if !drawing.groups().is_empty() => {
+                        let groups: Vec<GroupId> = drawing.groups().iter().map(|(id, _)| id).collect();
+                        let id = groups[g % groups.len()];
+                        let mut group = drawing.groups().get(id).unwrap().clone();
+                        group.name = format!("g{name}");
+                        let taken = drawing.groups().find(&group.name).is_some_and(|other| other != id);
+                        let mut tx = drawing.transaction();
+                        let renamed = tx.replace_group(id, group);
+                        tx.commit();
+                        prop_assert_eq!(renamed.is_ok(), !taken, "{:?}", renamed);
+                    }
+                    Op::Erase(_) | Op::Modify(..) | Op::Restyle(..) | Op::Dash(..) | Op::Group(..)
+                    | Op::GroupAdd(..) | Op::GroupRemove(..) | Op::GroupRename(..) => {}
                     Op::Undo => { drawing.undo(); }
                     Op::Redo => { drawing.redo(); }
                 }
                 prop_assert!(drawing.next_entity_id() >= high_water);
                 high_water = drawing.next_entity_id();
+                // Every group has members, each an entity of the drawing,
+                // once; no two groups share a name (#214).
+                let mut group_names = HashSet::new();
+                for (id, group) in drawing.groups().iter() {
+                    prop_assert!(!group.members.is_empty(), "group {} is empty", id);
+                    let mut seen = HashSet::new();
+                    for member in &group.members {
+                        prop_assert!(drawing.entity(*member).is_some(), "group {} holds {}, which is gone", id, member);
+                        prop_assert!(seen.insert(*member), "group {} holds {} twice", id, member);
+                    }
+                    prop_assert!(group_names.insert(group.name.to_lowercase()), "two groups are called {}", group.name);
+                }
                 for (id, record) in drawing.records() {
                     prop_assert!(
                         drawing.layers().contains(record.properties.layer),

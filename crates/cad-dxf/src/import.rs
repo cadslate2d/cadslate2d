@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use cad_core::{LengthUnit, Point2, Vec2};
+use cad_core::{EntityId, LengthUnit, Point2, Vec2};
 use cad_document::{
     ArcEntity, AttributeDefinitionEntity, Block, BlockId, BlockReferenceEntity, BlockTable,
     CircleEntity, Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings,
@@ -61,6 +61,10 @@ const ORDINATE: &str = "(ordinate DIMENSION)";
 const TOO_DENSE: &str = "(HATCH pattern too dense)";
 const UNKNOWN_DIMENSION: &str = "(DIMENSION of an unknown kind)";
 const BAD_BLOCK_NAME: &str = "(block name)";
+/// A GROUP the drawing cannot have: a name taken or not allowed (#214).
+const BAD_GROUP: &str = "(group)";
+/// A GROUP none of whose objects the drawing holds (#214).
+const EMPTY_GROUP: &str = "(group without objects)";
 /// Report key for a layer whose colour is a true colour: the drawing holds
 /// the index palette, so the layer takes the nearest index (ADR-0018).
 const LAYER_TRUE_COLOUR: &str = "(layer true colour)";
@@ -156,6 +160,8 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
         paper_blocks: Vec::new(),
         layouts: Vec::new(),
         block_record_names: HashMap::new(),
+        group_records: Vec::new(),
+        entry_names: HashMap::new(),
     };
     reader.read_file()?;
     reader.finish()
@@ -592,6 +598,11 @@ struct Reader<'a> {
     layouts: Vec<Vec<RawGroup>>,
     /// Block record handles to their names, to pair a layout with its block.
     block_record_names: HashMap<String, String>,
+    /// GROUP objects as the file held them (#214).
+    group_records: Vec<Vec<RawGroup>>,
+    /// What every DICTIONARY entry names, by the handle it points at: a
+    /// group's name is its entry in `ACAD_GROUP` (#214).
+    entry_names: HashMap<String, String>,
 }
 
 /// Gives every leader its note (#205): the MTEXT the leader names by
@@ -803,7 +814,9 @@ impl<'a> Reader<'a> {
             // drawing has no entity for, LAYOUT objects, and BLOCK_RECORD
             // rows, whose handles name the layouts' blocks.
             let keep_raw = matches!(record.value, "HATCH" | "SPLINE" | "LAYOUT" | "BLOCK_RECORD")
-                || matches!(self.open_block, Some(OpenBlock::Paper(_)));
+                || matches!(self.open_block, Some(OpenBlock::Paper(_)))
+                || (matches!(context, RecordContext::Objects)
+                    && matches!(record.value, "DICTIONARY" | "GROUP"));
             if keep_raw {
                 body.raw = Some(Vec::new());
             }
@@ -856,10 +869,26 @@ impl<'a> Reader<'a> {
             }
         }
         if matches!(context, RecordContext::Objects) {
-            if record.value == "LAYOUT"
-                && let Some(raw) = &body.raw
-            {
-                self.layouts.push(raw.clone());
+            match (record.value, &body.raw) {
+                ("LAYOUT", Some(raw)) => self.layouts.push(raw.clone()),
+                ("GROUP", Some(raw)) => self.group_records.push(raw.clone()),
+                // Each entry: its name (3), then the handle it names (350,
+                // or 360 for one the dictionary owns).
+                ("DICTIONARY", Some(raw)) => {
+                    let mut name = None;
+                    for (code, value) in raw {
+                        match code {
+                            3 => name = Some(value.clone()),
+                            350 | 360 => {
+                                if let Some(name) = name.take() {
+                                    self.entry_names.insert(value.trim().to_uppercase(), name);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
             }
             return Ok(());
         }
@@ -1732,6 +1761,50 @@ impl<'a> Reader<'a> {
         layouts
     }
 
+    /// A GROUP object as a group (#214): its name from its dictionary
+    /// entry — none, or `*A` and a number, is an unnamed group — its
+    /// description (300) and whether it is selectable (71), and its members
+    /// (340) among the drawing's entities. `None` when none of its
+    /// members is one: an object in a block, or one the drawing cannot
+    /// hold.
+    fn group_of(
+        &self,
+        raw: &[RawGroup],
+        ids: &HashMap<String, EntityId>,
+    ) -> Option<cad_document::Group> {
+        let value = |code: i32| {
+            raw.iter()
+                .find(|(c, _)| *c == code)
+                .map(|(_, value)| value.trim())
+        };
+        let mut members: Vec<EntityId> = Vec::new();
+        for (_, handle) in raw.iter().filter(|(code, _)| *code == 340) {
+            if let Some(id) = ids.get(&handle.trim().to_uppercase())
+                && !members.contains(id)
+            {
+                members.push(*id);
+            }
+        }
+        if members.is_empty() {
+            return None;
+        }
+        let unnamed = value(70)
+            .and_then(|flags| flags.parse::<i64>().ok())
+            .unwrap_or(0)
+            & 1
+            != 0;
+        let name = value(5)
+            .and_then(|handle| self.entry_names.get(&handle.to_uppercase()))
+            .filter(|name| !unnamed || name.starts_with(cad_document::Group::UNNAMED_PREFIX));
+        let mut group = match name {
+            Some(name) => cad_document::Group::named(name.clone(), members),
+            None => cad_document::Group::unnamed(members),
+        };
+        group.description = value(300).unwrap_or_default().to_owned();
+        group.selectable = value(71).is_none_or(|selectable| selectable != "0");
+        Some(group)
+    }
+
     fn finish(mut self) -> Result<Import, DxfError> {
         // The file's layers first: their linetypes may make rows that
         // entities then use.
@@ -1763,10 +1836,18 @@ impl<'a> Reader<'a> {
 
         let mut entities: Vec<(Entity, Properties, LayoutId)> =
             Vec::with_capacity(self.entities.len());
+        // Each entity's handle to the ID it will have: the drawing gives
+        // them 1, 2, … in the order they are listed, which a group's
+        // members are named by (#214).
+        let mut ids_by_handle: HashMap<String, EntityId> = HashMap::new();
         let (model, notes) = attach_leader_notes(std::mem::take(&mut self.entities));
         self.report.texts -= notes;
         for (entity, pending) in model {
+            let handle = pending.handle.clone();
             if let Some((entity, properties)) = self.resolve(entity, pending) {
+                if let Some(handle) = handle {
+                    ids_by_handle.insert(handle, EntityId::from_raw(entities.len() as u64 + 1));
+                }
                 if matches!(entity, Entity::BlockRef(_)) {
                     self.report.block_references += 1;
                 }
@@ -1782,7 +1863,11 @@ impl<'a> Reader<'a> {
             let (paper, notes) = attach_leader_notes(paper);
             self.report.texts -= notes;
             for (entity, pending) in paper {
+                let handle = pending.handle.clone();
                 if let Some((entity, properties)) = self.resolve(entity, pending) {
+                    if let Some(handle) = handle {
+                        ids_by_handle.insert(handle, EntityId::from_raw(entities.len() as u64 + 1));
+                    }
                     if matches!(entity, Entity::BlockRef(_)) {
                         self.report.block_references += 1;
                     }
@@ -1809,7 +1894,7 @@ impl<'a> Reader<'a> {
         let text_styles = std::mem::take(&mut self.tables.text_styles);
         let dim_styles = std::mem::take(&mut self.tables.dim_styles);
 
-        let drawing = Drawing::from_spaces(
+        let mut drawing = Drawing::from_spaces(
             layers,
             linetypes,
             text_styles,
@@ -1819,6 +1904,14 @@ impl<'a> Reader<'a> {
             entities,
         )
         .map_err(|error| DxfError::Tables(error.to_string()))?;
+        for raw in std::mem::take(&mut self.group_records) {
+            let group = self.group_of(&raw, &ids_by_handle);
+            match group.map(|group| drawing.import_group(group)) {
+                Some(Ok(_)) => self.report.groups += 1,
+                Some(Err(_)) => self.report.count_unsupported(BAD_GROUP),
+                None => self.report.count_unsupported(EMPTY_GROUP),
+            }
+        }
         self.report.layers = drawing.layers().len() - 1;
         self.report.linetypes = drawing.linetypes().len() - 1;
         self.report.text_styles = drawing.text_styles().len() - 1;

@@ -1,7 +1,7 @@
 //! The session facade.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use cad_core::{Aabb, EntityId, LengthUnit, PixelTolerance, Point2, ScreenPoint, View};
 use cad_document::{
@@ -1053,6 +1053,16 @@ impl Session {
                 // Drafting aids change what the overlay shows under the cursor.
                 Dirty::OVERLAY | Dirty::UI
             }
+            KeyAction::GroupSelection => {
+                self.settings.group_selection = !self.settings.group_selection;
+                let state = if self.settings.group_selection {
+                    "on"
+                } else {
+                    "off"
+                };
+                self.log.push(format!("<Group selection {state}>"));
+                Dirty::UI
+            }
         }
     }
 
@@ -1370,6 +1380,8 @@ impl Session {
         remove: bool,
         method: SelectionMethod,
     ) -> Dirty {
+        let ids = self.with_groups(ids);
+        let ids = ids.as_slice();
         let locked = if remove {
             0
         } else {
@@ -1403,6 +1415,30 @@ impl Session {
         } else {
             Dirty::NONE
         }
+    }
+
+    /// `ids` and, when group selection is on, every other member of each
+    /// selectable group one of them is in that is shown in this space
+    /// (#214): picking one member picks the group.
+    fn with_groups(&self, ids: &[EntityId]) -> Vec<EntityId> {
+        let mut all = ids.to_vec();
+        if !self.settings.group_selection || self.drawing.groups().is_empty() {
+            return all;
+        }
+        let mut seen: HashSet<EntityId> = ids.iter().copied().collect();
+        for id in ids {
+            for (_, group) in self.drawing.groups_of(*id) {
+                if !group.selectable {
+                    continue;
+                }
+                for member in &group.members {
+                    if self.drawing.is_shown_in(*member, self.space) && seen.insert(*member) {
+                        all.push(*member);
+                    }
+                }
+            }
+        }
+        all
     }
 
     /// Why a pick on `id` is refused: it names the layer.

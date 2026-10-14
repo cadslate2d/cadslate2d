@@ -42,6 +42,7 @@ export const KeyAction = {
   ToggleOrtho: 8,
   TogglePolar: 9,
   ToggleLineweight: 10,
+  GroupSelection: 11,
 } as const;
 export type KeyAction = (typeof KeyAction)[keyof typeof KeyAction];
 
@@ -151,6 +152,8 @@ export interface SelectionSummary {
   readonly geometry: readonly (readonly [label: string, value: string])[];
   /** How the objects were selected — "window", "fence", "quick select" — or empty. */
   readonly method: string;
+  /** The groups the selected objects are in, by name (#214). */
+  readonly groups: readonly string[];
 }
 
 /** One row of the Layers panel: names and looks only, never IDs or geometry. */

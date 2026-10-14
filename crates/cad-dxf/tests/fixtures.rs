@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use cad_core::{Aabb, Point2, Vec2};
 use cad_document::{
-    BlockReferenceEntity, Chain, Color, DimStyleId, DimensionEntity, Drawing, Entity,
+    BlockReferenceEntity, Chain, Color, DimStyleId, DimensionEntity, Drawing, Entity, Group,
     Justification, Layer, LayerId, Layout, LayoutId, LeaderEntity, LineEntity, Linetype,
     LinetypeDef, LinetypeId, Lineweight, MTextEntity, PointStyle, Properties, PurgeScope,
     TextEntity, TextStyleId, ViewportEntity,
@@ -1671,6 +1671,61 @@ fn text_and_styles_from_another_writer() {
     assert!(text.contains("AcDbTextStyleTableRecord\n  2\nROMAN\n"));
     assert!(text.contains("  7\nROMAN\n"));
     let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(export(&back.drawing), text, "export → import → export");
+}
+
+/// Groups from another writer (#214): named, unnamed, and not selectable,
+/// with their descriptions and their members among the drawing's
+/// entities; one whose only object the drawing cannot hold is reported;
+/// written back as GROUP objects in `ACAD_GROUP`, and the same again.
+#[test]
+fn groups_from_another_writer_keep_their_members_and_round_trip() {
+    let import = load("valid", "ezdxf-r2010-groups.dxf").unwrap();
+    let report = &import.report;
+    assert_eq!(report.groups, 3);
+    assert_eq!(report.unsupported.get("(group without objects)"), Some(&1));
+    assert!(
+        report
+            .summary()
+            .iter()
+            .any(|line| line.contains("3 groups"))
+    );
+    let drawing = &import.drawing;
+    let groups: Vec<&Group> = drawing.groups().iter().map(|(_, group)| group).collect();
+    let kinds = |group: &Group| -> Vec<&'static str> {
+        group
+            .members
+            .iter()
+            .map(|id| drawing.entity(*id).unwrap().kind_name())
+            .collect()
+    };
+    assert_eq!(groups[0].name, "DOOR");
+    assert_eq!(groups[0].description, "The front door");
+    assert_eq!(kinds(groups[0]), ["line", "arc"]);
+    assert!(groups[1].is_unnamed());
+    assert_eq!(kinds(groups[1]), ["polyline", "line"]);
+    assert_eq!(groups[2].name, "NOTE");
+    assert!(!groups[2].selectable);
+    assert_eq!(kinds(groups[2]), ["text"]);
+
+    let text = export(drawing);
+    assert!(text.contains("\n  3\nDOOR\n350\n"));
+    assert!(text.contains("\n100\nAcDbGroup\n300\nThe front door\n 70\n0\n 71\n1\n340\n"));
+    assert!(text.contains("\n100\nAcDbGroup\n300\n\n 70\n0\n 71\n0\n340\n"));
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(back.report.groups, 3);
+    assert_eq!(
+        back.drawing
+            .groups()
+            .iter()
+            .map(|(_, g)| g.clone())
+            .collect::<Vec<_>>(),
+        drawing
+            .groups()
+            .iter()
+            .map(|(_, g)| g.clone())
+            .collect::<Vec<_>>()
+    );
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }
 

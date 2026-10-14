@@ -42,6 +42,8 @@ pub enum KeyAction {
     Delete,
     /// A status-bar toggle or its function key (F3, F7, F8, F10).
     Toggle(crate::Toggle),
+    /// Group selection on or off (Ctrl+Shift+A, #214): `PICKSTYLE`.
+    GroupSelection,
 }
 
 /// Something only the host can do, requested by a command. Rust never calls

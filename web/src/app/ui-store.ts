@@ -71,6 +71,7 @@ const NO_SELECTION: SelectionSummary = {
   kinds: [],
   geometry: [],
   method: "",
+  groups: [],
 };
 
 /** What the store reads from the engine. */
