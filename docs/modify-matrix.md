@@ -57,6 +57,8 @@ Tests: `cad-commands/src/tests/layers.rs`, `cad-document/src/drawing.rs`, `cad-r
 | [BREAK](#break) | yes | yes | two points; becomes an arc | two points; becomes an arc of it | no | yes | two points; opens | no | no | no | no | no: not a curve |
 | [JOIN](#join) | yes | yes | no: it has no end | no | no | yes | no: it has no end | no: it has no ends | no | no | no | no: not a curve |
 | [STRETCH](#stretch) | by its ends | by its ends | whole, by its centre | whole, by its centre | by its fit points, re-fitted | by its vertices | by its vertices | whole, by its insertion point | whole, by its insertion point | by its points: a measured point inside the window moves and the dimension measures anew | by its loop vertices | whole, by its centre |
+| [LENGTHEN](#lengthen) | yes | yes, by length or angle | no: it has no end | no | no | at its end segment | no: it has no end | no | no | no | no | no |
+| [ALIGN](#align) | yes | yes | yes | yes | yes | yes | yes | yes, turned and scaled whole | yes, turned and scaled whole | yes, by its points | yes, whole | yes; its frame stays square to the paper |
 | ERASE | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes |
 | TEXTEDIT | — | — | — | — | — | — | — | changes what it says | — | — | — | — |
 | EXPLODE | — | — | — | — | — | its lines and arcs | its lines and arcs | — | its definition's objects | its lines, its arrowheads (closed polylines), its arc, its text | a pattern hatch its pattern's lines; a solid hatch has nothing to come apart into | no |
@@ -331,6 +333,42 @@ Rules:
 Not implemented: choosing objects by clicking them (they would move whole) or with several windows; the `Displacement` option; a selection made before the command, which is ignored.
 
 Tests: `cad-document/src/editing.rs` (`stretch_hold`, `stretched`), `cad-commands/src/tests/stretch.rs`, `web/e2e/stretch.spec.ts`.
+
+## LENGTHEN
+
+Pick an object to hear its length (an arc's included angle too); or choose how to change lengths — `DElta`, `Percent`, `Total`, `DYnamic` — then pick objects until Enter. Each pick changes the end nearer the pick.
+
+| Object | How it changes |
+| --- | --- |
+| Line | Along its own line: the picked end moves by the delta, to the percentage or total length |
+| Arc | Round its own circle; `Angle` gives the delta or the total as degrees of turn |
+| Open polyline | At its first or last segment, whichever end is nearer: a straight segment along its line, an arc segment round its circle, the bulge recomputed |
+| Circle, closed polyline | Refused: "A circle cannot be lengthened." — nothing with no end |
+| Ellipse, spline, text, block reference, dimension, hatch, viewport, point | Refused by name |
+
+Rules:
+
+- A change that would leave nothing of the object is refused: "That would leave nothing of the object."
+- An arc cannot reach or pass its full circle: "An arc cannot reach its full circle."
+- `Angle` on anything but an arc: "Only an arc has an angle to change."
+- `DYnamic` slides the picked end along the object's own line or circle to the point of it nearest the pointer; object snap is off while it is dragged, since a snap would pull the end off the object.
+- While you hover with an amount set, the object is shown as a click would leave it; nothing changes until the click.
+
+Tests: `cad-geometry/src/lengthen.rs`, `cad-geometry/src/path.rs`, `test-data/geometry/lengthens.txt`, `cad-document/src/editing.rs`, `cad-commands/src/tests/lengthen.rs`.
+
+## ALIGN
+
+Select objects, then a first source point and where it goes; then a second source point and where it goes, or Enter to stop at one pair.
+
+| Pairs given | What happens |
+| --- | --- |
+| One | The selection moves so the source point lands on the destination |
+| Two, `No` to scaling | It moves and turns so the first points meet and the second source point lies on the line from the first destination through the second, at its old distance |
+| Two, `Yes` to scaling | It moves, turns, and scales so both pairs meet |
+
+Every kind of object aligns as it moves, turns, and scales under MOVE, ROTATE, and SCALE: a text and a block reference turn and scale whole, a dimension by its points, a hatch whole, a viewport by its centre with its frame square to the paper. One transaction, one undo; the selection is previewed where the points so far would put it. Coinciding points are refused: "The second source point must differ from the first."
+
+Tests: `cad-geometry/src/transform.rs` (`aligning_lands_the_points_as_asked`), `cad-commands/src/tests/align.rs`, `web/e2e/align.spec.ts`.
 
 ## EXPLODE
 

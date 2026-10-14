@@ -40,6 +40,13 @@ enum Kind {
         about: Point2,
         factor: f64,
     },
+    /// A rotation and a uniform scaling about one point (ALIGN, #201).
+    Similar {
+        about: Point2,
+        turn: Vec2,
+        radians: f64,
+        factor: f64,
+    },
     Mirror {
         /// A point on the mirror line.
         on: Point2,
@@ -76,6 +83,61 @@ impl Transform {
         (factor.is_finite() && factor > 0.0).then_some(Self(Kind::Scale { about, factor }))
     }
 
+    /// Turns by `degrees` and scales by `factor` about `about`: what ALIGN
+    /// composes (#201). `None` unless the factor is finite and positive.
+    pub fn similarity(about: Point2, degrees: f64, factor: f64) -> Option<Self> {
+        (factor.is_finite() && factor > 0.0).then_some(Self(Kind::Similar {
+            about,
+            turn: unit_at_degrees(degrees),
+            radians: degrees.to_radians(),
+            factor,
+        }))
+    }
+
+    /// The transform that takes `a1` to `b1` and turns the direction from
+    /// `a1` to `a2` into the direction from `b1` to `b2` — scaled, when
+    /// `scale`, so that `a2` lands on `b2` too. A move alone when the
+    /// directions already agree and there is no scaling. `None` when a
+    /// pair of points coincides and gives no direction, or the scaling
+    /// would be nothing.
+    pub fn aligning(a1: Point2, a2: Point2, b1: Point2, b2: Point2, scale: bool) -> Option<Self> {
+        let (from, to) = (a2 - a1, b2 - b1);
+        if !(from.length() > 0.0 && to.length() > 0.0) {
+            return None;
+        }
+        let degrees = (to.y.atan2(to.x) - from.y.atan2(from.x)).to_degrees();
+        let factor = if scale {
+            to.length() / from.length()
+        } else {
+            1.0
+        };
+        if !(factor.is_finite() && factor > 0.0) {
+            return None;
+        }
+        let turn = unit_at_degrees(degrees);
+        let scaled = Vec2::new(turn.x * factor, turn.y * factor);
+        // The fixed point c of p ↦ sR(p − a1) + b1: (I − sR) c = b1 − sR a1.
+        let (m00, m01, m10, m11) = (1.0 - scaled.x, scaled.y, -scaled.y, 1.0 - scaled.x);
+        let determinant = m00 * m11 - m01 * m10;
+        if determinant.abs() < 1e-12 {
+            // No turn and no scaling: a move.
+            return Some(Self::translation(b1 - a1));
+        }
+        let rotated_a1 = Vec2::new(
+            a1.x * scaled.x - a1.y * scaled.y,
+            a1.x * scaled.y + a1.y * scaled.x,
+        );
+        let rhs = Vec2::new(b1.x - rotated_a1.x, b1.y - rotated_a1.y);
+        let about = Point2::new(
+            (rhs.x * m11 - m01 * rhs.y) / determinant,
+            (m00 * rhs.y - m10 * rhs.x) / determinant,
+        );
+        if !(about.x.is_finite() && about.y.is_finite()) {
+            return None;
+        }
+        Self::similarity(about, degrees, factor)
+    }
+
     /// Reflects across the line through `from` and `to`. `None` when the two
     /// points coincide and define no line.
     pub fn mirror(from: Point2, to: Point2) -> Option<Self> {
@@ -102,6 +164,19 @@ impl Transform {
                 about + rotated
             }
             Kind::Scale { about, factor } => about + (point - about) * factor,
+            Kind::Similar {
+                about,
+                turn,
+                factor,
+                ..
+            } => {
+                let from = point - about;
+                let rotated = Vec2::new(
+                    from.x * turn.x - from.y * turn.y,
+                    from.x * turn.y + from.y * turn.x,
+                );
+                about + rotated * factor
+            }
             Kind::Mirror { on, axis, .. } => {
                 let from = point - on;
                 on + (axis * (2.0 * from.dot(axis)) - from)
@@ -112,7 +187,7 @@ impl Transform {
     /// What lengths — a radius, say — are multiplied by.
     pub fn scale_factor(&self) -> f64 {
         match self.0 {
-            Kind::Scale { factor, .. } => factor,
+            Kind::Scale { factor, .. } | Kind::Similar { factor, .. } => factor,
             Kind::Translate(_) | Kind::Rotate { .. } | Kind::Mirror { .. } => 1.0,
         }
     }
@@ -122,7 +197,9 @@ impl Transform {
     pub fn apply_angle(&self, angle: f64) -> f64 {
         match self.0 {
             Kind::Translate(_) | Kind::Scale { .. } => angle,
-            Kind::Rotate { radians, .. } => normalize_angle(angle + radians),
+            Kind::Rotate { radians, .. } | Kind::Similar { radians, .. } => {
+                normalize_angle(angle + radians)
+            }
             Kind::Mirror {
                 twice_axis_angle, ..
             } => normalize_angle(twice_axis_angle - angle),
@@ -158,6 +235,37 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
+
+    proptest! {
+        /// #201: aligning takes the first source point to the first
+        /// destination; with scaling the second lands on the second too,
+        /// without it the second lies on the destination's direction at
+        /// its old distance; it is a similarity, so distances scale alike.
+        #[test]
+        fn aligning_lands_the_points_as_asked(
+            a1 in (-100.0..100.0_f64, -100.0..100.0_f64), a2 in (-100.0..100.0_f64, -100.0..100.0_f64),
+            b1 in (-100.0..100.0_f64, -100.0..100.0_f64), b2 in (-100.0..100.0_f64, -100.0..100.0_f64),
+            scale in any::<bool>(), extra in (-100.0..100.0_f64, -100.0..100.0_f64),
+        ) {
+            let (a1, a2) = (Point2::new(a1.0, a1.1), Point2::new(a2.0, a2.1));
+            let (b1, b2) = (Point2::new(b1.0, b1.1), Point2::new(b2.0, b2.1));
+            prop_assume!(a1.distance_to(a2) > 1.0 && b1.distance_to(b2) > 1.0);
+            let transform = Transform::aligning(a1, a2, b1, b2, scale).unwrap();
+            let slack = 1e-6;
+            prop_assert!(transform.apply(a1).distance_to(b1) < slack, "{:?}", transform.apply(a1));
+            let landed = transform.apply(a2);
+            if scale {
+                prop_assert!(landed.distance_to(b2) < slack, "{landed:?} is not {b2:?}");
+            } else {
+                let direction = (b2 - b1) * (1.0 / b1.distance_to(b2));
+                let expected = b1 + direction * a1.distance_to(a2);
+                prop_assert!(landed.distance_to(expected) < slack, "{landed:?} is not {expected:?}");
+            }
+            let other = Point2::new(extra.0, extra.1);
+            let ratio = transform.apply(other).distance_to(transform.apply(a1)) / other.distance_to(a1).max(1e-9);
+            prop_assert!((ratio - transform.scale_factor()).abs() < 1e-6 || other.distance_to(a1) < 1e-6);
+        }
+    }
 
     fn p(x: f64, y: f64) -> Point2 {
         Point2::new(x, y)

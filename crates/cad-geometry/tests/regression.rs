@@ -19,8 +19,9 @@ use cad_core::Point2;
 use cad_core::tolerance::LinearTolerance;
 use cad_geometry::{
     Arc, Circle, Corner, CornerError, Path as Polyline, PathSpan, Primitive, Segment,
-    distance_to_line, extend_arc, extend_segment, fillet_curves, offset_arc, offset_circle,
-    offset_path, offset_segment, path_spans, trim_arc_parts, trim_circle_parts, trim_segment_parts,
+    distance_to_line, extend_arc, extend_segment, fillet_curves, lengthen_arc, lengthen_segment,
+    offset_arc, offset_circle, offset_path, offset_segment, path_spans, trim_arc_parts,
+    trim_circle_parts, trim_segment_parts,
 };
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
@@ -560,6 +561,160 @@ fn extend_case(text: &str) -> Check {
 #[test]
 fn extend_corpus() {
     run("extends.txt", 10, &extend_case);
+}
+
+// ── lengthens ──
+
+/// What a lengthen case acts on: a primitive, or an open polyline.
+enum Lengthened {
+    Primitive(Primitive),
+    Polyline(Polyline),
+}
+
+fn lengthened_object(text: &str) -> Result<Lengthened, String> {
+    let text = text.trim();
+    match text.strip_prefix("polyline ") {
+        Some(rest) => {
+            let (kind, vertices) = split(rest, " ")?;
+            Ok(Lengthened::Polyline(polyline(kind.trim(), vertices)?))
+        }
+        None => Ok(Lengthened::Primitive(primitive(text)?)),
+    }
+}
+
+fn show_polyline(path: &Polyline) -> String {
+    let vertices: Vec<String> = path
+        .vertices
+        .iter()
+        .zip(path.bulges.iter().chain(std::iter::repeat(&0.0)))
+        .map(|(v, b)| {
+            if *b == 0.0 {
+                format!("{},{}", v.x, v.y)
+            } else {
+                format!("{},{},{:.6}", v.x, v.y, b)
+            }
+        })
+        .collect();
+    format!(
+        "polyline {} {}",
+        if path.closed { "closed" } else { "open" },
+        vertices.join(" ")
+    )
+}
+
+/// `<object> @ <pick x y> by <delta> => <object>`, or `=> nothing`. The
+/// end nearer the pick is the one moved.
+/// Property: the other end stays; the length changes by the delta; the
+/// old end is on the result, or the new end on the old object.
+fn lengthen_case(text: &str) -> Check {
+    let (inputs, outcome) = split(text, "=>")?;
+    let (object, rest) = split(inputs, "@")?;
+    let (pick, delta) = split(rest, "by")?;
+    let (object, pick) = (lengthened_object(object)?, point(pick)?);
+    let delta: f64 = delta
+        .trim()
+        .parse()
+        .map_err(|_| format!("`{}` is not a delta", delta.trim()))?;
+    /// What lengthening produced: the result's ends, its length, how it
+    /// is written, and its primitives — or nothing.
+    struct Produced {
+        ends: (Point2, Point2),
+        length: f64,
+        shown: String,
+        shape: Vec<Primitive>,
+    }
+    let (old_ends, old_length, old_shape, produced): (
+        (Point2, Point2),
+        f64,
+        Vec<Primitive>,
+        Option<Produced>,
+    ) = match &object {
+        Lengthened::Primitive(primitive) => {
+            let (start, end) = ends(primitive).ok_or("a circle has no end to lengthen")?;
+            let from_end = pick.distance_to(end) <= pick.distance_to(start);
+            let longer = match primitive {
+                Primitive::Segment(segment) => {
+                    lengthen_segment(segment, from_end, delta).map(Primitive::Segment)
+                }
+                Primitive::Arc(arc) => lengthen_arc(arc, from_end, delta).map(Primitive::Arc),
+                Primitive::Circle(_) => None,
+            };
+            let produced = longer.map(|longer| Produced {
+                ends: ends(&longer).expect("an open primitive"),
+                length: length(&longer),
+                shown: show(&longer),
+                shape: vec![longer],
+            });
+            ((start, end), length(primitive), vec![*primitive], produced)
+        }
+        Lengthened::Polyline(path) => {
+            let (start, end) = (path.vertices[0], path.vertices[path.vertices.len() - 1]);
+            let from_end = pick.distance_to(end) <= pick.distance_to(start);
+            let produced = path.lengthened(from_end, delta).map(|longer| Produced {
+                ends: (
+                    longer.vertices[0],
+                    longer.vertices[longer.vertices.len() - 1],
+                ),
+                length: longer.length(),
+                shown: show_polyline(&longer),
+                shape: longer.primitives(),
+            });
+            ((start, end), path.length(), path.primitives(), produced)
+        }
+    };
+    let Some(Produced {
+        ends: new_ends,
+        length: new_length,
+        shown,
+        shape: new_shape,
+    }) = produced
+    else {
+        report(text, "nothing");
+        return expect(outcome == "nothing", || "gave nothing".to_owned());
+    };
+    report(text, &shown);
+    let (start, end) = old_ends;
+    let (new_start, new_end) = new_ends;
+    let from_end = pick.distance_to(end) <= pick.distance_to(start);
+    let (fixed, was, tip, old_tip) = if from_end {
+        (new_start, start, new_end, end)
+    } else {
+        (new_end, end, new_start, start)
+    };
+    expect(near(fixed, was), || "the other end moved".to_owned())?;
+    expect(
+        (new_length - (old_length + delta)).abs() < AGREEMENT,
+        || format!("the length went from {old_length} to {new_length}, not by {delta}"),
+    )?;
+    let on = |shape: &[Primitive], point: Point2| {
+        shape
+            .iter()
+            .any(|primitive| primitive.distance_to_point(point) < AGREEMENT)
+    };
+    if delta >= 0.0 {
+        expect(on(&new_shape, old_tip), || {
+            "the old end is off the result".to_owned()
+        })?;
+    } else {
+        expect(on(&old_shape, tip), || {
+            "the new end is off the old object".to_owned()
+        })?;
+    }
+    if outcome == "nothing" {
+        return Err(format!("gave {shown}"));
+    }
+    match (&object, lengthened_object(outcome)?) {
+        (Lengthened::Primitive(_), Lengthened::Primitive(want)) => expect_all(&new_shape, &[want]),
+        (Lengthened::Polyline(_), Lengthened::Polyline(want)) => {
+            expect_all(&new_shape, &want.primitives())
+        }
+        _ => Err("the outcome is not the same kind of thing".to_owned()),
+    }
+}
+
+#[test]
+fn lengthen_corpus() {
+    run("lengthens.txt", 10, &lengthen_case);
 }
 
 // ── fillets and chamfers ──

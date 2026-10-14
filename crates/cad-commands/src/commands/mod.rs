@@ -23,6 +23,7 @@ macro_rules! immediate_command {
 }
 
 mod aliases;
+mod align;
 mod arc;
 mod array;
 mod attributes;
@@ -50,6 +51,7 @@ mod inquiry;
 mod join;
 mod layer;
 mod layout;
+mod lengthen;
 mod line;
 mod linetype;
 mod ltscale;
@@ -64,6 +66,7 @@ mod pline;
 mod plot;
 mod points;
 mod polarang;
+mod polygon;
 mod rectang;
 mod select;
 mod spline;
@@ -82,6 +85,7 @@ mod keywords {
 }
 
 pub(crate) use aliases::{AliasEditCommand, SettingsCommand};
+pub(crate) use align::AlignCommand;
 pub(crate) use arc::ArcCommand;
 pub(crate) use array::ArrayCommand;
 #[cfg(test)]
@@ -108,6 +112,7 @@ pub(crate) use inquiry::{AreaCommand, DistCommand, IdCommand, ListCommand};
 pub(crate) use join::JoinCommand;
 pub(crate) use layer::LayerCommand;
 pub(crate) use layout::{LayoutCommand, ModelCommand, MspaceCommand, PspaceCommand};
+pub(crate) use lengthen::LengthenCommand;
 pub(crate) use line::LineCommand;
 pub(crate) use linetype::LinetypeCommand;
 pub(crate) use ltscale::LtscaleCommand;
@@ -122,6 +127,7 @@ pub(crate) use pline::PlineCommand;
 pub(crate) use plot::PlotCommand;
 pub(crate) use points::{DivideCommand, MeasureCommand, PointCommand, PtypeCommand};
 pub(crate) use polarang::PolarAngleCommand;
+pub(crate) use polygon::PolygonCommand;
 pub(crate) use rectang::RectangCommand;
 pub(crate) use select::{QselectCommand, SelectCommand};
 pub(crate) use spline::SplineCommand;

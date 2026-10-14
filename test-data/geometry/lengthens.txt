@@ -1,0 +1,31 @@
+# Lengthen regression corpus (DESIGN §21.3; #201).
+#
+#   <object> @ <pick x y> by <delta> => <object>
+#   <object> @ <pick x y> by <delta> => nothing     the object would vanish, or an arc reach its full circle
+#
+# Objects are written as in intersections.txt, or as a polyline:
+# `polyline open x,y[,bulge] x,y[,bulge] …`. The end of the object nearer
+# the pick is moved `delta` along the object's own line or circle — back,
+# for a negative delta.
+#
+# The runner also checks, for every case, that the other end has not
+# moved, that the length changed by the delta, and that the old end is on
+# the result (or the new end on the old object, when it got shorter).
+
+segment 0 0 50 0 @ 45 0 by 10 => segment 0 0 60 0
+segment 0 0 50 0 @ 5 0 by 10 => segment -10 0 50 0
+segment 0 0 50 0 @ 45 0 by -20 => segment 0 0 30 0
+segment 0 0 50 0 @ 45 0 by -50 => nothing
+segment 0 0 30 40 @ 30 40 by 10 => segment 0 0 36 48
+segment 10 10 10 10 @ 10 10 by 5 => nothing
+arc 0 0 10 0 90 @ 0 10 by 15.707963 => arc 0 0 10 0 180
+arc 0 0 10 0 90 @ 10 0 by 15.707963 => arc 0 0 10 270 180
+arc 0 0 10 0 90 @ 0 10 by -7.853982 => arc 0 0 10 0 45
+arc 0 0 10 0 90 @ 0 10 by -16 => nothing
+arc 0 0 10 0 270 @ 0 -10 by 16 => nothing
+arc 0 0 10 0 270 @ 0 -10 by 20 => nothing
+arc 0 0 10 0 90 @ 0 10 by 1000 => nothing
+polyline open 0,0 10,0,1 10,10 @ 10 10 by 7.853982 => polyline open 0,0 10,0,2.41421356 5,5
+polyline open 0,0 10,0,1 10,10 @ 0 0 by 5 => polyline open -5,0 10,0,1 10,10
+polyline open 0,0 10,0,-1 10,10 @ 10 10 by -7.853982 => polyline open 0,0 10,0,-0.41421356 5,5
+polyline open 0,0 10,0,1 10,10 @ 10 10 by 23.561945 => nothing

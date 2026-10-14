@@ -9,13 +9,14 @@ Plain-text cases for the geometry underneath the modify commands, one case per l
 | `polyline-offsets.txt` | A polyline and a signed distance; the number and total length of the paths that result | Every point of the result is the offset distance from the source ([ADR-0011](../../docs/adr/0011-polyline-offset.md)) |
 | `trims.txt` | An object, its cutters, and a pick; the pieces kept | Kept and removed add up to the object; the removed part is the one nearest the pick |
 | `extends.txt` | An object, its boundaries, and a pick; the extended object | The other end has not moved; the result passes through the old end; the new end is on a boundary |
+| `lengthens.txt` | An object (or an open polyline), a pick, and a signed length; the lengthened object | The other end has not moved; the length changed by exactly that much; the old end is on the result (or the new end on the old object, when shorter) |
 | `fillets.txt` | A fillet radius or two chamfer distances, two picked objects; both objects as they become and the joint | The joint ends on both objects; a fillet arc has the radius asked for and is tangent to both |
 
 **Rule (DESIGN §21.3):** every fixed geometry bug adds a permanent case here, in the same commit as the fix — or, when the bug is too fine for values typed to six places, a regression test beside the code.
 
 ## Running it
 
-All six files go through one runner, `crates/cad-geometry/tests/regression.rs`:
+All seven files go through one runner, `crates/cad-geometry/tests/regression.rs`:
 
 ```bash
 cargo test -p cad-geometry --test regression
@@ -49,6 +50,9 @@ Each modify operation has at least one invariant that is stated in a test and he
 | OFFSET (polyline) | Every point of the result is the offset distance from the source | `path_offset.rs`: `every_point_of_an_offset_is_at_the_offset_distance`, `a_convex_polygon_offset_outwards_grows_by_one_full_turn`; `stress.rs`: `a_polyline_of_nearly_straight_arcs_offsets_true` |
 | TRIM | Kept and removed add up to the object; no piece is empty; the pick is in what was removed | `stress.rs`: `a_trimmed_line_is_the_line_less_the_stretch_at_the_pick`, `a_trimmed_arc_or_circle_is_itself_less_the_stretch_at_the_pick` |
 | EXTEND | The other end is untouched; the result passes through the old end, is never shorter, and ends on the boundary | `stress.rs`: `an_extended_line_ends_on_the_boundary_and_keeps_its_other_end` |
+| LENGTHEN | Lengthening by a delta and back by the same is the identity, and the length changes by exactly the delta meanwhile; an arc never reaches its full circle | `lengthen.rs`: `lengthening_there_and_back_is_the_identity` |
+| POLYGON | Every corner is on the circle — at the radius inscribed, at the radius over the cosine of half a turn between corners circumscribed, where the sides' middles are on the circle — and every side is as long as every other | `lengthen.rs`: `a_regular_polygons_corners_are_on_its_circle_with_equal_sides` |
+| ALIGN | The first source point lands on the first destination; the second on the second when scaled, on its direction at its old distance otherwise; every distance scales alike | `transform.rs`: `aligning_lands_the_points_as_asked` |
 | FILLET | The arc is tangent to both objects and has the radius asked for | `corner.rs`: `a_fillet_arc_is_tangent_to_both_lines`; `curve_fillet.rs`: `a_fillet_arc_is_tangent_to_a_line_and_a_circle`, `a_fillet_arc_is_tangent_to_two_arcs`; `stress.rs`: `nearly_parallel_lines_are_refused_or_properly_filleted`, `a_fillet_at_a_near_tangency_is_tangent_or_refused` |
 | CHAMFER | Each line is set back by its own distance from the corner, and the bevel joins those two points | `stress.rs`: `a_chamfer_sets_each_line_back_by_its_own_distance` |
 | BREAK | Exactly the stretch between the two points is removed | `stress.rs`: `breaking_removes_the_stretch_between_and_joining_undoes_a_split` |

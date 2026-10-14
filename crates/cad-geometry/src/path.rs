@@ -435,6 +435,48 @@ impl Path {
     /// first) lengthened until it meets `boundary`: a straight segment
     /// straight on, an arc along its circle. `None` for a closed path, which
     /// has no ends, or when the boundary is never met.
+    /// The path with its last segment (or its first) made `delta` longer
+    /// — shorter for a negative delta — along its own line or circle
+    /// (#201). `None` for a closed path, or when the segment would vanish
+    /// or an arc would reach its full circle.
+    pub fn lengthened(&self, from_end: bool, delta: f64) -> Option<Path> {
+        let spans = self.spans();
+        if self.closed || spans.is_empty() {
+            return None;
+        }
+        let (from, to) = if from_end { *spans.last()? } else { spans[0] };
+        let (start, end) = (self.vertices[from], self.vertices[to]);
+        let bulge = self.bulge(from);
+        let mut longer = self.clone();
+        match arc_from_bulge(start, end, bulge) {
+            None => {
+                let segment = crate::lengthen_segment(&Segment::new(start, end), from_end, delta)?;
+                longer.vertices[from] = segment.start;
+                longer.vertices[to] = segment.end;
+            }
+            Some(arc) => {
+                let forwards = bulge > 0.0;
+                let grown = crate::lengthen_arc(&arc, from_end == forwards, delta)?;
+                let (arc_start, arc_end) = (grown.start_point(), grown.end_point());
+                let (new_start, new_end) = if forwards {
+                    (arc_start, arc_end)
+                } else {
+                    (arc_end, arc_start)
+                };
+                if from_end {
+                    longer.vertices[to] = new_end;
+                } else {
+                    longer.vertices[from] = new_start;
+                }
+                if longer.bulges.len() <= from {
+                    longer.bulges.resize(from + 1, 0.0);
+                }
+                longer.bulges[from] = crate::bulge_from_arc(&grown, forwards);
+            }
+        }
+        Some(longer)
+    }
+
     pub fn extended(
         &self,
         from_end: bool,

@@ -13,8 +13,8 @@ use crate::tables::Tables;
 use cad_geometry::{
     Corner, CornerJoin, Ellipse, Path, PathCornerError, PathOffsetError, PathTrimError, Primitive,
     break_arc, break_circle, break_ellipse, break_segment, distance_to_line, extend_arc,
-    extend_segment, fillet_curves, offset_arc, offset_circle, offset_segment, trim_arc_parts,
-    trim_circle_parts, trim_ellipse_parts, trim_segment_parts,
+    extend_segment, fillet_curves, lengthen_arc, lengthen_segment, offset_arc, offset_circle,
+    offset_segment, trim_arc_parts, trim_circle_parts, trim_ellipse_parts, trim_segment_parts,
 };
 
 use crate::{
@@ -124,6 +124,37 @@ pub struct TrimParts {
     pub removed: Entity,
 }
 
+/// How LENGTHEN changes a length (#201).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Lengthening {
+    /// So much longer, or shorter when negative.
+    Delta(f64),
+    /// To this percentage of its length.
+    Percent(f64),
+    /// To this length altogether.
+    Total(f64),
+    /// So many degrees more of an arc's turn, or fewer when negative.
+    Angle(f64),
+    /// An arc's turn made this many degrees altogether.
+    TotalAngle(f64),
+}
+
+/// Why an entity could not be lengthened.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LengthenError {
+    /// This kind of entity has no length to change; carries its name.
+    Unsupported(&'static str),
+    /// The change would leave nothing of it.
+    Vanishes,
+    /// An arc would reach or pass its full circle.
+    FullCircle,
+    /// Only an arc has an angle to change.
+    NotAnArc,
+    /// The amount is not a finite number, or a percentage or total is not
+    /// positive.
+    BadAmount,
+}
+
 /// Why an entity could not be extended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExtendError {
@@ -134,6 +165,92 @@ pub enum ExtendError {
 }
 
 impl Entity {
+    /// The length along a line, an arc, or an open polyline — what
+    /// LENGTHEN measures and changes — or nothing for the rest.
+    pub fn curve_length(&self) -> Option<f64> {
+        match self {
+            Entity::Line(line) => Some(line.segment().length()),
+            Entity::Arc(arc) => {
+                let arc = arc.arc();
+                Some(arc.radius * arc.sweep)
+            }
+            Entity::Polyline(polyline) if !polyline.closed => Some(polyline.path().length()),
+            _ => None,
+        }
+    }
+
+    /// This entity made longer or shorter at the end nearer `pick`
+    /// (#201): a line along its own line, an arc round its own circle,
+    /// an open polyline at its end segment. The amount is given as a
+    /// delta, a percentage, a total, or — for an arc — degrees.
+    pub fn lengthened(&self, pick: Point2, how: Lengthening) -> Result<Entity, LengthenError> {
+        let length = match self {
+            Entity::Line(_) | Entity::Arc(_) => self.curve_length().expect("a curve"),
+            Entity::Polyline(polyline) if polyline.closed => {
+                return Err(LengthenError::Unsupported("closed polyline"));
+            }
+            Entity::Polyline(polyline) => polyline.path().length(),
+            Entity::Circle(_)
+            | Entity::Ellipse(_)
+            | Entity::Spline(_)
+            | Entity::Text(_)
+            | Entity::MText(_)
+            | Entity::AttributeDefinition(_)
+            | Entity::BlockRef(_)
+            | Entity::Dimension(_)
+            | Entity::Hatch(_)
+            | Entity::Viewport(_)
+            | Entity::Point(_) => return Err(LengthenError::Unsupported(self.kind_name())),
+        };
+        let delta = match how {
+            Lengthening::Delta(delta) if delta.is_finite() => delta,
+            Lengthening::Percent(percent) if percent.is_finite() && percent > 0.0 => {
+                length * (percent / 100.0 - 1.0)
+            }
+            Lengthening::Total(total) if total.is_finite() && total > 0.0 => total - length,
+            Lengthening::Angle(degrees) if degrees.is_finite() => match self {
+                Entity::Arc(arc) => arc.radius * degrees.to_radians(),
+                _ => return Err(LengthenError::NotAnArc),
+            },
+            Lengthening::TotalAngle(degrees) if degrees.is_finite() && degrees > 0.0 => {
+                match self {
+                    Entity::Arc(arc) => arc.radius * (degrees.to_radians() - arc.arc().sweep),
+                    _ => return Err(LengthenError::NotAnArc),
+                }
+            }
+            _ => return Err(LengthenError::BadAmount),
+        };
+        match self {
+            Entity::Line(line) => {
+                let from_end = pick.distance_to(line.end) <= pick.distance_to(line.start);
+                lengthen_segment(&line.segment(), from_end, delta)
+                    .map(|longer| LineEntity::new(longer.start, longer.end).into())
+                    .ok_or(LengthenError::Vanishes)
+            }
+            Entity::Arc(arc) => {
+                let geometry = arc.arc();
+                let from_end = pick.distance_to(geometry.end_point())
+                    <= pick.distance_to(geometry.start_point());
+                lengthen_arc(&geometry, from_end, delta)
+                    .map(|longer| ArcEntity::from(longer).into())
+                    .ok_or(if geometry.sweep + delta / geometry.radius <= 0.0 {
+                        LengthenError::Vanishes
+                    } else {
+                        LengthenError::FullCircle
+                    })
+            }
+            Entity::Polyline(polyline) => {
+                let from_end = polyline_end_is_nearer(polyline, pick);
+                polyline
+                    .path()
+                    .lengthened(from_end, delta)
+                    .map(|longer| PolylineEntity::from(longer).into())
+                    .ok_or(LengthenError::Vanishes)
+            }
+            _ => unreachable!("refused above"),
+        }
+    }
+
     /// How much of this entity a stretch window takes hold of. The points
     /// that count are a line's two ends, an arc's two ends, a polyline's
     /// vertices, and a circle's centre — so a circle moves whole or not at
@@ -872,6 +989,103 @@ mod tests {
 
     fn p(x: f64, y: f64) -> Point2 {
         Point2::new(x, y)
+    }
+
+    /// #201: a line, an arc, and an open polyline are lengthened at the
+    /// end nearer the pick, by a delta, to a percentage, to a total, or
+    /// by degrees for the arc; the rest refused by name or by reason.
+    #[test]
+    fn lengthening_changes_the_picked_end_by_the_amount_asked() {
+        let line: Entity = LineEntity::new(p(0.0, 0.0), p(100.0, 0.0)).into();
+        assert_eq!(
+            line.lengthened(p(90.0, 0.0), Lengthening::Delta(20.0)),
+            Ok(LineEntity::new(p(0.0, 0.0), p(120.0, 0.0)).into())
+        );
+        assert_eq!(
+            line.lengthened(p(10.0, 0.0), Lengthening::Percent(50.0)),
+            Ok(LineEntity::new(p(50.0, 0.0), p(100.0, 0.0)).into())
+        );
+        assert_eq!(
+            line.lengthened(p(90.0, 0.0), Lengthening::Total(250.0)),
+            Ok(LineEntity::new(p(0.0, 0.0), p(250.0, 0.0)).into())
+        );
+        assert_eq!(
+            line.lengthened(p(90.0, 0.0), Lengthening::Delta(-100.0)),
+            Err(LengthenError::Vanishes)
+        );
+        assert_eq!(
+            line.lengthened(p(90.0, 0.0), Lengthening::Angle(10.0)),
+            Err(LengthenError::NotAnArc)
+        );
+        assert_eq!(
+            line.lengthened(p(90.0, 0.0), Lengthening::Percent(0.0)),
+            Err(LengthenError::BadAmount)
+        );
+        assert_eq!(line.curve_length(), Some(100.0));
+
+        let arc: Entity =
+            ArcEntity::new(p(0.0, 0.0), 10.0, 0.0, std::f64::consts::FRAC_PI_2).into();
+        let Ok(Entity::Arc(longer)) = arc.lengthened(p(0.0, 10.0), Lengthening::Angle(90.0)) else {
+            panic!("an arc");
+        };
+        assert!((longer.end_angle - std::f64::consts::PI).abs() < 1e-12);
+        assert_eq!(
+            arc.lengthened(p(0.0, 10.0), Lengthening::Angle(270.0)),
+            Err(LengthenError::FullCircle)
+        );
+        let Ok(Entity::Arc(whole)) = arc.lengthened(p(0.0, 10.0), Lengthening::TotalAngle(180.0))
+        else {
+            panic!("an arc");
+        };
+        assert!((whole.end_angle - std::f64::consts::PI).abs() < 1e-12);
+        assert_eq!(
+            line.lengthened(p(90.0, 0.0), Lengthening::TotalAngle(90.0)),
+            Err(LengthenError::NotAnArc)
+        );
+        assert_eq!(
+            arc.lengthened(p(0.0, 10.0), Lengthening::Delta(-20.0)),
+            Err(LengthenError::Vanishes)
+        );
+        let Ok(Entity::Arc(total)) = arc.lengthened(
+            p(10.0, 0.0),
+            Lengthening::Total(10.0 * std::f64::consts::PI),
+        ) else {
+            panic!("an arc");
+        };
+        assert!(
+            (total.start_angle - (3.0 * std::f64::consts::FRAC_PI_2)).abs() < 1e-9,
+            "grown at its start"
+        );
+
+        let polyline: Entity = PolylineEntity::with_bulges(
+            vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0)],
+            vec![0.0, 1.0, 0.0],
+            false,
+        )
+        .into();
+        let Ok(Entity::Polyline(longer)) = polyline.lengthened(
+            p(10.0, 10.0),
+            Lengthening::Delta(5.0 * std::f64::consts::FRAC_PI_2),
+        ) else {
+            panic!("a polyline");
+        };
+        // The bulged end grows a quarter turn further round its half circle.
+        assert!(
+            longer.vertices[2].distance_to(p(5.0, 5.0)) < 1e-9,
+            "{:?}",
+            longer.vertices
+        );
+        let closed: Entity =
+            PolylineEntity::new(vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0)], true).into();
+        assert_eq!(
+            closed.lengthened(p(0.0, 0.0), Lengthening::Delta(1.0)),
+            Err(LengthenError::Unsupported("closed polyline"))
+        );
+        let circle: Entity = CircleEntity::new(p(0.0, 0.0), 5.0).into();
+        assert_eq!(
+            circle.lengthened(p(5.0, 0.0), Lengthening::Delta(1.0)),
+            Err(LengthenError::Unsupported("circle"))
+        );
     }
 
     #[test]

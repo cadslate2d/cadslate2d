@@ -50,7 +50,8 @@ pub use dim_style::{DimStyle, DimStyleChange, DimStyleError, DimStyleId, DimStyl
 pub use dimension::{DimensionEntity, DimensionError, DimensionLayout, Measure};
 pub use drawing::{ApplyReport, Drawing, PurgeScope, Purged, TransactionBuilder, TransactionError};
 pub use editing::{
-    BreakError, CornerError, Cornered, ExtendError, OffsetError, StretchHold, TrimError, TrimParts,
+    BreakError, CornerError, Cornered, ExtendError, LengthenError, Lengthening, OffsetError,
+    StretchHold, TrimError, TrimParts,
 };
 pub use entity::{
     ArcEntity, AttributeDefinitionEntity, CircleEntity, EllipseEntity, Entity, LineEntity,
