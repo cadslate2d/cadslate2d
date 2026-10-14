@@ -44,6 +44,7 @@ export const KeyAction = {
   ToggleLineweight: 10,
   GroupSelection: 11,
   ToggleSnap: 12,
+  ToggleOtrack: 13,
 } as const;
 export type KeyAction = (typeof KeyAction)[keyof typeof KeyAction];
 
@@ -55,6 +56,7 @@ export const ToggleBit = {
   Polar: 1 << 3,
   Lineweight: 1 << 4,
   Snap: 1 << 5,
+  Otrack: 1 << 6,
 } as const;
 
 /** Something only the host can do, requested by a command. */
@@ -430,6 +432,11 @@ export class CadEngine {
   /** Canvas size in CSS pixels. */
   resize(width: number, height: number): number {
     return this.#session.resize(width, height);
+  }
+
+  /** The pointer has rested a moment (#220): object snap tracking acquires the point under it. */
+  pointerRest(): number {
+    return this.#session.pointer_rest();
   }
 
   pointerMove(x: number, y: number, modifiers: number): number {

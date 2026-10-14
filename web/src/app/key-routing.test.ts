@@ -50,14 +50,17 @@ describe("classifyKey", () => {
     expect(classifyKey(key("Delete"), true, false).kind).toBe("text");
   });
 
-  test("F3, F7, F8, F9, and F10 are the drafting toggles", () => {
-    const toggles = ["F3", "F7", "F8", "F9", "F10"].map((name) => classifyKey(key(name), true));
+  test("F3, F7, F8, F9, F10, and F11 are the drafting toggles", () => {
+    const toggles = ["F3", "F7", "F8", "F9", "F10", "F11"].map((name) =>
+      classifyKey(key(name), true),
+    );
     expect(toggles).toEqual([
       { kind: "toggle", toggle: "osnap" },
       { kind: "toggle", toggle: "grid" },
       { kind: "toggle", toggle: "ortho" },
       { kind: "toggle", toggle: "snap" },
       { kind: "toggle", toggle: "polar" },
+      { kind: "toggle", toggle: "otrack" },
     ]);
   });
 

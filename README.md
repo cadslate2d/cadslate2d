@@ -138,6 +138,7 @@ Options shown in brackets, as in `Specify next point or [Close/Undo]:`, are chos
 | F10 | POLAR on or off: the pointer locks onto angles at a fixed increment from the previous point |
 | F7 | Grid on or off (on at start). Zoomed out, it shows every 2nd, 5th, 10th… line rather than crowding |
 | F9 | SNAP on or off: the pointer lands on the snap grid |
+| F11 | OTRACK on or off: object snap tracking. While a point is asked for, rest the pointer on a snap point to acquire it (up to seven; rest again to let it go); the pointer then follows lines through it — horizontal and vertical, or every polar angle when POLAR is on — and where lines from two points cross, and a distance typed is measured along the line from its point |
 
 ### Object snaps
 

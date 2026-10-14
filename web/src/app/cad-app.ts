@@ -20,6 +20,13 @@ const DEFAULT_FILE_NAME = "drawing.dxf";
 const RECOVERED_FILE_NAME = "recovered.dxf";
 /** How long after the last change the drawing is kept (ADR-0019). */
 export const AUTOSAVE_DELAY_MS = 1000;
+
+/**
+ * How long the pointer must stay still to rest on a point (#220): object
+ * snap tracking acquires the snap point it rests on. The engine keeps no
+ * clock; the app times the rest and tells it.
+ */
+export const POINTER_REST_MS = 400;
 /**
  * Records the snapshot writes per slice (ADR-0024): about ten milliseconds
  * of a large drawing, so the frames between slices are kept.
@@ -100,6 +107,8 @@ export class CadApp {
   #keptAt: number | undefined;
   /** The engine has panicked (#176): nothing reaches it any more. */
   #failed = false;
+  /** Cancels the pending pointer rest, while the pointer is moving. */
+  #cancelRest: (() => void) | undefined;
 
   constructor(engine: CadEngine, options: CadAppOptions = {}) {
     this.engine = engine;
@@ -112,12 +121,24 @@ export class CadApp {
       autosaveDelayMs: this.#autosaveDelay,
     });
     this.loop = new FrameLoop(
-      (sample) => engine.pointerMove(sample.x, sample.y, sample.modifiers),
+      (sample) => {
+        this.#awaitRest();
+        return engine.pointerMove(sample.x, sample.y, sample.modifiers);
+      },
       (dirty) => this.#onFrame(dirty),
       options.schedule ?? ((callback) => requestAnimationFrame(callback)),
     );
     engine.onFailure = (message) => this.#fail(message);
     this.ui.refresh(engine);
+  }
+
+  /** Starts timing a rest of the pointer afresh; when it rests, the engine is told. */
+  #awaitRest(): void {
+    this.#cancelRest?.();
+    this.#cancelRest = this.#timer(() => {
+      this.#cancelRest = undefined;
+      if (!this.#failed) this.loop.invalidate(this.engine.pointerRest());
+    }, POINTER_REST_MS);
   }
 
   /** Whether the engine has stopped. Everything the app is asked afterwards is declined. */

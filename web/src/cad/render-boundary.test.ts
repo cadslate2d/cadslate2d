@@ -46,6 +46,8 @@ describe("WASM API surface", () => {
       "pointer_down",
       "pointer_leave",
       "pointer_move",
+      // #220: the pointer rested a moment, which only the host can time.
+      "pointer_rest",
       "pointer_up",
       "resize",
       // #186: what the browser kept between sessions, given back in one call.

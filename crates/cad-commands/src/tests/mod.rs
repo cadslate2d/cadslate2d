@@ -55,6 +55,7 @@ mod snapping;
 mod spline;
 mod stretch;
 mod text;
+mod tracking;
 mod transform;
 mod units;
 mod viewport;

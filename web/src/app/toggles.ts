@@ -2,7 +2,7 @@
 // their state; this table only says how each is labelled and reached.
 import { KeyAction, ToggleBit } from "../cad/engine";
 
-export type ToggleId = "snap" | "osnap" | "grid" | "ortho" | "polar" | "lineweight";
+export type ToggleId = "snap" | "osnap" | "otrack" | "grid" | "ortho" | "polar" | "lineweight";
 
 export interface ToggleSpec {
   readonly id: ToggleId;
@@ -57,10 +57,15 @@ export const TOGGLES: readonly ToggleSpec[] = [
     action: KeyAction.ToggleOsnap,
     hint: "Clicks land exactly on endpoints, midpoints, centres, quadrants, and intersections. Type OSNAP to choose which.",
   },
+  {
+    id: "otrack",
+    label: "OTRACK",
+    key: "F11",
+    bit: ToggleBit.Otrack,
+    action: KeyAction.ToggleOtrack,
+    hint: "Rest the pointer on a snap point to track from it: the pointer follows lines through it, and where two cross. Rest on it again to let it go.",
+  },
 ];
-
-/** Shown in the reference design but not implemented: visibly unavailable. */
-export const UNAVAILABLE_TOGGLES = ["OTRACK"] as const;
 
 /** Lineweight display. It has no function key: it is flipped from the status bar. */
 export const LINEWEIGHT_TOGGLE: ToggleSpec = {
@@ -71,15 +76,8 @@ export const LINEWEIGHT_TOGGLE: ToggleSpec = {
   hint: "Draws lines as heavy as their lineweights say. Off, every line is drawn at the ordinary width. Type LWEIGHT to set the lineweight of new objects.",
 };
 
-/**
- * The status bar, left to right, as in the reference design: the toggles
- * that work, and the names of those that do not yet.
- */
-export const STATUS_BAR: readonly (ToggleSpec | string)[] = [
-  ...TOGGLES,
-  ...UNAVAILABLE_TOGGLES,
-  LINEWEIGHT_TOGGLE,
-];
+/** The status bar, left to right, as in the reference design. */
+export const STATUS_BAR: readonly (ToggleSpec | string)[] = [...TOGGLES, LINEWEIGHT_TOGGLE];
 
 export function toggleSpec(id: ToggleId): ToggleSpec {
   const spec = [...TOGGLES, LINEWEIGHT_TOGGLE].find((toggle) => toggle.id === id);

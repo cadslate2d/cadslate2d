@@ -59,6 +59,9 @@ pub enum OverlayItem {
     /// The direction polar tracking has locked onto: a ray from `from`
     /// through `through`, drawn to the edge of the view.
     TrackingLine { from: Point2, through: Point2 },
+    /// A point object snap tracking runs from (#220), marked with a small
+    /// cross.
+    AcquiredPoint { at: Point2 },
     /// The object snap the next click would take, shown at its exact point.
     SnapMarker { mode: SnapMode, at: Point2 },
     /// The cursor crosshair at a world position.

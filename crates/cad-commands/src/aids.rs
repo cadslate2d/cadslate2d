@@ -13,7 +13,8 @@
 //! ORTHO and POLAR are never on together: both claim the same rubber band.
 //! They constrain the grid-snapped point, as a classic drafter expects.
 
-use cad_core::{PixelTolerance, Point2};
+use cad_core::tolerance::AngularTolerance;
+use cad_core::{PixelTolerance, Point2, Vec2};
 use cad_geometry::unit_at_degrees;
 
 /// How close, on screen, the cursor must be to a polar direction to lock
@@ -25,6 +26,8 @@ pub const POLAR_APERTURE: PixelTolerance = PixelTolerance(8.0);
 pub enum TrackKind {
     Ortho,
     Polar,
+    /// Object snap tracking (#220): along a path from an acquired point.
+    Object,
 }
 
 /// A pointer position constrained to a direction from a base point.
@@ -50,12 +53,117 @@ impl Track {
         let aid = match self.kind {
             TrackKind::Ortho => "Ortho",
             TrackKind::Polar => "Polar",
+            TrackKind::Object => "Tracking",
         };
         // Up to two decimals, without trailing zeros: 45°, 22.5°, 33.33°.
         let angle = format!("{:.2}", self.angle);
         let angle = angle.trim_end_matches('0').trim_end_matches('.');
         format!("{aid}: {:.4} < {angle}°", self.distance())
     }
+}
+
+/// How close, on screen, the cursor must be to an object tracking path to
+/// follow it (#220).
+pub const TRACKING_APERTURE: PixelTolerance = PixelTolerance(8.0);
+
+/// The most points object snap tracking holds at once; acquiring another
+/// lets the oldest go.
+pub const MAX_ACQUIRED: usize = 7;
+
+/// Where object snap tracking puts the pointer (#220): on one alignment
+/// path, or where two cross.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tracked {
+    pub point: Point2,
+    /// The path the point is on, from its acquired point.
+    pub first: Track,
+    /// The other path, when the point is where two cross.
+    pub second: Option<Track>,
+}
+
+impl Tracked {
+    /// The status bar's readout: `Tracking: 50.0000 < 0°`, or where two
+    /// paths cross.
+    pub fn label(&self) -> String {
+        match self.second {
+            None => self.first.label(),
+            Some(_) => "Tracking: intersection".to_owned(),
+        }
+    }
+}
+
+/// OTRACK (#220): the cursor on an alignment path — a line through an
+/// acquired point at a multiple of `increment` degrees — when it is within
+/// `reach` (world units) of one, and at the crossing of two from different
+/// points when it is within reach of both. `None` leaves the cursor free.
+pub fn object_tracking(
+    acquired: &[Point2],
+    cursor: Point2,
+    increment: f64,
+    reach: f64,
+) -> Option<Tracked> {
+    if !(increment.is_finite() && increment > 0.0) {
+        return None;
+    }
+    let lines = ((180.0 / increment).round() as usize).clamp(1, 360);
+    // Every path near the cursor: its point, its direction, and how far.
+    let mut near: Vec<(Point2, Vec2, f64)> = Vec::new();
+    for from in acquired {
+        let offset = cursor - *from;
+        if offset.length() <= reach {
+            continue;
+        }
+        for step in 0..lines {
+            let along = unit_at_degrees(step as f64 * increment);
+            let aside = (offset.x * along.y - offset.y * along.x).abs();
+            if aside <= reach {
+                near.push((*from, along, aside));
+            }
+        }
+    }
+    let track = |from: Point2, point: Point2| {
+        let offset = point - from;
+        Track {
+            kind: TrackKind::Object,
+            from,
+            point,
+            angle: offset.y.atan2(offset.x).to_degrees().rem_euclid(360.0),
+        }
+    };
+    // Two paths from different points crossing near the cursor.
+    let mut crossing: Option<(f64, Tracked)> = None;
+    for (index, (from_a, along_a, _)) in near.iter().enumerate() {
+        for (from_b, along_b, _) in &near[index + 1..] {
+            let sine = along_a.x * along_b.y - along_a.y * along_b.x;
+            if from_a == from_b || AngularTolerance::DEFAULT.is_zero(sine) {
+                continue;
+            }
+            let between = *from_b - *from_a;
+            let t = (between.x * along_b.y - between.y * along_b.x) / sine;
+            let point = *from_a + *along_a * t;
+            let off = point.distance_to(cursor);
+            if off <= 2.0 * reach && crossing.is_none_or(|(best, _)| off < best) {
+                crossing = Some((
+                    off,
+                    Tracked {
+                        point,
+                        first: track(*from_a, point),
+                        second: Some(track(*from_b, point)),
+                    },
+                ));
+            }
+        }
+    }
+    if let Some((_, tracked)) = crossing {
+        return Some(tracked);
+    }
+    let (from, along, _) = near.into_iter().min_by(|a, b| a.2.total_cmp(&b.2))?;
+    let point = from + along * (cursor - from).dot(along);
+    Some(Tracked {
+        point,
+        first: track(from, point),
+        second: None,
+    })
 }
 
 /// SNAP (#219): `point` moved to the nearest point of the grid whose
@@ -120,6 +228,28 @@ mod tests {
 
     fn p(x: f64, y: f64) -> Point2 {
         Point2::new(x, y)
+    }
+
+    #[test]
+    fn object_tracking_follows_a_path_and_takes_a_crossing() {
+        let corner = p(0.0, 0.0);
+        let other = p(100.0, 50.0);
+        // Near the horizontal through the corner: on it.
+        let tracked = object_tracking(&[corner], p(60.0, 3.0), 90.0, 5.0).unwrap();
+        assert_eq!(tracked.point, p(60.0, 0.0));
+        assert_eq!((tracked.first.angle, tracked.second), (0.0, None));
+        assert_eq!(tracked.label(), "Tracking: 60.0000 < 0°");
+        // Level with one point and above the other: the crossing.
+        let tracked = object_tracking(&[corner, other], p(2.0, 48.0), 90.0, 5.0).unwrap();
+        assert!(tracked.point.distance_to(p(0.0, 50.0)) < 1e-9);
+        assert_eq!(tracked.label(), "Tracking: intersection");
+        // Far from every path, or at the point itself: free.
+        assert_eq!(object_tracking(&[corner], p(40.0, 40.0), 90.0, 5.0), None);
+        assert_eq!(object_tracking(&[corner], p(1.0, 1.0), 90.0, 5.0), None);
+        // With a polar increment of 45°, the diagonal too.
+        let tracked = object_tracking(&[corner], p(30.0, 32.0), 45.0, 5.0).unwrap();
+        assert!(tracked.point.distance_to(p(31.0, 31.0)) < 1e-9);
+        assert!((tracked.first.angle - 45.0).abs() < 1e-9);
     }
 
     #[test]

@@ -12,7 +12,7 @@ export type KeyIntent =
   /** Ctrl+Shift+A: group selection on or off (#214). */
   | { kind: "group-selection" }
   /** A drafting toggle's function key. */
-  | { kind: "toggle"; toggle: "snap" | "osnap" | "grid" | "ortho" | "polar" }
+  | { kind: "toggle"; toggle: "snap" | "osnap" | "otrack" | "grid" | "ortho" | "polar" }
   /** Delete with nothing typed: erase the selection. */
   | { kind: "delete" }
   | { kind: "history-previous" }
@@ -31,11 +31,14 @@ export interface KeyLike {
 }
 
 /** Function keys from DESIGN §13.4. Browsers bind several of these; the app takes them. */
-const TOGGLE_KEYS: Readonly<Record<string, "snap" | "osnap" | "grid" | "ortho" | "polar">> = {
+const TOGGLE_KEYS: Readonly<
+  Record<string, "snap" | "osnap" | "otrack" | "grid" | "ortho" | "polar">
+> = {
   F3: "osnap",
   F7: "grid",
   F8: "ortho",
   F9: "snap",
+  F11: "otrack",
   F10: "polar",
 };
 

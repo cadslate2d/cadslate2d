@@ -11,7 +11,9 @@ use cad_document::{
 use cad_geometry::SelectionShape;
 use cad_input::{ExpectedInput, Input, InputKind, Keyword};
 
-use crate::aids::{self, POLAR_APERTURE, Track, TrackKind};
+use crate::aids::{
+    self, MAX_ACQUIRED, POLAR_APERTURE, TRACKING_APERTURE, Track, TrackKind, Tracked,
+};
 use crate::command::angle_degrees;
 use crate::commands::{GripEditCommand, Isolation, grip};
 use crate::grips::{grip_at, grips_of};
@@ -142,6 +144,8 @@ pub struct Aim {
     pub point: Point2,
     pub snap: Option<SnapPoint>,
     pub track: Option<Track>,
+    /// Object snap tracking's paths, when they placed the point (#220).
+    pub tracked: Option<Tracked>,
 }
 
 #[derive(Debug)]
@@ -161,6 +165,9 @@ pub struct Session {
     view: View,
     /// The views ZOOM and PAN moved away from, newest last (#180).
     previous_views: Vec<View>,
+    /// The object snap points tracking runs from (#220), oldest first;
+    /// cleared when a command ends.
+    acquired: Vec<Point2>,
     /// What the last `LAYISO` changed, for `LAYUNISO` (#213).
     isolation: Option<Isolation>,
     registry: CommandRegistry,
@@ -246,6 +253,7 @@ impl Session {
             drawing,
             view: View::new(1.0, 1.0),
             previous_views: Vec::new(),
+            acquired: Vec::new(),
             isolation: None,
             registry,
             active: None,
@@ -385,6 +393,7 @@ impl Session {
             point: cursor,
             snap: None,
             track: None,
+            tracked: None,
         };
         if let Some(snap) = self.snap() {
             return Some(Aim {
@@ -393,11 +402,29 @@ impl Session {
                 ..free
             });
         }
-        // Grid snap moves the free cursor, unless what is asked for is a
-        // place on the screen, as object snap does not apply there (#219).
         let on_screen = self
             .point_target()
             .is_some_and(|command| !command.takes_object_snap());
+        // Object snap tracking, while a point of the drawing is asked for
+        // and some point has been acquired (#220).
+        if self.toggles.is_on(Toggle::Otrack) && self.point_target().is_some() && !on_screen {
+            let increment = if self.toggles.is_on(Toggle::Polar) {
+                self.settings.polar_increment
+            } else {
+                90.0
+            };
+            let reach = self.view.pixels_to_world(TRACKING_APERTURE.0);
+            if let Some(tracked) = aids::object_tracking(&self.acquired, cursor, increment, reach) {
+                return Some(Aim {
+                    point: tracked.point,
+                    track: Some(tracked.first),
+                    tracked: Some(tracked),
+                    ..free
+                });
+            }
+        }
+        // Grid snap moves the free cursor, unless what is asked for is a
+        // place on the screen, as object snap does not apply there (#219).
         let cursor = if self.toggles.is_on(Toggle::Snap) && !on_screen {
             aids::grid_snap(cursor, self.settings.snap_spacing)
         } else {
@@ -450,7 +477,11 @@ impl Session {
             log_total: self.log.total(),
             cursor: aim.map(|aim| (aim.point.x, aim.point.y)),
             snap: aim.and_then(|aim| aim.snap).map(|snap| snap.mode.label()),
-            tracking: aim.and_then(|aim| aim.track).map(|track| track.label()),
+            tracking: aim.and_then(|aim| {
+                aim.tracked
+                    .map(|tracked| tracked.label())
+                    .or_else(|| aim.track.map(|track| track.label()))
+            }),
             selection_count: self.selection.len(),
             space_accepts: self.expected().space_accepts(),
             can_undo: self.drawing.can_undo(),
@@ -579,6 +610,20 @@ impl Session {
                 through: track.point,
             });
         }
+        // The points tracking runs from, and the paths that placed the point.
+        items.extend(
+            self.acquired
+                .iter()
+                .map(|at| OverlayItem::AcquiredPoint { at: *at }),
+        );
+        if let Some(tracked) = aim.tracked {
+            for path in std::iter::once(tracked.first).chain(tracked.second) {
+                items.push(OverlayItem::TrackingLine {
+                    from: path.from,
+                    through: path.point,
+                });
+            }
+        }
         if let Some(active) = &self.active {
             // Previews follow the point a click would give, not the raw cursor.
             active.command.preview(aim.point, &mut items);
@@ -647,6 +692,32 @@ impl Session {
             dirty |= Dirty::VIEW;
         }
         dirty
+    }
+
+    /// The pointer has rested where it is (#220): the host says so after a
+    /// moment without a move, as Rust keeps no clock. Resting on an object
+    /// snap point while a point is asked for, with OTRACK on, acquires it
+    /// for tracking — or lets it go, if it was acquired already. At most
+    /// [`MAX_ACQUIRED`] are held; another lets the oldest go.
+    pub fn pointer_rest(&mut self) -> Dirty {
+        if !self.toggles.is_on(Toggle::Otrack) || self.point_target().is_none() {
+            return Dirty::NONE;
+        }
+        let Some(snap) = self.snap() else {
+            return Dirty::NONE;
+        };
+        match self.acquired.iter().position(|at| *at == snap.point) {
+            Some(index) => {
+                self.acquired.remove(index);
+            }
+            None => {
+                self.acquired.push(snap.point);
+                if self.acquired.len() > MAX_ACQUIRED {
+                    self.acquired.remove(0);
+                }
+            }
+        }
+        Dirty::OVERLAY | Dirty::UI
     }
 
     /// The pointer left the canvas: hide the crosshair and any preview.
@@ -1120,6 +1191,7 @@ impl Session {
         self.through = None;
         self.previous_views.clear();
         self.isolation = None;
+        self.acquired.clear();
         if let Some(extents) = self.drawing.extents() {
             self.view.fit(&extents);
         }
@@ -1534,8 +1606,16 @@ impl Session {
     /// Where direct-distance entry lands: `distance` from the command's base
     /// point towards the cursor. `None` without a base point or a direction.
     fn direct_distance_target(&self, distance: f64) -> Option<Point2> {
+        let aim = self.aim()?;
+        // Along an object tracking path, from the point it runs from (#220).
+        if let Some(tracked) = aim.tracked.filter(|tracked| tracked.second.is_none()) {
+            let from = tracked.first.from;
+            let towards = tracked.point - from;
+            let length = towards.length();
+            return (length > 0.0).then(|| from + towards * (distance / length));
+        }
         let base = self.active.as_ref()?.command.base_point()?;
-        let towards = self.aim()?.point - base;
+        let towards = aim.point - base;
         let length = towards.length();
         (length > 0.0).then(|| base + towards * (distance / length))
     }
@@ -1593,6 +1673,7 @@ impl Session {
         self.selection_box = None;
         self.selection_shape = None;
         self.removing = false;
+        self.acquired.clear();
         match self.active.take() {
             Some(_) => {
                 self.drawing.end_group();
@@ -1644,6 +1725,7 @@ impl Session {
             self.drawing.end_group();
             // Remove mode belongs to the prompt that is over.
             self.removing = false;
+            self.acquired.clear();
         }
 
         // Whatever the command did, the selection must never name an entity

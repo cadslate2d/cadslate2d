@@ -20,12 +20,16 @@ pub enum Toggle {
     Lineweight,
     /// Grid snap (F9, #219): the free cursor lands on the snap grid.
     Snap,
+    /// Object snap tracking (F11, #220): alignment paths from snap points
+    /// the pointer has rested on.
+    Otrack,
 }
 
 impl Toggle {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Snap,
         Self::Osnap,
+        Self::Otrack,
         Self::Grid,
         Self::Ortho,
         Self::Polar,
@@ -43,7 +47,7 @@ impl Toggle {
         match self {
             Self::Ortho => Some(Self::Polar),
             Self::Polar => Some(Self::Ortho),
-            Self::Osnap | Self::Grid | Self::Lineweight | Self::Snap => None,
+            Self::Osnap | Self::Grid | Self::Lineweight | Self::Snap | Self::Otrack => None,
         }
     }
 
@@ -56,6 +60,7 @@ impl Toggle {
             Self::Polar => "POLAR",
             Self::Lineweight => "LWT",
             Self::Snap => "SNAP",
+            Self::Otrack => "OTRACK",
         }
     }
 }
@@ -139,13 +144,13 @@ mod tests {
         let bits: Vec<u32> = Toggle::ALL.iter().map(|toggle| toggle.bit()).collect();
         assert_eq!(
             bits,
-            vec![32, 1, 2, 4, 8, 16],
-            "SNAP came last, so the others keep their bits"
+            vec![32, 1, 64, 2, 4, 8, 16],
+            "SNAP and OTRACK came last, so the others keep their bits"
         );
         let labels: Vec<&str> = Toggle::ALL.iter().map(|toggle| toggle.label()).collect();
         assert_eq!(
             labels,
-            vec!["SNAP", "OSNAP", "GRID", "ORTHO", "POLAR", "LWT"]
+            vec!["SNAP", "OSNAP", "OTRACK", "GRID", "ORTHO", "POLAR", "LWT"]
         );
         assert!(
             !Toggles::default().is_on(Toggle::Lineweight),

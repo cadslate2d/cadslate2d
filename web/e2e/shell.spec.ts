@@ -118,10 +118,12 @@ test.describe("status toggles", () => {
     expect(file.text.match(/^LINE$/gm)).toHaveLength(1);
   });
 
-  test("toggles without an implementation are shown as unavailable", async ({ page }) => {
+  test("every toggle of the reference status bar is there and works (#219, #220)", async ({
+    page,
+  }) => {
     await openApp(page);
-    for (const label of ["OTRACK"]) {
-      await expect(page.getByText(label, { exact: true })).toHaveAttribute("aria-disabled", "true");
+    for (const label of ["SNAP", "GRID", "ORTHO", "POLAR", "OSNAP", "OTRACK", "LWT"]) {
+      await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
     }
   });
 });

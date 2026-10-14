@@ -28,6 +28,9 @@ const GRIP_PIXELS: f64 = 4.0;
 /// Half-size of the hovered or dragged grip: a little larger.
 const HOT_GRIP_PIXELS: f64 = 5.0;
 /// Half-size of an object-snap marker, in CSS pixels.
+/// Half the size of an acquired point's cross, in pixels (#220).
+const ACQUIRED_MARK_PIXELS: f64 = 4.0;
+
 const SNAP_MARKER_PIXELS: f64 = 7.0;
 
 /// The glyph of a snap mode as pen strokes, in units of the marker's
@@ -253,6 +256,7 @@ impl OverlayFrame {
                 OverlayItem::TrackingLine { from, through } => {
                     self.push_tracking_line(*from, *through, view)
                 }
+                OverlayItem::AcquiredPoint { at } => self.push_acquired(*at, view),
                 OverlayItem::SnapMarker { mode, at } => self.push_snap_marker(*mode, *at, view),
                 OverlayItem::Crosshair { at } => self.push_crosshair(*at, view),
                 OverlayItem::ViewportFrame { corners } => {
@@ -478,6 +482,22 @@ impl OverlayFrame {
             let end = from + direction * (reach / length);
             self.frame.push_segment(StyleRole::Tracking, from, end);
         }
+    }
+
+    /// A point object snap tracking runs from (#220): a small cross, in
+    /// the tracking line's role, the same size at any zoom.
+    fn push_acquired(&mut self, at: Point2, view: &View) {
+        let half = view.pixels_to_world(ACQUIRED_MARK_PIXELS);
+        self.frame.push_segment(
+            StyleRole::Tracking,
+            at + Vec2::new(-half, 0.0),
+            at + Vec2::new(half, 0.0),
+        );
+        self.frame.push_segment(
+            StyleRole::Tracking,
+            at + Vec2::new(0.0, -half),
+            at + Vec2::new(0.0, half),
+        );
     }
 
     /// The marker is sized in pixels here, so it looks the same at any zoom.
@@ -1213,6 +1233,29 @@ mod tests {
         };
         overlay.rebuild(&[item], &Drawing::new(), &view());
         assert_eq!(overlay.frame().segment_count(), 0);
+    }
+
+    #[test]
+    fn object_tracking_marks_its_points_and_draws_its_paths_without_touching_the_scene() {
+        let mut h = Harness::with_entities([cad_document::LineEntity::new(
+            Point2::new(0.0, 0.0),
+            Point2::new(100.0, 0.0),
+        )
+        .into()]);
+        h.toggle(cad_commands::Toggle::Otrack);
+        h.enter("L");
+        let revision = h.session.drawing().revision();
+        h.move_to_world(Point2::new(100.0, 0.0));
+        h.session.pointer_rest();
+        h.move_to_world(Point2::new(200.0, 3.0));
+        let overlay = overlay_of(&h);
+        // The acquired end's cross, and the path from it.
+        assert_eq!(segments_of(&overlay, StyleRole::Tracking).len(), 3);
+        assert_eq!(
+            h.session.drawing().revision(),
+            revision,
+            "nothing committed"
+        );
     }
 
     #[test]

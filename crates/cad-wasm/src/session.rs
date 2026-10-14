@@ -51,6 +51,7 @@ fn key_action(code: u32) -> Option<KeyAction> {
         10 => Some(KeyAction::Toggle(Toggle::Lineweight)),
         11 => Some(KeyAction::GroupSelection),
         12 => Some(KeyAction::Toggle(Toggle::Snap)),
+        13 => Some(KeyAction::Toggle(Toggle::Otrack)),
         _ => None,
     }
 }
@@ -291,6 +292,14 @@ impl CadSession {
         let dirty = self
             .session
             .pointer_move(ScreenPoint::new(x, y), modifiers(modifier_bits));
+        self.report(dirty)
+    }
+
+    /// The pointer has rested a moment without moving (#220): the host's
+    /// timer says so, since Rust keeps no clock. Object snap tracking
+    /// acquires or releases the snap point under it.
+    pub fn pointer_rest(&mut self) -> u32 {
+        let dirty = self.session.pointer_rest();
         self.report(dirty)
     }
 

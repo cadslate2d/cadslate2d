@@ -1,7 +1,13 @@
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { CadEngine, Dirty, EngineFailure, KeyAction, ToggleBit } from "../cad/engine";
 import { loadEngineForTests } from "../cad/test-support";
-import { AUTOSAVE_DELAY_MS, CadApp, DISCARD_CHANGES_MESSAGE, SNAPSHOT_SLICE } from "./cad-app";
+import {
+  AUTOSAVE_DELAY_MS,
+  CadApp,
+  DISCARD_CHANGES_MESSAGE,
+  POINTER_REST_MS,
+  SNAPSHOT_SLICE,
+} from "./cad-app";
 import type { AutosaveRecord, AutosaveStore, FileAccess, FileTarget } from "./host-services";
 import { parseSettings } from "./host-services";
 import type { HostServices, PickedFile, Settings, SettingsStore, Theme } from "./host-services";
@@ -298,6 +304,27 @@ describe("CadApp", () => {
     expect(app.ui.getSnapshot().prompt).toBe("Command:");
     expect(app.historyPrevious()).toBe("L");
     expect(app.historyNext()).toBe("");
+  });
+
+  test("a pointer at rest acquires a snap point for tracking (#220)", async () => {
+    const { app, tick, timers, enter } = harness();
+    enter("L", "0,0", "100,0", "", "L");
+    app.key(KeyAction.ToggleOtrack);
+    await tick();
+    const rests = () => timers.filter((timer) => timer.ms === POINTER_REST_MS);
+    // Two moves: one rest timed, the later one's.
+    app.loop.queuePointerMove({ x: 480, y: 300, modifiers: 0 });
+    await tick();
+    app.loop.queuePointerMove({ x: 500, y: 300, modifiers: 0 });
+    await tick();
+    expect(rests()).toHaveLength(1);
+    rests()[0]?.callback();
+    await tick();
+    // Away along the line's direction: tracking from the acquired end.
+    app.loop.queuePointerMove({ x: 600, y: 303, modifiers: 0 });
+    await tick();
+    expect(app.ui.getSnapshot().tracking).toBe("Tracking: 100.0000 < 0°");
+    expect(app.ui.getSnapshot().cursor).toEqual([200, 0]);
   });
 
   test("a queued pointer move is delivered before typed input", async () => {
