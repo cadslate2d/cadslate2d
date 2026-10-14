@@ -23,6 +23,7 @@ mod dimstyle;
 mod edge;
 mod ellipse;
 mod far_from_origin;
+mod find;
 mod grips;
 mod groups;
 mod hatch;
