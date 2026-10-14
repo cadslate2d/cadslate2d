@@ -11,7 +11,7 @@ use cad_core::{EntityId, Point2, Vec2, View};
 use cad_document::{Drawing, Entity, LayoutId, TransactionBuilder};
 use cad_input::{CommandAliases, ExpectedInput, Keyword};
 
-use crate::commands::Isolation;
+use crate::commands::{Clipboard, Isolation};
 use crate::log::CommandLog;
 use crate::{DraftingSettings, Grip, HostRequest, OverlayItem, Selection, Toggles};
 
@@ -141,6 +141,9 @@ pub struct CommandContext<'a> {
     /// A drawing `WBLOCK` made, and the file name to write it under, for
     /// the host to take (#222).
     pub(crate) block_file: &'a mut Option<(String, Drawing)>,
+    /// What COPYCLIP and CUTCLIP took (#223): the session's, kept across
+    /// OPEN.
+    pub(crate) clipboard: &'a mut Option<Clipboard>,
     pub(crate) log: &'a mut CommandLog,
     pub(crate) host_request: &'a mut Option<HostRequest>,
     pub(crate) space_request: &'a mut Option<SpaceRequest>,

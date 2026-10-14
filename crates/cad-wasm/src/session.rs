@@ -52,6 +52,9 @@ fn key_action(code: u32) -> Option<KeyAction> {
         11 => Some(KeyAction::GroupSelection),
         12 => Some(KeyAction::Toggle(Toggle::Snap)),
         13 => Some(KeyAction::Toggle(Toggle::Otrack)),
+        14 => Some(KeyAction::Copy),
+        15 => Some(KeyAction::Cut),
+        16 => Some(KeyAction::Paste),
         _ => None,
     }
 }

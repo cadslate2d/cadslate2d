@@ -12,6 +12,7 @@ mod blocks;
 mod break_command;
 mod bulged;
 mod chprop;
+mod clipboard;
 mod color;
 mod construction;
 mod corner;

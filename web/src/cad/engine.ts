@@ -45,6 +45,9 @@ export const KeyAction = {
   GroupSelection: 11,
   ToggleSnap: 12,
   ToggleOtrack: 13,
+  Copy: 14,
+  Cut: 15,
+  Paste: 16,
 } as const;
 export type KeyAction = (typeof KeyAction)[keyof typeof KeyAction];
 

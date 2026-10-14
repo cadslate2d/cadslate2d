@@ -40,6 +40,14 @@ describe("classifyKey", () => {
     expect(kind(key("s", { metaKey: true }))).toBe("save");
   });
 
+  test("Ctrl+C, Ctrl+X, Ctrl+V are the drawing's clipboard only with nothing typed", () => {
+    const empty = (name: string) => classifyKey(key(name, { ctrlKey: true }), true, true).kind;
+    expect([empty("c"), empty("x"), empty("v")]).toEqual(["copy", "cut", "paste"]);
+    expect(classifyKey(key("v", { metaKey: true }), true, true).kind).toBe("paste");
+    // With text typed, they are the browser's, on the text.
+    expect(classifyKey(key("c", { ctrlKey: true }), true, false).kind).toBe("ignore");
+  });
+
   test("Ctrl+Shift+A switches group selection; Ctrl+A stays the browser's", () => {
     expect(kind(key("A", { ctrlKey: true, shiftKey: true }))).toBe("group-selection");
     expect(kind(key("a", { ctrlKey: true }))).toBe("ignore");

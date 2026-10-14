@@ -11,6 +11,10 @@ export type KeyIntent =
   | { kind: "save" }
   /** Ctrl+Shift+A: group selection on or off (#214). */
   | { kind: "group-selection" }
+  /** Ctrl+C, Ctrl+X, Ctrl+V with nothing typed: the drawing's clipboard (#223). */
+  | { kind: "copy" }
+  | { kind: "cut" }
+  | { kind: "paste" }
   /** A drafting toggle's function key. */
   | { kind: "toggle"; toggle: "snap" | "osnap" | "otrack" | "grid" | "ortho" | "polar" }
   /** Delete with nothing typed: erase the selection. */
@@ -57,6 +61,12 @@ export function classifyKey(event: KeyLike, spaceAccepts: boolean, inputEmpty = 
     if (key === "o") return { kind: "open" };
     if (key === "s") return { kind: "save" };
     if (key === "a" && event.shiftKey) return { kind: "group-selection" };
+    // With text typed, copying and pasting are the browser's, on the text.
+    if (inputEmpty && !event.shiftKey) {
+      if (key === "c") return { kind: "copy" };
+      if (key === "x") return { kind: "cut" };
+      if (key === "v") return { kind: "paste" };
+    }
     // Reload, devtools, copy/paste, and every other browser shortcut stay with the browser.
     return { kind: "ignore" };
   }

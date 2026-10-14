@@ -15,7 +15,7 @@ use crate::aids::{
     self, MAX_ACQUIRED, POLAR_APERTURE, TRACKING_APERTURE, Track, TrackKind, Tracked,
 };
 use crate::command::angle_degrees;
-use crate::commands::{GripEditCommand, Isolation, grip};
+use crate::commands::{Clipboard, GripEditCommand, Isolation, grip};
 use crate::grips::{grip_at, grips_of};
 use crate::history::InputHistory;
 use crate::log::CommandLog;
@@ -172,6 +172,8 @@ pub struct Session {
     isolation: Option<Isolation>,
     /// The drawing `WBLOCK` made, for the host to write (#222).
     block_file: Option<(String, Drawing)>,
+    /// What was copied (#223); kept across `OPEN`.
+    clipboard: Option<Clipboard>,
     registry: CommandRegistry,
     active: Option<ActiveCommand>,
     selection: Selection,
@@ -258,6 +260,7 @@ impl Session {
             acquired: Vec::new(),
             isolation: None,
             block_file: None,
+            clipboard: None,
             registry,
             active: None,
             selection: Selection::default(),
@@ -1124,6 +1127,11 @@ impl Session {
                 self.invoke("ERASE")
             }
             KeyAction::Delete => Dirty::NONE,
+            // The clipboard's chords start their commands between commands.
+            KeyAction::Copy if self.active.is_none() => self.invoke("COPYCLIP"),
+            KeyAction::Cut if self.active.is_none() => self.invoke("CUTCLIP"),
+            KeyAction::Paste if self.active.is_none() => self.invoke("PASTECLIP"),
+            KeyAction::Copy | KeyAction::Cut | KeyAction::Paste => Dirty::NONE,
             // A toggle flips whatever else is going on: the active command is
             // not cancelled and its state is untouched.
             KeyAction::Toggle(toggle) => {
@@ -1737,6 +1745,7 @@ impl Session {
             space: self.space,
             isolation: &mut self.isolation,
             block_file: &mut self.block_file,
+            clipboard: &mut self.clipboard,
             log: &mut self.log,
             host_request: &mut self.host_request,
             space_request: &mut self.space_request,

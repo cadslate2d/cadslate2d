@@ -44,6 +44,11 @@ pub enum KeyAction {
     Toggle(crate::Toggle),
     /// Group selection on or off (Ctrl+Shift+A, #214): `PICKSTYLE`.
     GroupSelection,
+    /// Ctrl+C, Ctrl+X, Ctrl+V with nothing typed (#223): `COPYCLIP`,
+    /// `CUTCLIP`, `PASTECLIP`.
+    Copy,
+    Cut,
+    Paste,
 }
 
 /// Something only the host can do, requested by a command. Rust never calls

@@ -50,6 +50,15 @@ export function CommandLine({ app }: { app: CadApp }) {
         case "group-selection":
           app.key(KeyAction.GroupSelection);
           break;
+        case "copy":
+          app.key(KeyAction.Copy);
+          break;
+        case "cut":
+          app.key(KeyAction.Cut);
+          break;
+        case "paste":
+          app.key(KeyAction.Paste);
+          break;
         case "delete":
           app.key(KeyAction.Delete);
           break;
