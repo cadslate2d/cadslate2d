@@ -15,6 +15,7 @@ mod chprop;
 mod color;
 mod construction;
 mod corner;
+mod dimchain;
 mod dimcurve;
 mod dimension;
 mod dimlinear;

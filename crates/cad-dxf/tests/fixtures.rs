@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 
 use cad_core::{Aabb, Point2, Vec2};
 use cad_document::{
-    BlockReferenceEntity, Color, DimStyleId, Drawing, Entity, Justification, Layer, LayerId,
-    Layout, LayoutId, LeaderEntity, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight,
-    MTextEntity, PointStyle, Properties, PurgeScope, TextEntity, TextStyleId, ViewportEntity,
+    BlockReferenceEntity, Chain, Color, DimStyleId, DimensionEntity, Drawing, Entity,
+    Justification, Layer, LayerId, Layout, LayoutId, LeaderEntity, LineEntity, Linetype,
+    LinetypeDef, LinetypeId, Lineweight, MTextEntity, PointStyle, Properties, PurgeScope,
+    TextEntity, TextStyleId, ViewportEntity,
 };
 use cad_dxf::{DxfError, Import, export, import};
 
@@ -1673,6 +1674,55 @@ fn text_and_styles_from_another_writer() {
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }
 
+/// A baseline chain from another writer (#212): its style's `DIMDLI` is
+/// the baseline spacing, and each dimension stands where chaining the one
+/// before it by that spacing would put it; the spacing round-trips.
+#[test]
+fn a_baseline_chain_from_another_writer_is_spaced_by_its_style() {
+    let import = load("valid", "ezdxf-r2010-dimension-chains.dxf").unwrap();
+    let drawing = &import.drawing;
+    let chain = drawing.dim_styles().find("CHAIN").unwrap();
+    assert_eq!(
+        drawing.dim_styles().get(chain).unwrap().baseline_spacing,
+        7.0
+    );
+    assert_eq!(
+        drawing
+            .dim_styles()
+            .get(DimStyleId::FIRST)
+            .unwrap()
+            .baseline_spacing,
+        3.75,
+        "ezdxf's Standard has the classic spacing"
+    );
+    let dimensions: Vec<&DimensionEntity> = drawing
+        .shown()
+        .filter_map(|(_, entity)| match entity {
+            Entity::Dimension(dimension) => Some(dimension),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(dimensions.len(), 3);
+    for pair in dimensions.windows(2) {
+        let [before, after] = pair else {
+            unreachable!()
+        };
+        let to = after.measure.points()[1];
+        let chained = before.chained(0, to, Chain::Baseline(7.0)).unwrap();
+        assert_eq!(chained.measure, after.measure);
+        assert!(
+            (chained.line_point.y - after.line_point.y).abs() < 1e-9,
+            "{chained:?} against {after:?}"
+        );
+    }
+
+    let text = export(drawing);
+    assert!(text.contains("\n  2\nCHAIN\n"));
+    assert!(text.contains("\n 43\n7.0\n"));
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(export(&back.drawing), text, "export → import → export");
+}
+
 /// A newer file's DIMSTYLE table: the variables the drawing holds are read,
 /// the suffix from DIMPOST, the current style from `$DIMSTYLE`; a row with
 /// a value a dimension cannot be drawn by keeps the default and is reported.
@@ -1735,7 +1785,7 @@ fn dimension_styles_from_another_writer() {
     let text = export(drawing);
     assert!(text.contains("  9\n$DIMSTYLE\n  2\nARCH\n"));
     assert!(text.contains(
-        "AcDbDimStyleTableRecord\n  2\nARCH\n 70\n0\n  3\n<> mm\n 41\n2.0\n 42\n0.5\n 44\n1.5\n140\n3.5\n147\n1.0\n271\n1\n"
+        "AcDbDimStyleTableRecord\n  2\nARCH\n 70\n0\n  3\n<> mm\n 41\n2.0\n 42\n0.5\n 43\n3.75\n 44\n1.5\n140\n3.5\n147\n1.0\n271\n1\n"
     ));
     let back = cad_dxf::import(text.as_bytes()).unwrap();
     assert_eq!(back.drawing.dim_styles().len(), 4);

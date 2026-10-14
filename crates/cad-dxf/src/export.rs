@@ -841,7 +841,8 @@ impl Writer {
     /// A DIMSTYLE row — whose handle is group 105, alone among the tables —
     /// with the variables the drawing holds: the suffix as DIMPOST (3), with
     /// `<>` standing for the value; arrow size (41); extension offset (42)
-    /// and overshoot (44); text height (140); text gap (147); decimals (271).
+    /// and overshoot (44); baseline spacing (43); text height (140); text
+    /// gap (147); decimals (271).
     fn dim_style(&mut self, table: Handle, style: &DimStyle) {
         let handle = self.handles.take();
         self.group(0, "DIMSTYLE");
@@ -856,6 +857,7 @@ impl Writer {
         }
         self.real(41, style.arrow_size);
         self.real(42, style.extension_offset);
+        self.real(43, style.baseline_spacing);
         self.real(44, style.extension_overshoot);
         self.real(140, style.text_height);
         self.real(147, style.text_gap);

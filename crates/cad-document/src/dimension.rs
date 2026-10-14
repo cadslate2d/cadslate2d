@@ -10,6 +10,8 @@
 //! The layout is a pure function of the entity and the style.
 
 use cad_core::tolerance::LinearTolerance;
+use std::f64::consts::TAU;
+
 use cad_core::{Aabb, Point2, Vec2};
 use cad_geometry::intersect::line_line;
 use cad_geometry::{
@@ -153,6 +155,17 @@ impl Measure {
             },
         }
     }
+}
+
+/// How a dimension is chained to another (#212).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Chain {
+    /// From the same extension line, across the other, with its dimension
+    /// line this far further out: `DIMBASELINE`.
+    Baseline(f64),
+    /// From the other's extension line onwards, on the same dimension
+    /// line: `DIMCONTINUE`.
+    Continue,
 }
 
 /// Why a dimension cannot be as given.
@@ -343,6 +356,138 @@ impl DimensionEntity {
             measure,
             line_point,
             ..self.clone()
+        })
+    }
+
+    /// Which of the two extension lines `at` is nearer — 0 for the one from
+    /// `a`, 1 for the one from `b` — measured along a linear or aligned
+    /// dimension, or by angle about an angular one's vertex (#212). `None`
+    /// for a radius or a diameter, which has no extension lines to chain
+    /// from.
+    pub fn nearer_origin(&self, at: Point2) -> Option<usize> {
+        let (a_off, b_off) = match self.measure {
+            Measure::Linear { a, b, rotation } => {
+                let along = Vec2::from_polar(1.0, rotation);
+                (along.dot(at - a).abs(), along.dot(at - b).abs())
+            }
+            Measure::Aligned { a, b } => {
+                let along = normalized(b - a).unwrap_or(Vec2::new(1.0, 0.0));
+                (along.dot(at - a).abs(), along.dot(at - b).abs())
+            }
+            Measure::Angular { vertex, a, b } => {
+                let angle = |point: Point2| {
+                    let ray = point - vertex;
+                    ray.y.atan2(ray.x)
+                };
+                let apart = |x: f64, y: f64| {
+                    let turn = (x - y).rem_euclid(TAU);
+                    turn.min(TAU - turn)
+                };
+                let pick = angle(at);
+                (apart(pick, angle(a)), apart(pick, angle(b)))
+            }
+            Measure::Radius { .. } | Measure::Diameter { .. } => return None,
+        };
+        Some(usize::from(b_off < a_off))
+    }
+
+    /// The dimension `chain` makes from this one's extension line `origin`
+    /// (0 from `a`, 1 from `b`) to `to`, of the same kind and style and
+    /// with no text of its own (#212). A continued dimension shares this
+    /// one's dimension line, or its arc's radius, and runs on away from it;
+    /// a baseline dimension measures across this one, its line a spacing
+    /// further from what is measured. `None` for a radius or a diameter,
+    /// for an origin other than 0 or 1, or when `to` gives no direction.
+    /// What it returns may still fail [`DimensionEntity::check`].
+    pub fn chained(&self, origin: usize, to: Point2, chain: Chain) -> Option<Self> {
+        let pick = |a: Point2, b: Point2| match origin {
+            0 => Some(a),
+            1 => Some(b),
+            _ => None,
+        };
+        // Away from what is measured: the side the line is on, or the
+        // positive one when it runs through the points.
+        let outwards = |offset: f64| if offset < 0.0 { -1.0 } else { 1.0 };
+        let (measure, line_point) = match self.measure {
+            Measure::Linear { a, b, rotation } => {
+                let from = pick(a, b)?;
+                let normal = perpendicular(Vec2::from_polar(1.0, rotation));
+                let line_point = match chain {
+                    Chain::Continue => self.line_point,
+                    Chain::Baseline(spacing) => {
+                        let middle = a + (b - a) * 0.5;
+                        let side = outwards(normal.dot(self.line_point - middle));
+                        self.line_point + normal * (side * spacing)
+                    }
+                };
+                (
+                    Measure::Linear {
+                        a: from,
+                        b: to,
+                        rotation,
+                    },
+                    line_point,
+                )
+            }
+            Measure::Aligned { a, b } => {
+                let from = pick(a, b)?;
+                let normal = perpendicular(normalized(b - a)?);
+                let offset = normal.dot(self.line_point - a);
+                let mut turned = perpendicular(normalized(to - from)?);
+                if turned.dot(normal) < 0.0 {
+                    turned = -turned;
+                }
+                let offset = match chain {
+                    Chain::Continue => offset,
+                    Chain::Baseline(spacing) => offset + outwards(offset) * spacing,
+                };
+                (Measure::Aligned { a: from, b: to }, from + turned * offset)
+            }
+            Measure::Angular { vertex, a, b } => {
+                let from = pick(a, b)?;
+                let angle = |point: Point2| {
+                    let ray = normalized(point - vertex)?;
+                    Some(ray.y.atan2(ray.x))
+                };
+                let (angle_a, angle_b, angle_p) = (angle(a)?, angle(b)?, angle(self.line_point)?);
+                // Which way this one turns from `a` to `b`: +1 anticlockwise.
+                let sense =
+                    if Arc::from_angles(vertex, 1.0, angle_a, angle_b).contains_angle(angle_p) {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                // A continued one turns on past the origin, away from this
+                // one; a baseline one turns from the origin across it.
+                let turning = match (chain, origin) {
+                    (Chain::Continue, 1) | (Chain::Baseline(_), 0) => sense,
+                    _ => -sense,
+                };
+                let (start, end) = (angle(from)?, angle(to)?);
+                let sweep = (turning * (end - start)).rem_euclid(TAU);
+                let radius = vertex.distance_to(self.line_point)
+                    + match chain {
+                        Chain::Continue => 0.0,
+                        Chain::Baseline(spacing) => spacing,
+                    };
+                let middle = start + turning * sweep / 2.0;
+                (
+                    Measure::Angular {
+                        vertex,
+                        a: from,
+                        b: to,
+                    },
+                    vertex + Vec2::from_polar(radius, middle),
+                )
+            }
+            Measure::Radius { .. } | Measure::Diameter { .. } => return None,
+        };
+        Some(Self {
+            measure,
+            line_point,
+            style: self.style,
+            text_override: None,
+            text_angle: None,
         })
     }
 
@@ -704,6 +849,175 @@ mod tests {
 
     fn p(x: f64, y: f64) -> Point2 {
         Point2::new(x, y)
+    }
+
+    /// The dimension line's distance from the measured points' line, along
+    /// a linear dimension's normal: where a chain puts it.
+    fn line_offset(dimension: &DimensionEntity) -> f64 {
+        let Measure::Linear { a, rotation, .. } = dimension.measure else {
+            panic!("a linear dimension");
+        };
+        perpendicular(Vec2::from_polar(1.0, rotation)).dot(dimension.line_point - a)
+    }
+
+    #[test]
+    fn a_continued_linear_dimension_shares_the_line_and_a_baseline_one_steps_out() {
+        let style = DimStyleId::from_raw(3);
+        let above = DimensionEntity::new(
+            Measure::Linear {
+                a: p(0.0, 0.0),
+                b: p(10.0, 0.0),
+                rotation: 0.0,
+            },
+            p(5.0, 10.0),
+        )
+        .in_style(style)
+        .saying(Some("ten".into()));
+
+        let next = above.chained(1, p(25.0, 0.0), Chain::Continue).unwrap();
+        assert_eq!(
+            next.measure,
+            Measure::Linear {
+                a: p(10.0, 0.0),
+                b: p(25.0, 0.0),
+                rotation: 0.0
+            }
+        );
+        assert_eq!(line_offset(&next), 10.0);
+        assert_eq!(next.value(), 15.0);
+        assert_eq!((next.style, next.text_override.as_deref()), (style, None));
+
+        let base = above
+            .chained(0, p(25.0, 0.0), Chain::Baseline(3.75))
+            .unwrap();
+        assert_eq!(base.measure.points(), vec![p(0.0, 0.0), p(25.0, 0.0)]);
+        assert_eq!(line_offset(&base), 13.75);
+        // Below the points, a baseline steps further down.
+        let below = DimensionEntity::new(above.measure, p(5.0, -10.0));
+        let base = below
+            .chained(0, p(25.0, 0.0), Chain::Baseline(3.75))
+            .unwrap();
+        assert_eq!(line_offset(&base), -13.75);
+        // From the first extension line, a continued one runs back the other way.
+        let back = above.chained(0, p(-8.0, 0.0), Chain::Continue).unwrap();
+        assert_eq!(back.measure.points(), vec![p(0.0, 0.0), p(-8.0, 0.0)]);
+        assert_eq!(line_offset(&back), 10.0);
+        // A vertical one keeps its rotation.
+        let vertical = DimensionEntity::new(
+            Measure::Linear {
+                a: p(0.0, 0.0),
+                b: p(3.0, 10.0),
+                rotation: FRAC_PI_2,
+            },
+            p(-6.0, 0.0),
+        );
+        let next = vertical
+            .chained(0, p(1.0, 30.0), Chain::Baseline(2.0))
+            .unwrap();
+        assert_eq!(next.value(), 30.0);
+        assert!((line_offset(&next) - 8.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn an_aligned_chain_keeps_its_offset_on_the_same_side() {
+        let normal = Vec2::new(-1.0, 1.0) * (0.5_f64).sqrt();
+        let base = DimensionEntity::new(
+            Measure::Aligned {
+                a: p(0.0, 0.0),
+                b: p(10.0, 10.0),
+            },
+            p(5.0, 5.0) + normal * 4.0,
+        );
+        let offset = |d: &DimensionEntity| {
+            let Measure::Aligned { a, b } = d.measure else {
+                panic!("aligned")
+            };
+            perpendicular(normalized(b - a).unwrap()).dot(d.line_point - a)
+        };
+        let next = base.chained(1, p(20.0, 20.0), Chain::Continue).unwrap();
+        assert!((offset(&next) - 4.0).abs() < 1e-12);
+        let stacked = base
+            .chained(0, p(20.0, 20.0), Chain::Baseline(3.75))
+            .unwrap();
+        assert!((offset(&stacked) - 7.75).abs() < 1e-12);
+        // Back from `a`, the line stays on the side it was in the world.
+        let back = base.chained(0, p(-10.0, -10.0), Chain::Continue).unwrap();
+        assert!(normal.dot(back.line_point - p(0.0, 0.0)) > 3.99);
+    }
+
+    #[test]
+    fn an_angular_chain_turns_on_from_the_origin_the_way_the_angle_does() {
+        let vertex = p(0.0, 0.0);
+        let quarter = |place: Point2| {
+            DimensionEntity::new(
+                Measure::Angular {
+                    vertex,
+                    a: p(10.0, 0.0),
+                    b: p(0.0, 10.0),
+                },
+                place,
+            )
+        };
+        // The quarter anticlockwise from +X to +Y, its arc 8 out.
+        let base = quarter(Point2::ORIGIN + Vec2::from_polar(8.0, FRAC_PI_4));
+        let next = base.chained(1, p(-10.0, 0.0), Chain::Continue).unwrap();
+        assert!((next.value() - 90.0).abs() < 1e-9);
+        assert!(near(
+            next.line_point,
+            Point2::ORIGIN + Vec2::from_polar(8.0, 3.0 * FRAC_PI_4)
+        ));
+        let across = base
+            .chained(0, p(-10.0, 0.0), Chain::Baseline(3.75))
+            .unwrap();
+        assert!((across.value() - 180.0).abs() < 1e-9);
+        assert!(near(
+            across.line_point,
+            Point2::ORIGIN + Vec2::from_polar(11.75, FRAC_PI_2)
+        ));
+        // The reflex side: from +X clockwise round to +Y. Continued past
+        // +Y it turns on clockwise, into the quarter it left out.
+        let reflex = quarter(Point2::ORIGIN + Vec2::from_polar(8.0, 5.0 * FRAC_PI_4));
+        assert!((reflex.value() - 270.0).abs() < 1e-9);
+        let next = reflex.chained(1, p(10.0, 10.0), Chain::Continue).unwrap();
+        assert!((next.value() - 45.0).abs() < 1e-9);
+        assert!(near(
+            next.line_point,
+            Point2::ORIGIN + Vec2::from_polar(8.0, 3.0 * std::f64::consts::FRAC_PI_8)
+        ));
+    }
+
+    #[test]
+    fn a_chain_starts_from_the_nearer_extension_line_and_never_from_a_radius() {
+        let linear = DimensionEntity::new(
+            Measure::Linear {
+                a: p(0.0, 0.0),
+                b: p(10.0, 0.0),
+                rotation: 0.0,
+            },
+            p(5.0, 10.0),
+        );
+        assert_eq!(linear.nearer_origin(p(1.0, 9.0)), Some(0));
+        assert_eq!(linear.nearer_origin(p(9.0, 3.0)), Some(1));
+        let angle = DimensionEntity::new(
+            Measure::Angular {
+                vertex: p(0.0, 0.0),
+                a: p(10.0, 0.0),
+                b: p(0.0, 10.0),
+            },
+            p(6.0, 6.0),
+        );
+        assert_eq!(angle.nearer_origin(p(8.0, 1.0)), Some(0));
+        assert_eq!(angle.nearer_origin(p(1.0, 8.0)), Some(1));
+        let radius = DimensionEntity::new(
+            Measure::Radius {
+                center: p(0.0, 0.0),
+                radius: 5.0,
+            },
+            p(8.0, 0.0),
+        );
+        assert_eq!(radius.nearer_origin(p(5.0, 0.0)), None);
+        assert_eq!(radius.chained(0, p(1.0, 1.0), Chain::Continue), None);
+        assert_eq!(linear.chained(2, p(1.0, 1.0), Chain::Continue), None);
     }
 
     fn close(a: Point2, b: Point2) -> bool {
@@ -1239,6 +1553,8 @@ mod tests {
                     text_gap: gap,
                     extension_offset: offset,
                     extension_overshoot: overshoot,
+                    // Not part of a single dimension's layout.
+                    baseline_spacing: 3.75,
                     decimals,
                     suffix: if suffix {
                         " mm".to_owned()

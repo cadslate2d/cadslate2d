@@ -27,6 +27,9 @@ pub struct DimStyle {
     pub extension_offset: f64,
     /// How far an extension line runs past the dimension line. Not negative.
     pub extension_overshoot: f64,
+    /// How far apart the dimension lines of a baseline chain stand
+    /// (`DIMDLI`, #212). Not negative.
+    pub baseline_spacing: f64,
     /// Decimal places of the measured value, 0 to 8.
     pub decimals: u8,
     /// What follows the value: a unit, a note; nothing by default.
@@ -75,6 +78,7 @@ impl DimStyle {
             text_gap: 0.625,
             extension_offset: 0.625,
             extension_overshoot: 1.25,
+            baseline_spacing: 3.75,
             decimals: 2,
             suffix: String::new(),
         }
@@ -107,6 +111,7 @@ impl DimStyle {
         not_negative(self.text_gap, "text gap")?;
         not_negative(self.extension_offset, "extension line offset")?;
         not_negative(self.extension_overshoot, "extension line overshoot")?;
+        not_negative(self.baseline_spacing, "baseline spacing")?;
         if self.decimals > Self::MAX_DECIMALS {
             return Err(DimStyleError::TooManyDecimals);
         }
@@ -156,6 +161,7 @@ mod tests {
         assert_eq!(table.find("STANDARD"), Some(DimStyleId::FIRST));
         assert_eq!((standard.text_height, standard.arrow_size), (2.5, 2.5));
         assert_eq!(standard.decimals, 2);
+        assert_eq!(standard.baseline_spacing, 3.75);
         assert!(standard.check().is_ok());
     }
 
@@ -183,6 +189,12 @@ mod tests {
         assert_eq!(
             style.check(),
             Err(DimStyleError::Negative("extension line offset"))
+        );
+        style = DimStyle::named("Arch");
+        style.baseline_spacing = -1.0;
+        assert_eq!(
+            style.check(),
+            Err(DimStyleError::Negative("baseline spacing"))
         );
         style = DimStyle::named("Arch");
         style.decimals = 9;

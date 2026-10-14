@@ -1423,6 +1423,13 @@ impl<'a> Reader<'a> {
             defaults.extension_overshoot,
             false,
         );
+        // DIMDLI: group 43, which an entity's record reads as a width.
+        take(
+            &mut style.baseline_spacing,
+            body.constant_width,
+            defaults.baseline_spacing,
+            false,
+        );
         if let Some(decimals) = body.dim_decimals {
             match u8::try_from(decimals) {
                 Ok(decimals) if decimals <= DimStyle::MAX_DECIMALS => style.decimals = decimals,

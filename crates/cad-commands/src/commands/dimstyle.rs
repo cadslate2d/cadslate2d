@@ -4,7 +4,8 @@
 //! The command stays at its option prompt until Enter, like LAYER and
 //! LINETYPE. `New` copies the current style under a new name and makes it
 //! current; `Set` chooses the current one; the variables — text height,
-//! arrow size, text gap, extension offset and overshoot, decimals, suffix
+//! arrow size, text gap, extension offset and overshoot, baseline spacing,
+//! decimals, suffix
 //! — each ask with the current style's value as the default and change the
 //! current style, which redraws every dimension drawn by it (§19.6). What
 //! the table allows is decided by `cad-document`; this is the conversation.
@@ -28,8 +29,10 @@ const OFFSET: Keyword = Keyword::new("Offset");
 const EXTENSION: Keyword = Keyword::new("Extension");
 const PRECISION: Keyword = Keyword::new("Precision");
 const SUFFIX: Keyword = Keyword::new("SUffix");
-const OPTIONS: [Keyword; 12] = [
-    LIST, NEW, SET, RENAME, DELETE, HEIGHT, ARROW, GAP, OFFSET, EXTENSION, PRECISION, SUFFIX,
+const BASELINE: Keyword = Keyword::new("Baseline");
+const OPTIONS: [Keyword; 13] = [
+    LIST, NEW, SET, RENAME, DELETE, HEIGHT, ARROW, GAP, OFFSET, EXTENSION, BASELINE, PRECISION,
+    SUFFIX,
 ];
 /// Typed at the suffix prompt, clears the suffix.
 const NO_SUFFIX: &str = ".";
@@ -43,6 +46,7 @@ enum Length {
     Gap,
     Offset,
     Extension,
+    Baseline,
 }
 
 impl Length {
@@ -53,6 +57,7 @@ impl Length {
             Self::Gap => "Enter gap between dimension line and text",
             Self::Offset => "Enter extension line offset",
             Self::Extension => "Enter extension line overshoot",
+            Self::Baseline => "Enter baseline spacing",
         }
     }
 
@@ -64,6 +69,7 @@ impl Length {
             Self::Gap => "text gap",
             Self::Offset => "extension line offset",
             Self::Extension => "extension line overshoot",
+            Self::Baseline => "baseline spacing",
         }
     }
 
@@ -74,6 +80,7 @@ impl Length {
             Self::Gap => style.text_gap,
             Self::Offset => style.extension_offset,
             Self::Extension => style.extension_overshoot,
+            Self::Baseline => style.baseline_spacing,
         }
     }
 
@@ -84,6 +91,7 @@ impl Length {
             Self::Gap => style.text_gap = value,
             Self::Offset => style.extension_offset = value,
             Self::Extension => style.extension_overshoot = value,
+            Self::Baseline => style.baseline_spacing = value,
         }
     }
 }
@@ -127,16 +135,17 @@ fn find(ctx: &CommandContext<'_>, name: &str) -> Result<DimStyleId, String> {
         .ok_or_else(|| format!("There is no dimension style \"{name}\"."))
 }
 
-/// `"Standard": text 2.5, arrows 2.5, gap 0.625, offset 0.625, overshoot 1.25, 2 decimals`.
+/// `"Standard": text 2.5, arrows 2.5, gap 0.625, offset 0.625, overshoot 1.25, baseline 3.75, 2 decimals`.
 fn describe(style: &DimStyle) -> String {
     let mut line = format!(
-        "\"{}\": text {}, arrows {}, gap {}, offset {}, overshoot {}, {} decimal{}",
+        "\"{}\": text {}, arrows {}, gap {}, offset {}, overshoot {}, baseline {}, {} decimal{}",
         style.name,
         display(style.text_height),
         display(style.arrow_size),
         display(style.text_gap),
         display(style.extension_offset),
         display(style.extension_overshoot),
+        display(style.baseline_spacing),
         style.decimals,
         if style.decimals == 1 { "" } else { "s" },
     );
@@ -359,6 +368,7 @@ impl Command for DimStyleCommand {
                     GAP => State::Length(Length::Gap),
                     OFFSET => State::Length(Length::Offset),
                     EXTENSION => State::Length(Length::Extension),
+                    BASELINE => State::Length(Length::Baseline),
                     PRECISION => State::Precision,
                     SUFFIX => State::Suffix,
                     _ => {

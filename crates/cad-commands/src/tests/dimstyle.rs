@@ -5,7 +5,7 @@ use cad_document::{DimStyle, DimStyleId};
 
 use crate::testing::Harness;
 
-const OPTIONS: &str = "Press Enter to finish or [?/New/Set/Rename/Delete/Height/Arrow/Gap/Offset/Extension/Precision/SUffix]:";
+const OPTIONS: &str = "Press Enter to finish or [?/New/Set/Rename/Delete/Height/Arrow/Gap/Offset/Extension/Baseline/Precision/SUffix]:";
 
 fn last(h: &Harness) -> String {
     h.log().last().cloned().unwrap_or_default()
@@ -35,13 +35,13 @@ fn the_command_reports_lists_and_loops_until_enter() {
     h.enter("DIMSTYLE");
     assert_eq!(
         last(&h),
-        "Current dimension style \"Standard\": text 2.5, arrows 2.5, gap 0.625, offset 0.625, overshoot 1.25, 2 decimals"
+        "Current dimension style \"Standard\": text 2.5, arrows 2.5, gap 0.625, offset 0.625, overshoot 1.25, baseline 3.75, 2 decimals"
     );
     assert_eq!(h.prompt(), OPTIONS);
     h.enter("?");
     assert_eq!(
         last(&h),
-        "  \"Standard\": text 2.5, arrows 2.5, gap 0.625, offset 0.625, overshoot 1.25, 2 decimals, current"
+        "  \"Standard\": text 2.5, arrows 2.5, gap 0.625, offset 0.625, overshoot 1.25, baseline 3.75, 2 decimals, current"
     );
     assert_eq!(h.prompt(), OPTIONS);
     h.enter("");
@@ -167,6 +167,11 @@ fn the_variables_change_the_current_style_with_the_current_value_as_default() {
         ),
         (1.0, 0.0, 2.0)
     );
+    h.enter("B");
+    assert_eq!(h.prompt(), "Enter baseline spacing <3.75>:");
+    h.enter("7");
+    assert_eq!(last(&h), "\"Standard\": baseline spacing 7.");
+    assert_eq!(current(&h).baseline_spacing, 7.0);
     h.enter("P");
     assert_eq!(h.prompt(), "Enter number of decimals (0 to 8) <2>:");
     h.enter("3");
@@ -204,6 +209,9 @@ fn the_variables_refuse_what_a_dimension_cannot_be_drawn_by() {
     assert_eq!(current(&h).text_height, 2.5);
     h.enter_all(&["G", "-1"]);
     assert_eq!(last(&h), "The text gap cannot be negative.");
+    h.enter_all(&["B", "-2"]);
+    assert_eq!(last(&h), "The baseline spacing cannot be negative.");
+    assert_eq!(current(&h).baseline_spacing, 3.75);
     h.enter_all(&["P", "9"]);
     assert_eq!(last(&h), "A dimension shows at most 8 decimals.");
     h.enter_all(&["P", "2.5"]);

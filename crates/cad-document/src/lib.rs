@@ -50,7 +50,7 @@ pub use block::{Block, BlockChange, BlockId, BlockReferenceEntity, BlockTable, e
 pub use cad_geometry::{Path, Spline};
 pub use construction::{CONSTRUCTION_REACH, RayEntity, XLineEntity};
 pub use dim_style::{DimStyle, DimStyleChange, DimStyleError, DimStyleId, DimStyleTable};
-pub use dimension::{DimensionEntity, DimensionError, DimensionLayout, Measure};
+pub use dimension::{Chain, DimensionEntity, DimensionError, DimensionLayout, Measure};
 pub use drawing::{ApplyReport, Drawing, PurgeScope, Purged, TransactionBuilder, TransactionError};
 pub use editing::{
     BreakError, CornerError, Cornered, ExtendError, LengthenError, Lengthening, OffsetError,
