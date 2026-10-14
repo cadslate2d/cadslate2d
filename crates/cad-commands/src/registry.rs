@@ -10,17 +10,17 @@ use cad_input::{CommandAliases, DuplicateCommandName};
 
 use crate::Command;
 use crate::commands::{
-    AliasEditCommand, ArcCommand, AreaCommand, AttdefCommand, AtteditCommand, BlockCommand,
-    BreakCommand, ChpropCommand, CircleCommand, ColorCommand, CornerCommand, DimAngularCommand,
-    DimLinearCommand, DimRadialCommand, DimStyleCommand, DistCommand, DivideCommand, EdgeCommand,
-    EllipseCommand, EraseCommand, ExplodeCommand, ExportCommand, GridCommand, HatchCommand,
-    HatchEditCommand, IdCommand, InsertCommand, JoinCommand, LayerCommand, LayoutCommand,
-    LineCommand, LinetypeCommand, ListCommand, LtscaleCommand, LweightCommand, MTextCommand,
-    MeasureCommand, MirrorCommand, ModelCommand, MspaceCommand, MviewCommand, OffsetCommand,
-    OpenCommand, OsnapCommand, PanCommand, PlineCommand, PlotCommand, PointCommand,
-    PolarAngleCommand, PspaceCommand, PtypeCommand, QselectCommand, RectangCommand, RedoCommand,
-    SaveCommand, SelectCommand, SettingsCommand, SplineCommand, StretchCommand, TextCommand,
-    TextEditCommand, TransformCommand, UndoCommand, UnitsCommand, ZoomCommand,
+    AliasEditCommand, ArcCommand, AreaCommand, ArrayCommand, AttdefCommand, AtteditCommand,
+    BlockCommand, BreakCommand, ChpropCommand, CircleCommand, ColorCommand, CornerCommand,
+    DimAngularCommand, DimLinearCommand, DimRadialCommand, DimStyleCommand, DistCommand,
+    DivideCommand, EdgeCommand, EllipseCommand, EraseCommand, ExplodeCommand, ExportCommand,
+    GridCommand, HatchCommand, HatchEditCommand, IdCommand, InsertCommand, JoinCommand,
+    LayerCommand, LayoutCommand, LineCommand, LinetypeCommand, ListCommand, LtscaleCommand,
+    LweightCommand, MTextCommand, MeasureCommand, MirrorCommand, ModelCommand, MspaceCommand,
+    MviewCommand, OffsetCommand, OpenCommand, OsnapCommand, PanCommand, PlineCommand, PlotCommand,
+    PointCommand, PolarAngleCommand, PspaceCommand, PtypeCommand, QselectCommand, RectangCommand,
+    RedoCommand, SaveCommand, SelectCommand, SettingsCommand, SplineCommand, StretchCommand,
+    TextCommand, TextEditCommand, TransformCommand, UndoCommand, UnitsCommand, ZoomCommand,
 };
 
 type CommandFactory = fn() -> Box<dyn Command>;
@@ -56,7 +56,8 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 72] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 73] = [
+            ("ARRAY", &["AR"], || Box::new(ArrayCommand::new())),
             ("POINT", &["PO"], || Box::new(PointCommand)),
             ("DIVIDE", &["DIV"], || Box::new(DivideCommand::new())),
             ("MEASURE", &["ME"], || Box::new(MeasureCommand::new())),

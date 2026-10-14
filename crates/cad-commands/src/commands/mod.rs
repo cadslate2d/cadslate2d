@@ -24,6 +24,7 @@ macro_rules! immediate_command {
 
 mod aliases;
 mod arc;
+mod array;
 mod attributes;
 pub(crate) mod block;
 #[path = "break_.rs"]
@@ -81,6 +82,9 @@ mod keywords {
 
 pub(crate) use aliases::{AliasEditCommand, SettingsCommand};
 pub(crate) use arc::ArcCommand;
+pub(crate) use array::ArrayCommand;
+#[cfg(test)]
+pub(crate) use array::{Polar, Rectangular};
 pub(crate) use attributes::{AttdefCommand, AtteditCommand};
 pub(crate) use block::{BlockCommand, ExplodeCommand, InsertCommand};
 pub(crate) use break_command::BreakCommand;

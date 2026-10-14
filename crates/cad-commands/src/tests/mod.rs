@@ -3,6 +3,7 @@
 mod advanced_selection;
 mod aids;
 mod aliases;
+mod array;
 mod attributes;
 mod block_commands;
 mod blocks;

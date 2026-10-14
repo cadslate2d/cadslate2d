@@ -66,7 +66,20 @@ impl TransientEdit {
     /// the sources as they are. Each copy has its source's properties.
     /// Returns the new IDs.
     pub fn commit_copies(&self, drawing: &mut Drawing, transform: Transform) -> Vec<EntityId> {
-        let copies = self.transformed(drawing, transform);
+        self.commit_copies_under(drawing, &[transform])
+    }
+
+    /// A copy of every source under every transform — an array (#199) —
+    /// in one transaction, transform by transform. Returns the new IDs.
+    pub fn commit_copies_under(
+        &self,
+        drawing: &mut Drawing,
+        transforms: &[Transform],
+    ) -> Vec<EntityId> {
+        let copies: Vec<(EntityId, Entity)> = transforms
+            .iter()
+            .flat_map(|transform| self.transformed(drawing, *transform))
+            .collect();
         let mut transaction = drawing.transaction();
         let ids = copies
             .into_iter()

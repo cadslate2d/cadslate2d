@@ -62,6 +62,7 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `ERASE` | `E`, Delete | Erases the selected objects. |
 | `MOVE` | `M` | Moves the selection from a base point to a second point. |
 | `COPY` | `CO`, `CP` | Copies the selection; keeps placing until Enter. |
+| `ARRAY` | `AR` | Copies of the selection laid out `Rectangular` — rows, columns, the distance between rows and between columns (negative goes the other way) — or `Polar` — a centre, a number of items, the angle to fill (360 by default, negative clockwise), and whether the items are turned as they go round or kept the same way up. Every copy keeps its source's properties; one transaction, one undo. The whole array is previewed as the numbers are typed, the one still being asked for read off the pointer. The copies are ordinary objects: the array is not associative. |
 | `ROTATE` | `RO` | Rotates the selection about a base point, by a typed angle or towards the pointer. |
 | `SCALE` | `SC` | Scales the selection uniformly about a base point, by a typed factor or the pointer's distance. |
 | `MIRROR` | `MI` | Reflects the selection across a line through two points; asks whether to erase the originals. |
