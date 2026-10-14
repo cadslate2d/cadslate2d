@@ -1,6 +1,6 @@
 //! The drawing: the authoritative CAD state.
 
-use std::collections::{BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::sync::Arc;
 
@@ -51,6 +51,11 @@ pub struct Drawing {
     /// The entities without bounds — xlines and rays (ADR-0031) — kept out
     /// of the index's tree and tested one by one beside it.
     unbounded: BTreeSet<EntityId>,
+    /// Every entity with a circle or an arc in it, by its largest radius
+    /// (#210): what can be too large for the arc shader at a zoom
+    /// (ADR-0009) is found without reading every entity.
+    radii: BTreeSet<(Radius, EntityId)>,
+    radius_of: HashMap<EntityId, f64>,
     history: History,
     revision: Revision,
     shown_revision: Revision,
@@ -265,6 +270,66 @@ impl fmt::Display for TransactionError {
 
 impl std::error::Error for TransactionError {}
 
+/// A radius ordered by its value, for the drawing's list of curves by
+/// size (#210). Radii are finite and positive, so the order is total.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Radius(f64);
+
+impl Eq for Radius {}
+
+impl PartialOrd for Radius {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Radius {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+/// The largest radius of a circle or an arc among an entity's primitives,
+/// as the scene draws them — a block reference's through its definition,
+/// a polyline's arc segments — or `None` when it has none.
+///
+/// It agrees with [`Entity::primitives`] but reads the common kinds
+/// directly: a drawing opens with every entity noted, and chording an
+/// ellipse or a spline only to find no arc in it doubled the cost.
+fn largest_radius(entity: &Entity, tables: Tables<'_>) -> Option<f64> {
+    fn largest(primitives: impl Iterator<Item = cad_geometry::Primitive>) -> Option<f64> {
+        primitives
+            .filter_map(|primitive| match primitive {
+                cad_geometry::Primitive::Arc(arc) => Some(arc.radius),
+                cad_geometry::Primitive::Circle(circle) => Some(circle.radius),
+                cad_geometry::Primitive::Segment(_) => None,
+            })
+            .filter(|radius| radius.is_finite())
+            .reduce(f64::max)
+    }
+    match entity {
+        Entity::Circle(circle) => Some(circle.radius).filter(|radius| radius.is_finite()),
+        Entity::Arc(arc) => Some(arc.radius).filter(|radius| radius.is_finite()),
+        Entity::Polyline(polyline) if polyline.has_arcs() => largest(polyline.primitives()),
+        Entity::BlockRef(_) => largest(entity.primitives(tables).into_iter()),
+        // Chords, segments, or no primitives at all.
+        Entity::Polyline(_)
+        | Entity::Line(_)
+        | Entity::Ellipse(_)
+        | Entity::Spline(_)
+        | Entity::AttributeDefinition(_)
+        | Entity::Text(_)
+        | Entity::MText(_)
+        | Entity::Dimension(_)
+        | Entity::Hatch(_)
+        | Entity::Viewport(_)
+        | Entity::Point(_)
+        | Entity::Leader(_)
+        | Entity::XLine(_)
+        | Entity::Ray(_) => None,
+    }
+}
+
 /// Which tables `PURGE` sweeps (#200).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PurgeScope {
@@ -357,6 +422,8 @@ impl Drawing {
             ids: EntityIdAllocator::new(),
             index,
             unbounded: BTreeSet::new(),
+            radii: BTreeSet::new(),
+            radius_of: HashMap::new(),
             history: History::default(),
             revision: Revision::next(),
             shown_revision: Revision::next(),
@@ -640,6 +707,45 @@ impl Drawing {
             .map(|(id, entity)| (id, entity.bounds(tables)))
             .collect();
         self.index.rebuild(&mut bounds.into_iter());
+        // In bulk: a set built from a sorted list is not built one insert
+        // at a time, and a drawing opens through here.
+        let mut radii: Vec<(Radius, EntityId)> = self
+            .entities
+            .iter()
+            .filter_map(|(id, entity)| {
+                largest_radius(entity, tables).map(|radius| (Radius(radius), id))
+            })
+            .collect();
+        radii.sort_unstable();
+        self.radius_of = radii.iter().map(|(radius, id)| (*id, radius.0)).collect();
+        self.radii = radii.into_iter().collect();
+    }
+
+    /// Notes the largest radius of a circle or arc in entity `id`, or that
+    /// it has none — or that it is gone (#210).
+    fn note_radius(&mut self, id: EntityId) {
+        let radius = self
+            .entities
+            .get(id)
+            .and_then(|entity| largest_radius(entity, self.tables()));
+        if let Some(old) = self.radius_of.remove(&id) {
+            self.radii.remove(&(Radius(old), id));
+        }
+        if let Some(radius) = radius {
+            self.radius_of.insert(id, radius);
+            self.radii.insert((Radius(radius), id));
+        }
+    }
+
+    /// The entities with a circle or an arc whose radius is over `radius`,
+    /// largest first (#210): those that may hold a curve too large for the
+    /// arc shader at a zoom, whatever their extent.
+    pub fn curves_larger_than(&self, radius: f64) -> impl Iterator<Item = EntityId> + '_ {
+        self.radii
+            .iter()
+            .rev()
+            .take_while(move |(largest, _)| largest.0 > radius)
+            .map(|(_, id)| *id)
     }
 
     /// Changes on every commit, undo, and redo, and at no other time.
@@ -1052,6 +1158,7 @@ impl Drawing {
                     self.entities
                         .insert(*id, record.clone())
                         .expect("transactions never insert a live ID");
+                    self.note_radius(*id);
                     report.inserted.push(*id);
                 }
                 Change::Entity(EntityChange::Remove { id, .. }) => {
@@ -1060,6 +1167,7 @@ impl Drawing {
                     self.entities
                         .remove(*id)
                         .expect("transactions only remove live entities");
+                    self.note_radius(*id);
                     report.removed.push(*id);
                 }
                 Change::Entity(EntityChange::Replace { id, before, after }) => {
@@ -1078,6 +1186,7 @@ impl Drawing {
                     self.entities
                         .replace(*id, after.clone())
                         .expect("transactions only replace live entities");
+                    self.note_radius(*id);
                     report.replaced.push(*id);
                 }
                 Change::Layer(change) => {
@@ -1122,6 +1231,7 @@ impl Drawing {
                                 };
                                 self.index.update(entity_id, entity.bounds(tables));
                             }
+                            self.note_radius(entity_id);
                             report.replaced.push(entity_id);
                         }
                     }
@@ -1150,6 +1260,7 @@ impl Drawing {
                             if let Some(entity) = self.entities.get(entity_id) {
                                 self.index.update(entity_id, entity.bounds(self.tables()));
                             }
+                            self.note_radius(entity_id);
                             report.replaced.push(entity_id);
                         }
                     }
@@ -4346,6 +4457,69 @@ mod tests {
     }
 
     #[test]
+    fn the_curves_larger_than_a_radius_follow_every_edit_and_redefinition() {
+        use crate::{ArcEntity, CircleEntity, PolylineEntity};
+        let mut drawing = Drawing::new();
+        let larger = |drawing: &Drawing, radius: f64| -> Vec<EntityId> {
+            drawing.curves_larger_than(radius).collect()
+        };
+        let mut tx = drawing.transaction();
+        let small = tx.insert(CircleEntity::new(Point2::ORIGIN, 5.0)).unwrap();
+        let big = tx
+            .insert(ArcEntity::new(Point2::ORIGIN, 500.0, 0.0, 0.1))
+            .unwrap();
+        tx.insert(line(0.0, 0.0, 1e6, 0.0)).unwrap();
+        // A half-circle segment of a polyline: a radius of 50.
+        let bulged = tx
+            .insert(PolylineEntity::with_bulges(
+                vec![Point2::ORIGIN, Point2::new(100.0, 0.0)],
+                vec![1.0, 0.0],
+                false,
+            ))
+            .unwrap();
+        tx.commit();
+        assert_eq!(
+            larger(&drawing, 1.0),
+            vec![big, bulged, small],
+            "largest first"
+        );
+        assert_eq!(larger(&drawing, 50.0), vec![big], "over, not at");
+        assert!(larger(&drawing, 1000.0).is_empty());
+
+        // A curve made a line is no longer one; one removed is gone.
+        let mut tx = drawing.transaction();
+        tx.replace(small, line(0.0, 0.0, 1.0, 1.0)).unwrap();
+        tx.remove(big).unwrap();
+        tx.commit();
+        assert_eq!(larger(&drawing, 1.0), vec![bulged]);
+        drawing.undo();
+        assert_eq!(
+            larger(&drawing, 1.0),
+            vec![big, bulged, small],
+            "and undone"
+        );
+
+        // A reference has its definition's curves, and follows a redefinition.
+        let wheel = define(
+            &mut drawing,
+            Block::new(
+                "Wheel",
+                Point2::ORIGIN,
+                vec![EntityRecord::new(
+                    CircleEntity::new(Point2::ORIGIN, 10.0),
+                    Properties::default(),
+                )],
+            ),
+        );
+        let placed = place(&mut drawing, wheel, Point2::new(3.0, 3.0));
+        assert_eq!(larger(&drawing, 6.0), vec![big, bulged, placed]);
+        let mut tx = drawing.transaction();
+        tx.redefine_block(wheel, chair_block()).unwrap();
+        tx.commit();
+        assert_eq!(larger(&drawing, 1.0), vec![big, bulged, small]);
+    }
+
+    #[test]
     fn a_block_is_defined_placed_and_its_references_have_its_bounds() {
         let mut drawing = Drawing::new();
         let chair = define(&mut drawing, chair_block());
@@ -5387,6 +5561,37 @@ mod tests {
         -500.0..500.0_f64
     }
 
+    /// The drawing's list of curves by size (#210), as it keeps it.
+    fn curves_by_size(drawing: &Drawing) -> Vec<(EntityId, f64)> {
+        drawing
+            .radii
+            .iter()
+            .rev()
+            .map(|(radius, id)| (*id, radius.0))
+            .collect()
+    }
+
+    /// The same list read from every entity's primitives, largest first.
+    fn radii_read_afresh(drawing: &Drawing) -> Vec<(EntityId, f64)> {
+        let mut radii: Vec<(EntityId, f64)> = drawing
+            .entities()
+            .filter_map(|(id, entity)| {
+                entity
+                    .primitives(drawing.tables())
+                    .iter()
+                    .filter_map(|primitive| match primitive {
+                        cad_geometry::Primitive::Arc(arc) => Some(arc.radius),
+                        cad_geometry::Primitive::Circle(circle) => Some(circle.radius),
+                        cad_geometry::Primitive::Segment(_) => None,
+                    })
+                    .reduce(f64::max)
+                    .map(|radius| (id, radius))
+            })
+            .collect();
+        radii.sort_by(|a, b| b.1.total_cmp(&a.1).then(b.0.cmp(&a.0)));
+        radii
+    }
+
     fn op() -> impl Strategy<Value = Op> {
         prop_oneof![
             3 => (coordinate(), coordinate(), coordinate(), coordinate())
@@ -5555,7 +5760,9 @@ mod tests {
                     }
                     Op::CreateOn(x, on) => {
                         let mut tx = drawing.transaction();
-                        allocated.push(tx.insert_with(line(x, 0.0, x, 9.0), Properties::on(layer(on))).unwrap());
+                        // A circle, so the list of curves by size (#210) has something in it.
+                        let circle = crate::CircleEntity::new(Point2::new(x, 0.0), 9.0);
+                        allocated.push(tx.insert_with(circle, Properties::on(layer(on))).unwrap());
                         tx.commit();
                     }
                     Op::Erase(pick) if !live.is_empty() => {
@@ -5921,6 +6128,7 @@ mod tests {
                         let name = drawing.blocks().get(id).unwrap().name.clone();
                         let block = Block::new(name, Point2::new(1.0, 1.0), vec![
                             EntityRecord::new(line(0.0, 0.0, 0.0, len), Properties::default()),
+                            EntityRecord::new(crate::CircleEntity::new(Point2::ORIGIN, len), Properties::default()),
                         ]);
                         let mut tx = drawing.transaction();
                         let redefined = tx.redefine_block(id, block);
@@ -6111,6 +6319,7 @@ mod tests {
             }
 
             prop_assert_eq!(sorted(drawing.query(&everything())), live_ids(&drawing));
+            prop_assert_eq!(curves_by_size(&drawing), radii_read_afresh(&drawing));
             for (x, y, w, h) in queries {
                 let query = Aabb::from_points(Point2::new(x, y), Point2::new(x + w, y + h));
                 prop_assert_eq!(sorted(drawing.query(&query)), sorted(reference.query(&query)));
@@ -6128,6 +6337,7 @@ mod tests {
             }
             prop_assert_eq!(saved(&drawing), now);
             prop_assert_eq!(sorted(drawing.query(&everything())), live_ids(&drawing));
+            prop_assert_eq!(curves_by_size(&drawing), radii_read_afresh(&drawing));
         }
     }
 }

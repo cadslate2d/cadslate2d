@@ -55,3 +55,7 @@ harness = false
 [[bench]]
 name = "construction"
 harness = false
+
+[[bench]]
+name = "overlay"
+harness = false

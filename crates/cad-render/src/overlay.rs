@@ -104,6 +104,9 @@ pub struct OverlayFrame {
 /// near 10⁷ (ADR-0009). The adapter collapses such instances at a radius
 /// one per cent larger, so the band between is drawn twice, never not at all.
 pub const FAR_CURVE_RADIUS_PIXELS: f64 = 50_000.0;
+/// How many entities with a curve large enough to be far are read one by
+/// one before the view's own query is the cheaper way (#210).
+const FAR_CURVE_CANDIDATES: usize = 1024;
 /// Chord error of a far curve's segments, in CSS pixels.
 const FAR_CURVE_CHORD_PIXELS: f64 = 0.25;
 /// How far outside the view a far curve is still drawn, in CSS pixels.
@@ -277,7 +280,27 @@ impl OverlayFrame {
         let bounds = view
             .visible_bounds()
             .expanded(view.pixels_to_world(FAR_CURVE_MARGIN_PIXELS));
-        for id in drawing.query_shown_in(space, &bounds) {
+        // Only a curve larger than this, in drawing units, can be far
+        // (#210). Zoomed out, few are or none, and the drawing's list of
+        // curves by size names them; zoomed in, the view holds little, and
+        // the index names what is in it.
+        let threshold = FAR_CURVE_RADIUS_PIXELS / scale;
+        let mut large: Vec<_> = drawing
+            .curves_larger_than(threshold)
+            .take(FAR_CURVE_CANDIDATES + 1)
+            .collect();
+        let candidates = if large.len() > FAR_CURVE_CANDIDATES {
+            drawing.query_shown_in(space, &bounds)
+        } else {
+            large.retain(|id| {
+                drawing.is_shown_in(*id, space)
+                    && drawing
+                        .entity(*id)
+                        .is_some_and(|entity| drawing.bounds_of(entity).intersects(&bounds))
+            });
+            large
+        };
+        for id in candidates {
             let Some(entity) = drawing.entity(id) else {
                 continue;
             };

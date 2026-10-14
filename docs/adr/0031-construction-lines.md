@@ -28,7 +28,7 @@ Measured on the 100k mixed drawing (`benches/benches/construction.rs`, `cargo be
 | Overlay rebuild at extents (every pointer move) | 25.25 ms ± 0.22 | 25.46 ms ± 0.30 |
 | A pick or snap query, 10 px aperture | 1.40 µs | 4.35 µs |
 
-A hundred construction lines add a fifth of a millisecond to an overlay rebuild — inside its noise — and three microseconds to a query. The overlay rebuild itself turned out to cost 25 ms at the extents of a 100k drawing with nothing in it: that is the far-curve pass of ADR-0009 reading every entity in view, found by this benchmark and filed as #210.
+A hundred construction lines add a fifth of a millisecond to an overlay rebuild — inside its noise — and three microseconds to a query. The overlay rebuild itself turned out to cost 25 ms at the extents of a 100k drawing with nothing in it: that is the far-curve pass of ADR-0009 reading every entity in view, found by this benchmark and filed as #210. Since #210 the pass reads only the curves large enough to need it, and the rebuild with none is 5.6 ns, with a hundred 4.1 µs ([performance](../performance.md#far-curves-and-the-overlay-2026-10-14-210)).
 
 Precision: drawn in the overlay, a construction line's piece is computed in `f64` relative to the view centre at every frame, so it is placed to the pixel at any zoom — `a_construction_line_is_overlay_clipped_to_the_view_and_never_committed` pans a million units along one. Snapped crossings are computed locally: `construction_lines_snap_at_their_base_nearest_perpendicular_and_crossings` lands within 10⁻⁹ of the exact point.
 

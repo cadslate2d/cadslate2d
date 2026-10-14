@@ -97,7 +97,36 @@ The open and the export are user actions within a second at 100k; the autosave r
 | Overlay rebuild (every pointer move) | 25.25 ms | 25.46 ms |
 | Pick or snap query, 10 px aperture | 1.40 µs | 4.35 µs |
 
-The construction lines cost a fifth of a millisecond per rebuild. The 25 ms with none is the far-curve pass of ADR-0009 reading every entity in view, which #210 takes up.
+The construction lines cost a fifth of a millisecond per rebuild. The 25 ms with none was the far-curve pass of ADR-0009 reading every entity in view; the next section takes it away.
+
+## Far curves and the overlay (2026-10-14, #210)
+
+The far-curve pass of [ADR-0009](adr/0009-curve-rendering.md) looked for curves too large for the arc shader by reading every entity in view and its primitives, on every pointer move. Only a curve whose radius is over 50,000 pixels can be one, so the drawing now keeps its entities with a circle or an arc in them by their largest radius (`Drawing::curves_larger_than`), and the pass reads the few over the threshold at the current scale. When more than 1,024 are, it reads the view through the index as before; zoomed in, that is what happens, and the view holds little.
+
+`benches/benches/overlay.rs` (the overlay rebuilt with nothing in it but what it draws from the drawing) and `benches/benches/construction.rs`, natively:
+
+| | 10k | 50k | 100k |
+| --- | --- | --- | --- |
+| Rebuild at extents, before | 1.30 ms | 8.64 ms | 23.3 ms |
+| Rebuild at extents, after | 4.3 ns | 4.7 ns | 4.7 ns |
+| Rebuild zoomed in a hundredfold, before | 0.20 µs | 0.70 µs | 1.88 µs |
+| Rebuild zoomed in a hundredfold, after | 0.39 µs | 0.39 µs | 1.29 µs |
+| `construction/overlay_rebuild`, none / 100 lines | | | 5.6 ns / 4.1 µs |
+
+In Firefox (`bench:mixed`, the same run of each build one after the other), where the pass had been added after the browser figures above were taken:
+
+| Mean / worst | 10k | 50k | 100k |
+| --- | --- | --- | --- |
+| Pan, before | 14.6 / 75 ms | 71 / 132 ms | 122 / 632 ms |
+| Pan, after | 10.3 / 80 ms | 33 / 93 ms | 64 / 134 ms |
+| Zoom, before | 8.2 / 14 ms | 33 / 63 ms | 52 / 118 ms |
+| Zoom, after | 6.0 / 10 ms | 21 / 31 ms | 42 / 64 ms |
+| Pointer, before | 13.5 / 15 ms | 50 / 55 ms | 123 / 634 ms |
+| Pointer, after | 7.3 / 9 ms | 31 / 34 ms | 63 / 65 ms |
+
+A frame at the extents of the 100k drawing is half what it was, and back to the figures of #171: what is left is the rasteriser's. Zoomed in, nothing changed (41 against 42 ms for the pointer), as the native figures say.
+
+Zoomed in at 10k the rebuild is two tenths of a microsecond dearer: the list is walked to its cap before the index is asked. The list is kept with the index, on every insert, replace, removal, and redefinition, and built in one sort when a drawing opens: `mixed/open/100000` went from 201 ms to 211 ms on the same machine.
 
 ## Against the targets
 
