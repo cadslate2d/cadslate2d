@@ -243,8 +243,9 @@ export class CadApp {
     const current = this.ui.getSnapshot();
     const theme = kept.theme ?? "dark";
     this.#autosaveDelay = kept.autosaveDelayMs ?? this.#autosaveDelay;
-    this.settings.set({ theme, autosaveDelayMs: this.#autosaveDelay });
+    // The page first: whoever hears of the new theme reads its colours there.
     this.#host.applyTheme(theme);
+    this.settings.set({ theme, autosaveDelayMs: this.#autosaveDelay });
     if (!this.#failed) {
       const dirty = this.engine.restoreSettings(
         kept.toggles ?? current.toggles,
@@ -294,8 +295,10 @@ export class CadApp {
   }
 
   setTheme(theme: Theme): void {
-    this.settings.set({ theme });
+    // The page first: the canvas re-reads its palette from the page's tokens
+    // as soon as the setting changes, and must find the new theme's there.
     this.#host.applyTheme(theme);
+    this.settings.set({ theme });
     this.#keepSettings();
   }
 

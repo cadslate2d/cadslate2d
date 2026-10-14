@@ -810,7 +810,12 @@ describe("settings", () => {
     app.closeSettings();
     expect(app.settings.getSnapshot().open).toBe(false);
 
+    // Whoever hears of the change — the canvas, re-reading its palette —
+    // finds the page already in the new theme.
+    const heard: string[] = [];
+    app.settings.subscribe(() => heard.push(host.themes.at(-1) ?? ""));
     app.setTheme("light");
+    expect(heard).toEqual(["light"]);
     expect(host.themes).toEqual(["dark", "light"]);
     expect(host.settings.kept.theme).toBe("light");
     app.setAutosaveDelay(3000);

@@ -16,14 +16,22 @@ import {
   num,
   openApp,
   prompt,
+  settle,
   tableRow,
 } from "./support";
 
-/** Moves the pointer to `(x, y)` and lets it rest there, as tracking needs. */
+/**
+ * Moves the pointer to `(x, y)` and lets it rest there, as tracking needs.
+ * The move must reach the engine first: the frame loop keeps only the
+ * latest pointer move of a frame, so under load a move followed at once by
+ * another is never delivered, and nothing rests where it went.
+ */
 async function restAt(page: Page, canvas: Locator, x: number, y: number): Promise<void> {
   const center = await centerOf(canvas);
   await page.mouse.move(center.x + x, center.y - y);
+  await settle(page);
   await page.waitForTimeout(700);
+  await settle(page);
 }
 
 async function clickAt(page: Page, canvas: Locator, x: number, y: number): Promise<void> {

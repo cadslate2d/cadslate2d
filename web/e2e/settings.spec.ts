@@ -2,7 +2,7 @@
 // kept across a reload and used; a conflict is refused by name; the toggles
 // come up as last left; the theme chosen in the settings panel stays.
 import { expect, test, type Page } from "@playwright/test";
-import { enter, logLines, openApp, prompt } from "./support";
+import { enter, logLines, openApp, pixelsAround, prompt } from "./support";
 
 const editor = (page: Page) => page.getByRole("dialog", { name: "Text editor" });
 const field = (page: Page) => page.getByRole("textbox", { name: "Paragraph" });
@@ -45,6 +45,47 @@ test("the toggles come up as last left", async ({ page }) => {
   await expect(toggle(page, "GRID")).toHaveAttribute("aria-pressed", "false");
   await expect(toggle(page, "ORTHO")).toHaveAttribute("aria-pressed", "true");
   await expect(toggle(page, "OSNAP")).toHaveAttribute("aria-pressed", "true");
+});
+
+// The drawing area follows the theme chosen, not the one left: the canvas
+// reads its colours from the page, which must have the new theme first.
+test("the drawing area takes the theme chosen, at once and after a reload", async ({ page }) => {
+  const canvas = await openApp(page);
+  await page.keyboard.press("F7");
+  const background = async () => {
+    // A patch of empty canvas, away from the crosshair.
+    await page.mouse.move(2, 2);
+    const light = await pixelsAround(
+      page,
+      canvas,
+      { x: 150, y: 120 },
+      { width: 3, height: 3 },
+      ([red, green, blue]) => red > 200 && green > 200 && blue > 200,
+    );
+    const dark = await pixelsAround(
+      page,
+      canvas,
+      { x: 150, y: 120 },
+      { width: 3, height: 3 },
+      ([red, green, blue]) => red < 60 && green < 60 && blue < 60,
+    );
+    return light === 36 ? "light" : dark === 36 ? "dark" : "mixed";
+  };
+  await expect.poll(background).toBe("dark");
+  const choose = async (theme: "light" | "dark") => {
+    await enter(page, "SETTINGS");
+    const panel = page.getByRole("dialog", { name: "Settings" });
+    await panel.getByLabel("Theme").selectOption(theme);
+    await panel.getByRole("button", { name: "Close" }).click();
+  };
+  await choose("light");
+  await expect.poll(background).toBe("light");
+  await choose("dark");
+  await expect.poll(background).toBe("dark");
+  await choose("light");
+  await page.reload();
+  await openApp(page);
+  await expect.poll(background).toBe("light");
 });
 
 test("the settings panel sets the theme, the unit, and the autosave delay, and they stay", async ({
