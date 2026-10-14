@@ -8,7 +8,7 @@
 //! The snap aperture is a display tolerance in pixels, converted through the
 //! view at the moment of use; it is never a geometric tolerance (§18.3).
 
-use cad_core::{EntityId, PixelTolerance, Point2, ScreenPoint, View};
+use cad_core::{Aabb, EntityId, PixelTolerance, Point2, ScreenPoint, View};
 use cad_document::{Drawing, Entity, LayoutId, Measure, Tables};
 use cad_geometry::Primitive;
 
@@ -162,6 +162,24 @@ pub fn entity_snap_points(entity: &Entity, mode: SnapMode, tables: Tables<'_>) -
             SnapMode::Insertion => vec![insertion],
             _ => Vec::new(),
         };
+    }
+    // A construction line offers its base point — an xline's as its
+    // midpoint, a ray's as its end — not the ends of its reach; nearest,
+    // perpendicular, and intersections come from its reach (ADR-0031).
+    match entity {
+        Entity::XLine(line) => {
+            return match mode {
+                SnapMode::Midpoint => vec![line.base],
+                _ => Vec::new(),
+            };
+        }
+        Entity::Ray(ray) => {
+            return match mode {
+                SnapMode::Endpoint => vec![ray.start],
+                _ => Vec::new(),
+            };
+        }
+        _ => {}
     }
     // A leader offers its vertices as endpoints and its note's insertion
     // point (#205): annotation, like a dimension.
@@ -373,8 +391,19 @@ pub fn find_snap_from(
     ids.sort_unstable();
     let candidates: Vec<&Entity> = ids.iter().filter_map(|id| drawing.entity(*id)).collect();
 
+    // A construction line is read where the snap looks — the view and
+    // the point drawn from — not along its million-unit reach, so what it
+    // offers is computed at the view's scale (ADR-0031).
+    let near = base.map_or_else(
+        || view.visible_bounds(),
+        |base| view.visible_bounds().union(&Aabb::from_points(base, base)),
+    );
+    let local: Vec<Entity> = candidates
+        .iter()
+        .map(|entity| (*entity).within(&near).unwrap_or_else(|| (*entity).clone()))
+        .collect();
     let mut found: Vec<Ranked> = Vec::new();
-    for entity in &candidates {
+    for (entity, local) in candidates.iter().zip(&local) {
         let on_curve = within(entity.distance_to(at, drawing.tables()) * view.scale());
         for mode in modes.enabled() {
             match mode {
@@ -384,7 +413,7 @@ pub fn find_snap_from(
                     let nearest = match entity {
                         Entity::Ellipse(ellipse) => Some(ellipse.ellipse().closest_point(at)),
                         Entity::Spline(spline) => Some(spline.spline().closest_point(at)),
-                        _ => entity
+                        _ => local
                             .primitives(drawing.tables())
                             .iter()
                             .map(|primitive| primitive.closest_point(at))
@@ -411,7 +440,7 @@ pub fn find_snap_from(
                 // is on the piece of the object they land on, or on the point itself.
                 SnapMode::Perpendicular | SnapMode::Tangent => {
                     let Some(base) = base else { continue };
-                    for primitive in entity.primitives(drawing.tables()) {
+                    for primitive in local.primitives(drawing.tables()) {
                         let touching = within(primitive.distance_to_point(at) * view.scale());
                         let points = match mode {
                             SnapMode::Perpendicular => primitive.perpendicular_feet(base),

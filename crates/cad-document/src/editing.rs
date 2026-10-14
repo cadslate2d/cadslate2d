@@ -19,8 +19,8 @@ use cad_geometry::{
 
 use crate::{
     ArcEntity, AttributeDefinitionEntity, BlockReferenceEntity, CircleEntity, EllipseEntity,
-    Entity, LeaderEntity, LineEntity, MTextEntity, PointEntity, PolylineEntity, TextEntity,
-    ViewportEntity,
+    Entity, LeaderEntity, LineEntity, MTextEntity, PointEntity, PolylineEntity, RayEntity,
+    TextEntity, ViewportEntity, XLineEntity,
 };
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
@@ -165,6 +165,78 @@ pub enum ExtendError {
     NoMeeting,
 }
 
+/// The stretch of a construction line (ADR-0031) through `base` along
+/// unit `direction` between parameters `lo` and `hi` — either may be
+/// infinite: the whole line an xline, one infinite end a ray, none a line.
+fn construction_piece(base: Point2, direction: Vec2, lo: f64, hi: f64) -> Entity {
+    match (lo.is_finite(), hi.is_finite()) {
+        (false, false) => XLineEntity { base, direction }.into(),
+        (true, false) => RayEntity {
+            start: base + direction * lo,
+            direction,
+        }
+        .into(),
+        (false, true) => RayEntity {
+            start: base + direction * hi,
+            direction: -direction,
+        }
+        .into(),
+        (true, true) => LineEntity::new(base + direction * lo, base + direction * hi).into(),
+    }
+}
+
+/// A construction line from `from` (−∞ for an xline, 0 for a ray) to +∞,
+/// cut at `cuts` (parameters along it), with the stretch at `pick` gone:
+/// what is kept, and what goes.
+fn trim_construction(
+    base: Point2,
+    direction: Vec2,
+    from: f64,
+    cuts: &[f64],
+    pick: f64,
+) -> Result<TrimParts, TrimError> {
+    let mut inside: Vec<f64> = cuts.iter().copied().filter(|t| *t > from).collect();
+    inside.sort_by(f64::total_cmp);
+    inside.dedup_by(|a, b| (*a - *b).abs() <= TOLERANCE.value());
+    if inside.is_empty() {
+        return Err(TrimError::NoIntersection);
+    }
+    let lo = inside
+        .iter()
+        .copied()
+        .rev()
+        .find(|t| *t < pick)
+        .unwrap_or(from);
+    let hi = inside
+        .iter()
+        .copied()
+        .find(|t| *t > pick)
+        .unwrap_or(f64::INFINITY);
+    let mut kept = Vec::new();
+    if lo > from {
+        kept.push(construction_piece(base, direction, from, lo));
+    }
+    if hi.is_finite() {
+        kept.push(construction_piece(base, direction, hi, f64::INFINITY));
+    }
+    Ok(TrimParts {
+        kept,
+        removed: construction_piece(base, direction, lo, hi),
+    })
+}
+
+/// A construction line from `from` to +∞ with the stretch between the
+/// parameters of two points gone: one or two pieces.
+fn break_construction(base: Point2, direction: Vec2, from: f64, a: f64, b: f64) -> Vec<Entity> {
+    let (a, b) = (a.min(b).max(from), a.max(b).max(from));
+    let mut pieces = Vec::new();
+    if a > from {
+        pieces.push(construction_piece(base, direction, from, a));
+    }
+    pieces.push(construction_piece(base, direction, b, f64::INFINITY));
+    pieces
+}
+
 impl Entity {
     /// The length along a line, an arc, or an open polyline — what
     /// LENGTHEN measures and changes — or nothing for the rest.
@@ -202,7 +274,9 @@ impl Entity {
             | Entity::Hatch(_)
             | Entity::Viewport(_)
             | Entity::Point(_)
-            | Entity::Leader(_) => return Err(LengthenError::Unsupported(self.kind_name())),
+            | Entity::Leader(_)
+            | Entity::XLine(_)
+            | Entity::Ray(_) => return Err(LengthenError::Unsupported(self.kind_name())),
         };
         let delta = match how {
             Lengthening::Delta(delta) if delta.is_finite() => delta,
@@ -270,6 +344,8 @@ impl Entity {
             }
         };
         match self {
+            Entity::XLine(line) => held(&[line.base]),
+            Entity::Ray(ray) => held(&[ray.start]),
             Entity::Line(line) => held(&[line.start, line.end]),
             Entity::Circle(circle) => held(&[circle.center]),
             // An ellipse goes whole, by its centre, like a circle.
@@ -321,6 +397,20 @@ impl Entity {
             }
         };
         match self {
+            Entity::XLine(line) => Some(
+                XLineEntity {
+                    base: moved(line.base),
+                    ..*line
+                }
+                .into(),
+            ),
+            Entity::Ray(ray) => Some(
+                RayEntity {
+                    start: moved(ray.start),
+                    ..*ray
+                }
+                .into(),
+            ),
             Entity::Line(line) => {
                 let (start, end) = (moved(line.start), moved(line.end));
                 (!TOLERANCE.coincident(start, end)).then(|| LineEntity::new(start, end).into())
@@ -451,6 +541,20 @@ impl Entity {
             }
         };
         match self {
+            Entity::XLine(line) => Ok(break_construction(
+                line.base,
+                line.direction,
+                f64::NEG_INFINITY,
+                line.parameter_of(first),
+                line.parameter_of(second),
+            )),
+            Entity::Ray(ray) => {
+                let (a, b) = (ray.parameter_of(first), ray.parameter_of(second));
+                if a.max(b) <= 0.0 {
+                    return Err(BreakError::AtEndpoint);
+                }
+                Ok(break_construction(ray.start, ray.direction, 0.0, a, b))
+            }
             Entity::Line(line) => {
                 let segment = line.segment();
                 break_segment(&segment, first, second, TOLERANCE)
@@ -574,6 +678,20 @@ impl Entity {
             | Entity::Viewport(_)
             | Entity::Point(_)
             | Entity::Leader(_) => Err(TrimError::Unsupported(self.kind_name())),
+            Entity::XLine(line) => {
+                let ts: Vec<f64> = cuts.iter().map(|cut| line.parameter_of(*cut)).collect();
+                trim_construction(
+                    line.base,
+                    line.direction,
+                    f64::NEG_INFINITY,
+                    &ts,
+                    line.parameter_of(pick),
+                )
+            }
+            Entity::Ray(ray) => {
+                let ts: Vec<f64> = cuts.iter().map(|cut| ray.parameter_of(*cut)).collect();
+                trim_construction(ray.start, ray.direction, 0.0, &ts, ray.parameter_of(pick))
+            }
             Entity::Line(entity) => trim_segment_parts(&entity.segment(), cuts, pick, TOLERANCE)
                 .map(|parts| TrimParts {
                     kept: parts.kept.into_iter().map(line).collect(),
@@ -662,7 +780,9 @@ impl Entity {
             | Entity::Hatch(_)
             | Entity::Viewport(_)
             | Entity::Point(_)
-            | Entity::Leader(_) => Err(ExtendError::Unsupported(self.kind_name())),
+            | Entity::Leader(_)
+            | Entity::XLine(_)
+            | Entity::Ray(_) => Err(ExtendError::Unsupported(self.kind_name())),
             Entity::Polyline(polyline) => {
                 let from_end = polyline_end_is_nearer(polyline, pick);
                 polyline
@@ -732,7 +852,9 @@ impl Entity {
             | Entity::Hatch(_)
             | Entity::Viewport(_)
             | Entity::Point(_)
-            | Entity::Leader(_) => None,
+            | Entity::Leader(_)
+            | Entity::XLine(_)
+            | Entity::Ray(_) => None,
         }
     }
 
@@ -799,7 +921,9 @@ impl Entity {
             | Entity::Hatch(_)
             | Entity::Viewport(_)
             | Entity::Point(_)
-            | Entity::Leader(_) => Err(CornerError::Unsupported(entity.kind_name())),
+            | Entity::Leader(_)
+            | Entity::XLine(_)
+            | Entity::Ray(_) => Err(CornerError::Unsupported(entity.kind_name())),
         };
         let rebuilt = |original: &Entity, primitive: Primitive| -> Entity {
             match primitive {
@@ -910,6 +1034,8 @@ impl Entity {
             Entity::Viewport(_) => "viewport",
             Entity::Point(_) => "point",
             Entity::Leader(_) => "leader",
+            Entity::XLine(_) => "construction line",
+            Entity::Ray(_) => "ray",
         }
     }
 
@@ -924,7 +1050,38 @@ impl Entity {
         let one = |entity: Option<Entity>, otherwise: OffsetError| {
             entity.map(|entity| vec![entity]).ok_or(otherwise)
         };
+        // A construction line's parallel through its base moved to the
+        // side the point is on.
+        let parallel = |base: Point2, direction: Vec2| {
+            let normal = Vec2::new(-direction.y, direction.x);
+            let towards = (side - base).dot(normal);
+            if TOLERANCE.is_zero(towards) {
+                None
+            } else {
+                Some(base + normal * (distance * towards.signum()))
+            }
+        };
         match self {
+            Entity::XLine(line) => one(
+                parallel(line.base, line.direction).map(|base| {
+                    XLineEntity {
+                        base,
+                        direction: line.direction,
+                    }
+                    .into()
+                }),
+                OffsetError::NoSide,
+            ),
+            Entity::Ray(ray) => one(
+                parallel(ray.start, ray.direction).map(|start| {
+                    RayEntity {
+                        start,
+                        direction: ray.direction,
+                    }
+                    .into()
+                }),
+                OffsetError::NoSide,
+            ),
             Entity::Line(line) => one(
                 offset_segment(&line.segment(), distance, side)
                     .map(|parallel| LineEntity::new(parallel.start, parallel.end).into()),
@@ -976,6 +1133,11 @@ impl Entity {
     /// carried on past its ends.
     pub fn offset_through(&self, point: Point2) -> Result<Vec<Entity>, OffsetError> {
         let distance = match self {
+            Entity::XLine(line) => line.distance_to(point),
+            Entity::Ray(ray) => {
+                let offset = point - ray.start;
+                (offset.x * ray.direction.y - offset.y * ray.direction.x).abs()
+            }
             Entity::Line(line) => {
                 distance_to_line(&line.segment(), point).ok_or(OffsetError::NoSide)?
             }
@@ -1105,6 +1267,124 @@ mod tests {
             circle.lengthened(p(5.0, 0.0), Lengthening::Delta(1.0)),
             Err(LengthenError::Unsupported("circle"))
         );
+    }
+
+    /// #206: TRIM turns an xline into a ray and a ray into a line; BREAK
+    /// splits an xline into two rays; OFFSET makes a parallel; the rest
+    /// of the curve commands refuse them.
+    #[test]
+    fn construction_lines_trim_break_and_offset_into_rays_and_lines() {
+        use crate::{RayEntity, XLineEntity};
+        let xline: Entity = XLineEntity::through(p(0.0, 0.0), p(1.0, 0.0))
+            .unwrap()
+            .into();
+        // Cut at x = 10 and x = 30; picked between them.
+        let parts = xline
+            .trim_parts_at(&[p(10.0, 0.0), p(30.0, 0.0)], p(20.0, 0.0))
+            .unwrap();
+        assert_eq!(
+            parts.kept,
+            vec![
+                RayEntity::new(p(10.0, 0.0), Vec2::new(-1.0, 0.0))
+                    .unwrap()
+                    .into(),
+                RayEntity::new(p(30.0, 0.0), Vec2::new(1.0, 0.0))
+                    .unwrap()
+                    .into(),
+            ]
+        );
+        assert_eq!(
+            parts.removed,
+            LineEntity::new(p(10.0, 0.0), p(30.0, 0.0)).into()
+        );
+        // Picked beyond the last cut: one ray back from it.
+        let parts = xline.trim_parts_at(&[p(10.0, 0.0)], p(50.0, 0.0)).unwrap();
+        assert_eq!(
+            parts.kept,
+            vec![
+                RayEntity::new(p(10.0, 0.0), Vec2::new(-1.0, 0.0))
+                    .unwrap()
+                    .into()
+            ]
+        );
+        assert!(matches!(parts.removed, Entity::Ray(_)));
+        assert_eq!(
+            xline.trim_parts_at(&[], p(5.0, 0.0)),
+            Err(TrimError::NoIntersection)
+        );
+        // A ray cut at 10 and picked beyond: a line from its start.
+        let ray: Entity = RayEntity::through(p(0.0, 0.0), p(1.0, 0.0)).unwrap().into();
+        let parts = ray.trim_parts_at(&[p(10.0, 0.0)], p(50.0, 0.0)).unwrap();
+        assert_eq!(
+            parts.kept,
+            vec![LineEntity::new(p(0.0, 0.0), p(10.0, 0.0)).into()]
+        );
+        // Picked before the cut: a ray from the cut.
+        let parts = ray.trim_parts_at(&[p(10.0, 0.0)], p(5.0, 0.0)).unwrap();
+        assert_eq!(
+            parts.kept,
+            vec![
+                RayEntity::new(p(10.0, 0.0), Vec2::new(1.0, 0.0))
+                    .unwrap()
+                    .into()
+            ]
+        );
+        // A cut behind the ray's start does not cut it.
+        assert_eq!(
+            ray.trim_parts_at(&[p(-10.0, 0.0)], p(5.0, 0.0)),
+            Err(TrimError::NoIntersection)
+        );
+
+        // Broken: two rays; a ray broken leaves a line and a ray.
+        let pieces = xline.broken(p(30.0, 5.0), p(10.0, -5.0)).unwrap();
+        assert_eq!(
+            pieces,
+            vec![
+                RayEntity::new(p(10.0, 0.0), Vec2::new(-1.0, 0.0))
+                    .unwrap()
+                    .into(),
+                RayEntity::new(p(30.0, 0.0), Vec2::new(1.0, 0.0))
+                    .unwrap()
+                    .into(),
+            ]
+        );
+        let pieces = ray.broken(p(10.0, 0.0), p(20.0, 0.0)).unwrap();
+        assert_eq!(pieces[0], LineEntity::new(p(0.0, 0.0), p(10.0, 0.0)).into());
+        assert_eq!(
+            pieces[1],
+            RayEntity::new(p(20.0, 0.0), Vec2::new(1.0, 0.0))
+                .unwrap()
+                .into()
+        );
+        assert_eq!(
+            ray.broken(p(-5.0, 0.0), p(-1.0, 0.0)),
+            Err(BreakError::AtEndpoint)
+        );
+
+        // Offset: a parallel on the side of the point.
+        assert_eq!(
+            xline.offset(5.0, p(3.0, -1.0)),
+            Ok(vec![
+                XLineEntity::new(p(0.0, -5.0), Vec2::new(1.0, 0.0))
+                    .unwrap()
+                    .into()
+            ])
+        );
+        assert_eq!(xline.offset(5.0, p(3.0, 0.0)), Err(OffsetError::NoSide));
+        assert_eq!(
+            ray.offset_through(p(7.0, 4.0)),
+            Ok(vec![
+                RayEntity::new(p(0.0, 4.0), Vec2::new(1.0, 0.0))
+                    .unwrap()
+                    .into()
+            ])
+        );
+        assert_eq!(
+            xline.extended_to(&[], p(0.0, 0.0)),
+            Err(ExtendError::Unsupported("construction line"))
+        );
+        assert!(xline.is_unbounded() && ray.is_unbounded());
+        assert_eq!(ray.kind_name(), "ray");
     }
 
     #[test]

@@ -9,7 +9,7 @@ use std::f64::consts::{PI, TAU};
 
 use cad_commands::{OverlayItem, SnapMode};
 use cad_core::{Aabb, Point2, Vec2, View};
-use cad_document::{Drawing, LayoutId};
+use cad_document::{Drawing, Entity, LayoutId};
 use cad_geometry::{Arc, Primitive};
 
 use crate::{PackedFrame, StyleRole};
@@ -158,6 +158,8 @@ impl OverlayFrame {
         // The overlay is rebuilt freely, so it can always sit on the view centre.
         self.frame.reset(view.center());
         self.push_far_curves(drawing, space, view);
+        self.push_construction_lines(drawing, space, view);
+        self.push_construction_items(items, drawing, view);
         for item in items {
             match item {
                 OverlayItem::Grid { spacing } => self.push_grid(*spacing, view),
@@ -293,6 +295,76 @@ impl OverlayFrame {
                 if arc.radius * scale > FAR_CURVE_RADIUS_PIXELS {
                     self.push_far_arc(&arc, view, &bounds);
                 }
+            }
+        }
+    }
+
+    /// The construction lines of the space, clipped to the view (ADR-0031):
+    /// drawn in the theme's entity colour, as far curves are, since the
+    /// overlay has no style table.
+    fn push_construction_lines(&mut self, drawing: &Drawing, space: LayoutId, view: &View) {
+        let bounds = view
+            .visible_bounds()
+            .expanded(view.pixels_to_world(FAR_CURVE_MARGIN_PIXELS));
+        for (_, entity) in drawing.unbounded_shown_in(space) {
+            self.push_construction(StyleRole::Entity, entity, &bounds);
+        }
+    }
+
+    /// An xline or a ray, the part of it within `bounds`, in `role`.
+    fn push_construction(&mut self, role: StyleRole, entity: &Entity, bounds: &Aabb) {
+        let piece = match entity {
+            Entity::XLine(line) => line.clipped(bounds),
+            Entity::Ray(ray) => ray.clipped(bounds),
+            _ => None,
+        };
+        if let Some(piece) = piece {
+            self.frame.push_segment(role, piece.start, piece.end);
+        }
+    }
+
+    /// The construction lines among the items — highlighted, hovered,
+    /// previewed — which the walk leaves out, clipped to the view.
+    fn push_construction_items(&mut self, items: &[OverlayItem], drawing: &Drawing, view: &View) {
+        let bounds = view
+            .visible_bounds()
+            .expanded(view.pixels_to_world(FAR_CURVE_MARGIN_PIXELS));
+        for item in items {
+            match item {
+                OverlayItem::Highlight(id) | OverlayItem::Hover(id) => {
+                    let role = if matches!(item, OverlayItem::Highlight(_)) {
+                        StyleRole::Selection
+                    } else {
+                        StyleRole::Hover
+                    };
+                    if let Some(entity) = drawing.entity(*id) {
+                        self.push_construction(role, entity, &bounds);
+                    }
+                }
+                OverlayItem::PreviewRemoval(entity) => {
+                    self.push_construction(StyleRole::Removal, entity, &bounds);
+                }
+                OverlayItem::PreviewEntity(entity) => {
+                    self.push_construction(StyleRole::Preview, entity, &bounds);
+                }
+                OverlayItem::PreviewTransformed { ids, transform } => {
+                    for entity in ids.iter().filter_map(|id| drawing.entity(*id)) {
+                        self.push_construction(
+                            StyleRole::Preview,
+                            &entity.transformed(transform),
+                            &bounds,
+                        );
+                    }
+                }
+                OverlayItem::PreviewGrip { id, to } => {
+                    if let Some(preview) = drawing
+                        .entity(id.entity)
+                        .and_then(|entity| entity.grip_preview(id.index, *to))
+                    {
+                        self.push_construction(StyleRole::Preview, &preview, &bounds);
+                    }
+                }
+                _ => {}
             }
         }
     }

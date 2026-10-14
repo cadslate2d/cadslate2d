@@ -974,6 +974,8 @@ impl Writer {
             Entity::Viewport(_) => "VIEWPORT",
             Entity::Point(_) => "POINT",
             Entity::Leader(_) => "LEADER",
+            Entity::XLine(_) => "XLINE",
+            Entity::Ray(_) => "RAY",
         };
         self.entity(kind, owner, layer, &record.properties, drawing.linetypes());
         match &*record.entity {
@@ -998,6 +1000,17 @@ impl Writer {
             Entity::Point(point) => self.point_entity(point),
             Entity::Leader(leader) => {
                 self.leader(leader, owner, layer, &record.properties, drawing)
+            }
+            // An XLINE or a RAY (#206): its base and its unit direction.
+            Entity::XLine(line) => {
+                self.group(100, "AcDbXline");
+                self.point(10, line.base);
+                self.point(11, Point2::ORIGIN + line.direction);
+            }
+            Entity::Ray(ray) => {
+                self.group(100, "AcDbRay");
+                self.point(10, ray.start);
+                self.point(11, Point2::ORIGIN + ray.direction);
             }
         }
     }

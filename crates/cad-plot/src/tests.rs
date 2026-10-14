@@ -604,6 +604,47 @@ fn the_sample_plot_for_a_reader() {
     std::fs::write(&path, pdf).unwrap();
 }
 
+/// #206 (ADR-0031): a construction line plots clipped to the plotted
+/// area — every point it draws is on the page within the margins — and
+/// leaves the extents, and so the page's fit, to the rest.
+#[test]
+fn a_construction_line_plots_clipped_to_the_area_and_leaves_the_fit_alone() {
+    let mut drawing = Drawing::from_entities([line(0.0, 0.0, 100.0, 50.0)]);
+    let plain = Page::new(&drawing, &settings());
+    let mut tx = drawing.transaction();
+    tx.insert(cad_document::XLineEntity::through(p(0.0, 25.0), p(1.0, 25.0)).unwrap())
+        .unwrap();
+    tx.commit();
+    let page = Page::new(&drawing, &settings());
+    assert_eq!(page, plain, "the fit is the line's");
+    let pdf = plot_pdf(&drawing, &settings());
+    let ops = parse(content_of(&pdf));
+    assert_eq!(
+        ops.points.len(),
+        4,
+        "the line and the xline, two points each"
+    );
+    let margin = MARGIN_MM * POINTS_PER_MM;
+    let media = media_box(&pdf);
+    let printable = Aabb::from_points(
+        media.min() + Vec2::new(margin, margin),
+        media.max() - Vec2::new(margin, margin),
+    )
+    .expanded(0.01);
+    for point in &ops.points {
+        assert!(printable.contains_point(*point), "{point:?}");
+    }
+    // The xline spans the plotted area's width at y = 25.
+    let mid = page.to_page(p(50.0, 25.0)).y;
+    assert!(
+        ops.points
+            .iter()
+            .filter(|point| (point.y - mid).abs() < 0.01)
+            .count()
+            == 2
+    );
+}
+
 /// #194: a layout plots on its sheet at one to one — the title line where
 /// it is on the paper, the sheet the page — and each viewport that is on
 /// draws the model at its own scale, clipped to its frame; the frame
@@ -783,12 +824,14 @@ proptest! {
         let page = media_box(&pdf);
         let margin = MARGIN_MM * POINTS_PER_MM;
         // A quarter-turn Bézier bulges 0.027% of its radius outside the
-        // arc: under half a point on any page here.
+        // arc, and an arc can be as large as the page: on A0 that is most
+        // of a point, so the slack is that share of the page's size.
+        let slack = 0.5_f64.max(3.0e-4 * (page.max().x - page.min().x).max(page.max().y - page.min().y));
         let printable = Aabb::from_points(
             page.min() + Vec2::new(margin, margin),
             page.max() - Vec2::new(margin, margin),
         )
-        .expanded(0.5);
+        .expanded(slack);
         let ops = parse(content_of(&pdf));
         prop_assert!(!ops.points.is_empty());
         for point in &ops.points {

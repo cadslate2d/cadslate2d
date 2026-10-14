@@ -286,7 +286,7 @@ fn content(drawing: &Drawing, space: LayoutId, settings: &PlotSettings, page: &P
         current: None,
     };
     let ids = sorted_ids(drawing.shown_in(space).map(|(id, _)| id));
-    painter.space(&mut out, &ids, page.placement());
+    painter.space(&mut out, &ids, page.placement(), page.area);
     let viewports: Vec<ViewportEntity> = ids
         .iter()
         .filter_map(|id| match drawing.entity(*id) {
@@ -304,7 +304,12 @@ fn content(drawing: &Drawing, space: LayoutId, settings: &PlotSettings, page: &P
                 Aabb::from_points(page.to_page(frame.min()), page.to_page(frame.max())),
             );
             painter.current = None;
-            painter.space(&mut out, &model, page.through(&viewport));
+            // What of the model shows through it, for its construction lines.
+            let window = Aabb::from_points(
+                viewport.model_point(frame.min()),
+                viewport.model_point(frame.max()),
+            );
+            painter.space(&mut out, &model, page.through(&viewport), window);
             out.push_str("Q\n");
             painter.current = None;
         }
@@ -341,7 +346,10 @@ struct Painter<'a> {
 }
 
 impl Painter<'_> {
-    fn space(&mut self, out: &mut String, ids: &[EntityId], placement: Placement) {
+    /// The entities `ids` at `placement`; `area`, in the space's units,
+    /// is what the page shows of it, which a construction line is clipped
+    /// to (ADR-0031).
+    fn space(&mut self, out: &mut String, ids: &[EntityId], placement: Placement, area: Aabb) {
         let drawing = self.drawing;
         let mut sink = PageSink::new(placement);
         for id in ids {
@@ -392,6 +400,14 @@ impl Painter<'_> {
                     self.current = Some(look);
                 }
                 walk_entity(&part, drawing.tables(), &mut sink);
+                let construction = match &part {
+                    Entity::XLine(line) => line.clipped(&area),
+                    Entity::Ray(ray) => ray.clipped(&area),
+                    _ => None,
+                };
+                if let Some(piece) = construction {
+                    sink.segment(piece.start, piece.end, 0.0);
+                }
                 sink.flush(out);
             }
         }

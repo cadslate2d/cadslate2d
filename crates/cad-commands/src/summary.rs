@@ -12,7 +12,7 @@ use cad_document::{Drawing, Entity, Properties};
 use crate::Selection;
 
 /// The kinds an entity can be, in the order they are listed.
-const KINDS: [(&str, &str); 15] = [
+const KINDS: [(&str, &str); 17] = [
     ("line", "lines"),
     ("circle", "circles"),
     ("arc", "arcs"),
@@ -28,6 +28,8 @@ const KINDS: [(&str, &str); 15] = [
     ("viewport", "viewports"),
     ("point", "points"),
     ("leader", "leaders"),
+    ("construction line", "construction lines"),
+    ("ray", "rays"),
 ];
 
 /// The kind named by `name` — singular or plural, any case — if any.
@@ -60,6 +62,8 @@ pub(crate) fn kind_index(entity: &Entity) -> usize {
         Entity::Viewport(_) => 12,
         Entity::Point(_) => 13,
         Entity::Leader(_) => 14,
+        Entity::XLine(_) => 15,
+        Entity::Ray(_) => 16,
     }
 }
 
@@ -304,6 +308,20 @@ pub(crate) fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, St
             row("On", if viewport.on { "yes" } else { "no" }.to_owned()),
         ],
         Entity::Point(place) => vec![row("Position", point(place.position))],
+        Entity::XLine(line) => vec![
+            row("Base point", point(line.base)),
+            row(
+                "Angle",
+                degrees(line.direction.y.atan2(line.direction.x).rem_euclid(TAU)),
+            ),
+        ],
+        Entity::Ray(ray) => vec![
+            row("Start", point(ray.start)),
+            row(
+                "Angle",
+                degrees(ray.direction.y.atan2(ray.direction.x).rem_euclid(TAU)),
+            ),
+        ],
         Entity::Leader(leader) => {
             let style = drawing.tables().dim_style(leader.style);
             vec![

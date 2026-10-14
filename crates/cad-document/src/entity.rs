@@ -8,6 +8,7 @@ use cad_geometry::{
 };
 
 pub use crate::block::BlockReferenceEntity;
+use crate::construction::{RayEntity, XLineEntity};
 use crate::dimension::DimensionEntity;
 use crate::hatch::HatchEntity;
 use crate::leader::LeaderEntity;
@@ -449,6 +450,10 @@ pub enum Entity {
     Point(PointEntity),
     /// A line to a note, with an arrowhead, laid out by a dimension style (#205).
     Leader(LeaderEntity),
+    /// A construction line endless both ways (#206; ADR-0031).
+    XLine(XLineEntity),
+    /// A construction line endless one way (#206; ADR-0031).
+    Ray(RayEntity),
 }
 
 impl Entity {
@@ -481,6 +486,10 @@ impl Entity {
             Entity::Viewport(viewport) => viewport.frame(),
             Entity::Point(point) => point.bounds(tables.point_style),
             Entity::Leader(leader) => leader.layout(tables.dim_style(leader.style)).bounds(),
+            // What every geometric question reads: its reach (ADR-0031).
+            // It is kept out of the index's tree and the extents.
+            Entity::XLine(line) => line.segment().bounds(),
+            Entity::Ray(ray) => ray.segment().bounds(),
         }
     }
 
@@ -521,6 +530,8 @@ impl Entity {
             Entity::Leader(leader) => leader
                 .layout(tables.dim_style(leader.style))
                 .distance_to(point),
+            Entity::XLine(line) => line.distance_to(point),
+            Entity::Ray(ray) => ray.distance_to(point),
         }
     }
 
@@ -563,6 +574,10 @@ impl Entity {
             Entity::Point(_) => Vec::new(),
             // A leader is annotation, like a dimension (ADR-0020).
             Entity::Leader(_) => Vec::new(),
+            // A construction line is its reach (ADR-0031): it cuts, is
+            // cut, and snaps as a segment that long.
+            Entity::XLine(line) => vec![Primitive::Segment(line.segment())],
+            Entity::Ray(ray) => vec![Primitive::Segment(ray.segment())],
             Entity::BlockRef(reference) => tables
                 .blocks
                 .flatten(reference, crate::Properties::default())
@@ -574,6 +589,29 @@ impl Entity {
 
     /// Every point where this entity's geometry meets `other`'s.
     pub fn intersections(&self, other: &Entity, tables: Tables<'_>) -> Vec<Point2> {
+        // A construction line meets things where they are: read it within
+        // the other's bounds, not along its million-unit reach, so the
+        // crossing is computed at their scale (ADR-0031).
+        match (self.construction(), other.construction()) {
+            (Some(mine), Some(theirs)) => {
+                return crate::construction::crossing(mine, theirs)
+                    .into_iter()
+                    .collect();
+            }
+            (Some(_), None) => {
+                let near = other.bounds(tables).expanded(1.0);
+                return self
+                    .within(&near)
+                    .map_or_else(Vec::new, |local| local.intersections(other, tables));
+            }
+            (None, Some(_)) => {
+                let near = self.bounds(tables).expanded(1.0);
+                return other
+                    .within(&near)
+                    .map_or_else(Vec::new, |local| self.intersections(&local, tables));
+            }
+            (None, None) => {}
+        }
         let theirs = other.primitives(tables);
         self.primitives(tables)
             .iter()
@@ -672,6 +710,8 @@ impl Entity {
                     )
                     .collect()
             }
+            Entity::XLine(line) => vec![Primitive::Segment(line.segment())],
+            Entity::Ray(ray) => vec![Primitive::Segment(ray.segment())],
         }
     }
 
@@ -706,6 +746,7 @@ impl Entity {
                 .layout(tables.dim_style(leader.style))
                 .text
                 .is_some_and(|text| text.frame().contains(point)),
+            Entity::XLine(_) | Entity::Ray(_) => false,
         }
     }
 
@@ -793,6 +834,8 @@ impl Entity {
             Entity::Viewport(viewport) => viewport.transformed(transform).into(),
             Entity::Point(point) => point.transformed(transform).into(),
             Entity::Leader(leader) => leader.transformed(transform).into(),
+            Entity::XLine(line) => line.transformed(transform).into(),
+            Entity::Ray(ray) => ray.transformed(transform).into(),
         }
     }
 
@@ -831,6 +874,50 @@ impl From<PointEntity> for Entity {
 impl From<LeaderEntity> for Entity {
     fn from(leader: LeaderEntity) -> Self {
         Entity::Leader(leader)
+    }
+}
+
+impl From<XLineEntity> for Entity {
+    fn from(line: XLineEntity) -> Self {
+        Entity::XLine(line)
+    }
+}
+
+impl From<RayEntity> for Entity {
+    fn from(ray: RayEntity) -> Self {
+        Entity::Ray(ray)
+    }
+}
+
+impl Entity {
+    /// A construction line's base point, unit direction, and where along
+    /// it it starts: −∞ for an xline, 0 for a ray. `None` for the rest.
+    pub fn construction(&self) -> Option<(Point2, Vec2, f64)> {
+        match self {
+            Entity::XLine(line) => Some((line.base, line.direction, f64::NEG_INFINITY)),
+            Entity::Ray(ray) => Some((ray.start, ray.direction, 0.0)),
+            _ => None,
+        }
+    }
+
+    /// A construction line as a line within `bounds` — what of it a
+    /// question about that region needs — or `None` when it misses them.
+    /// Any other entity as it is.
+    pub fn within(&self, bounds: &Aabb) -> Option<Entity> {
+        match self.construction() {
+            Some((base, direction, from)) => {
+                crate::construction::clip_to(base, direction, from, f64::INFINITY, bounds)
+                    .map(|piece| LineEntity::new(piece.start, piece.end).into())
+            }
+            None => Some(self.clone()),
+        }
+    }
+
+    /// Whether the entity runs for ever (ADR-0031): an xline or a ray,
+    /// kept out of the spatial index's tree and the extents, and drawn
+    /// clipped to the view.
+    pub fn is_unbounded(&self) -> bool {
+        matches!(self, Entity::XLine(_) | Entity::Ray(_))
     }
 }
 
@@ -1037,6 +1124,8 @@ mod tests {
             Entity::Viewport(viewport) => viewport.corners().to_vec(),
             Entity::Point(point) => vec![point.position],
             Entity::Leader(leader) => leader.vertices.clone(),
+            Entity::XLine(line) => vec![line.base, line.base + line.direction * 10.0],
+            Entity::Ray(ray) => vec![ray.start, ray.start + ray.direction * 10.0],
         }
     }
 

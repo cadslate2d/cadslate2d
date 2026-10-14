@@ -88,6 +88,17 @@ Three seconds a frame is SwiftShader rasterising 143,000 segments, 4,000 arcs, a
 
 The open and the export are user actions within a second at 100k; the autosave recurred after every pause and held the thread for as long as the export, which is why it is now written in slices ([ADR-0024](adr/0024-autosave-in-slices.md)): the thread is held for the last step alone, the file taken as one buffer and put into IndexedDB. No worker: the drawing stays where it is.
 
+## Construction lines and the overlay (2026-10-14, #206)
+
+`benches/benches/construction.rs` on the 100k mixed drawing at its extents ([ADR-0031](adr/0031-construction-lines.md)):
+
+| | None | 100 construction lines |
+| --- | --- | --- |
+| Overlay rebuild (every pointer move) | 25.25 ms | 25.46 ms |
+| Pick or snap query, 10 px aperture | 1.40 µs | 4.35 µs |
+
+The construction lines cost a fifth of a millisecond per rebuild. The 25 ms with none is the far-curve pass of ADR-0009 reading every entity in view, which #210 takes up.
+
 ## Against the targets
 
 | Target | 10k effortless | 50k smooth | 100k usable |

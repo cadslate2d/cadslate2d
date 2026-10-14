@@ -485,6 +485,57 @@ fn a_layout_made_here_and_a_renamed_one_are_written_and_read_back() {
     assert_eq!(back.report.layouts, vec!["Layout1", "Details"]);
 }
 
+/// #206: xlines and rays from another writer — on a layer of their own,
+/// coloured — read as construction lines, left out of the extents, and
+/// written back as XLINE and RAY with their unit directions.
+#[test]
+fn construction_lines_from_another_writer_round_trip_and_stay_out_of_the_extents() {
+    let import = load("valid", "ezdxf-r2010-construction-lines.dxf").unwrap();
+    assert_eq!(import.report.construction_lines, 4);
+    assert_eq!(import.report.lines, 1);
+    assert!(
+        !import.report.has_unsupported_content(),
+        "{:?}",
+        import.report
+    );
+    let drawing = &import.drawing;
+    assert_eq!(
+        drawing.extents().unwrap().max(),
+        Point2::new(100.0, 50.0),
+        "the line alone counts"
+    );
+    let kinds: Vec<&str> = drawing
+        .shown()
+        .map(|(_, entity)| entity.kind_name())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "line",
+            "construction line",
+            "construction line",
+            "ray",
+            "ray"
+        ]
+    );
+    let (id, _) = drawing
+        .shown()
+        .find(|(_, entity)| matches!(entity, Entity::XLine(_)))
+        .unwrap();
+    assert_eq!(drawing.layer_of(id).unwrap().name, "CONSTRUCTION");
+    let text = export(drawing);
+    assert!(text.contains("\n100\nAcDbXline\n 10\n0.0\n 20\n25.0\n"));
+    assert!(text.contains("\n100\nAcDbRay\n 10\n100.0\n 20\n50.0\n"));
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(back.report.construction_lines, 4);
+    assert_eq!(export(&back.drawing), text, "stable on the second pass");
+    // An xline with no direction is not one.
+    let none = "  0\nSECTION\n  2\nENTITIES\n  0\nXLINE\n  8\n0\n 10\n0.0\n 20\n0.0\n 11\n0.0\n 21\n0.0\n  0\nENDSEC\n  0\nEOF\n";
+    let import = cad_dxf::import(none.as_bytes()).unwrap();
+    assert_eq!(import.report.construction_lines, 0);
+    assert!(import.report.has_unsupported_content());
+}
+
 /// #205: leaders from another writer — one with an MTEXT note named by
 /// handle, which becomes the leader's words and no entity of its own;
 /// one with no note, ending leftwards; one with a spline path, read

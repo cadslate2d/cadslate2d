@@ -13,6 +13,7 @@ mod break_command;
 mod bulged;
 mod chprop;
 mod color;
+mod construction;
 mod corner;
 mod dimcurve;
 mod dimension;

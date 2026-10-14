@@ -957,6 +957,35 @@ fn a_dimension_is_drawn_by_its_style_and_redrawn_when_the_style_changes() {
 }
 
 /// ADR-0021: a hatch is committed triangles — a style index each, batches
+/// #206 (ADR-0031): a construction line is no committed geometry; the
+/// overlay draws it clipped to the view, so panning far along it redraws
+/// the overlay and leaves the scene as it was.
+#[test]
+fn a_construction_line_is_overlay_clipped_to_the_view_and_never_committed() {
+    use cad_document::{Entity, XLineEntity};
+    let line = XLineEntity::through(
+        cad_core::Point2::new(0.0, 0.0),
+        cad_core::Point2::new(1.0, 1.0),
+    )
+    .unwrap();
+    let mut h = Harness::with_entities([Entity::from(line)]);
+    let mut cache = SceneCache::new();
+    let scene = cache.scene(h.session.drawing());
+    assert_eq!(scene.frame().segment_count(), 0);
+    let revision = scene.revision();
+    let overlay = overlay_of(&h);
+    let drawn = overlay.frame().segment_count();
+    assert!(drawn >= 1, "{drawn}");
+    // Far along it: still drawn, still nothing committed.
+    h.enter_all(&["ZOOM", "C", "1000000,1000000", "10"]);
+    assert_eq!(cache.scene(h.session.drawing()).revision(), revision);
+    assert!(overlay_of(&h).frame().segment_count() >= 1);
+    // Off it: the overlay has no piece of it.
+    h.enter_all(&["ZOOM", "C", "500,-500", "10"]);
+    let off = overlay_of(&h).frame().segment_count();
+    assert!(off < drawn, "{off} {drawn}");
+}
+
 /// #204: a wide polyline is committed as its band's triangles and no
 /// strokes; its width set, the scene is rebuilt with them, and the
 /// pointer never touches it.

@@ -21,7 +21,8 @@ use cad_document::{
     EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Justification, Layer, LayerId,
     Layout, LayoutId, LeaderEntity, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight,
     MTextEntity, Measure, PointEntity, PointStyle, PolylineEntity, Properties, RawEntity, RawGroup,
-    TextEntity, TextStyle, TextStyleId, ViewportEntity, check_name, nearest_index, same_name,
+    RayEntity, TextEntity, TextStyle, TextStyleId, ViewportEntity, XLineEntity, check_name,
+    nearest_index, same_name,
 };
 
 use crate::export::insunits_code;
@@ -928,6 +929,23 @@ impl<'a> Reader<'a> {
             }
             (_, "INSERT") if entities => self.insert(record, body)?,
             (_, "DIMENSION") if entities => self.dimension(body)?,
+            // An XLINE or a RAY (#206): its base (10, 20) and its
+            // direction (11, 21), made a unit vector; none is invalid.
+            (_, kind @ ("XLINE" | "RAY")) if entities => {
+                let name: &'static str = if kind == "XLINE" { "XLINE" } else { "RAY" };
+                let need = |value, group| required(value, record.line, name, group);
+                let base = Point2::new(need(body.x0, 10)?, need(body.y0, 20)?);
+                let direction = Vec2::new(need(body.x1, 11)?, need(body.y1, 21)?);
+                let entity = if name == "XLINE" {
+                    XLineEntity::new(base, direction).map(Entity::XLine)
+                } else {
+                    RayEntity::new(base, direction).map(Entity::Ray)
+                };
+                match entity {
+                    Some(entity) => self.import(entity, body)?,
+                    None => self.report.count_unsupported(INVALID),
+                }
+            }
             // A LEADER (#205): its vertices (10, 20 repeated), its style
             // (3), and the handle of its MTEXT note (340), attached once
             // every record is read. A spline path (72) is read straight.
@@ -1493,6 +1511,7 @@ impl<'a> Reader<'a> {
                     Entity::Viewport(_) => self.report.viewports += 1,
                     Entity::Point(_) => self.report.points += 1,
                     Entity::Leader(_) => self.report.leaders += 1,
+                    Entity::XLine(_) | Entity::Ray(_) => self.report.construction_lines += 1,
                 }
                 match &mut self.open_block {
                     Some(OpenBlock::Paper(paper)) => paper.entities.push((entity, properties)),
@@ -2557,9 +2576,9 @@ mod tests {
 
     #[test]
     fn unsupported_entities_are_counted_by_kind_and_supported_ones_still_import() {
-        let mut body = vec![(0, "RAY"), (10, "0"), (20, "0"), (40, "5")];
+        let mut body = vec![(0, "SOLID"), (10, "0"), (20, "0"), (40, "5")];
         body.extend_from_slice(&LINE_0_0_TO_10_5);
-        body.extend_from_slice(&[(0, "XLINE"), (70, "8"), (0, "RAY"), (40, "1")]);
+        body.extend_from_slice(&[(0, "TRACE"), (70, "8"), (0, "SOLID"), (40, "1")]);
         // A 3D polyline is unsupported; its vertices belong to it and are not counted separately.
         body.extend_from_slice(&[
             (0, "POLYLINE"),
@@ -2578,7 +2597,7 @@ mod tests {
             .iter()
             .map(|(kind, count)| (kind.as_str(), *count))
             .collect();
-        assert_eq!(counts, vec![("POLYLINE", 1), ("RAY", 2), ("XLINE", 1)]);
+        assert_eq!(counts, vec![("POLYLINE", 1), ("SOLID", 2), ("TRACE", 1)]);
         assert!(import.report.has_unsupported_content());
     }
 

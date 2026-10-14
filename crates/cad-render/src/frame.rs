@@ -594,6 +594,10 @@ pub fn walk_entity(entity: &Entity, tables: Tables<'_>, sink: &mut impl Geometry
             }
             walk_strokes(sink, layout.text.strokes());
         }
+        // A construction line has no bounds to draw within: the overlay
+        // draws it clipped to the view, the page clipped to the sheet
+        // (ADR-0031). The committed scene holds none of it.
+        Entity::XLine(_) | Entity::Ray(_) => {}
         // A leader is laid out by its style like a dimension (#205).
         Entity::Leader(leader) => {
             let layout = leader.layout(tables.dim_style(leader.style));

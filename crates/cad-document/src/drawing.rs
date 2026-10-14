@@ -1,6 +1,6 @@
 //! The drawing: the authoritative CAD state.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::fmt;
 use std::sync::Arc;
 
@@ -48,6 +48,9 @@ pub struct Drawing {
     settings: DrawingSettings,
     ids: EntityIdAllocator,
     index: Box<dyn SpatialIndex>,
+    /// The entities without bounds — xlines and rays (ADR-0031) — kept out
+    /// of the index's tree and tested one by one beside it.
+    unbounded: BTreeSet<EntityId>,
     history: History,
     revision: Revision,
     shown_revision: Revision,
@@ -353,6 +356,7 @@ impl Drawing {
             settings: DrawingSettings::default(),
             ids: EntityIdAllocator::new(),
             index,
+            unbounded: BTreeSet::new(),
             history: History::default(),
             revision: Revision::next(),
             shown_revision: Revision::next(),
@@ -623,9 +627,16 @@ impl Drawing {
             dim_styles: &self.dim_styles,
             point_style: self.settings.point_style,
         };
+        self.unbounded = self
+            .entities
+            .iter()
+            .filter(|(_, entity)| entity.is_unbounded())
+            .map(|(id, _)| id)
+            .collect();
         let bounds: Vec<(EntityId, Aabb)> = self
             .entities
             .iter()
+            .filter(|(_, entity)| !entity.is_unbounded())
             .map(|(id, entity)| (id, entity.bounds(tables)))
             .collect();
         self.index.rebuild(&mut bounds.into_iter());
@@ -737,7 +748,7 @@ impl Drawing {
     /// [`query_shown`](Self::query_shown) in `space`: what the pointer
     /// does there.
     pub fn query_shown_in(&self, space: LayoutId, bounds: &Aabb) -> Vec<EntityId> {
-        let mut ids = self.index.query(bounds);
+        let mut ids = self.query(bounds);
         ids.retain(|id| self.is_shown_in(*id, space));
         ids
     }
@@ -746,6 +757,7 @@ impl Drawing {
     /// has none.
     pub fn extents_in(&self, space: LayoutId) -> Option<Aabb> {
         self.entities_in(space)
+            .filter(|(_, entity)| !entity.is_unbounded())
             .map(|(_, entity)| entity.bounds(self.tables()))
             .reduce(|a, b| a.union(&b))
     }
@@ -903,7 +915,24 @@ impl Drawing {
     /// Candidate entities whose bounds intersect `bounds`. Callers follow up
     /// with an exact geometric test.
     pub fn query(&self, bounds: &Aabb) -> Vec<EntityId> {
-        self.index.query(bounds)
+        let mut ids = self.index.query(bounds);
+        // The construction lines that cross the box (ADR-0031).
+        ids.extend(self.unbounded.iter().copied().filter(|id| {
+            self.entities
+                .get(*id)
+                .is_some_and(|entity| entity.crosses(bounds, self.tables()))
+        }));
+        ids
+    }
+
+    /// The construction lines of `space` that are shown (ADR-0031): what
+    /// the overlay draws clipped to the view.
+    pub fn unbounded_shown_in(&self, space: LayoutId) -> impl Iterator<Item = (EntityId, &Entity)> {
+        self.unbounded.iter().filter_map(move |id| {
+            self.is_shown_in(*id, space)
+                .then(|| self.entities.get(*id).map(|entity| (*id, &**entity)))
+                .flatten()
+        })
     }
 
     /// The bounding box of the model's entities, or `None` when it has
@@ -1015,7 +1044,11 @@ impl Drawing {
             };
             match change {
                 Change::Entity(EntityChange::Insert { id, record }) => {
-                    self.index.insert(*id, record.entity.bounds(self.tables()));
+                    if record.entity.is_unbounded() {
+                        self.unbounded.insert(*id);
+                    } else {
+                        self.index.insert(*id, record.entity.bounds(self.tables()));
+                    }
                     self.entities
                         .insert(*id, record.clone())
                         .expect("transactions never insert a live ID");
@@ -1023,6 +1056,7 @@ impl Drawing {
                 }
                 Change::Entity(EntityChange::Remove { id, .. }) => {
                     self.index.remove(*id);
+                    self.unbounded.remove(id);
                     self.entities
                         .remove(*id)
                         .expect("transactions only remove live entities");
@@ -1031,7 +1065,15 @@ impl Drawing {
                 Change::Entity(EntityChange::Replace { id, before, after }) => {
                     // A change of properties alone leaves the index as it is.
                     if !Arc::ptr_eq(&before.entity, &after.entity) {
-                        self.index.update(*id, after.entity.bounds(self.tables()));
+                        // A trim can turn a ray into a line: the entry
+                        // moves between the tree and the side list.
+                        self.index.remove(*id);
+                        self.unbounded.remove(id);
+                        if after.entity.is_unbounded() {
+                            self.unbounded.insert(*id);
+                        } else {
+                            self.index.insert(*id, after.entity.bounds(self.tables()));
+                        }
                     }
                     self.entities
                         .replace(*id, after.clone())
@@ -5032,6 +5074,67 @@ mod tests {
         drawing.undo();
         assert_eq!(drawing.properties(id).unwrap().layer, LayerId::FIRST);
         assert_eq!(drawing.entity(id).unwrap().as_line().unwrap().end.x, 1.0);
+    }
+
+    /// #206 (ADR-0031): construction lines are kept out of the index's
+    /// tree and the extents, found by any query whose box they cross, and
+    /// move into the tree when an edit makes one a line.
+    #[test]
+    fn construction_lines_are_queried_beside_the_tree_and_left_out_of_the_extents() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let line_id = tx.insert(line(0.0, 0.0, 10.0, 10.0)).unwrap();
+        let xline = tx
+            .insert(
+                crate::XLineEntity::through(Point2::new(0.0, 50.0), Point2::new(1.0, 50.0))
+                    .unwrap(),
+            )
+            .unwrap();
+        let ray = tx
+            .insert(
+                crate::RayEntity::through(Point2::new(100.0, 0.0), Point2::new(100.0, 1.0))
+                    .unwrap(),
+            )
+            .unwrap();
+        tx.commit();
+        let extents = drawing.extents().unwrap();
+        assert_eq!(
+            extents.max(),
+            Point2::new(10.0, 10.0),
+            "only the line counts"
+        );
+        let far = Aabb::from_points(Point2::new(5000.0, 45.0), Point2::new(5010.0, 55.0));
+        assert_eq!(
+            drawing.query(&far),
+            vec![xline],
+            "the xline crosses it, far from its base"
+        );
+        let above = Aabb::from_points(Point2::new(95.0, 500.0), Point2::new(105.0, 510.0));
+        assert_eq!(drawing.query(&above), vec![ray]);
+        let below = Aabb::from_points(Point2::new(95.0, -510.0), Point2::new(105.0, -500.0));
+        assert!(drawing.query(&below).is_empty(), "behind the ray's start");
+        let mut near = drawing.query(&Aabb::from_points(
+            Point2::new(0.0, 0.0),
+            Point2::new(10.0, 60.0),
+        ));
+        near.sort();
+        assert_eq!(near, vec![line_id, xline]);
+        assert_eq!(drawing.unbounded_shown_in(LayoutId::MODEL).count(), 2);
+        // A ray replaced by a line moves into the tree, and back on undo.
+        let mut tx = drawing.transaction();
+        tx.replace(ray, line(100.0, 0.0, 100.0, 20.0)).unwrap();
+        tx.commit();
+        assert_eq!(drawing.unbounded_shown_in(LayoutId::MODEL).count(), 1);
+        assert_eq!(drawing.extents().unwrap().max(), Point2::new(100.0, 20.0));
+        assert!(drawing.query(&above).is_empty());
+        drawing.undo();
+        assert_eq!(drawing.query(&above), vec![ray]);
+        assert_eq!(drawing.extents().unwrap().max(), Point2::new(10.0, 10.0));
+        // Removed, gone from the side list too.
+        let mut tx = drawing.transaction();
+        tx.remove(xline).unwrap();
+        tx.commit();
+        assert!(drawing.query(&far).is_empty());
     }
 
     #[test]

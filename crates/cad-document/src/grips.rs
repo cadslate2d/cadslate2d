@@ -26,7 +26,8 @@ use cad_geometry::Arc;
 
 use crate::{
     ArcEntity, AttributeDefinitionEntity, BlockReferenceEntity, CircleEntity, EllipseEntity,
-    Entity, LineEntity, MTextEntity, PointEntity, PolylineEntity, TextEntity, ViewportEntity,
+    Entity, LineEntity, MTextEntity, PointEntity, PolylineEntity, RayEntity, TextEntity,
+    ViewportEntity, XLineEntity,
 };
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
@@ -125,6 +126,9 @@ impl Entity {
             Entity::Text(text) => vec![grip(GripKind::Insertion, text.insertion)],
             // A point's one grip moves it (#198).
             Entity::Point(point) => vec![grip(GripKind::Center, point.position)],
+            // A construction line's base point, which moves it (#206).
+            Entity::XLine(line) => vec![grip(GripKind::Midpoint, line.base)],
+            Entity::Ray(ray) => vec![grip(GripKind::Endpoint, ray.start)],
             // A leader's every vertex (#205).
             Entity::Leader(leader) => leader
                 .vertices
@@ -312,6 +316,8 @@ impl Entity {
             }
             Entity::Point(_) => (index == 0).then(|| PointEntity::new(to).into()),
             Entity::Leader(leader) => leader.with_vertex(index, to).map(Entity::from),
+            Entity::XLine(line) => (index == 0).then(|| XLineEntity { base: to, ..*line }.into()),
+            Entity::Ray(ray) => (index == 0).then(|| RayEntity { start: to, ..*ray }.into()),
             Entity::Text(text) => (index == 0).then(|| {
                 TextEntity {
                     insertion: to,
