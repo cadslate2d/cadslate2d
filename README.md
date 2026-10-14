@@ -51,6 +51,10 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `SETTINGS` | Header button | Opens the settings panel: the theme (dark or light), the autosave delay, the drawing unit, the drafting toggles, and the aliases. The toggles come back as you left them; the unit you set starts the next new drawing. All of it stays in this browser; nothing leaves it. |
 | `SELECT` | — | Builds a selection at the idle prompt, with the pointer or with the methods below, and keeps it for the next command. |
 | `QSELECT` | `QS` | Selects by what objects are: a kind (`line`, `circle`, `text`, … or all), then optionally a property — `Layer`, `Color`, `LType`, `LWeight` — tested with `=` or `<>` (a value alone means `=`), or `<` and `>` for a colour number or a lineweight. The result replaces the selection; objects on layers that are off or locked are never in it. |
+| `DIST` | `DI` | Two points: the distance between them, the delta in X and Y, and the angle from the first to the second, in the log. Lengths carry the drawing's unit suffix when it has one. Changes nothing. |
+| `ID` | — | A point, reported. Changes nothing. |
+| `AREA` | `AA` | The area and perimeter of a polygon given corner by corner and closed by Enter, or `Object`: a closed polyline (its arcs counted exactly), a circle, a whole ellipse, or a hatch (its holes taken out). An open polyline or arc is refused. The area is in the drawing's unit squared. Changes nothing. |
+| `LIST` | `LI`, `LS` | Every selected object, one after the other: its kind, layer, colour, linetype, lineweight, and space, then what defines it as the Properties panel names it — points, radius, angles, text, the block and its attributes, a dimension's value. Changes nothing; the selection is spent. |
 | `ERASE` | `E`, Delete | Erases the selected objects. |
 | `MOVE` | `M` | Moves the selection from a base point to a second point. |
 | `COPY` | `CO`, `CP` | Copies the selection; keeps placing until Enter. |

@@ -21,6 +21,7 @@ mod ellipse;
 mod far_from_origin;
 mod grips;
 mod hatch;
+mod inquiry;
 mod join;
 mod layer_command;
 mod layers;

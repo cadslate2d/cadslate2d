@@ -10,16 +10,17 @@ use cad_input::{CommandAliases, DuplicateCommandName};
 
 use crate::Command;
 use crate::commands::{
-    AliasEditCommand, ArcCommand, AttdefCommand, AtteditCommand, BlockCommand, BreakCommand,
-    ChpropCommand, CircleCommand, ColorCommand, CornerCommand, DimAngularCommand, DimLinearCommand,
-    DimRadialCommand, DimStyleCommand, EdgeCommand, EllipseCommand, EraseCommand, ExplodeCommand,
-    ExportCommand, GridCommand, HatchCommand, HatchEditCommand, InsertCommand, JoinCommand,
-    LayerCommand, LayoutCommand, LineCommand, LinetypeCommand, LtscaleCommand, LweightCommand,
-    MTextCommand, MirrorCommand, ModelCommand, MspaceCommand, MviewCommand, OffsetCommand,
-    OpenCommand, OsnapCommand, PanCommand, PlineCommand, PlotCommand, PolarAngleCommand,
-    PspaceCommand, QselectCommand, RectangCommand, RedoCommand, SaveCommand, SelectCommand,
-    SettingsCommand, SplineCommand, StretchCommand, TextCommand, TextEditCommand, TransformCommand,
-    UndoCommand, UnitsCommand, ZoomCommand,
+    AliasEditCommand, ArcCommand, AreaCommand, AttdefCommand, AtteditCommand, BlockCommand,
+    BreakCommand, ChpropCommand, CircleCommand, ColorCommand, CornerCommand, DimAngularCommand,
+    DimLinearCommand, DimRadialCommand, DimStyleCommand, DistCommand, EdgeCommand, EllipseCommand,
+    EraseCommand, ExplodeCommand, ExportCommand, GridCommand, HatchCommand, HatchEditCommand,
+    IdCommand, InsertCommand, JoinCommand, LayerCommand, LayoutCommand, LineCommand,
+    LinetypeCommand, ListCommand, LtscaleCommand, LweightCommand, MTextCommand, MirrorCommand,
+    ModelCommand, MspaceCommand, MviewCommand, OffsetCommand, OpenCommand, OsnapCommand,
+    PanCommand, PlineCommand, PlotCommand, PolarAngleCommand, PspaceCommand, QselectCommand,
+    RectangCommand, RedoCommand, SaveCommand, SelectCommand, SettingsCommand, SplineCommand,
+    StretchCommand, TextCommand, TextEditCommand, TransformCommand, UndoCommand, UnitsCommand,
+    ZoomCommand,
 };
 
 type CommandFactory = fn() -> Box<dyn Command>;
@@ -55,7 +56,11 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 64] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 68] = [
+            ("DIST", &["DI"], || Box::new(DistCommand::new())),
+            ("ID", &[], || Box::new(IdCommand)),
+            ("AREA", &["AA"], || Box::new(AreaCommand::new())),
+            ("LIST", &["LI", "LS"], || Box::new(ListCommand)),
             ("PLOT", &["PDFOUT"], || Box::new(PlotCommand::new())),
             ("MVIEW", &["MV"], || Box::new(MviewCommand::new())),
             ("LAYOUT", &["LO"], || Box::new(LayoutCommand::new())),

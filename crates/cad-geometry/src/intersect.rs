@@ -260,6 +260,15 @@ pub enum Primitive {
 }
 
 impl Primitive {
+    /// Its length: a segment's, an arc's along the arc, a circle's round.
+    pub fn length(&self) -> f64 {
+        match self {
+            Primitive::Segment(segment) => segment.length(),
+            Primitive::Arc(arc) => arc.radius * arc.sweep,
+            Primitive::Circle(circle) => std::f64::consts::TAU * circle.radius,
+        }
+    }
+
     /// Every point where the two primitives meet.
     pub fn intersect(&self, other: &Primitive) -> Hits {
         use Primitive::{Arc as A, Circle as C, Segment as S};

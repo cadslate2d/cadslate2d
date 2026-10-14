@@ -179,16 +179,16 @@ pub(crate) fn number(value: f64) -> String {
     format!("{value:.4}")
 }
 
-fn point(point: Point2) -> String {
+pub(crate) fn point(point: Point2) -> String {
     format!("{}, {}", number(point.x), number(point.y))
 }
 
-fn degrees(radians: f64) -> String {
+pub(crate) fn degrees(radians: f64) -> String {
     format!("{}°", number(radians.to_degrees()))
 }
 
 /// What defines one entity, as the panel lists it.
-fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, String)> {
+pub(crate) fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, String)> {
     let row = |label: &str, value: String| (label.to_owned(), value);
     match entity {
         Entity::Line(line) => {

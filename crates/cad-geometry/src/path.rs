@@ -72,6 +72,41 @@ impl Path {
         self.bulges.get(vertex).copied().unwrap_or(0.0)
     }
 
+    /// The signed area the path encloses when closed back to its first
+    /// vertex — positive counter-clockwise — exactly, the arc segments'
+    /// circular segments included (#197): the polygon of the vertices,
+    /// plus, for each bulged segment, the area between its chord and its
+    /// arc on the side the arc bulges to.
+    pub fn area(&self) -> f64 {
+        let polygon = crate::signed_area(&self.vertices);
+        let segments: f64 = self
+            .spans()
+            .into_iter()
+            .map(|(from, to)| {
+                let bulge = self.bulge(from);
+                if is_straight(bulge) {
+                    return 0.0;
+                }
+                match arc_from_bulge(self.vertices[from], self.vertices[to], bulge) {
+                    // A circular segment: r²(θ − sin θ)/2, bowing to the
+                    // right of the chord for a positive (counter-clockwise)
+                    // bulge, to the left for a negative.
+                    Some(arc) => {
+                        let segment = arc.radius * arc.radius * (arc.sweep - arc.sweep.sin()) / 2.0;
+                        segment.copysign(bulge)
+                    }
+                    None => 0.0,
+                }
+            })
+            .sum();
+        polygon + segments
+    }
+
+    /// The length along the path: its segments and arcs end to end.
+    pub fn length(&self) -> f64 {
+        self.primitives().iter().map(Primitive::length).sum()
+    }
+
     /// The path's geometry, one primitive per segment.
     pub fn primitives(&self) -> Vec<Primitive> {
         self.spans()
@@ -385,9 +420,62 @@ impl Path {
 
 #[cfg(test)]
 mod tests {
-    use std::f64::consts::SQRT_2;
+    use std::f64::consts::{PI, SQRT_2};
 
     use super::*;
+
+    /// #197: the area of a closed path is exact through its arcs — a square
+    /// is its side squared, a circle of two half-turn bulges is πr², a
+    /// square with one side bowed out gains the half-disc, bowed in loses
+    /// it — and the sign follows the direction.
+    #[test]
+    fn the_area_of_a_path_counts_its_arcs_exactly_and_signs_by_direction() {
+        let square = Path {
+            vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)],
+            bulges: vec![],
+            closed: true,
+        };
+        assert!((square.area() - 100.0).abs() < 1e-9);
+        assert!((square.length() - 40.0).abs() < 1e-9);
+        let clockwise = Path {
+            vertices: square.vertices.iter().rev().copied().collect(),
+            bulges: vec![],
+            closed: true,
+        };
+        assert!((clockwise.area() + 100.0).abs() < 1e-9);
+        let circle = Path {
+            vertices: vec![p(-5.0, 0.0), p(5.0, 0.0)],
+            bulges: vec![1.0, 1.0],
+            closed: true,
+        };
+        assert!(
+            (circle.area() - PI * 25.0).abs() < 1e-9,
+            "{}",
+            circle.area()
+        );
+        assert!((circle.length() - 2.0 * PI * 5.0).abs() < 1e-9);
+        // A positive bulge is a counter-clockwise arc, which bows away
+        // from its centre: to the right of the chord, outside this square.
+        let bowed_out = Path {
+            vertices: square.vertices.clone(),
+            bulges: vec![1.0, 0.0, 0.0, 0.0],
+            closed: true,
+        };
+        assert!((bowed_out.area() - (100.0 + PI * 25.0 / 2.0)).abs() < 1e-9);
+        let bowed_in = Path {
+            vertices: square.vertices.clone(),
+            bulges: vec![-1.0, 0.0, 0.0, 0.0],
+            closed: true,
+        };
+        assert!((bowed_in.area() - (100.0 - PI * 25.0 / 2.0)).abs() < 1e-9);
+        // An open path is measured as if closed back to its start.
+        let open = Path {
+            closed: false,
+            ..square.clone()
+        };
+        assert!((open.area() - 100.0).abs() < 1e-9);
+        assert!((open.length() - 30.0).abs() < 1e-9);
+    }
 
     const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
     const QUARTER: f64 = SQRT_2 - 1.0;

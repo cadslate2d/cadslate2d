@@ -73,6 +73,12 @@ impl Ellipse {
             && self.sweep > 0.0
     }
 
+    /// The area of the whole ellipse: π times the two half-axes.
+    pub fn area(&self) -> f64 {
+        let major = self.major.length();
+        std::f64::consts::PI * major * major * self.ratio
+    }
+
     pub fn is_full(&self) -> bool {
         self.sweep >= TAU
     }
