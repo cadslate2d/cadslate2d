@@ -37,6 +37,8 @@ Everything else in the header is skipped.
 | `$CELTYPE` (6) | The linetype for new objects, if the file defines it | Not `ByLayer` | the same |
 | `$CELWEIGHT` (370) | The lineweight for new objects | Not `ByLayer` | the same |
 | `$LTSCALE` (40) | The linetype scale, if finite and positive | Not 1 | the same |
+| `$PDMODE` (70) | How points are drawn (#198): 0 a dot, 1 nothing, 2 a cross, 3 an X, 4 a tick, with 32 for a circle or 64 for a square round it; any other number is the default | Not 0 | `points_from_another_writer_and_the_point_style_round_trip()` |
+| `$PDSIZE` (40) | The points' size in drawing units, if finite and positive; zero or negative — a size relative to the screen — is not held: the default size stands, and the report says so when the file has points | Not 1 | the same |
 | `$EXTMIN`, `$EXTMAX` | Nothing | The drawing has anything in it | `a_line_is_written_with_its_handle_owner_layer_and_coordinates()` |
 | `$DIMSTYLE` | The current dimension style, by name; `Standard` when the file names none the table defines | When the current style is not `Standard` | `dimension_styles_from_another_writer()` |
 | `$HANDSEED` | Nothing | Always: the first free handle | `an_empty_drawing_is_a_complete_file_with_its_permanent_rows()` |
@@ -87,6 +89,7 @@ Each entity's geometry, then what is read and written for it. Every entity also 
 6 1` says ATTRIBs follow, read for the reference until `SEQEND` (#183) | Written with `66 1` and one ATTRIB per attribute definition, placed as the reference places it, then `SEQEND` |
 | `ATTRIB` | Skipped without a count of its own: its `INSERT` is reported as having attributes | Never | `attributes_from_another_writer()` |
 | `VIEWPORT` | On a layout's paper, a viewport (#192, [ADR-0030](adr/0030-viewports.md)): its frame's centre (10, 20), width (40), and height (41), the model point at its centre (12, 22), the height of its view (45; the frame's height when absent), on or off (68; on when absent). One in model space — a tiled viewport of an old file — is reported; one with no width, height, or view height is `(invalid geometry)` | `AcDbViewport` with those, its number (69) in the order written, and the view straight down, untwisted, with no lens and no UCS, as writers lay it out | `layouts_are_kept_through_a_round_trip()`, `a_viewport_round_trips_and_one_in_the_model_is_reported()`, `layouts.dxf` |
+| `POINT` | Its place (10, 20) as a point entity (#198), drawn as the header's point style | `AcDbPoint` with its place | `points_from_another_writer_and_the_point_style_round_trip()`, `ezdxf-r2010-points.dxf` |
 | Anything else | Counted by its type name and reported | Never | `unsupported_entities_are_counted_by_kind_and_supported_ones_still_import()`, `unsupported_content_is_counted_and_reported()` |
 
 ## Entity properties

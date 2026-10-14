@@ -160,6 +160,8 @@ test.describe("snap markers (visual baseline)", () => {
   const CIRCLE = ["C", "0,0", "60"];
   const CASES = [
     { mode: "Endpoint", setup: ONE_LINE, hover: [98, 2], at: [100, 0] },
+    // A point entity's place (#198).
+    { mode: "Node", setup: ["POINT", "50,30", ""], hover: [52, 28], at: [50, 30] },
     { mode: "Midpoint", setup: ONE_LINE, hover: [52, 2], at: [50, 0] },
     { mode: "Center", setup: CIRCLE, hover: [3, 2], at: [0, 0] },
     { mode: "Quadrant", setup: CIRCLE, hover: [58, 3], at: [60, 0] },

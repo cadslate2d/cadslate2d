@@ -20,8 +20,8 @@ use cad_document::{
     Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity,
     EntityRecord, HatchEntity, HatchStyle, Justification, Layer, Layout, LayoutId, LayoutTable,
     LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight, MTextEntity, Measure,
-    PolylineEntity, Properties, Revision, SplineEntity, TextEntity, TextStyle, TextStyleTable,
-    ViewportEntity,
+    PointEntity, PolylineEntity, Properties, Revision, SplineEntity, TextEntity, TextStyle,
+    TextStyleTable, ViewportEntity,
 };
 
 use crate::properties::{
@@ -541,6 +541,16 @@ impl Writer {
             self.group(9, "$LTSCALE");
             self.real(40, settings.ltscale);
         }
+        // The point style (#198): the mode and the size, in drawing units.
+        if settings.point_style.mode != defaults.point_style.mode {
+            self.group(9, "$PDMODE");
+            self.int(70, i64::from(settings.point_style.mode));
+        }
+        #[allow(clippy::float_cmp)]
+        if settings.point_style.size != defaults.point_style.size {
+            self.group(9, "$PDSIZE");
+            self.real(40, settings.point_style.size);
+        }
         if let Some(extents) = drawing.extents() {
             self.group(9, "$EXTMIN");
             self.point(10, extents.min());
@@ -962,6 +972,7 @@ impl Writer {
             Entity::Dimension(_) => "DIMENSION",
             Entity::Hatch(_) => "HATCH",
             Entity::Viewport(_) => "VIEWPORT",
+            Entity::Point(_) => "POINT",
         };
         self.entity(kind, owner, layer, &record.properties, drawing.linetypes());
         match &*record.entity {
@@ -983,7 +994,14 @@ impl Writer {
             Entity::Dimension(dimension) => self.dimension(dimension, drawing),
             Entity::Hatch(hatch) => self.hatch(hatch),
             Entity::Viewport(viewport) => self.viewport_entity(viewport),
+            Entity::Point(point) => self.point_entity(point),
         }
+    }
+
+    /// A POINT (#198): its place.
+    fn point_entity(&mut self, point: &PointEntity) {
+        self.group(100, "AcDbPoint");
+        self.point(10, point.position);
     }
 
     /// A VIEWPORT (#192): its frame on paper — centre (10, 20), width
@@ -2125,6 +2143,7 @@ mod tests {
                 current_dim_style: cad_document::DimStyleId::FIRST,
                 ltscale: 20.0,
                 unit: None,
+                point_style: cad_document::PointStyle::new(35, 2.5),
             })
             .unwrap()
     }

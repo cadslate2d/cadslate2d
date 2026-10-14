@@ -25,6 +25,10 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `SPLINE` | `SPL` | A cubic spline through the points given in order, `Undo` taking the last back, Enter finishing after at least two. It is read as chords, flat to a quarter of a thousandth of its extent: it snaps at its ends and middle, is picked on its curve, moves, turns, scales, and mirrors, stretches by its fit points and re-fits, grips at its fit points, cuts other objects, and bounds a hatch when it ends where it began; it is not trimmed, broken, extended, offset, filleted, joined, or exploded. A spline from a file keeps its control points, knots, and weights as written. |
 | `PLINE` | `PL` | One polyline through a chain of points. `Arc` switches to arc segments that continue smoothly from the one before; `Line` switches back. Also `Close`, `Undo`. |
 | `RECTANG` | `REC` | A closed rectangle from two corners. |
+| `POINT` | `PO` | A point at each place given, until Enter: a place that `DIVIDE` and `MEASURE` mark and the `Node` snap finds. Drawn as the drawing's point style. |
+| `DIVIDE` | `DIV` | Points along a curve — a line, arc, circle, ellipse, spline, or polyline, its arcs included — dividing it into so many segments of equal length; on a closed curve the start is marked too. The points take the curve's layer and properties. |
+| `MEASURE` | `ME` | Points every so far along a curve, from the end nearest where it was picked. |
+| `PTYPE` | `DDPTYPE` | How every point is drawn: `Dot`, `Cross`, `X`, `Tick`, or `Blank`, with `CIrcle` or `SQuare` round it (`Plain` takes the ring off), or the `$PDMODE` number itself; then the size, in drawing units. One undoable change that redraws every point. A size relative to the screen is not held: a file's zero or negative `$PDSIZE` opens at the default size. |
 | `COLOR` | `COL` | The colour new objects are given: a number from 1 to 255, a name (`red`, `yellow`, `green`, `cyan`, `blue`, `magenta`, `white`), `ByLayer` (the default), or `ByBlock`. An object with a colour of its own keeps it whatever its layer's colour becomes. There is no true colour: a file that has one opens with the nearest numbered colour, and says so ([ADR-0018](docs/adr/0018-dxf-release-r2000.md), amended). |
 | `LWEIGHT` | `LW` | The lineweight new objects are given: one of the standard widths in millimetres (`0.25`, `0.5`, `1`, … `2.11`), `Default`, `ByLayer` (the default), or `ByBlock`. Lineweights are shown only while `LWT` on the status bar is on. |
 | `UNITS` | `UN` | Says what the drawing's numbers are: unitless (the default), millimetres, centimetres, metres, inches, or feet. Nothing is rescaled; the unit is what a typed `25mm` is converted into, and it is saved with the drawing. |
@@ -126,6 +130,7 @@ While a command asks for a point, the pointer snaps to nearby geometry. A marker
 | Perpendicular | right-angle sign | the foot of the perpendicular from the point you are drawing from (off by default) | | | |
 | Tangent | circle under a bar | — | where a line from the point you are drawing from touches it (off by default) | the same, if on the arc | arc segments |
 | Insertion | two squares | the insertion point of a text, which offers no other snap | | | |
+| Node | a circle with an X | a point entity's place, which offers no other snap | | | |
 
 The closest snap point within ten pixels wins. Perpendicular and Tangent are constructions from the previous point, so they need one, and they are offered wherever you hover the object — not only at the point itself. Hovering a circle or arc also offers its centre. Nearest applies only when no other snap is in reach. An entity being moved is not offered as a target at its old position. `OSNAP` chooses the running modes; F3 switches them all off and on.
 

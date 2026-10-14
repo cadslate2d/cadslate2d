@@ -8,7 +8,7 @@ use cad_input::{ExpectedInput, InputKind, Keyword};
 
 use crate::{Command, CommandContext, CommandInput, Prompt, SnapMode, Step};
 
-const MODES: [(Keyword, SnapMode); 9] = [
+const MODES: [(Keyword, SnapMode); 10] = [
     (Keyword::new("Endpoint"), SnapMode::Endpoint),
     (Keyword::new("Midpoint"), SnapMode::Midpoint),
     (Keyword::new("Center"), SnapMode::Center),
@@ -18,6 +18,7 @@ const MODES: [(Keyword, SnapMode); 9] = [
     (Keyword::new("Perpendicular"), SnapMode::Perpendicular),
     (Keyword::new("Tangent"), SnapMode::Tangent),
     (Keyword::new("INSertion"), SnapMode::Insertion),
+    (Keyword::new("NODe"), SnapMode::Node),
 ];
 
 #[derive(Debug)]
@@ -79,10 +80,10 @@ mod tests {
         h.enter("OSNAP");
         assert_eq!(
             h.prompt(),
-            "Press Enter to finish or [Endpoint/Midpoint/Center/Quadrant/Intersection/Nearest/Perpendicular/Tangent/INSertion]:"
+            "Press Enter to finish or [Endpoint/Midpoint/Center/Quadrant/Intersection/Nearest/Perpendicular/Tangent/INSertion/NODe]:"
         );
         assert!(h.log().iter().any(|line| line
-            == "Running object snaps: Endpoint, Intersection, Midpoint, Insertion, Center, Quadrant"));
+            == "Running object snaps: Endpoint, Node, Intersection, Midpoint, Insertion, Center, Quadrant"));
 
         h.enter_all(&["N", "endpoint", ""]);
         assert_eq!(h.prompt(), "Command:");
@@ -90,7 +91,7 @@ mod tests {
         assert!(modes.is_on(SnapMode::Nearest));
         assert!(!modes.is_on(SnapMode::Endpoint));
         assert!(h.log().iter().any(|line| line
-            == "Running object snaps: Intersection, Midpoint, Insertion, Center, Quadrant, Nearest"));
+            == "Running object snaps: Node, Intersection, Midpoint, Insertion, Center, Quadrant, Nearest"));
     }
 
     #[test]
@@ -103,13 +104,13 @@ mod tests {
         let modes = h.session.snap_modes();
         assert!(modes.is_on(SnapMode::Perpendicular) && modes.is_on(SnapMode::Tangent));
         assert!(h.log().iter().any(|line| line
-            == "Running object snaps: Endpoint, Intersection, Midpoint, Insertion, Perpendicular, Tangent, Center, Quadrant"));
+            == "Running object snaps: Endpoint, Node, Intersection, Midpoint, Insertion, Perpendicular, Tangent, Center, Quadrant"));
     }
 
     #[test]
     fn every_mode_can_be_switched_off() {
         let mut h = Harness::new();
-        h.enter_all(&["OS", "E", "M", "C", "Q", "I", "INS", ""]);
+        h.enter_all(&["OS", "E", "M", "C", "Q", "I", "INS", "NOD", ""]);
         assert_eq!(h.session.snap_modes(), crate::SnapModes::NONE);
         assert!(
             h.log()

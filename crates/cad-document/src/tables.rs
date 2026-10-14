@@ -12,6 +12,7 @@ use cad_core::Aabb;
 
 use crate::block::{BlockReferenceEntity, BlockTable, empty_blocks};
 use crate::dim_style::{DimStyle, DimStyleId, DimStyleTable, initial_dim_styles};
+use crate::point::PointStyle;
 use crate::properties::Properties;
 
 /// The tables geometry is resolved against.
@@ -19,6 +20,10 @@ use crate::properties::Properties;
 pub struct Tables<'a> {
     pub blocks: &'a BlockTable,
     pub dim_styles: &'a DimStyleTable,
+    /// How points are drawn (#198): a setting, read here beside the
+    /// tables because a point's marker depends on it as a dimension's
+    /// layout depends on its style.
+    pub point_style: PointStyle,
 }
 
 impl<'a> Tables<'a> {
@@ -31,6 +36,7 @@ impl<'a> Tables<'a> {
         Tables {
             blocks: empty_blocks(),
             dim_styles: STYLES.get_or_init(initial_dim_styles),
+            point_style: PointStyle::default(),
         }
     }
 
@@ -40,6 +46,7 @@ impl<'a> Tables<'a> {
         Tables {
             blocks,
             dim_styles: Tables::none().dim_styles,
+            point_style: PointStyle::default(),
         }
     }
 

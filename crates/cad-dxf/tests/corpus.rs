@@ -265,6 +265,7 @@ fn expectation(imported: &Import, line: &str) -> Result<(), String> {
                 "block_references" => report.block_references,
                 "dimensions" => report.dimensions,
                 "hatches" => report.hatches,
+                "points" => report.points,
                 other => return Err(format!("unknown kind {other}")),
             };
             same("count", got, index(w(2)?)?)

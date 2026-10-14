@@ -8,6 +8,7 @@ use cad_core::LengthUnit;
 
 use crate::dim_style::DimStyleId;
 use crate::layer::LayerId;
+use crate::point::PointStyle;
 use crate::{Color, Linetype, Lineweight};
 
 /// The settings of one drawing.
@@ -31,6 +32,8 @@ pub struct DrawingSettings {
     /// line 25 long is 25 long in any unit. A typed length with a unit
     /// suffix is converted into this (DESIGN §14).
     pub unit: Option<LengthUnit>,
+    /// How every point is drawn (`PTYPE`; `$PDMODE`, `$PDSIZE`; #198).
+    pub point_style: PointStyle,
 }
 
 impl DrawingSettings {
@@ -50,6 +53,7 @@ impl Default for DrawingSettings {
             current_dim_style: DimStyleId::FIRST,
             ltscale: Self::DEFAULT_LTSCALE,
             unit: None,
+            point_style: PointStyle::default(),
         }
     }
 }
@@ -100,6 +104,7 @@ mod tests {
                 current_dim_style: DimStyleId::from_raw(2),
                 ltscale: 2.5,
                 unit: Some(LengthUnit::Metres),
+                point_style: PointStyle::new(35, 4.0),
             },
         };
         assert_eq!(change.inverse().before, change.after);

@@ -19,6 +19,12 @@ pub struct ImportReport {
     pub attribute_definitions: usize,
     /// Viewports of the layouts (#192).
     pub viewports: usize,
+    /// Points (#198).
+    pub points: usize,
+    /// Whether the file gave its points a size relative to the screen —
+    /// `$PDSIZE` zero or negative — which the drawing does not hold: its
+    /// points are drawn at the default size (#198).
+    pub point_size_relative: bool,
     /// Layouts with something on their paper — entities of the drawing
     /// since #191, or records kept as the file held them — by name. An
     /// empty layout is read without a word.
@@ -132,6 +138,7 @@ impl ImportReport {
             (self.dimensions, "dimension", "dimensions"),
             (self.hatches, "hatch", "hatches"),
             (self.viewports, "viewport", "viewports"),
+            (self.points, "point", "points"),
         ];
         let imported: Vec<String> = kinds
             .into_iter()
@@ -152,6 +159,13 @@ impl ImportReport {
             ));
         }
         lines.extend(self.unsupported_line());
+        // Said only when there are points for it to matter to.
+        if self.point_size_relative && self.points > 0 {
+            lines.push(
+                "The points' size is relative to the screen in the file, which is not held: they are drawn at the default size."
+                    .to_owned(),
+            );
+        }
         if self.layers + self.linetypes + self.text_styles + self.dim_styles + self.blocks > 0 {
             let tables: Vec<String> = [
                 (self.layers, "layer", "layers"),

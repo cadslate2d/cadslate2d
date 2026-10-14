@@ -527,6 +527,20 @@ pub fn walk_entity(entity: &Entity, tables: Tables<'_>, sink: &mut impl Geometry
         // A text is the strokes of its glyphs (ADR-0016): segments like
         // any other. The scene draws every text continuous, whatever
         // its linetype says, as drafting programs do.
+        // A point is its marker, as the drawing's point style draws it (#198).
+        Entity::Point(point) => {
+            for primitive in tables.point_style.marker(point.position) {
+                match primitive {
+                    Primitive::Segment(segment) => sink.segment(segment.start, segment.end, 0.0),
+                    Primitive::Arc(arc) => sink.arc(&arc, 0.0, true),
+                    Primitive::Circle(circle) => sink.arc(
+                        &Arc::new(circle.center, circle.radius, 0.0, std::f64::consts::TAU),
+                        0.0,
+                        true,
+                    ),
+                }
+            }
+        }
         Entity::Text(text) => walk_strokes(sink, text.strokes()),
         // On its own, an attribute definition shows its tag (#183).
         Entity::AttributeDefinition(definition) => {

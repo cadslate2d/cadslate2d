@@ -15,6 +15,7 @@ use crate::layer::{Layer, LayerId, LayerTable, initial_layers};
 use crate::layout::{Layout, LayoutId, LayoutTable, initial_layouts};
 use crate::linetype::{LinetypeDef, LinetypeError, LinetypeId, LinetypeTable, initial_linetypes};
 use crate::names::{NameError, check_name, same_name};
+use crate::point::{PointStyle, PointStyleError};
 use crate::spatial::RTreeIndex;
 use crate::table::TableChange;
 use crate::tables::Tables;
@@ -116,6 +117,8 @@ pub enum TransactionError {
     DuplicateLinetypeName(LinetypeId),
     /// `LTSCALE` must be a positive number.
     BadLtscale,
+    /// The point style is not one the drawing can draw.
+    BadPointStyle(PointStyleError),
     /// The dimension style does not exist, in the drawing or earlier in
     /// this transaction.
     UnknownDimStyle(DimStyleId),
@@ -211,6 +214,7 @@ impl fmt::Display for TransactionError {
                 write!(f, "linetype {id} already has that name")
             }
             Self::BadLtscale => write!(f, "LTSCALE must be a positive number"),
+            Self::BadPointStyle(error) => write!(f, "{error}"),
             Self::UnknownDimStyle(id) => write!(f, "dimension style {id} does not exist"),
             Self::PermanentDimStyle => write!(f, "dimension style Standard cannot be removed"),
             Self::DimStyleInUse(id) => write!(f, "dimension style {id} is in use"),
@@ -556,6 +560,7 @@ impl Drawing {
         let tables = Tables {
             blocks: &self.blocks,
             dim_styles: &self.dim_styles,
+            point_style: self.settings.point_style,
         };
         let bounds: Vec<(EntityId, Aabb)> = self
             .entities
@@ -726,6 +731,7 @@ impl Drawing {
         Tables {
             blocks: &self.blocks,
             dim_styles: &self.dim_styles,
+            point_style: self.settings.point_style,
         }
     }
 
@@ -796,6 +802,7 @@ impl Drawing {
         tx.set_current_color(settings.current_color);
         tx.set_current_lineweight(settings.current_lineweight);
         tx.set_unit(settings.unit);
+        tx.set_point_style(settings.point_style)?;
         tx.commit();
         self.history = History::default();
         Ok(self)
@@ -932,13 +939,18 @@ impl Drawing {
                 // a dimension style changed, of every dimension drawn by it.
                 Change::Block(TableChange::Replace { .. })
                 | Change::DimStyle(TableChange::Replace { .. }) => true,
+                // The point style drawn changes every point (#198).
+                Change::Settings(change) => {
+                    let restyled = change.before.point_style != change.after.point_style;
+                    everything |= restyled;
+                    restyled
+                }
                 Change::Layer(_)
                 | Change::Linetype(_)
                 | Change::TextStyle(_)
                 | Change::DimStyle(_)
                 | Change::Block(_)
-                | Change::Layout(_)
-                | Change::Settings(_) => false,
+                | Change::Layout(_) => false,
             };
             match change {
                 Change::Entity(EntityChange::Insert { id, record }) => {
@@ -1002,6 +1014,7 @@ impl Drawing {
                                 let tables = Tables {
                                     blocks: &self.blocks,
                                     dim_styles: &self.dim_styles,
+                                    point_style: self.settings.point_style,
                                 };
                                 self.index.update(entity_id, entity.bounds(tables));
                             }
@@ -1506,6 +1519,17 @@ impl TransactionBuilder<'_> {
         }
         self.set_settings(DrawingSettings {
             ltscale,
+            ..self.settings_now()
+        });
+        Ok(())
+    }
+
+    /// Sets how every point is drawn (#198): one change, however many
+    /// points there are.
+    pub fn set_point_style(&mut self, style: PointStyle) -> Result<(), TransactionError> {
+        style.check().map_err(TransactionError::BadPointStyle)?;
+        self.set_settings(DrawingSettings {
+            point_style: style,
             ..self.settings_now()
         });
         Ok(())
@@ -3720,6 +3744,7 @@ mod tests {
             current_dim_style: DimStyleId::FIRST,
             ltscale: 25.0,
             unit: Some(LengthUnit::Millimetres),
+            point_style: PointStyle::new(3, 2.0),
         };
         let drawing = drawing.with_settings(settings).unwrap();
         assert_eq!(drawing.settings(), settings);
@@ -4537,6 +4562,7 @@ mod tests {
         DashLayer(usize, usize),
         SetCurrentLinetype(usize),
         SetLtscale(f64),
+        SetPointStyle(u8, f64),
         /// A text style by name; a text with a style by index (one past
         /// the table is a style that does not exist); a style removed.
         AddTextStyle(u8),
@@ -4595,6 +4621,7 @@ mod tests {
             1 => (any::<usize>(), any::<usize>()).prop_map(|(i, lt)| Op::DashLayer(i, lt)),
             1 => any::<usize>().prop_map(Op::SetCurrentLinetype),
             1 => (-1.0..5.0_f64).prop_map(Op::SetLtscale),
+            1 => (0..100u8, -1.0..5.0_f64).prop_map(|(mode, size)| Op::SetPointStyle(mode, size)),
             1 => (0..6u8).prop_map(Op::AddTextStyle),
             2 => (0..5u8, 1.0..50.0f64).prop_map(|(n, len)| Op::DefineBlock(n, len)),
             3 => (any::<usize>(), coordinate(), 0.1..4.0f64).prop_map(|(b, x, s)| Op::PlaceBlock(b, x, s)),
@@ -4876,6 +4903,20 @@ mod tests {
                         tx.commit();
                         prop_assert_eq!(set.is_ok(), scale > 0.0);
                         prop_assert!(drawing.ltscale() > 0.0);
+                    }
+                    Op::SetPointStyle(mode, size) => {
+                        let style = PointStyle::new(mode, size);
+                        let previous = drawing.settings().point_style;
+                        let shown_before = drawing.shown_revision();
+                        let mut tx = drawing.transaction();
+                        let set = tx.set_point_style(style);
+                        tx.commit();
+                        prop_assert_eq!(set.is_ok(), style.check().is_ok());
+                        if set.is_ok() {
+                            prop_assert_eq!(drawing.settings().point_style, style);
+                            prop_assert!(drawing.settings().point_style.check().is_ok());
+                            prop_assert_eq!(drawing.shown_revision() != shown_before, style != previous);
+                        }
                     }
                     Op::AddTextStyle(name) => {
                         let name = format!("Style {name}");

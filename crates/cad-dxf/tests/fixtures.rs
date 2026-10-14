@@ -7,7 +7,7 @@ use cad_core::{Point2, Vec2};
 use cad_document::{
     BlockReferenceEntity, Color, DimStyleId, Drawing, Entity, Justification, Layer, LayerId,
     Layout, LayoutId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity,
-    Properties, TextEntity, TextStyleId, ViewportEntity,
+    PointStyle, Properties, TextEntity, TextStyleId, ViewportEntity,
 };
 use cad_dxf::{DxfError, Import, export, import};
 
@@ -483,6 +483,86 @@ fn a_layout_made_here_and_a_renamed_one_are_written_and_read_back() {
     assert!(!text.contains("\n  1\nLayout2\n"));
     let back = cad_dxf::import(text.as_bytes()).unwrap();
     assert_eq!(back.report.layouts, vec!["Layout1", "Details"]);
+}
+
+/// #198: points from another writer — on layer 0, on a layer of their
+/// own, coloured — with the header's point style; a style set here is
+/// written as `$PDMODE` and `$PDSIZE` and read back; a size relative to
+/// the screen is not held, and the report says so when the file has
+/// points to show at it.
+#[test]
+fn points_from_another_writer_and_the_point_style_round_trip() {
+    let import = load("valid", "ezdxf-r2010-points.dxf").unwrap();
+    assert_eq!(import.report.points, 3);
+    assert_eq!(import.report.lines, 1);
+    assert!(!import.report.has_unsupported_content());
+    let drawing = &import.drawing;
+    assert_eq!(drawing.settings().point_style, PointStyle::new(35, 2.5));
+    let points: Vec<(Point2, String)> = drawing
+        .shown()
+        .filter_map(|(id, entity)| match entity {
+            Entity::Point(point) => Some((
+                point.position,
+                drawing
+                    .layer_of(id)
+                    .map(|layer| layer.name.clone())
+                    .unwrap_or_default(),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        points,
+        vec![
+            (Point2::new(10.0, 10.0), "0".to_owned()),
+            (Point2::new(20.0, 5.0), "NODES".to_owned()),
+            (Point2::new(30.5, -7.25), "0".to_owned()),
+        ]
+    );
+    let text = export(drawing);
+    assert!(
+        text.contains("\n  9\n$PDMODE\n 70\n35\n  9\n$PDSIZE\n 40\n2.5\n"),
+        "the style"
+    );
+    assert!(text.contains("\n100\nAcDbPoint\n 10\n20.0\n 20\n5.0\n"));
+
+    // A relative size: the default stands, and the report says so.
+    let relative = "  0\nSECTION\n  2\nHEADER\n  9\n$PDMODE\n 70\n3\n  9\n$PDSIZE\n 40\n-2.0\n  0\nENDSEC\n  0\nSECTION\n  2\nENTITIES\n  0\nPOINT\n  8\n0\n 10\n1.0\n 20\n2.0\n  0\nENDSEC\n  0\nEOF\n";
+    let import = cad_dxf::import(relative.as_bytes()).unwrap();
+    assert_eq!(
+        import.drawing.settings().point_style,
+        PointStyle::new(3, PointStyle::DEFAULT_SIZE)
+    );
+    assert!(import.report.point_size_relative);
+    assert!(
+        import
+            .report
+            .summary()
+            .iter()
+            .any(|line| line.starts_with("The points' size is relative to the screen")),
+        "{:?}",
+        import.report.summary()
+    );
+    assert!(
+        !import.report.has_unsupported_content(),
+        "not lossy: the size written back is the default"
+    );
+    let again = export(&import.drawing);
+    assert!(again.contains("\n$PDMODE\n 70\n3\n") && !again.contains("$PDSIZE"));
+    // A relative size with no points is not worth a word.
+    let silent = "  0\nSECTION\n  2\nHEADER\n  9\n$PDSIZE\n 40\n0.0\n  0\nENDSEC\n  0\nEOF\n";
+    let import = cad_dxf::import(silent.as_bytes()).unwrap();
+    assert!(
+        !import
+            .report
+            .summary()
+            .iter()
+            .any(|line| line.contains("relative"))
+    );
+    // An unknown mode is read as the default.
+    let unknown = "  0\nSECTION\n  2\nHEADER\n  9\n$PDMODE\n 70\n7\n  0\nENDSEC\n  0\nEOF\n";
+    let import = cad_dxf::import(unknown.as_bytes()).unwrap();
+    assert_eq!(import.drawing.settings().point_style, PointStyle::default());
 }
 
 /// #194: a layout's sheet, set here, is the paper size its LAYOUT object

@@ -29,6 +29,7 @@ mod linetype;
 mod lineweight;
 mod mtext;
 mod names;
+mod point;
 mod properties;
 mod revision;
 mod settings;
@@ -69,6 +70,7 @@ pub use linetype::{LinetypeChange, LinetypeDef, LinetypeError, LinetypeId, Linet
 pub use lineweight::Weight;
 pub use mtext::LINE_SPACING;
 pub use names::{NameError, Named, check_name, same_name};
+pub use point::{PointEntity, PointStyle, PointStyleError};
 pub use properties::{Color, EntityRecord, Linetype, Lineweight, Properties};
 pub use revision::Revision;
 pub use settings::{DrawingSettings, SettingsChange};

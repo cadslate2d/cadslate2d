@@ -229,10 +229,11 @@ def unsupported(release: str) -> None:
     msp.add_point((5, 5))
     msp.add_solid([(0, 0), (1, 0), (1, 1), (0, 1)])
     msp.add_3dface([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)])
+    # The point is imported since #198; it stays here as the one ezdxf wrote.
     expect = [
         "imported lines 1",
-        "entities 1",
-        "unsupported POINT 1",
+        "imported points 1",
+        "entities 2",
         "unsupported SOLID 1",
         "unsupported 3DFACE 1",
     ]
@@ -241,7 +242,13 @@ def unsupported(release: str) -> None:
         # Imported since #181 and #182; they stay here as the one ellipse
         # and the one spline ezdxf wrote.
         msp.add_ellipse((50, 50), major_axis=(20, 0), ratio=0.5)
-        expect[0:2] = ["imported lines 1", "imported ellipses 1", "imported splines 1", "entities 3"]
+        expect[0:3] = [
+            "imported lines 1",
+            "imported ellipses 1",
+            "imported splines 1",
+            "imported points 1",
+            "entities 4",
+        ]
     save(doc, f"{release.lower()}-unsupported", expect)
 
 

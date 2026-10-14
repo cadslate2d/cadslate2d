@@ -34,13 +34,16 @@ pub enum SnapMode {
     Tangent,
     /// The insertion point of a text (or, later, a block).
     Insertion,
+    /// A point entity's place (#198).
+    Node,
 }
 
 impl SnapMode {
     /// Every mode, in ranking order: when two snap points are equally close,
     /// the earlier mode wins.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Endpoint,
+        Self::Node,
         Self::Intersection,
         Self::Midpoint,
         Self::Insertion,
@@ -66,6 +69,7 @@ impl SnapMode {
             Self::Perpendicular => "Perpendicular",
             Self::Tangent => "Tangent",
             Self::Insertion => "Insertion",
+            Self::Node => "Node",
         }
     }
 }
@@ -87,6 +91,7 @@ impl Default for SnapModes {
             SnapMode::Quadrant,
             SnapMode::Intersection,
             SnapMode::Insertion,
+            SnapMode::Node,
         ];
         Self {
             bits: on.iter().fold(0, |bits, mode| bits | mode.bit()),
@@ -155,6 +160,13 @@ pub fn entity_snap_points(entity: &Entity, mode: SnapMode, tables: Tables<'_>) -
     if let Some(insertion) = insertion {
         return match mode {
             SnapMode::Insertion => vec![insertion],
+            _ => Vec::new(),
+        };
+    }
+    // A point offers its place as a node and nothing else (#198).
+    if let Entity::Point(point) = entity {
+        return match mode {
+            SnapMode::Node => vec![point.position],
             _ => Vec::new(),
         };
     }
@@ -1075,6 +1087,7 @@ mod tests {
         assert_eq!(
             enabled,
             vec![
+                SnapMode::Node,
                 SnapMode::Intersection,
                 SnapMode::Midpoint,
                 SnapMode::Insertion,

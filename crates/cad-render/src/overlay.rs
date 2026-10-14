@@ -45,6 +45,7 @@ const SNAP_MARKER_PIXELS: f64 = 7.0;
 /// | Perpendicular | right-angle sign |
 /// | Tangent | circle under a bar |
 /// | Insertion | two squares, offset |
+/// | Node | a circle with an X through it |
 fn marker_strokes(mode: SnapMode) -> &'static [&'static [(f64, f64)]] {
     const SQUARE: &[(f64, f64)] = &[(-1., -1.), (1., -1.), (1., 1.), (-1., 1.), (-1., -1.)];
     const TRIANGLE: &[(f64, f64)] = &[(-1., -1.), (1., -1.), (0., 1.), (-1., -1.)];
@@ -68,12 +69,13 @@ fn marker_strokes(mode: SnapMode) -> &'static [&'static [(f64, f64)]] {
         SnapMode::Perpendicular => &[CORNER, SQUARE_MARK],
         SnapMode::Tangent => &[BAR],
         SnapMode::Insertion => &[LOWER_LEFT, UPPER_RIGHT],
+        SnapMode::Node => &[RISING, FALLING],
     }
 }
 
 /// Whether a snap mode's glyph includes a circle the size of the marker.
 fn marker_has_circle(mode: SnapMode) -> bool {
-    matches!(mode, SnapMode::Center | SnapMode::Tangent)
+    matches!(mode, SnapMode::Center | SnapMode::Tangent | SnapMode::Node)
 }
 
 /// The spacing the grid is drawn at: `spacing` times the smallest of 1, 2,

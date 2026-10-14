@@ -11,6 +11,7 @@ pub use crate::block::BlockReferenceEntity;
 use crate::dimension::DimensionEntity;
 use crate::hatch::HatchEntity;
 pub use crate::mtext::MTextEntity;
+use crate::point::PointEntity;
 use crate::tables::Tables;
 pub use crate::text::TextEntity;
 use crate::viewport::ViewportEntity;
@@ -398,6 +399,8 @@ pub enum Entity {
     /// drawn as its frame; its contents are the model's scene, drawn
     /// again under its own transform.
     Viewport(ViewportEntity),
+    /// A place, drawn as the drawing's point style (#198).
+    Point(PointEntity),
 }
 
 impl Entity {
@@ -427,6 +430,7 @@ impl Entity {
             }
             Entity::Hatch(hatch) => hatch.bounds(),
             Entity::Viewport(viewport) => viewport.frame(),
+            Entity::Point(point) => point.bounds(tables.point_style),
         }
     }
 
@@ -459,6 +463,7 @@ impl Entity {
             Entity::Hatch(hatch) => hatch.distance_to(point),
             // A viewport by its frame: what shows through it is the model's.
             Entity::Viewport(viewport) => viewport.distance_to(point),
+            Entity::Point(place) => place.distance_to(point),
         }
     }
 
@@ -497,6 +502,8 @@ impl Entity {
             // A viewport's frame is a window, not geometry of the drawing:
             // nothing trims against it. Its corners snap (see `snap.rs`).
             Entity::Viewport(_) => Vec::new(),
+            // A point is a place: it snaps as a node and cuts nothing.
+            Entity::Point(_) => Vec::new(),
             Entity::BlockRef(reference) => tables
                 .blocks
                 .flatten(reference, crate::Properties::default())
@@ -587,6 +594,12 @@ impl Entity {
                 .into_iter()
                 .map(Primitive::Segment)
                 .collect(),
+            // A point is in a window when its place is; a crossing window
+            // takes it the same way: an edge of no length at its place.
+            Entity::Point(point) => vec![Primitive::Segment(Segment::new(
+                point.position,
+                point.position,
+            ))],
         }
     }
 
@@ -616,6 +629,7 @@ impl Entity {
                 .contains(point),
             Entity::Hatch(hatch) => hatch.contains(point),
             Entity::Viewport(viewport) => viewport.contains(point),
+            Entity::Point(_) => false,
         }
     }
 
@@ -700,6 +714,7 @@ impl Entity {
             Entity::Dimension(dimension) => dimension.transformed(transform).into(),
             Entity::Hatch(hatch) => hatch.transformed(transform).into(),
             Entity::Viewport(viewport) => viewport.transformed(transform).into(),
+            Entity::Point(point) => point.transformed(transform).into(),
         }
     }
 
@@ -726,6 +741,12 @@ impl From<CircleEntity> for Entity {
 impl From<ViewportEntity> for Entity {
     fn from(viewport: ViewportEntity) -> Self {
         Entity::Viewport(viewport)
+    }
+}
+
+impl From<PointEntity> for Entity {
+    fn from(point: PointEntity) -> Self {
+        Entity::Point(point)
     }
 }
 
@@ -897,6 +918,7 @@ mod tests {
                 true,
             )
             .into(),
+            PointEntity::new(Point2::new(7.0, 2.0)).into(),
         ]
     }
 
@@ -929,6 +951,7 @@ mod tests {
             Entity::Dimension(dimension) => dimension.points(),
             Entity::Hatch(hatch) => hatch.vertices(),
             Entity::Viewport(viewport) => viewport.corners().to_vec(),
+            Entity::Point(point) => vec![point.position],
         }
     }
 
@@ -1386,7 +1409,7 @@ mod tests {
             all.iter()
                 .map(|entity| entity.primitives(Tables::none()).len())
                 .collect::<Vec<_>>(),
-            vec![1, 1, 1, 3]
+            vec![1, 1, 1, 3, 0]
         );
 
         // A vertical line through the circle's centre crosses it twice.

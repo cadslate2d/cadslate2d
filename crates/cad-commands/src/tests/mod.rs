@@ -32,6 +32,7 @@ mod modify;
 mod mtext;
 mod offset;
 mod plot;
+mod points;
 mod properties;
 mod reconciliation;
 mod selection;

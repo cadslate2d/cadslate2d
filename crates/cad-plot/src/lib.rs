@@ -363,7 +363,11 @@ impl Painter<'_> {
                 // continuous, whatever their linetype says.
                 if matches!(
                     part,
-                    Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_) | Entity::Hatch(_)
+                    Entity::Text(_)
+                        | Entity::MText(_)
+                        | Entity::Dimension(_)
+                        | Entity::Hatch(_)
+                        | Entity::Point(_)
                 ) {
                     properties.linetype = Linetype::CONTINUOUS;
                 }

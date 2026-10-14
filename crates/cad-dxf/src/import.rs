@@ -20,8 +20,8 @@ use cad_document::{
     CircleEntity, Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings,
     EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Justification, Layer, LayerId,
     Layout, LayoutId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity,
-    Measure, PolylineEntity, Properties, RawEntity, RawGroup, TextEntity, TextStyle, TextStyleId,
-    ViewportEntity, check_name, nearest_index, same_name,
+    Measure, PointEntity, PointStyle, PolylineEntity, Properties, RawEntity, RawGroup, TextEntity,
+    TextStyle, TextStyleId, ViewportEntity, check_name, nearest_index, same_name,
 };
 
 use crate::export::insunits_code;
@@ -296,6 +296,9 @@ struct Header {
     current_linetype: Option<LinetypeRef>,
     current_lineweight: Option<Lineweight>,
     ltscale: Option<f64>,
+    /// The point style (#198): `$PDMODE` and `$PDSIZE`.
+    point_mode: Option<i64>,
+    point_size: Option<f64>,
 }
 
 /// The tables as they are built up: the file's rows, then the rows made
@@ -650,6 +653,8 @@ impl<'a> Reader<'a> {
                     self.header.current_lineweight = number.and_then(lineweight_from_dxf);
                 }
                 ("$LTSCALE", 40) => self.header.ltscale = group.value.parse::<f64>().ok(),
+                ("$PDMODE", 70) => self.header.point_mode = number,
+                ("$PDSIZE", 40) => self.header.point_size = group.value.parse::<f64>().ok(),
                 _ => continue,
             }
             variable = "";
@@ -658,6 +663,29 @@ impl<'a> Reader<'a> {
 
     /// Takes the file's `$INSUNITS` code: a unit the drawing can be in, no
     /// unit, or one it cannot be in — reported, and the drawing unitless.
+    /// The point style the header gave (#198): a mode the drawing can
+    /// draw, or the default; a size in drawing units, or the default when
+    /// the file's is relative to the screen (zero or negative), which the
+    /// drawing does not hold and the report says so.
+    fn point_style(&mut self) -> PointStyle {
+        let default = PointStyle::default();
+        let mode = self
+            .header
+            .point_mode
+            .and_then(|mode| u8::try_from(mode).ok())
+            .filter(|mode| PointStyle::new(*mode, 1.0).check().is_ok())
+            .unwrap_or(default.mode);
+        let size = match self.header.point_size {
+            Some(size) if size.is_finite() && size > 0.0 => size,
+            Some(size) if size.is_finite() => {
+                self.report.point_size_relative = true;
+                default.size
+            }
+            _ => default.size,
+        };
+        PointStyle::new(mode, size)
+    }
+
     fn declare_unit(&mut self, code: i64) {
         let unit = LengthUnit::ALL
             .into_iter()
@@ -762,6 +790,10 @@ impl<'a> Reader<'a> {
             (_, "LINE") if entities => {
                 let line = body.line(record.line)?;
                 self.import(Entity::Line(line), body)?;
+            }
+            (_, "POINT") if entities => {
+                let point = body.point(record.line)?;
+                self.import(Entity::Point(point), body)?;
             }
             (_, "CIRCLE") if entities => match body.circle(record.line)? {
                 Some(circle) => self.import(Entity::Circle(circle), body)?,
@@ -1348,6 +1380,7 @@ impl<'a> Reader<'a> {
                     Entity::Dimension(_) => self.report.dimensions += 1,
                     Entity::Hatch(_) => self.report.hatches += 1,
                     Entity::Viewport(_) => self.report.viewports += 1,
+                    Entity::Point(_) => self.report.points += 1,
                 }
                 match &mut self.open_block {
                     Some(OpenBlock::Paper(paper)) => paper.entities.push((entity, properties)),
@@ -1686,6 +1719,7 @@ impl<'a> Reader<'a> {
                 .filter(|scale| scale.is_finite() && *scale > 0.0)
                 .unwrap_or(DrawingSettings::DEFAULT_LTSCALE),
             unit: self.report.unit,
+            point_style: self.point_style(),
         };
         let drawing = drawing
             .with_settings(settings)
@@ -2024,6 +2058,15 @@ impl RecordBody {
         };
         text.insertion = insertion - frame.along * across + frame.up * down;
         Ok((text, dropped))
+    }
+
+    /// A POINT (#198): its place (10, 20).
+    fn point(&self, at: usize) -> Result<PointEntity, DxfError> {
+        let need = |value, group| required(value, at, "POINT", group);
+        Ok(PointEntity::new(Point2::new(
+            need(self.x0, 10)?,
+            need(self.y0, 20)?,
+        )))
     }
 
     fn line(&self, at: usize) -> Result<LineEntity, DxfError> {

@@ -26,7 +26,7 @@ use cad_geometry::Arc;
 
 use crate::{
     ArcEntity, AttributeDefinitionEntity, BlockReferenceEntity, CircleEntity, EllipseEntity,
-    Entity, LineEntity, MTextEntity, PolylineEntity, TextEntity, ViewportEntity,
+    Entity, LineEntity, MTextEntity, PointEntity, PolylineEntity, TextEntity, ViewportEntity,
 };
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
@@ -123,6 +123,8 @@ impl Entity {
                 .map(|point| grip(GripKind::Vertex, *point))
                 .collect(),
             Entity::Text(text) => vec![grip(GripKind::Insertion, text.insertion)],
+            // A point's one grip moves it (#198).
+            Entity::Point(point) => vec![grip(GripKind::Center, point.position)],
             Entity::MText(text) => vec![grip(GripKind::Insertion, text.insertion)],
             Entity::AttributeDefinition(definition) => {
                 vec![grip(GripKind::Insertion, definition.text.insertion)]
@@ -301,6 +303,7 @@ impl Entity {
                     .into(),
                 )
             }
+            Entity::Point(_) => (index == 0).then(|| PointEntity::new(to).into()),
             Entity::Text(text) => (index == 0).then(|| {
                 TextEntity {
                     insertion: to,

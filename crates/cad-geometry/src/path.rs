@@ -9,7 +9,7 @@
 use cad_core::Point2;
 use cad_core::tolerance::{LinearTolerance, ParametricTolerance};
 
-use crate::polyline::{arc_from_bulge, is_straight, polyline_spans};
+use crate::polyline::{arc_from_bulge, bulge_primitive, is_straight, polyline_spans};
 use crate::trim::{OpenCurve, Trimmed};
 use crate::{Arc, Primitive, Segment, extend_arc, extend_segment};
 
@@ -100,6 +100,71 @@ impl Path {
             })
             .sum();
         polygon + segments
+    }
+
+    /// The point `distance` along the path from its first vertex, through
+    /// its arcs by arc length (#198); `None` past the end, or before the
+    /// start.
+    pub fn point_along(&self, distance: f64) -> Option<Point2> {
+        if distance.is_nan() || distance < 0.0 {
+            return None;
+        }
+        let mut left = distance;
+        let spans = self.spans();
+        for (index, (from, to)) in spans.iter().enumerate() {
+            let primitive =
+                bulge_primitive(self.vertices[*from], self.vertices[*to], self.bulge(*from));
+            let length = primitive.length();
+            // The end of the last span counts as on the path.
+            let last = index + 1 == spans.len();
+            if left <= length
+                || (last
+                    && LinearTolerance::DEFAULT
+                        .around(&[self.vertices[*from], self.vertices[*to]])
+                        .is_zero(left - length))
+            {
+                let along = left.min(length);
+                return Some(match primitive {
+                    Primitive::Segment(segment) => {
+                        if length > 0.0 {
+                            segment.start + (segment.end - segment.start) * (along / length)
+                        } else {
+                            segment.start
+                        }
+                    }
+                    // A positive bulge runs the arc counter-clockwise from
+                    // its start; a negative one runs it back from its end.
+                    Primitive::Arc(arc) => {
+                        let turned = along / arc.radius;
+                        if self.bulge(*from) > 0.0 {
+                            arc.point_at(arc.start + turned)
+                        } else {
+                            arc.point_at(arc.start + arc.sweep - turned)
+                        }
+                    }
+                    Primitive::Circle(circle) => circle.point_at(along / circle.radius),
+                });
+            }
+            left -= length;
+        }
+        None
+    }
+
+    /// The length along the path from its first vertex to `location`.
+    pub fn length_to(&self, location: Location) -> f64 {
+        let spans = self.spans();
+        let before: f64 = spans
+            .iter()
+            .take(location.segment)
+            .map(|(from, to)| {
+                bulge_primitive(self.vertices[*from], self.vertices[*to], self.bulge(*from))
+                    .length()
+            })
+            .sum();
+        let own = spans.get(location.segment).map_or(0.0, |(from, to)| {
+            bulge_primitive(self.vertices[*from], self.vertices[*to], self.bulge(*from)).length()
+        });
+        before + own * location.t
     }
 
     /// The length along the path: its segments and arcs end to end.
@@ -475,6 +540,74 @@ mod tests {
         };
         assert!((open.area() - 100.0).abs() < 1e-9);
         assert!((open.length() - 30.0).abs() < 1e-9);
+    }
+
+    /// #198: a distance along the path lands on it, through its arcs by
+    /// arc length and the way they run; the length back to a location
+    /// agrees; reversed, the path runs the other way round the same curve.
+    #[test]
+    fn a_distance_along_a_path_lands_on_it_through_its_arcs_either_way_round() {
+        // A straight run, then a half-turn bulging to the right (down),
+        // then straight back: a slot lying on its side.
+        let slot = Path {
+            vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, -10.0), p(0.0, -10.0)],
+            bulges: vec![0.0, 1.0, 0.0, -1.0],
+            closed: true,
+        };
+        let tolerance = LinearTolerance::DEFAULT;
+        assert_eq!(slot.point_along(0.0), Some(p(0.0, 0.0)));
+        assert_eq!(slot.point_along(5.0), Some(p(5.0, 0.0)));
+        // Halfway round the half-turn: the arc bows to the right of its
+        // downward chord, inside the square.
+        let on_arc = slot.point_along(10.0 + PI * 5.0 / 2.0).unwrap();
+        assert!(tolerance.coincident(on_arc, p(5.0, -5.0)), "{on_arc:?}");
+        // Past the arc, on the way back.
+        let back = slot.point_along(10.0 + PI * 5.0 + 4.0).unwrap();
+        assert!(tolerance.coincident(back, p(6.0, -10.0)), "{back:?}");
+        // The left-hand arc, run from the bottom up: clockwise.
+        let left = slot.point_along(20.0 + PI * 5.0 + PI * 5.0 / 2.0).unwrap();
+        assert!(tolerance.coincident(left, p(-5.0, -5.0)), "{left:?}");
+        let total = 20.0 + PI * 10.0;
+        assert!(tolerance.coincident(slot.point_along(total).unwrap(), p(0.0, 0.0)));
+        assert_eq!(slot.point_along(total + 1.0), None);
+        assert_eq!(slot.point_along(-1.0), None);
+        for distance in [0.0, 3.0, 12.0, 25.0, 40.0] {
+            let at = slot.point_along(distance).unwrap();
+            let location = slot.locate(at, tolerance).unwrap();
+            assert!(tolerance.coincident(location.point, at));
+            assert!(
+                (slot.length_to(location) - distance).abs() < 1e-9,
+                "{distance}: {}",
+                slot.length_to(location)
+            );
+        }
+        let reversed = slot.reversed();
+        assert!((reversed.length() - slot.length()).abs() < 1e-9);
+        assert!(
+            (reversed.area() + slot.area()).abs() < 1e-9,
+            "the other way round"
+        );
+        // An open path reversed runs the same curve from its other end.
+        let open = Path {
+            vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0)],
+            bulges: vec![0.0, 1.0, 0.0],
+            closed: false,
+        };
+        let reversed = open.reversed();
+        assert_eq!(
+            reversed.vertices,
+            vec![p(10.0, 10.0), p(10.0, 0.0), p(0.0, 0.0)]
+        );
+        assert_eq!(reversed.bulges, vec![-1.0, 0.0, 0.0]);
+        let length = open.length();
+        for distance in [0.0, 3.0, 12.0, 20.0, length] {
+            let forwards = open.point_along(distance).unwrap();
+            let backwards = reversed.point_along(length - distance).unwrap();
+            assert!(
+                tolerance.coincident(forwards, backwards),
+                "{distance}: {forwards:?} {backwards:?}"
+            );
+        }
     }
 
     const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
