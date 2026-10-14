@@ -69,7 +69,7 @@ pub use hatch_pattern::{
 pub use joining::{JoinError, Joined, close_into_circle, join};
 pub use kept::{RawEntity, RawGroup};
 pub use layer::{Layer, LayerChange, LayerId, LayerTable};
-pub use layout::{Layout, LayoutChange, LayoutId, LayoutTable};
+pub use layout::{Layout, LayoutArea, LayoutChange, LayoutId, LayoutPlot, LayoutTable};
 pub use leader::{LeaderEntity, LeaderError, LeaderLayout};
 pub use linetype::{LinetypeChange, LinetypeDef, LinetypeError, LinetypeId, LinetypeTable};
 pub use lineweight::Weight;

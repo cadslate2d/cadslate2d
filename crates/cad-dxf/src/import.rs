@@ -1682,6 +1682,7 @@ impl<'a> Reader<'a> {
                 Layout {
                     name,
                     paper_size: None,
+                    plot: None,
                     kept: groups,
                     block_record_handle,
                     block_name,
@@ -1714,6 +1715,7 @@ impl<'a> Reader<'a> {
                 Layout {
                     name,
                     paper_size: None,
+                    plot: None,
                     kept: Vec::new(),
                     block_record_handle: String::new(),
                     block_name: block.name,

@@ -8,7 +8,9 @@
 //! window of it; a fit of the sheet is one to one.
 
 use cad_core::{Aabb, Point2, Vec2};
-use cad_document::LayoutId;
+use cad_document::{Layout, LayoutArea, LayoutId, LayoutPlot};
+
+use super::ltscale::display;
 use cad_input::{ExpectedInput, InputKind, Keyword};
 
 use crate::{
@@ -26,6 +28,7 @@ const PAPERS: [Keyword; 7] = [
     Keyword::new("Tabloid"),
 ];
 const EXTENTS: Keyword = Keyword::new("Extents");
+const SHEET: Keyword = Keyword::new("Layout");
 const WINDOW: Keyword = Keyword::new("Window");
 const FIT: Keyword = Keyword::new("Fit");
 const YES: Keyword = Keyword::new("Yes");
@@ -40,6 +43,8 @@ enum State {
     WindowFirst,
     WindowSecond(Point2),
     Scale,
+    /// On a layout (#208): the quarter turns the sheet is plotted turned.
+    Rotation,
     Lineweights,
     Colour,
 }
@@ -51,6 +56,9 @@ pub(crate) struct PlotCommand {
     /// The layout plotted, with its name and sheet as the command found
     /// them; `None` on the model.
     layout: Option<(LayoutId, String, Vec2)>,
+    /// On a layout, its plot settings as the prompts leave them (#208):
+    /// they start as the layout's own and are kept on its row.
+    plot: LayoutPlot,
 }
 
 impl PlotCommand {
@@ -59,6 +67,7 @@ impl PlotCommand {
             state: State::Paper,
             settings: PlotSettings::default(),
             layout: None,
+            plot: LayoutPlot::default(),
         }
     }
 
@@ -130,7 +139,19 @@ impl PlotCommand {
         }
     }
 
+    /// A layout's scale as typed: `Fit`, or `1:N` for a paper millimetre
+    /// per N units.
+    fn describe_layout_scale(scale: Option<f64>) -> String {
+        match scale {
+            None => "Fit".to_owned(),
+            Some(millimetres) => format!("1:{}", display(1.0 / millimetres)),
+        }
+    }
+
     fn finish(&self, ctx: &mut CommandContext<'_>) -> Step {
+        if let Some((id, name, sheet)) = &self.layout {
+            return self.finish_layout(ctx, *id, name.clone(), *sheet);
+        }
         // The layout's sheet is the layout's, not the next model plot's.
         ctx.settings.plot = PlotSettings {
             paper: match self.layout {
@@ -179,6 +200,56 @@ impl PlotCommand {
     }
 }
 
+impl PlotCommand {
+    /// A layout's plot (#208): its settings kept on its row when the
+    /// prompts changed them — one undoable change — then the page asked of
+    /// the host.
+    fn finish_layout(
+        &self,
+        ctx: &mut CommandContext<'_>,
+        id: LayoutId,
+        name: String,
+        sheet: Vec2,
+    ) -> Step {
+        ctx.settings.plot.lineweights = self.settings.lineweights;
+        ctx.settings.plot.monochrome = self.settings.monochrome;
+        let current = ctx.drawing.layouts().get(id).map(Layout::plot_settings);
+        if current != Some(self.plot) {
+            let mut tx = ctx.transaction();
+            if let Err(error) = tx.set_layout_plot(id, self.plot) {
+                drop(tx);
+                ctx.message(format!("The plot settings cannot be kept: {error}."));
+                return Step::Finished;
+            }
+            tx.commit();
+        }
+        ctx.request_host(HostRequest::Plot);
+        let area = match self.plot.area {
+            LayoutArea::Layout => "the sheet",
+            LayoutArea::Extents => "the extents",
+            LayoutArea::Window(_) => "the window",
+        };
+        let scale = match self.plot.scale {
+            None => "to fit".to_owned(),
+            Some(millimetres) => format!("at 1:{}", display(1.0 / millimetres)),
+        };
+        let turned = match self.plot.turns {
+            0 => String::new(),
+            turns => format!(", turned {}°", u32::from(turns) * 90),
+        };
+        ctx.message(format!(
+            "Plotting {area} of layout \"{name}\"{} on {}, {scale}{turned}.",
+            if self.settings.monochrome {
+                " in black"
+            } else {
+                ""
+            },
+            Self::describe_sheet(sheet),
+        ));
+        Step::Finished
+    }
+}
+
 impl Command for PlotCommand {
     fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
         self.settings = ctx.settings.plot;
@@ -186,6 +257,7 @@ impl Command for PlotCommand {
             && let Some(layout) = ctx.drawing.layouts().get(ctx.space)
         {
             self.layout = Some((ctx.space, layout.name.clone(), layout.sheet_size()));
+            self.plot = layout.plot_settings();
         }
         Step::Continue
     }
@@ -196,15 +268,26 @@ impl Command for PlotCommand {
                 None => self.settings.paper.name().to_owned(),
                 Some((_, _, sheet)) => Self::describe_sheet(*sheet),
             }),
+            State::Area if self.layout.is_some() => {
+                Prompt::new("Plot area").with_default(match self.plot.area {
+                    LayoutArea::Layout => "Layout",
+                    LayoutArea::Extents => "Extents",
+                    LayoutArea::Window(_) => "Window",
+                })
+            }
             State::Area => Prompt::new("Plot area").with_default(match self.settings.area {
                 PlotArea::Extents => "Extents",
                 PlotArea::Window(_) => "Window",
             }),
             State::WindowFirst => Prompt::new("Specify first corner of the window"),
             State::WindowSecond(_) => Prompt::new("Specify opposite corner"),
+            State::Scale if self.layout.is_some() => Prompt::new("Scale, as 1:N")
+                .with_default(Self::describe_layout_scale(self.plot.scale)),
             State::Scale => {
                 Prompt::new("Scale, as 1:N").with_default(Self::describe_scale(self.settings.scale))
             }
+            State::Rotation => Prompt::new("Plot rotation in degrees")
+                .with_default((u32::from(self.plot.turns) * 90).to_string()),
             State::Lineweights => {
                 Prompt::new("Plot lineweights?").with_default(if self.settings.lineweights {
                     "Yes"
@@ -225,7 +308,11 @@ impl Command for PlotCommand {
     fn expected(&self) -> ExpectedInput {
         match self.state {
             State::Paper => ExpectedInput::new(InputKind::Nothing).with_keywords(&PAPERS),
+            State::Area if self.layout.is_some() => {
+                ExpectedInput::new(InputKind::Nothing).with_keywords(&[SHEET, EXTENTS, WINDOW])
+            }
             State::Area => ExpectedInput::new(InputKind::Nothing).with_keywords(&[EXTENTS, WINDOW]),
+            State::Rotation => ExpectedInput::angle(),
             State::WindowFirst | State::WindowSecond(_) => ExpectedInput::point(),
             State::Scale => ExpectedInput::text().with_keywords(&[FIT]),
             State::Lineweights => ExpectedInput::new(InputKind::Nothing).with_keywords(&[YES, NO]),
@@ -255,6 +342,49 @@ impl Command for PlotCommand {
                 self.state = State::Area;
             }
             (State::Paper, CommandInput::Accept) => self.state = State::Area,
+            // On a layout, the area, the scale, and the turn are the
+            // layout's own (#208).
+            (State::Area, CommandInput::Keyword(SHEET)) if self.layout.is_some() => {
+                self.plot.area = LayoutArea::Layout;
+                self.state = State::Scale;
+            }
+            (State::Area, CommandInput::Keyword(EXTENTS)) if self.layout.is_some() => {
+                self.plot.area = LayoutArea::Extents;
+                self.state = State::Scale;
+            }
+            (State::Area, CommandInput::Accept) if self.layout.is_some() => {
+                self.state = State::Scale;
+            }
+            (State::Scale, CommandInput::Keyword(_)) if self.layout.is_some() => {
+                self.plot.scale = None;
+                self.state = State::Rotation;
+            }
+            (State::Scale, CommandInput::Accept) if self.layout.is_some() => {
+                self.state = State::Rotation;
+            }
+            (State::Scale, CommandInput::Text(text)) if self.layout.is_some() => {
+                match Self::parse_scale(&text) {
+                    Some(PlotScale::Ratio(denominator)) => {
+                        self.plot.scale = Some(1.0 / denominator);
+                        self.state = State::Rotation;
+                    }
+                    Some(PlotScale::Fit) => {
+                        self.plot.scale = None;
+                        self.state = State::Rotation;
+                    }
+                    None => ctx.message("A scale is 1:N — 1:50, 1:100 — or Fit."),
+                }
+            }
+            (State::Rotation, CommandInput::Angle(degrees)) => {
+                let quarters = (degrees / 90.0).round();
+                if degrees.is_finite() && (degrees - quarters * 90.0).abs() < 1e-9 {
+                    self.plot.turns = quarters.rem_euclid(4.0) as u8;
+                    self.state = State::Lineweights;
+                } else {
+                    ctx.message("The rotation is 0, 90, 180, or 270 degrees.");
+                }
+            }
+            (State::Rotation, CommandInput::Accept) => self.state = State::Lineweights,
             (State::Area, CommandInput::Keyword(WINDOW)) => self.state = State::WindowFirst,
             (State::Area, CommandInput::Keyword(_)) => {
                 self.settings.area = PlotArea::Extents;
@@ -275,6 +405,9 @@ impl Command for PlotCommand {
                 if size.x <= 0.0 || size.y <= 0.0 {
                     ctx.message("A window needs two different corners.");
                     self.state = State::WindowFirst;
+                } else if self.layout.is_some() {
+                    self.plot.area = LayoutArea::Window(window);
+                    self.state = State::Scale;
                 } else {
                     self.settings.area = PlotArea::Window(window);
                     self.state = State::Scale;

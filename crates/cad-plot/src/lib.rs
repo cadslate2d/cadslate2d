@@ -20,8 +20,8 @@ use cad_commands::{PlotArea, PlotScale, PlotSettings};
 use cad_core::tolerance::LinearTolerance;
 use cad_core::{Aabb, EntityId, Point2, Vec2};
 use cad_document::{
-    Drawing, Entity, HatchEntity, Layout, LayoutId, Linetype, LinetypeId, Paint, Properties,
-    ViewportEntity, Weight,
+    Drawing, Entity, HatchEntity, Layout, LayoutArea, LayoutId, Linetype, LinetypeId, Paint,
+    Properties, ViewportEntity, Weight,
 };
 use cad_geometry::{Arc, Primitive};
 use cad_render::{GeometrySink, walk_entity};
@@ -37,19 +37,31 @@ pub const DEFAULT_WIDTH_MM: f64 = 0.25;
 /// many units on a side around the origin.
 const EMPTY_EXTENT: f64 = 100.0;
 
-/// Where drawing units land on the page, in points: `to + (point - from)
-/// * scale`. The page's own, or the model's through a viewport.
+/// Where drawing units land on the page, in points: `to + turned(point -
+/// from) * scale`. The page's own, or the model's through a viewport.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placement {
     /// Points on the page per unit placed.
     pub scale: f64,
     pub from: Point2,
     pub to: Point2,
+    /// Quarter turns counter-clockwise: a layout plotted turned (#208).
+    pub turns: u8,
+}
+
+/// `offset` turned `turns` quarter turns counter-clockwise, exactly.
+fn turned(offset: Vec2, turns: u8) -> Vec2 {
+    match turns % 4 {
+        0 => offset,
+        1 => Vec2::new(-offset.y, offset.x),
+        2 => Vec2::new(-offset.x, -offset.y),
+        _ => Vec2::new(offset.y, -offset.x),
+    }
 }
 
 impl Placement {
     pub fn map(&self, point: Point2) -> Point2 {
-        self.to + (point - self.from) * self.scale
+        self.to + turned(point - self.from, self.turns) * self.scale
     }
 
     /// Where a length lands, in points: what a lineweight never is — a
@@ -60,7 +72,7 @@ impl Placement {
 
     /// The page point back where it came from.
     pub fn unmap(&self, point: Point2) -> Point2 {
-        self.from + (point - self.to) * (1.0 / self.scale)
+        self.from + turned(point - self.to, (4 - self.turns % 4) % 4) * (1.0 / self.scale)
     }
 }
 
@@ -76,45 +88,87 @@ pub struct Page {
     pub area: Aabb,
     /// Points on the page per drawing unit.
     pub scale: f64,
-    /// Where the area's centre lands: the page's centre.
+    /// Where the area's centre lands.
     pub center: Point2,
+    /// Quarter turns counter-clockwise the area is turned on the page.
+    pub turns: u8,
+    /// What of the page is printed, in points: a layout's printable area
+    /// within its margins (#208); for the model's, the area itself.
+    pub printable: Option<Aabb>,
 }
 
 impl Page {
     /// The page of a space: the model's, or a layout's sheet.
     pub fn in_space(drawing: &Drawing, space: LayoutId, settings: &PlotSettings) -> Self {
         match drawing.layouts().get(space) {
-            Some(layout) if space != LayoutId::MODEL => Self::of_layout(layout, settings),
+            Some(layout) if space != LayoutId::MODEL => {
+                Self::of_layout(layout, drawing.extents_in(space))
+            }
             _ => Self::new(drawing, settings),
         }
     }
 
-    /// A layout's page is its sheet (#194): the paper the layout's plot
-    /// settings name, held as the sheet is, with no margin of its own —
-    /// the sheet's margins are its printable area. The area is the sheet,
-    /// or a window of it; a fit of the sheet is one to one, and `1:N` is
-    /// a paper millimetre over N.
-    pub fn of_layout(layout: &Layout, settings: &PlotSettings) -> Self {
+    /// A layout's page is its sheet (#194), plotted by the layout's own
+    /// settings (#208): the paper its sheet is, turned a quarter turn on
+    /// the page when they say so; printed within the sheet's margins; the
+    /// area the sheet, what is on it (`extents`, or the sheet when it has
+    /// nothing), or a window of it; the scale its own — a paper millimetre
+    /// per `scale` units — or a fit within the margins. The sheet plots
+    /// where it lies on the paper; a window or the extents, centred in
+    /// the printable area.
+    pub fn of_layout(layout: &Layout, extents: Option<Aabb>) -> Self {
+        let plot = layout.plot_settings();
         let sheet = layout.sheet();
-        let area = match settings.area {
-            PlotArea::Window(window) => window,
-            PlotArea::Extents => sheet,
+        let (area, centred) = match plot.area {
+            LayoutArea::Layout => (sheet, false),
+            LayoutArea::Extents => (extents.unwrap_or(sheet), true),
+            LayoutArea::Window(window) => (window, true),
         };
-        let size = area.max() - area.min();
         let paper = layout.sheet_size();
-        let width = paper.x * POINTS_PER_MM;
-        let height = paper.y * POINTS_PER_MM;
-        let scale = match settings.scale {
-            PlotScale::Ratio(denominator) => POINTS_PER_MM / denominator,
-            PlotScale::Fit => Self::fit(Vec2::new(width, height), size),
+        let turns = plot.turns % 4;
+        let upright = Vec2::new(paper.x * POINTS_PER_MM, paper.y * POINTS_PER_MM);
+        let (width, height) = if turns % 2 == 1 {
+            (upright.y, upright.x)
+        } else {
+            (upright.x, upright.y)
+        };
+        let page_center = Point2::new(width / 2.0, height / 2.0);
+        // The printable area on the upright sheet, turned with it.
+        let margins = layout.printable_area();
+        let sheet_center = Point2::new(upright.x / 2.0, upright.y / 2.0);
+        let on_page = |point: Point2| {
+            page_center
+                + turned(
+                    Point2::new(point.x * POINTS_PER_MM, point.y * POINTS_PER_MM) - sheet_center,
+                    turns,
+                )
+        };
+        let printable = Aabb::from_points(on_page(margins.min()), on_page(margins.max()));
+        let size = area.max() - area.min();
+        let scale = match plot.scale {
+            Some(millimetres) => millimetres * POINTS_PER_MM,
+            None => {
+                let room = margins.max() - margins.min();
+                Self::fit(
+                    Vec2::new(room.x * POINTS_PER_MM, room.y * POINTS_PER_MM),
+                    size,
+                )
+            }
+        };
+        let center = if centred {
+            printable.center()
+        } else {
+            on_page(area.center())
         };
         Self {
             width,
             height,
-            landscape: paper.x > paper.y,
+            landscape: width > height,
             area,
             scale,
-            center: Point2::new(width / 2.0, height / 2.0),
+            center,
+            turns,
+            printable: Some(printable),
         }
     }
 
@@ -173,6 +227,8 @@ impl Page {
             area,
             scale,
             center: Point2::new(width / 2.0, height / 2.0),
+            turns: 0,
+            printable: None,
         }
     }
 
@@ -182,6 +238,32 @@ impl Page {
             scale: self.scale,
             from: self.area.center(),
             to: self.center,
+            turns: self.turns,
+        }
+    }
+
+    /// What the page clips to, in points: the area, within the printable
+    /// area when there is one.
+    pub fn clip(&self) -> Aabb {
+        let area = self.area_on_page();
+        match self.printable {
+            Some(printable) => Aabb::from_points(
+                Point2::new(
+                    area.min().x.max(printable.min().x),
+                    area.min().y.max(printable.min().y),
+                ),
+                Point2::new(
+                    area.max()
+                        .x
+                        .min(printable.max().x)
+                        .max(area.min().x.max(printable.min().x)),
+                    area.max()
+                        .y
+                        .min(printable.max().y)
+                        .max(area.min().y.max(printable.min().y)),
+                ),
+            ),
+            None => area,
         }
     }
 
@@ -192,6 +274,7 @@ impl Page {
             scale: viewport.scale * self.scale,
             from: viewport.view_center,
             to: self.to_page(viewport.center),
+            turns: self.turns,
         }
     }
 
@@ -279,7 +362,7 @@ fn content(drawing: &Drawing, space: LayoutId, settings: &PlotSettings, page: &P
     let mut out = String::new();
     // Round caps and joins meet at vertices as they do on screen.
     out.push_str("q\n1 J\n1 j\n");
-    clip(&mut out, page.area_on_page());
+    clip(&mut out, page.clip());
     let mut painter = Painter {
         drawing,
         settings,

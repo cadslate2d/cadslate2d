@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use cad_core::{Point2, Vec2};
+use cad_core::{Aabb, Point2, Vec2};
 use cad_document::{
     BlockReferenceEntity, Color, DimStyleId, Drawing, Entity, Justification, Layer, LayerId,
     Layout, LayoutId, LeaderEntity, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight,
@@ -483,6 +483,60 @@ fn a_layout_made_here_and_a_renamed_one_are_written_and_read_back() {
     assert!(!text.contains("\n  1\nLayout2\n"));
     let back = cad_dxf::import(text.as_bytes()).unwrap();
     assert_eq!(back.report.layouts, vec!["Layout1", "Details"]);
+}
+
+/// #208: a layout's plot settings — read from the kept LAYOUT groups as
+/// the file gives them, changed here, written back into those groups, and
+/// read back the same; a layout made here writes its own.
+#[test]
+fn a_layouts_plot_settings_are_read_changed_and_written_back() {
+    use cad_document::{LayoutArea, LayoutPlot};
+    let mut drawing = load("valid", "layouts.dxf").unwrap().drawing;
+    let (one, row) = drawing.layouts().iter().nth(1).unwrap();
+    assert_eq!(
+        row.plot_settings(),
+        LayoutPlot::default(),
+        "a whole A3 sheet at 1:1"
+    );
+    let window = Aabb::from_points(Point2::new(10.0, 20.0), Point2::new(110.0, 70.0));
+    let changed = LayoutPlot {
+        area: LayoutArea::Window(window),
+        scale: None,
+        turns: 1,
+    };
+    let mut tx = drawing.transaction();
+    tx.set_layout_plot(one, changed).unwrap();
+    let made = tx.add_layout(Layout::named("Made here")).unwrap();
+    tx.set_layout_plot(
+        made,
+        LayoutPlot {
+            area: LayoutArea::Extents,
+            scale: Some(0.25),
+            turns: 3,
+        },
+    )
+    .unwrap();
+    tx.commit();
+    let text = export(&drawing);
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    let rows: Vec<LayoutPlot> = back
+        .drawing
+        .layouts()
+        .iter()
+        .skip(1)
+        .map(|(_, row)| row.plot_settings())
+        .collect();
+    assert_eq!(rows[0], changed);
+    assert_eq!(rows[1], LayoutPlot::default(), "Layout2 as it was");
+    assert_eq!(
+        rows[2],
+        LayoutPlot {
+            area: LayoutArea::Extents,
+            scale: Some(0.25),
+            turns: 3,
+        }
+    );
+    assert_eq!(export(&back.drawing), text, "stable on the second pass");
 }
 
 /// #206: xlines and rays from another writer — on a layer of their own,

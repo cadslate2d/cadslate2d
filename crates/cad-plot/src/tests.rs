@@ -705,11 +705,12 @@ fn a_layout_plots_its_paper_at_one_to_one_and_the_model_through_each_viewport_at
     assert_eq!(parse(&model.paper).points.len(), 2);
 }
 
-/// #194: the page is the sheet the layout's row says — set here, or
-/// A3 landscape for one made here — whatever paper the settings name; a
-/// window of the paper is clipped to and fits; `1:2` halves the paper.
+/// #194, #208: the page is the sheet the layout's row says — set here,
+/// or A3 landscape for one made here — whatever paper the settings name;
+/// a layout made here plots its whole sheet at one to one, printed within
+/// its margins.
 #[test]
-fn a_layouts_page_is_its_sheet_and_a_window_or_a_ratio_scales_the_paper() {
+fn a_layouts_page_is_its_sheet_at_its_own_scale_within_its_margins() {
     let (drawing, sheet) = layout_drawing(Some(Vec2::new(210.0, 297.0)), &[]);
     let plot = PlotSettings {
         paper: Paper::A0,
@@ -719,49 +720,191 @@ fn a_layouts_page_is_its_sheet_and_a_window_or_a_ratio_scales_the_paper() {
     assert!(!page.landscape);
     assert!((page.width - 210.0 * POINTS_PER_MM).abs() < 1e-9);
     assert!((page.height - 297.0 * POINTS_PER_MM).abs() < 1e-9);
+    assert!((page.scale - POINTS_PER_MM).abs() < 1e-9, "one to one");
     assert!(
-        (page.scale - POINTS_PER_MM).abs() < 1e-9,
-        "a fit of the sheet is one to one"
+        close(page.to_page(Point2::ORIGIN), Point2::ORIGIN),
+        "where it lies"
     );
-    assert!(close(page.to_page(Point2::ORIGIN), Point2::ORIGIN));
-
-    let window = Aabb::from_points(p(0.0, 0.0), p(105.0, 148.5));
-    let windowed = Page::in_space(
-        &drawing,
-        sheet,
-        &PlotSettings {
-            area: PlotArea::Window(window),
-            ..plot
-        },
-    );
-    assert_eq!(windowed.area, window);
-    assert!(
-        (windowed.scale - 2.0 * POINTS_PER_MM).abs() < 1e-9,
-        "the window fills the page"
-    );
-    let pdf = plot_pdf_in(
-        &drawing,
-        sheet,
-        &PlotSettings {
-            area: PlotArea::Window(window),
-            ..plot
-        },
-    );
-    assert!(pdf.contains("0 0 595.276 841.89 re W n\n"));
-
-    let halved = Page::in_space(
-        &drawing,
-        sheet,
-        &PlotSettings {
-            scale: PlotScale::Ratio(2.0),
-            ..plot
-        },
-    );
-    assert!((halved.scale - POINTS_PER_MM / 2.0).abs() < 1e-9);
+    // Printed within the margins a layout made here has: 7.5, 20, 7.5, 20.
+    let clip = page.clip();
+    assert!(close(
+        clip.min(),
+        p(7.5 * POINTS_PER_MM, 20.0 * POINTS_PER_MM)
+    ));
+    assert!(close(
+        clip.max(),
+        p(202.5 * POINTS_PER_MM, 277.0 * POINTS_PER_MM)
+    ));
+    let pdf = plot_pdf_in(&drawing, sheet, &plot);
+    assert!(pdf.contains(&format!(
+        "{} {} {} {} re W n\n",
+        num(clip.min().x),
+        num(clip.min().y),
+        num(clip.max().x - clip.min().x),
+        num(clip.max().y - clip.min().y)
+    )));
     assert_eq!(
         Page::in_space(&drawing, LayoutId::MODEL, &plot),
         Page::new(&drawing, &plot)
     );
+}
+
+/// #208: a layout set to plot a window, its extents, at a scale, to fit,
+/// or turned, plots so; the settings travel on the row.
+#[test]
+fn a_layouts_plot_settings_shape_the_page() {
+    use cad_document::{LayoutArea, LayoutPlot};
+    let set = |plot: LayoutPlot| {
+        let (mut drawing, sheet) = layout_drawing(Some(Vec2::new(297.0, 210.0)), &[]);
+        let mut tx = drawing.transaction();
+        tx.insert_in(sheet, line(100.0, 100.0, 140.0, 120.0))
+            .unwrap();
+        tx.set_layout_plot(sheet, plot).unwrap();
+        tx.commit();
+        let page = Page::in_space(&drawing, sheet, &settings());
+        (drawing, sheet, page)
+    };
+    // Half scale: a paper millimetre per two units.
+    let (_, _, page) = set(LayoutPlot {
+        scale: Some(0.5),
+        ..LayoutPlot::default()
+    });
+    assert!((page.scale - POINTS_PER_MM / 2.0).abs() < 1e-9);
+    // A window, fitted into the printable area: 282 × 170 mm of room.
+    let window = Aabb::from_points(p(100.0, 100.0), p(140.0, 120.0));
+    let (_, _, page) = set(LayoutPlot {
+        area: LayoutArea::Window(window),
+        scale: None,
+        turns: 0,
+    });
+    assert_eq!(page.area, window);
+    let fit = (282.0 / 40.0_f64).min(170.0 / 20.0) * POINTS_PER_MM;
+    assert!((page.scale - fit).abs() < 1e-9, "{} {fit}", page.scale);
+    let printable = page.printable.unwrap();
+    assert!(
+        close(page.to_page(window.center()), printable.center()),
+        "centred"
+    );
+    // The extents: what is on the paper.
+    let (_, _, page) = set(LayoutPlot {
+        area: LayoutArea::Extents,
+        scale: Some(1.0),
+        turns: 0,
+    });
+    assert_eq!(page.area, window, "the line is all there is");
+    // A quarter turn: the page is held the other way, and the sheet's
+    // corners go round counter-clockwise.
+    let (drawing, sheet, page) = set(LayoutPlot {
+        turns: 1,
+        ..LayoutPlot::default()
+    });
+    assert!((page.width - 210.0 * POINTS_PER_MM).abs() < 1e-9);
+    assert!((page.height - 297.0 * POINTS_PER_MM).abs() < 1e-9);
+    assert!(close(
+        page.to_page(Point2::ORIGIN),
+        p(210.0 * POINTS_PER_MM, 0.0)
+    ));
+    assert!(close(
+        page.to_page(p(297.0, 210.0)),
+        p(0.0, 297.0 * POINTS_PER_MM)
+    ));
+    let pdf = plot_pdf_in(&drawing, sheet, &settings());
+    assert!(pdf.contains("/MediaBox [0 0 595.276 841.89]"));
+    let ops = parse(&pull_apart(content_of(&pdf)).paper);
+    // The line from (100, 100) to (140, 120) turned: x = 210 − y, y = x.
+    assert!(
+        close(
+            ops.points[0],
+            p(110.0 * POINTS_PER_MM, 100.0 * POINTS_PER_MM)
+        ),
+        "{:?}",
+        ops.points
+    );
+    assert!(close(
+        ops.points[1],
+        p(90.0 * POINTS_PER_MM, 140.0 * POINTS_PER_MM)
+    ));
+}
+
+/// #208: a layout's plot settings as a file gives them — the margins
+/// (40–43), the scale (142 over 143, or a fit), the plot type and window
+/// (74; 48, 49, 140, 141), the rotation (73) — as the layouts fixture's
+/// `Layout1` has them: a whole A3 sheet at one to one within margins of
+/// 7.5, 20, 7.5, 20.
+#[test]
+fn a_layouts_kept_plot_settings_are_read_from_its_groups() {
+    use cad_document::{Layout, LayoutArea, LayoutPlot};
+    let groups = |pairs: &[(i32, &str)]| -> Vec<(i32, String)> {
+        pairs
+            .iter()
+            .map(|(code, value)| (*code, (*value).to_owned()))
+            .collect()
+    };
+    let fixture = Layout {
+        kept: groups(&[
+            (40, "7.5"),
+            (41, "20.0"),
+            (42, "7.5"),
+            (43, "20.0"),
+            (44, "420.0"),
+            (45, "297.0"),
+            (48, "0.0"),
+            (49, "0.0"),
+            (140, "0.0"),
+            (141, "0.0"),
+            (142, "1.0"),
+            (143, "1.0"),
+            (70, "0"),
+            (73, "0"),
+            (74, "5"),
+            (75, "16"),
+        ]),
+        ..Layout::named("Layout1")
+    };
+    assert_eq!(fixture.plot_settings(), LayoutPlot::default());
+    let page = Page::of_layout(&fixture, None);
+    assert!((page.width - 420.0 * POINTS_PER_MM).abs() < 1e-9);
+    assert!((page.scale - POINTS_PER_MM).abs() < 1e-9);
+    assert!(close(
+        page.clip().min(),
+        p(7.5 * POINTS_PER_MM, 20.0 * POINTS_PER_MM)
+    ));
+    let turned_window = Layout {
+        kept: groups(&[
+            (44, "420.0"),
+            (45, "297.0"),
+            (48, "10.0"),
+            (49, "20.0"),
+            (140, "110.0"),
+            (141, "70.0"),
+            (142, "1.0"),
+            (143, "4.0"),
+            (70, "0"),
+            (73, "3"),
+            (74, "4"),
+            (75, "0"),
+        ]),
+        ..Layout::named("Detail")
+    };
+    let plot = turned_window.plot_settings();
+    assert_eq!(
+        plot.area,
+        LayoutArea::Window(Aabb::from_points(p(10.0, 20.0), p(110.0, 70.0)))
+    );
+    assert_eq!(plot.scale, Some(0.25));
+    assert_eq!(plot.turns, 3);
+    let fit = Layout {
+        kept: groups(&[
+            (44, "420.0"),
+            (45, "297.0"),
+            (70, "16"),
+            (74, "1"),
+            (75, "0"),
+        ]),
+        ..Layout::named("Fit")
+    };
+    assert_eq!(fit.plot_settings().scale, None);
+    assert_eq!(fit.plot_settings().area, LayoutArea::Extents);
 }
 
 fn any_entity() -> impl Strategy<Value = Entity> {

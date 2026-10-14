@@ -114,7 +114,7 @@ test("PLOT on a layout plots its sheet, its viewport clipped at its scale, and i
   await expect(space(page)).toHaveText("PAPER");
   await enter(page, "PLOT");
   await expect(prompt(page)).toHaveText("Paper size or [A4/A3/A2/A1/A0/Letter/Tabloid] <A3>:");
-  const file = await downloadFrom(page, () => enter(page, "", "", "", "", ""));
+  const file = await downloadFrom(page, () => enter(page, "", "", "", "", "", ""));
   expect(file.name).toBe("layouts-Layout1.pdf");
   expect(file.text).toContain("/MediaBox [0 0 1190.551 841.89]");
   // The title line from (10, 10) to (287, 10), in points.
@@ -123,6 +123,36 @@ test("PLOT on a layout plots its sheet, its viewport clipped at its scale, and i
   expect(file.text).toContain("\nq\n28.346 28.346 785.197 538.583 re W n\n");
   expect(file.text).toContain("\n286.299 230.315 m\n555.591 230.315 l\n");
   await expect(logLines(page).last()).toHaveText(
-    'Plotting the sheet of layout "Layout1" on A3, to fit.',
+    'Plotting the sheet of layout "Layout1" on A3, at 1:1.',
   );
+});
+
+// #208: the same sheet plotted turned a quarter turn: the page held the
+// other way, the title line running up it; the choice kept on the layout.
+test("PLOT turns a layout's sheet a quarter turn when asked, and keeps the setting", async ({
+  page,
+}) => {
+  await openApp(page);
+  await chooseFile(page, () => enter(page, "OPEN"), {
+    name: "layouts.dxf",
+    mimeType: "application/dxf",
+    buffer: readFileSync(fixturePath("valid/layouts.dxf")),
+  });
+  await page.getByRole("button", { name: "Dismiss the import report" }).click();
+  await tab(page, "Layout1").click();
+  await enter(page, "PLOT", "", "", "");
+  await expect(prompt(page)).toHaveText("Plot rotation in degrees <0>:");
+  const file = await downloadFrom(page, () => enter(page, "90", "", ""));
+  expect(file.text).toContain("/MediaBox [0 0 841.89 1190.551]");
+  expect(file.text).toContain("\n813.543 28.346 m\n813.543 813.543 l\n");
+  await expect(logLines(page).last()).toHaveText(
+    'Plotting the sheet of layout "Layout1" on A3, at 1:1, turned 90°.',
+  );
+  // Kept on the layout: the next PLOT offers it, and the saved file has it.
+  await enter(page, "PLOT", "", "", "");
+  await expect(prompt(page)).toHaveText("Plot rotation in degrees <90>:");
+  await page.keyboard.press("Escape");
+  const saved = await downloadFrom(page, () => enter(page, "DXFOUT"));
+  expect(saved.text).toContain("\n  1\nLayout1\n");
+  expect(saved.text).toContain("\n 73\n1\n");
 });

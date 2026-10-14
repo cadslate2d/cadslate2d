@@ -14,14 +14,14 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use cad_core::{EntityId, LengthUnit, Point2, Vec2};
+use cad_core::{Aabb, EntityId, LengthUnit, Point2, Vec2};
 use cad_document::{
     ArcEntity, AttributeDefinitionEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity,
     Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity,
-    EntityRecord, HatchEntity, HatchStyle, Justification, Layer, Layout, LayoutId, LayoutTable,
-    LeaderEntity, LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight, MTextEntity,
-    Measure, PointEntity, PolylineEntity, Properties, Revision, SplineEntity, TextEntity,
-    TextStyle, TextStyleTable, ViewportEntity,
+    EntityRecord, HatchEntity, HatchStyle, Justification, Layer, Layout, LayoutArea, LayoutId,
+    LayoutPlot, LayoutTable, LeaderEntity, LineEntity, Linetype, LinetypeDef, LinetypeTable,
+    Lineweight, MTextEntity, Measure, PointEntity, PolylineEntity, Properties, Revision,
+    SplineEntity, TextEntity, TextStyle, TextStyleTable, ViewportEntity,
 };
 
 use crate::properties::{
@@ -437,6 +437,40 @@ fn dimension_block_name(n: usize) -> String {
 
 /// A kept LAYOUT's groups with the name the layout has now: the first
 /// group 1 after the `AcDbLayout` marker.
+/// The plot settings' groups for `plot` (#208): the rotation (73), the
+/// plot type (74), the window's corners (48, 49, 140, 141), the scale
+/// (142 over 143), and the flags (70, bit 16) with the standard scale (75)
+/// that say a fit — the flags as `groups` had them otherwise.
+fn plot_groups(plot: &LayoutPlot, groups: &[(i32, String)]) -> Vec<(i32, String)> {
+    let flags = groups
+        .iter()
+        .find(|(code, _)| *code == 70)
+        .and_then(|(_, value)| value.trim().parse::<i64>().ok())
+        .unwrap_or(0);
+    let (kind, window) = match plot.area {
+        LayoutArea::Layout => (5, None),
+        LayoutArea::Extents => (1, None),
+        LayoutArea::Window(window) => (4, Some(window)),
+    };
+    let window = window.unwrap_or_else(|| Aabb::from_points(Point2::ORIGIN, Point2::ORIGIN));
+    let (flags, standard, paper, drawing) = match plot.scale {
+        None => (flags | 16, 0, 1.0, 1.0),
+        Some(scale) => (flags & !16, 16, scale, 1.0),
+    };
+    vec![
+        (48, format_real(window.min().x)),
+        (49, format_real(window.min().y)),
+        (140, format_real(window.max().x)),
+        (141, format_real(window.max().y)),
+        (142, format_real(paper)),
+        (143, format_real(drawing)),
+        (70, flags.to_string()),
+        (73, plot.turns.to_string()),
+        (74, kind.to_string()),
+        (75, standard.to_string()),
+    ]
+}
+
 fn layout_groups_as_now(groups: &[(i32, String)], layout: &Layout) -> Vec<(i32, String)> {
     let mut out = groups.to_vec();
     let start = out
@@ -445,6 +479,15 @@ fn layout_groups_as_now(groups: &[(i32, String)], layout: &Layout) -> Vec<(i32, 
         .unwrap_or(0);
     if let Some(slot) = out[start..].iter_mut().find(|(code, _)| *code == 1) {
         slot.1 = layout.name.clone();
+    }
+    // Plot settings set here (#208) replace the file's.
+    if let Some(plot) = layout.plot.as_deref() {
+        for (code, value) in plot_groups(plot, &out) {
+            match out.iter_mut().find(|(c, _)| *c == code) {
+                Some(slot) => slot.1 = value,
+                None => out.push((code, value)),
+            }
+        }
     }
     // A sheet set here (#194) replaces the plot settings' paper size.
     if layout.paper_size.is_some() {
@@ -1614,7 +1657,7 @@ impl Writer {
             "Model",
             structure.model_space,
             0,
-            Vec2::new(420.0, 297.0),
+            (Vec2::new(420.0, 297.0), LayoutPlot::default()),
         );
         if structure.sheets.is_empty() {
             self.layout(
@@ -1623,7 +1666,7 @@ impl Writer {
                 "Layout1",
                 structure.paper_space,
                 1,
-                Vec2::new(420.0, 297.0),
+                (Vec2::new(420.0, 297.0), LayoutPlot::default()),
             );
         }
         // A layout the file gave its LAYOUT object keeps it, under the
@@ -1639,7 +1682,7 @@ impl Writer {
                     &layout.name,
                     sheet.record,
                     index as i64 + 1,
-                    layout.sheet_size(),
+                    (layout.sheet_size(), layout.plot_settings()),
                 );
             } else {
                 self.group(0, "LAYOUT");
@@ -1701,9 +1744,17 @@ impl Writer {
         name: &str,
         space: Handle,
         order: i64,
-        sheet: Vec2,
+        (sheet, plot): (Vec2, LayoutPlot),
     ) {
         let model = order == 0;
+        let groups = plot_groups(&plot, &[(70, if model { "1024" } else { "0" }.to_owned())]);
+        let group_of = |code: i32| {
+            groups
+                .iter()
+                .find(|(c, _)| *c == code)
+                .map(|(_, value)| value.clone())
+                .unwrap_or_default()
+        };
         self.group(0, "LAYOUT");
         self.handle(5, handle);
         self.handle(330, owner);
@@ -1725,22 +1776,19 @@ impl Writer {
             (45, sheet.y),
             (46, 0.0),
             (47, 0.0),
-            (48, 0.0),
-            (49, 0.0),
-            (140, 0.0),
-            (141, 0.0),
-            (142, 1.0),
-            (143, 1.0),
         ] {
             self.real(code, value);
         }
+        for code in [48, 49, 140, 141, 142, 143] {
+            self.group(code, &group_of(code));
+        }
         // Plot layout flags: the model layout is "model type".
-        self.group(70, if model { "1024" } else { "0" });
+        self.group(70, &group_of(70));
         self.group(72, "1");
-        self.group(73, "0");
-        self.group(74, "5");
+        self.group(73, &group_of(73));
+        self.group(74, &group_of(74));
         self.group(7, "");
-        self.group(75, "16");
+        self.group(75, &group_of(75));
         self.group(76, "0");
         self.group(77, "2");
         self.group(78, "300");

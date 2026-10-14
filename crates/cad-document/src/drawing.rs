@@ -12,7 +12,7 @@ use crate::dimension::DimensionError;
 use crate::history::History;
 use crate::id_alloc::EntityIdAllocator;
 use crate::layer::{Layer, LayerId, LayerTable, initial_layers};
-use crate::layout::{Layout, LayoutId, LayoutTable, initial_layouts};
+use crate::layout::{Layout, LayoutId, LayoutPlot, LayoutTable, initial_layouts};
 use crate::leader::LeaderError;
 use crate::linetype::{LinetypeDef, LinetypeError, LinetypeId, LinetypeTable, initial_linetypes};
 use crate::names::{NameError, check_name, same_name};
@@ -1350,6 +1350,29 @@ impl TransactionBuilder<'_> {
             .cloned()
             .ok_or(TransactionError::UnknownLayout(id))?;
         let after = before.clone().with_sheet(size);
+        self.push_other(Change::Layout(TableChange::Replace { id, before, after }));
+        Ok(())
+    }
+
+    /// Sets what a plot of a layout takes (#208): its area, scale, and
+    /// turn, kept on the row and written into its plot settings. The model
+    /// has none; settings a plot cannot follow are refused.
+    pub fn set_layout_plot(
+        &mut self,
+        id: LayoutId,
+        plot: LayoutPlot,
+    ) -> Result<(), TransactionError> {
+        if id == LayoutId::MODEL {
+            return Err(TransactionError::PermanentLayout);
+        }
+        if !plot.is_valid() {
+            return Err(TransactionError::BadSheet);
+        }
+        let before = self
+            .layout_now(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownLayout(id))?;
+        let after = before.clone().with_plot(plot);
         self.push_other(Change::Layout(TableChange::Replace { id, before, after }));
         Ok(())
     }
@@ -5352,6 +5375,7 @@ mod tests {
         AddLayout(u8),
         RenameLayout(usize, u8),
         SetLayoutSheet(usize, f64, f64),
+        SetLayoutPlot(usize, f64, u8),
         RemoveLayout(usize),
         CreateIn(usize, f64),
         MoveTo(usize, usize),
@@ -5398,6 +5422,7 @@ mod tests {
             1 => any::<usize>().prop_map(Op::RemoveLayout),
             1 => (any::<usize>(), -10.0..500.0_f64, -10.0..500.0_f64)
                 .prop_map(|(i, w, h)| Op::SetLayoutSheet(i, w, h)),
+            1 => (any::<usize>(), -1.0..5.0_f64, 0..5u8).prop_map(|(i, scale, turns)| Op::SetLayoutPlot(i, scale, turns)),
             2 => (any::<usize>(), coordinate()).prop_map(|(i, x)| Op::CreateIn(i, x)),
             1 => (any::<usize>(), any::<usize>()).prop_map(|(i, space)| Op::MoveTo(i, space)),
             1 => (0..5u8).prop_map(Op::AddDimStyle),
@@ -5734,6 +5759,23 @@ mod tests {
                         prop_assert_eq!(renamed.is_ok(), allowed, "{:?}", renamed);
                         if allowed {
                             prop_assert_eq!(drawing.layouts().find(&name), Some(id));
+                        }
+                    }
+                    Op::SetLayoutPlot(pick, scale, turns) => {
+                        let layouts: Vec<LayoutId> = drawing.layouts().iter().map(|(id, _)| id).collect();
+                        let id = layouts[pick % layouts.len()];
+                        let plot = LayoutPlot {
+                            scale: (scale != 0.0).then_some(scale),
+                            turns,
+                            ..LayoutPlot::default()
+                        };
+                        let mut tx = drawing.transaction();
+                        let set = tx.set_layout_plot(id, plot);
+                        tx.commit();
+                        let allowed = id != LayoutId::MODEL && plot.is_valid();
+                        prop_assert_eq!(set.is_ok(), allowed, "{:?}", set);
+                        if allowed {
+                            prop_assert_eq!(drawing.layouts().get(id).map(Layout::plot_settings), Some(plot));
                         }
                     }
                     Op::SetLayoutSheet(pick, width, height) => {

@@ -63,12 +63,12 @@ test("the M9 scenario: a file's layouts shown, a viewport added and scaled, a ti
   await expect(prompt(page)).toHaveText("Command:");
 
   // 5. The layout plotted: the sheet as the page, a clip per viewport.
-  const plot = await downloadFrom(page, () => enter(page, "PLOT", "", "", "", "", ""));
+  const plot = await downloadFrom(page, () => enter(page, "PLOT", "", "", "", "", "", ""));
   expect(plot.name).toBe("scenario-Layout1.pdf");
   expect(plot.text).toContain("/MediaBox [0 0 1190.551 841.89]");
   expect(plot.text.match(/ re W n\n/g)).toHaveLength(3);
   await expect(logLines(page).last()).toHaveText(
-    'Plotting the sheet of layout "Layout1" on A3, to fit.',
+    'Plotting the sheet of layout "Layout1" on A3, at 1:1.',
   );
 
   // 6. Saved with it all: the two viewports — the new one at half its

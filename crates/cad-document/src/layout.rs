@@ -21,6 +21,12 @@ pub struct Layout {
     /// settings say, or A3 landscape. The writer puts it in the plot
     /// settings' paper size (44, 45).
     pub paper_size: Option<Vec2>,
+    /// What to plot of it, at what scale, turned how — when set here
+    /// (PLOT on the layout, #208); otherwise what the kept plot settings
+    /// say, or a whole sheet at one to one. The writer puts it in the
+    /// plot settings' groups. Boxed: a layout change holds two rows, and
+    /// most rows have none.
+    pub plot: Option<Box<LayoutPlot>>,
     /// The `LAYOUT` object as a file held it — plot settings and the
     /// rest, opaque — written back as it was. Empty for a layout made
     /// here, which the writer gives a sheet of its own.
@@ -33,6 +39,58 @@ pub struct Layout {
     /// Records of the layout's paper that the drawing has no entity for —
     /// a `VIEWPORT` — kept as the file held them and written back.
     pub kept_entities: Vec<RawEntity>,
+}
+
+/// What of a layout's paper a plot takes (#208): the plot type its
+/// settings name (74).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LayoutArea {
+    /// The sheet: the layout as laid out (5), or its limits (2).
+    Layout,
+    /// What is on the paper (1).
+    Extents,
+    /// A window of the paper (4), its corners (48, 49 and 140, 141).
+    Window(Aabb),
+}
+
+/// A layout's plot settings (#208): the area, the scale — paper units per
+/// unit of the layout, or a fit — and the quarter turns the sheet is
+/// turned counter-clockwise on the page (73: 0 none, 1 a quarter, 2 a
+/// half, 3 three quarters).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LayoutPlot {
+    pub area: LayoutArea,
+    /// `None` to fit; otherwise the paper's millimetres per layout unit.
+    pub scale: Option<f64>,
+    pub turns: u8,
+}
+
+impl Default for LayoutPlot {
+    /// A whole sheet at one to one, upright: what a layout made here plots.
+    fn default() -> Self {
+        Self {
+            area: LayoutArea::Layout,
+            scale: Some(1.0),
+            turns: 0,
+        }
+    }
+}
+
+impl LayoutPlot {
+    /// Whether the settings are ones a plot can follow.
+    pub fn is_valid(&self) -> bool {
+        self.turns < 4
+            && self
+                .scale
+                .is_none_or(|scale| scale.is_finite() && scale > 0.0)
+            && match self.area {
+                LayoutArea::Window(window) => {
+                    let size = window.max() - window.min();
+                    size.x > 0.0 && size.y > 0.0
+                }
+                _ => true,
+            }
+    }
 }
 
 impl Layout {
@@ -48,6 +106,62 @@ impl Layout {
 }
 
 impl Layout {
+    /// A layout with these plot settings.
+    #[must_use]
+    pub fn with_plot(self, plot: LayoutPlot) -> Self {
+        Self {
+            plot: Some(Box::new(plot)),
+            ..self
+        }
+    }
+
+    /// The plot settings: as set here, or as the file's kept groups give
+    /// them — the plot type (74), the window (48, 49, 140, 141), the scale
+    /// (142 over 143, or a fit when the flags (70, bit 16) and the
+    /// standard scale (75, 0) say so), the rotation (73) — or a whole
+    /// sheet at one to one for a layout made here.
+    pub fn plot_settings(&self) -> LayoutPlot {
+        if let Some(plot) = self.plot.as_deref().filter(|plot| plot.is_valid()) {
+            return *plot;
+        }
+        let value = |code: i32| {
+            self.kept
+                .iter()
+                .find(|(c, _)| *c == code)
+                .and_then(|(_, v)| v.trim().parse::<f64>().ok())
+                .filter(|v| v.is_finite())
+        };
+        if self.kept.is_empty() {
+            return LayoutPlot::default();
+        }
+        let window = || {
+            let (x0, y0) = (value(48)?, value(49)?);
+            let (x1, y1) = (value(140)?, value(141)?);
+            let window = Aabb::from_points(Point2::new(x0, y0), Point2::new(x1, y1));
+            let size = window.max() - window.min();
+            (size.x > 0.0 && size.y > 0.0).then_some(window)
+        };
+        let area = match value(74).map(|v| v as i64) {
+            Some(1) => LayoutArea::Extents,
+            Some(4) => window().map_or(LayoutArea::Layout, LayoutArea::Window),
+            _ => LayoutArea::Layout,
+        };
+        let flags = value(70).map_or(0, |v| v as i64);
+        let standard = value(75).map(|v| v as i64);
+        let scale = if flags & 16 != 0 && standard == Some(0) {
+            None
+        } else {
+            match (value(142), value(143)) {
+                (Some(paper), Some(drawing)) if paper > 0.0 && drawing > 0.0 => {
+                    Some(paper / drawing)
+                }
+                _ => Some(1.0),
+            }
+        };
+        let turns = value(73).map_or(0, |v| (v as i64).rem_euclid(4) as u8);
+        LayoutPlot { area, scale, turns }
+    }
+
     /// A layout with this sheet, in millimetres.
     #[must_use]
     pub fn with_sheet(self, size: Vec2) -> Self {

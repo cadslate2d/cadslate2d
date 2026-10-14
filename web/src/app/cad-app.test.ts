@@ -839,7 +839,7 @@ describe("plot", () => {
   // #194: a layout plots under the drawing's name and its own.
   test("PLOT on a layout saves the sheet under the layout's name", async () => {
     const { host, tick, enter } = harness();
-    enter("LAYOUT", "N", "Sheet one", "L", "10,10", "200,10", "", "PLOT", "", "", "", "", "");
+    enter("LAYOUT", "N", "Sheet one", "L", "10,10", "200,10", "", "PLOT", "", "", "", "", "", "");
     await tick();
     expect(host.files.saved).toHaveLength(1);
     const [saved] = host.files.saved;
