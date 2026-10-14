@@ -21,7 +21,7 @@ use cad_document::{
     EntityRecord, Group, HatchEntity, HatchStyle, Justification, Layer, Layout, LayoutArea,
     LayoutId, LayoutPlot, LayoutTable, LeaderEntity, LineEntity, Linetype, LinetypeDef,
     LinetypeTable, Lineweight, MTextEntity, Measure, PointEntity, PolylineEntity, Properties,
-    Revision, SplineEntity, TextEntity, TextStyle, TextStyleTable, ViewportEntity,
+    Revision, SplineEntity, TextEntity, TextStyle, TextStyleId, TextStyleTable, ViewportEntity,
 };
 
 use crate::properties::{
@@ -595,6 +595,12 @@ impl Writer {
             self.group(9, "$DIMSTYLE");
             self.group(2, &style.name);
         }
+        if settings.current_text_style != TextStyleId::FIRST
+            && let Some(style) = drawing.text_styles().get(settings.current_text_style)
+        {
+            self.group(9, "$TEXTSTYLE");
+            self.group(7, &style.name);
+        }
         // Exactly the default is left out; any other value is written as it is.
         #[allow(clippy::float_cmp)]
         if settings.ltscale != defaults.ltscale {
@@ -849,9 +855,9 @@ impl Writer {
     fn text_style(&mut self, style: &TextStyle) {
         self.group(2, &style.name);
         self.group(70, "0");
-        self.real(40, 0.0);
-        self.real(41, 1.0);
-        self.real(50, 0.0);
+        self.real(40, style.height);
+        self.real(41, style.width_factor);
+        self.real(50, style.oblique.to_degrees());
         self.group(71, "0");
         self.real(42, 2.5);
         self.group(3, "txt");
@@ -1497,6 +1503,14 @@ impl Writer {
         self.group(1, &text_codes(&text.content));
         if text.rotation != 0.0 {
             self.real(50, text.rotation.to_degrees());
+        }
+        // Its own width factor and slant (#221), when they are not the font's.
+        #[allow(clippy::float_cmp)]
+        if text.width_factor != 1.0 {
+            self.real(41, text.width_factor);
+        }
+        if text.oblique != 0.0 {
+            self.real(51, text.oblique.to_degrees());
         }
         let style = styles
             .get(text.style)
@@ -2340,6 +2354,7 @@ mod tests {
                 current_linetype: Linetype::Named(dot),
                 current_lineweight: Lineweight::Hundredths(25),
                 current_dim_style: cad_document::DimStyleId::FIRST,
+                current_text_style: cad_document::TextStyleId::FIRST,
                 ltscale: 20.0,
                 unit: None,
                 point_style: cad_document::PointStyle::new(35, 2.5),

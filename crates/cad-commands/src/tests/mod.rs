@@ -54,6 +54,7 @@ mod selection_sets;
 mod snapping;
 mod spline;
 mod stretch;
+mod style;
 mod text;
 mod tracking;
 mod transform;

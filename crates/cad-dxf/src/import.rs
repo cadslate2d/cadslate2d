@@ -51,6 +51,8 @@ const BAD_LAYER_NAME: &str = "(layer name)";
 const BAD_LINETYPE_NAME: &str = "(linetype name)";
 const BAD_LINETYPE_PATTERN: &str = "(linetype pattern)";
 const BAD_TEXT_STYLE_NAME: &str = "(text style name)";
+/// A text style value no text can be drawn by (#221).
+const BAD_TEXT_STYLE: &str = "(text style values)";
 const BAD_DIM_STYLE_NAME: &str = "(dimension style name)";
 /// Report key for a dimension style with a value a dimension cannot be
 /// drawn by: the row is kept with the default for that value.
@@ -306,6 +308,8 @@ impl Default for Pending {
 struct Header {
     current_layer: Option<String>,
     current_dim_style: Option<String>,
+    /// `$TEXTSTYLE`: the style new texts take, by name (#221).
+    current_text_style: Option<String>,
     current_color: Option<Color>,
     current_linetype: Option<LinetypeRef>,
     current_lineweight: Option<Lineweight>,
@@ -605,6 +609,17 @@ struct Reader<'a> {
     entry_names: HashMap<String, String>,
 }
 
+/// An angle in degrees brought into (−180, 180]: a slant of 345° is one of
+/// −15°.
+fn signed_degrees(degrees: f64) -> f64 {
+    let turned = degrees.rem_euclid(360.0);
+    if turned > 180.0 {
+        turned - 360.0
+    } else {
+        turned
+    }
+}
+
 /// Gives every leader its note (#205): the MTEXT the leader names by
 /// handle, among the same entities, becomes the leader's words and is no
 /// longer an entity of its own. A leader naming no MTEXT here keeps none.
@@ -742,6 +757,9 @@ impl<'a> Reader<'a> {
                 }
                 ("$CLAYER", 8) => self.header.current_layer = Some(group.value.to_owned()),
                 ("$DIMSTYLE", 2) => self.header.current_dim_style = Some(group.value.to_owned()),
+                ("$TEXTSTYLE", 7) => {
+                    self.header.current_text_style = Some(group.value.to_owned());
+                }
                 ("$CECOLOR", 62) => self.header.current_color = number.and_then(color_from_dxf),
                 ("$CELTYPE", 6) => {
                     self.header.current_linetype = Some(LinetypeRef::from_dxf(group.value));
@@ -1490,8 +1508,39 @@ impl<'a> Reader<'a> {
         } else {
             name
         };
+        // Its fixed height (40), width factor (41), and oblique angle (50,
+        // degrees), when a text can be drawn by them (#221); otherwise the
+        // default, reported.
+        let mut style = TextStyle::named(name);
+        let mut dropped = false;
+        if let Some(height) = body.radius {
+            style.height = height;
+        }
+        if let Some(width) = body.width {
+            style.width_factor = width;
+        }
+        if let Some(degrees) = body.start_degrees {
+            style.oblique = signed_degrees(degrees).to_radians();
+        }
+        if let Err(error) = style.check() {
+            dropped = true;
+            let defaults = TextStyle::named(name);
+            match error {
+                cad_document::TextStyleError::Height => style.height = defaults.height,
+                cad_document::TextStyleError::WidthFactor => {
+                    style.width_factor = defaults.width_factor;
+                }
+                cad_document::TextStyleError::Oblique => style.oblique = defaults.oblique,
+            }
+            if style.check().is_err() {
+                style = defaults;
+            }
+        }
+        if dropped {
+            self.report.count_unsupported(BAD_TEXT_STYLE);
+        }
         self.tables
-            .add_text_style(TextStyle::named(name))
+            .add_text_style(style)
             .map_err(|TableFull| self.too_many_rows("STYLE"))
     }
 
@@ -1958,6 +2007,12 @@ impl<'a> Reader<'a> {
                 .as_deref()
                 .and_then(|name| drawing.dim_styles().find(name))
                 .unwrap_or(DimStyleId::FIRST),
+            current_text_style: self
+                .header
+                .current_text_style
+                .as_deref()
+                .and_then(|name| drawing.text_styles().find(name))
+                .unwrap_or(TextStyleId::FIRST),
             current_lineweight: self
                 .header
                 .current_lineweight
@@ -2288,7 +2343,25 @@ impl RecordBody {
             _ => 0.0,
         };
         let insertion = anchor - up * drop;
-        let text = TextEntity::new(insertion, height, rotation, content).justified(justification);
+        let mut text =
+            TextEntity::new(insertion, height, rotation, content).justified(justification);
+        // Its own width factor (41) and oblique angle (51, degrees), when
+        // a text can be drawn by them (#221).
+        if let Some(width) = self.width {
+            if width.is_finite() && (0.01..=100.0).contains(&width) {
+                text.width_factor = width;
+            } else {
+                dropped = true;
+            }
+        }
+        if let Some(degrees) = self.end_degrees {
+            let oblique = signed_degrees(degrees).to_radians();
+            if oblique.is_finite() && oblique.abs() <= TextStyle::MAX_OBLIQUE {
+                text.oblique = oblique;
+            } else {
+                dropped = true;
+            }
+        }
         Ok((text, dropped || !height.is_finite() || height <= 0.0))
     }
 

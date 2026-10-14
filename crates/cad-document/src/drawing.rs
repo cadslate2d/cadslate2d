@@ -21,7 +21,9 @@ use crate::point::{PointStyle, PointStyleError};
 use crate::spatial::RTreeIndex;
 use crate::table::TableChange;
 use crate::tables::Tables;
-use crate::text_style::{TextStyle, TextStyleId, TextStyleTable, initial_text_styles};
+use crate::text_style::{
+    TextStyle, TextStyleError, TextStyleId, TextStyleTable, initial_text_styles,
+};
 use crate::viewport::ViewportError;
 use crate::{
     Change, Color, DrawingSettings, Entity, EntityChange, EntityRecord, EntityStore, Linetype,
@@ -160,6 +162,8 @@ pub enum TransactionError {
     DuplicateDimStyleName(DimStyleId),
     /// A value of the style is not one a dimension can be drawn by.
     BadDimStyle(DimStyleError),
+    /// A value of the style is not one a text can be drawn by (#221).
+    BadTextStyle(TextStyleError),
     /// A dimension that cannot be laid out.
     BadDimension(DimensionError),
     /// The text style does not exist, in the drawing or earlier in this
@@ -262,6 +266,7 @@ impl fmt::Display for TransactionError {
                 write!(f, "dimension style {id} already has that name")
             }
             Self::BadDimStyle(error) => write!(f, "{}", error.explain()),
+            Self::BadTextStyle(error) => write!(f, "{}", error.explain()),
             Self::BadDimension(error) => write!(f, "{}", error.explain()),
             Self::UnknownTextStyle(id) => write!(f, "text style {id} does not exist"),
             Self::PermanentTextStyle => write!(f, "text style Standard cannot be removed"),
@@ -568,6 +573,7 @@ impl Drawing {
         }
         for style in text_styles {
             check_name(&style.name).map_err(TransactionError::BadTextStyleName)?;
+            style.check().map_err(TransactionError::BadTextStyle)?;
             match drawing.text_styles.find(&style.name) {
                 Some(id) if id == TextStyleId::FIRST => {
                     let before = drawing.text_styles.get(TextStyleId::FIRST).cloned();
@@ -961,6 +967,11 @@ impl Drawing {
         self.settings.current_dim_style
     }
 
+    /// The style new texts take (#221).
+    pub fn current_text_style(&self) -> TextStyleId {
+        self.settings.current_text_style
+    }
+
     /// The block table. It always holds `*Model_Space`, the drawing itself.
     /// The tables an entity's geometry is read through: the blocks a
     /// reference places and the styles a dimension is drawn by.
@@ -1036,6 +1047,7 @@ impl Drawing {
         tx.set_current_linetype(settings.current_linetype)?;
         tx.set_ltscale(settings.ltscale)?;
         tx.set_current_dim_style(settings.current_dim_style)?;
+        tx.set_current_text_style(settings.current_text_style)?;
         tx.set_current_color(settings.current_color);
         tx.set_current_lineweight(settings.current_lineweight);
         tx.set_unit(settings.unit);
@@ -1802,7 +1814,10 @@ impl TransactionBuilder<'_> {
                 return Err(TransactionError::DuplicateTextStyleName(other));
             }
         }
-        let after = TextStyle { name };
+        let after = TextStyle {
+            name,
+            ..before.clone()
+        };
         self.push_other(Change::TextStyle(TableChange::Replace {
             id,
             before,
@@ -2180,6 +2195,7 @@ impl TransactionBuilder<'_> {
     /// not taken.
     pub fn add_text_style(&mut self, style: TextStyle) -> Result<TextStyleId, TransactionError> {
         check_name(&style.name).map_err(TransactionError::BadTextStyleName)?;
+        style.check().map_err(TransactionError::BadTextStyle)?;
         let added = self.others().filter_map(|change| match change {
             Change::TextStyle(TableChange::Insert { id, row }) => Some((*id, row)),
             _ => None,
@@ -2199,7 +2215,45 @@ impl TransactionBuilder<'_> {
         Ok(id)
     }
 
-    /// Removes a text style no text has. `Standard` stays.
+    /// Changes a text style's values — the height, width factor, and
+    /// oblique angle new texts take (#221) — keeping its name. No text
+    /// already made changes: a text keeps its own width and slant.
+    pub fn set_text_style_values(
+        &mut self,
+        id: TextStyleId,
+        values: TextStyle,
+    ) -> Result<(), TransactionError> {
+        let before = self
+            .text_style_now(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownTextStyle(id))?;
+        let after = TextStyle {
+            name: before.name.clone(),
+            ..values
+        };
+        after.check().map_err(TransactionError::BadTextStyle)?;
+        self.push_other(Change::TextStyle(TableChange::Replace {
+            id,
+            before,
+            after,
+        }));
+        Ok(())
+    }
+
+    /// Sets the style new texts take. It must exist.
+    pub fn set_current_text_style(&mut self, id: TextStyleId) -> Result<(), TransactionError> {
+        if self.text_style_now(id).is_none() {
+            return Err(TransactionError::UnknownTextStyle(id));
+        }
+        self.set_settings(DrawingSettings {
+            current_text_style: id,
+            ..self.settings_now()
+        });
+        Ok(())
+    }
+
+    /// Removes a text style no text has, and new texts do not take.
+    /// `Standard` stays.
     pub fn remove_text_style(&mut self, id: TextStyleId) -> Result<(), TransactionError> {
         if id == TextStyleId::FIRST {
             return Err(TransactionError::PermanentTextStyle);
@@ -2208,6 +2262,9 @@ impl TransactionBuilder<'_> {
             .text_style_now(id)
             .cloned()
             .ok_or(TransactionError::UnknownTextStyle(id))?;
+        if self.settings_now().current_text_style == id {
+            return Err(TransactionError::TextStyleInUse(id));
+        }
         let uses = |entity: &Entity| match entity {
             Entity::Text(text) => text.style == id,
             Entity::MText(text) => text.style == id,
@@ -4633,6 +4690,7 @@ mod tests {
             current_linetype: Linetype::Named(LinetypeId::from_raw(1)),
             current_lineweight: Lineweight::Hundredths(50),
             current_dim_style: DimStyleId::FIRST,
+            current_text_style: TextStyleId::FIRST,
             ltscale: 25.0,
             unit: Some(LengthUnit::Millimetres),
             point_style: PointStyle::new(3, 2.0),
@@ -5901,6 +5959,8 @@ mod tests {
         /// A text style by name; a text with a style by index (one past
         /// the table is a style that does not exist); a style removed.
         AddTextStyle(u8),
+        RestyleText(usize, f64, f64, f64),
+        SetTextStyle(usize),
         CreateText(f64, usize),
         RemoveTextStyle(usize),
         /// A dimension style by name; one restyled (a text height, which
@@ -5997,6 +6057,9 @@ mod tests {
             1 => (-1.0..5.0_f64).prop_map(Op::SetLtscale),
             1 => (0..100u8, -1.0..5.0_f64).prop_map(|(mode, size)| Op::SetPointStyle(mode, size)),
             1 => (0..6u8).prop_map(Op::AddTextStyle),
+            1 => (any::<usize>(), -1.0..5.0f64, -0.5..3.0f64, -1.7..1.7f64)
+                .prop_map(|(i, height, width, oblique)| Op::RestyleText(i, height, width, oblique)),
+            1 => any::<usize>().prop_map(Op::SetTextStyle),
             2 => (0..5u8, 1.0..50.0f64).prop_map(|(n, len)| Op::DefineBlock(n, len)),
             3 => (any::<usize>(), coordinate(), 0.1..4.0f64).prop_map(|(b, x, s)| Op::PlaceBlock(b, x, s)),
             2 => (any::<usize>(), 1.0..50.0f64).prop_map(|(b, len)| Op::RedefineBlock(b, len)),
@@ -6431,11 +6494,35 @@ mod tests {
                     Op::RemoveTextStyle(pick) => {
                         let styles: Vec<TextStyleId> = drawing.text_styles().iter().map(|(id, _)| id).collect();
                         let id = styles[pick % styles.len()];
-                        let used = drawing.entities().any(|(_, entity)| matches!(entity, Entity::Text(text) if text.style == id));
+                        let used = drawing.entities().any(|(_, entity)| matches!(entity, Entity::Text(text) if text.style == id))
+                            || drawing.current_text_style() == id;
                         let mut tx = drawing.transaction();
                         let removed = tx.remove_text_style(id);
                         tx.commit();
                         prop_assert_eq!(removed.is_ok(), id != TextStyleId::FIRST && !used, "{:?}", removed);
+                    }
+                    // A style's values change, or are refused, and no text
+                    // already made changes with them (#221).
+                    Op::RestyleText(pick, height, width_factor, oblique) => {
+                        let styles: Vec<TextStyleId> = drawing.text_styles().iter().map(|(id, _)| id).collect();
+                        let id = styles[pick % styles.len()];
+                        let texts_before: Vec<Entity> = drawing.entities().map(|(_, e)| e.clone()).collect();
+                        let values = TextStyle { height, width_factor, oblique, ..TextStyle::named("ignored") };
+                        let fine = values.check().is_ok();
+                        let mut tx = drawing.transaction();
+                        let set = tx.set_text_style_values(id, values);
+                        tx.commit();
+                        prop_assert_eq!(set.is_ok(), fine, "{:?}", set);
+                        let texts_after: Vec<Entity> = drawing.entities().map(|(_, e)| e.clone()).collect();
+                        prop_assert_eq!(texts_after, texts_before);
+                    }
+                    Op::SetTextStyle(pick) => {
+                        let styles: Vec<TextStyleId> = drawing.text_styles().iter().map(|(id, _)| id).collect();
+                        let id = styles[pick % styles.len()];
+                        let mut tx = drawing.transaction();
+                        tx.set_current_text_style(id).unwrap();
+                        tx.commit();
+                        prop_assert_eq!(drawing.current_text_style(), id);
                     }
                     Op::AddDimStyle(name) => {
                         let name = format!("Dim {name}");
@@ -6722,6 +6809,7 @@ mod tests {
                     prop_assert!(known(layer.linetype), "layer {} has a linetype that does not exist", id);
                 }
                 prop_assert!(known(drawing.current_linetype()));
+                prop_assert!(drawing.text_styles().contains(drawing.current_text_style()), "the current text style is gone");
                 for (id, entity) in drawing.entities() {
                     if let Entity::Text(text) = entity {
                         prop_assert!(drawing.text_styles().contains(text.style), "text {} has a style that does not exist", id);

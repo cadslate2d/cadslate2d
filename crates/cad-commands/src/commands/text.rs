@@ -9,7 +9,7 @@
 
 use cad_core::Point2;
 use cad_core::tolerance::LinearTolerance;
-use cad_document::{Entity, Justification, TextEntity};
+use cad_document::{Entity, Justification, TextEntity, TextStyle, TextStyleId};
 use cad_input::{ExpectedInput, Keyword};
 
 use super::ltscale::display;
@@ -45,6 +45,9 @@ enum State {
 pub(crate) struct TextCommand {
     state: State,
     justification: Justification,
+    /// The current text style as the command found it (#221): what the
+    /// text takes, and its fixed height, if it has one.
+    style: (TextStyleId, TextStyle),
 }
 
 impl TextCommand {
@@ -52,15 +55,39 @@ impl TextCommand {
         Self {
             state: State::Start,
             justification: Justification::Left,
+            style: (TextStyleId::FIRST, TextStyle::named(TextStyle::STANDARD)),
         }
     }
 
     fn text(&self, start: Point2, height: f64, rotation: f64, content: &str) -> TextEntity {
-        TextEntity::new(start, height, rotation, content).justified(self.justification)
+        TextEntity::new(start, height, rotation, content)
+            .justified(self.justification)
+            .styled(self.style.0, &self.style.1)
+    }
+
+    /// After the start point: the height, unless the style fixes one.
+    fn after_start(&self, start: Point2) -> State {
+        let fixed = self.style.1.height;
+        if fixed > 0.0 {
+            State::Rotation {
+                start,
+                height: fixed,
+            }
+        } else {
+            State::Height { start }
+        }
     }
 }
 
 impl Command for TextCommand {
+    fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
+        let id = ctx.drawing.current_text_style();
+        if let Some(style) = ctx.drawing.text_styles().get(id) {
+            self.style = (id, style.clone());
+        }
+        Step::Continue
+    }
+
     fn prompt(&self) -> Prompt {
         match &self.state {
             State::Start => Prompt::new("Specify start point of text"),
@@ -89,7 +116,7 @@ impl Command for TextCommand {
 
     fn step(&mut self, input: CommandInput, ctx: &mut CommandContext<'_>) -> Step {
         match (&self.state, input) {
-            (State::Start, CommandInput::Point(start)) => self.state = State::Height { start },
+            (State::Start, CommandInput::Point(start)) => self.state = self.after_start(start),
             (State::Start, CommandInput::Keyword(_)) => self.state = State::Justification,
             (State::Start, CommandInput::Accept) => return Step::Finished,
             (State::Justification, CommandInput::Keyword(keyword)) => {
@@ -143,7 +170,7 @@ impl Command for TextCommand {
                 let mut transaction = ctx.transaction();
                 transaction
                     .insert(text)
-                    .expect("a new text has the standard style");
+                    .expect("a new text has the current style, which exists");
                 transaction.commit();
                 return Step::Finished;
             }

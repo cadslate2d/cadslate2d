@@ -29,6 +29,8 @@ enum State {
 pub(crate) struct MTextCommand {
     state: State,
     height: f64,
+    /// The current text style as the command found it (#221).
+    style: cad_document::TextStyleId,
 }
 
 impl MTextCommand {
@@ -36,6 +38,7 @@ impl MTextCommand {
         Self {
             state: State::FirstCorner,
             height: DEFAULT_HEIGHT,
+            style: cad_document::TextStyleId::FIRST,
         }
     }
 
@@ -48,6 +51,18 @@ impl MTextCommand {
 }
 
 impl Command for MTextCommand {
+    /// The paragraph takes the current text style, and its fixed height
+    /// as the height offered, when it has one (#221).
+    fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
+        self.style = ctx.drawing.current_text_style();
+        if let Some(style) = ctx.drawing.text_styles().get(self.style)
+            && style.height > 0.0
+        {
+            self.height = style.height;
+        }
+        Step::Continue
+    }
+
     fn prompt(&self) -> Prompt {
         match &self.state {
             State::FirstCorner => Prompt::new("Specify first corner"),
@@ -106,11 +121,14 @@ impl Command for MTextCommand {
                 if content.trim().is_empty() {
                     return Step::Finished;
                 }
-                let text = MTextEntity::new(*insertion, *width, self.height, 0.0, content);
+                let text = MTextEntity {
+                    style: self.style,
+                    ..MTextEntity::new(*insertion, *width, self.height, 0.0, content)
+                };
                 let mut transaction = ctx.transaction();
                 transaction
                     .insert(text)
-                    .expect("a new paragraph has the standard style");
+                    .expect("a new paragraph has the current style, which exists");
                 transaction.commit();
                 return Step::Finished;
             }

@@ -62,6 +62,12 @@ pub struct TextEntity {
     pub content: String,
     pub style: TextStyleId,
     pub justification: Justification,
+    /// How wide its glyphs are, against the font's own (#221): one as
+    /// drawn. Its style's when made; its own after (DXF 41).
+    pub width_factor: f64,
+    /// How far its glyphs lean from upright, radians, positive to the
+    /// right (#221; DXF 51).
+    pub oblique: f64,
 }
 
 /// The box a text's glyphs sit in: its baseline start, and the unit
@@ -128,6 +134,20 @@ impl TextEntity {
             content: content.into(),
             style: TextStyleId::FIRST,
             justification: Justification::Left,
+            width_factor: 1.0,
+            oblique: 0.0,
+        }
+    }
+
+    /// The same text in style `id`, with the width factor and slant the
+    /// style gives a new text (#221).
+    #[must_use]
+    pub fn styled(self, id: TextStyleId, style: &crate::TextStyle) -> Self {
+        Self {
+            style: id,
+            width_factor: style.width_factor,
+            oblique: style.oblique,
+            ..self
         }
     }
 
@@ -148,9 +168,10 @@ impl TextEntity {
         }
     }
 
-    /// The width of the text, in drawing units, by the font's metrics.
+    /// The width of the text, in drawing units, by the font's metrics and
+    /// its width factor: how far its baseline runs.
     pub fn width(&self) -> f64 {
-        Font::simplex().advance(&self.content) * self.height
+        Font::simplex().advance(&self.content) * self.height * self.width_factor
     }
 
     /// Where the baseline starts: the insertion point, less the
@@ -163,23 +184,46 @@ impl TextEntity {
         Vec2::new(self.rotation.cos(), self.rotation.sin())
     }
 
-    /// The box the glyphs sit in: the font's metrics, placed (DESIGN §34).
+    /// The box the glyphs sit in: the font's metrics, widened by the
+    /// width factor and by as far as a slant leans the top and the bottom
+    /// out of it (DESIGN §34; #221).
     pub fn frame(&self) -> TextFrame {
         let along = self.along();
         let metrics = Font::simplex().metrics(&self.content, self.height);
+        let lean = self.oblique.tan();
+        let (top, bottom) = (metrics.ascent * lean, -metrics.descent * lean);
+        let behind = top.min(bottom).min(0.0);
+        let ahead = top.max(bottom).max(0.0);
         TextFrame {
-            start: self.start(),
+            start: self.start() + along * behind,
             along,
             up: Vec2::new(-along.y, along.x),
-            width: metrics.width,
+            width: metrics.width * self.width_factor + ahead - behind,
             ascent: metrics.ascent,
             descent: metrics.descent,
         }
     }
 
-    /// The strokes that draw the text: polylines in drawing units.
+    /// The strokes that draw the text: polylines in drawing units, the
+    /// font's own widened by the width factor and leaned by the slant.
     pub fn strokes(&self) -> Vec<Vec<Point2>> {
-        Font::simplex().strokes(&self.content, self.start(), self.height, self.rotation)
+        let plain = Font::simplex().strokes(&self.content, Point2::ORIGIN, self.height, 0.0);
+        let (sin, cos) = self.rotation.sin_cos();
+        let lean = self.oblique.tan();
+        let start = self.start();
+        plain
+            .into_iter()
+            .map(|stroke| {
+                stroke
+                    .into_iter()
+                    .map(|point| {
+                        let x = point.x * self.width_factor + point.y * lean;
+                        let y = point.y;
+                        start + Vec2::new(x * cos - y * sin, x * sin + y * cos)
+                    })
+                    .collect()
+            })
+            .collect()
     }
 
     pub fn bounds(&self) -> Aabb {
@@ -218,10 +262,12 @@ impl TextEntity {
                 ..self.clone()
             };
         }
-        let frame = self.frame();
-        let start = transform.apply(frame.start);
-        let end = transform.apply(frame.start + frame.along * frame.width);
-        let top = transform.apply(frame.start + frame.up * self.height);
+        // The baseline, not the box: a slant widens the box beyond it.
+        let (base, along_unit) = (self.start(), self.along());
+        let up_unit = Vec2::new(-along_unit.y, along_unit.x);
+        let start = transform.apply(base);
+        let end = transform.apply(base + along_unit * self.width());
+        let top = transform.apply(base + up_unit * self.height);
         let mut along = transform.apply_angle(self.rotation);
         // Upside down — reading right to left — is turned round: the text
         // runs from the other end of the mirrored baseline. Vertical text
@@ -246,11 +292,13 @@ impl TextEntity {
         } else {
             baseline_start
         };
-        let width = frame.width * transform.scale_factor();
+        let width = self.width() * transform.scale_factor();
         Self {
             insertion: new_start - direction * (self.justification.start_fraction() * width),
             height,
             rotation: along,
+            // Redrawn readable, its glyphs are not mirrored: the slant
+            // stays as it was.
             ..self.clone()
         }
     }
@@ -392,8 +440,13 @@ mod tests {
             content in "[ -~]{1,10}",
             justification in prop::sample::select(Justification::ALL.to_vec()),
             px in -600.0..600.0f64, py in -600.0..600.0f64,
+            width_factor in 0.3..3.0f64, oblique in -1.2..1.2f64,
         ) {
-            let text = TextEntity::new(p(x, y), height, rotation, content.clone()).justified(justification);
+            let text = TextEntity {
+                width_factor,
+                oblique,
+                ..TextEntity::new(p(x, y), height, rotation, content.clone()).justified(justification)
+            };
             let bounds = text.bounds();
             let loose = Aabb::from_points(
                 bounds.min() - Vec2::new(1e-6, 1e-6), bounds.max() + Vec2::new(1e-6, 1e-6));
@@ -409,6 +462,11 @@ mod tests {
             let mirrored = text.transformed(&Transform::mirror(p(0.0, 0.0), p(1.0, 1.0)).unwrap());
             prop_assert!(mirrored.rotation.cos() >= -1e-6, "never upside down");
             prop_assert!((mirrored.width() - text.width()).abs() < 1e-9);
+            prop_assert_eq!(
+                (mirrored.width_factor, mirrored.oblique),
+                (width_factor, oblique),
+                "redrawn readable, as it was"
+            );
         }
     }
 }
@@ -441,9 +499,15 @@ mod layout_metrics {
                 Just(Justification::Center),
                 Just(Justification::Right),
             ],
+            width_factor in 0.3..3.0f64,
+            oblique in -1.2..1.2f64,
         ) {
-            let text = TextEntity::new(Point2::new(x, y), height, rotation, content)
-                .justified(justification);
+            let text = TextEntity {
+                width_factor,
+                oblique,
+                ..TextEntity::new(Point2::new(x, y), height, rotation, content)
+                    .justified(justification)
+            };
             let frame = text.frame();
             let slack = 1e-9 * (1.0 + height + x.abs() + y.abs());
             for point in text.strokes().iter().flatten() {
@@ -453,10 +517,11 @@ mod layout_metrics {
                 prop_assert!(along >= -slack && along <= frame.width + slack);
                 prop_assert!(up >= -frame.descent - slack && up <= frame.ascent + slack);
             }
-            // The insertion point is on the baseline, at the justification's share.
+            // The insertion point is on the baseline, at the justification's
+            // share of how far the baseline runs.
             let share = -justification.start_fraction();
             prop_assert!(close(
-                frame.start + frame.along * (share * frame.width),
+                text.start() + frame.along * (share * text.width()),
                 text.insertion,
                 slack
             ));
@@ -474,8 +539,14 @@ mod layout_metrics {
             factor in 0.1..10.0f64,
             dx in -500.0..500.0f64,
             dy in -500.0..500.0f64,
+            width_factor in 0.3..3.0f64,
+            oblique in -1.2..1.2f64,
         ) {
-            let text = TextEntity::new(Point2::new(3.0, -4.0), height, rotation, content);
+            let text = TextEntity {
+                width_factor,
+                oblique,
+                ..TextEntity::new(Point2::new(3.0, -4.0), height, rotation, content)
+            };
             let about = Point2::new(dx, dy);
             let turn = Transform::rotation(about, degrees);
             let scale = Transform::scaling(about, factor).unwrap();

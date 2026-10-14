@@ -1674,6 +1674,51 @@ fn text_and_styles_from_another_writer() {
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }
 
+/// Text styles and texts from another writer (#221): a style's fixed
+/// height, width factor, and slant; a value no text can be drawn by,
+/// reported; `$TEXTSTYLE`; each text's own width and slant, a slant of
+/// 345° read as −15°; and the same back.
+#[test]
+fn text_styles_and_their_texts_from_another_writer_round_trip() {
+    let import = load("valid", "ezdxf-r2010-text-styles.dxf").unwrap();
+    assert_eq!(
+        import.report.unsupported.get("(text style values)"),
+        Some(&1)
+    );
+    let drawing = &import.drawing;
+    let styles = drawing.text_styles();
+    let narrow = styles.find("NARROW").unwrap();
+    let style = styles.get(narrow).unwrap();
+    assert_eq!((style.height, style.width_factor), (3.5, 0.7));
+    assert!((style.oblique.to_degrees() - 15.0).abs() < 1e-9);
+    assert_eq!(
+        styles
+            .get(styles.find("BAD").unwrap())
+            .unwrap()
+            .width_factor,
+        1.0
+    );
+    assert_eq!(drawing.current_text_style(), narrow, "$TEXTSTYLE");
+    let texts: Vec<(f64, f64)> = drawing
+        .shown()
+        .filter_map(|(_, entity)| match entity {
+            Entity::Text(text) => Some((text.width_factor, text.oblique.to_degrees())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts.len(), 3);
+    assert!((texts[0].0 - 0.7).abs() < 1e-12 && (texts[0].1 - 15.0).abs() < 1e-9);
+    assert!((texts[1].0 - 1.5).abs() < 1e-12 && texts[1].1.abs() < 1e-12);
+    assert!((texts[2].1 + 15.0).abs() < 1e-9, "345° leans back");
+
+    let text = export(drawing);
+    assert!(text.contains("\n  9\n$TEXTSTYLE\n  7\nNARROW\n"));
+    // The slant goes through radians and back: within an ulp of 15°.
+    assert!(text.contains("\n  2\nNARROW\n 70\n0\n 40\n3.5\n 41\n0.7\n 50\n1"));
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(export(&back.drawing), text, "export → import → export");
+}
+
 /// Groups from another writer (#214): named, unnamed, and not selectable,
 /// with their descriptions and their members among the drawing's
 /// entities; one whose only object the drawing cannot hold is reported;

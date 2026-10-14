@@ -86,6 +86,6 @@ pub use store::{DuplicateEntityId, EntityStore};
 pub use table::{Table, TableChange, TableId};
 pub use tables::Tables;
 pub use text::{Justification, TextFrame};
-pub use text_style::{TextStyle, TextStyleChange, TextStyleId, TextStyleTable};
+pub use text_style::{TextStyle, TextStyleChange, TextStyleError, TextStyleId, TextStyleTable};
 pub use transaction::{Change, EntityChange, Transaction};
 pub use viewport::{ViewportEntity, ViewportError};
