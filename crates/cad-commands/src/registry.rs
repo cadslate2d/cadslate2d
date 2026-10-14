@@ -24,6 +24,7 @@ use crate::commands::{
     SelectCommand, SettingsCommand, SplineCommand, StretchCommand, TextCommand, TextEditCommand,
     TransformCommand, UndoCommand, UnitsCommand, XLineCommand, ZoomCommand,
 };
+use crate::session::select_keywords;
 
 type CommandFactory = fn() -> Box<dyn Command>;
 
@@ -58,7 +59,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 84] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 91] = [
             ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
             ("RAY", &[], || Box::new(RayCommand::new())),
             ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
@@ -89,7 +90,30 @@ impl CommandRegistry {
             ("MSPACE", &["MS"], || Box::new(MspaceCommand)),
             ("ALIASEDIT", &[], || Box::new(AliasEditCommand::new())),
             ("SETTINGS", &[], || Box::new(SettingsCommand)),
-            ("SELECT", &[], || Box::new(SelectCommand)),
+            ("SELECT", &[], || Box::new(SelectCommand::new())),
+            // The selection methods by their full names at the idle prompt
+            // (#207): their short forms there are other commands' aliases.
+            ("FENCE", &[], || {
+                Box::new(SelectCommand::opening_with(select_keywords::FENCE))
+            }),
+            ("WPOLYGON", &["WP"], || {
+                Box::new(SelectCommand::opening_with(select_keywords::WPOLYGON))
+            }),
+            ("CPOLYGON", &["CPOLY"], || {
+                Box::new(SelectCommand::opening_with(select_keywords::CPOLYGON))
+            }),
+            ("PREVIOUS", &[], || {
+                Box::new(SelectCommand::opening_with(select_keywords::PREVIOUS))
+            }),
+            ("LAST", &[], || {
+                Box::new(SelectCommand::opening_with(select_keywords::LAST))
+            }),
+            ("ALL", &[], || {
+                Box::new(SelectCommand::opening_with(select_keywords::ALL))
+            }),
+            ("REMOVE", &[], || {
+                Box::new(SelectCommand::opening_with(select_keywords::REMOVE))
+            }),
             ("QSELECT", &["QS"], || Box::new(QselectCommand::new())),
             ("ERASE", &["E"], || Box::new(EraseCommand)),
             ("MOVE", &["M"], || Box::new(TransformCommand::moving())),

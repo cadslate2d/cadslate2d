@@ -450,7 +450,7 @@ fn qselect_by_kind_alone() {
     h.enter("line");
     assert_eq!(
         h.prompt(),
-        "Property to test or [Layer/Color/LType/LWeight] <none>:"
+        "Property to test or [Layer/Color/LType/LWeight/Style/DIMstyle/Block/Append/Remove/Done] <none>:"
     );
     h.enter("");
     assert_eq!(last(&h), "3 found.");
@@ -475,8 +475,10 @@ fn qselect_by_layer_equal_and_not_equal() {
     h.enter_all(&["QS", "", "L"]);
     assert_eq!(h.prompt(), "Layer name, after = or <>:");
     h.enter("= walls");
+    assert_eq!(last(&h), "2 match so far.");
+    h.enter("");
     assert_eq!(selected(&h), vec![ids[2], ids[3]]);
-    h.enter_all(&["QS", "line", "L", "<> WALLS"]);
+    h.enter_all(&["QS", "line", "L", "<> WALLS", ""]);
     assert_eq!(selected(&h), vec![ids[0], ids[1]]);
 }
 
@@ -484,21 +486,21 @@ fn qselect_by_layer_equal_and_not_equal() {
 fn qselect_compares_colour_numbers_and_lineweights() {
     let mut h = styled();
     let ids = h.ids();
-    h.enter_all(&["QS", "", "C", "< 3"]);
+    h.enter_all(&["QS", "", "C", "< 3", ""]);
     assert_eq!(selected(&h), vec![ids[0]]);
-    h.enter_all(&["QS", "", "C", "> 1"]);
+    h.enter_all(&["QS", "", "C", "> 1", ""]);
     assert_eq!(selected(&h), vec![ids[1]]);
-    h.enter_all(&["QS", "", "C", "red"]);
+    h.enter_all(&["QS", "", "C", "red", ""]);
     assert_eq!(selected(&h), vec![ids[0]]);
-    h.enter_all(&["QS", "", "C", "<> bylayer"]);
+    h.enter_all(&["QS", "", "C", "<> bylayer", ""]);
     assert_eq!(selected(&h), vec![ids[0], ids[1]]);
-    h.enter_all(&["QS", "", "LW", "> 0.3"]);
+    h.enter_all(&["QS", "", "LW", "> 0.3", ""]);
     assert_eq!(selected(&h), vec![ids[2]]);
-    h.enter_all(&["QS", "", "LW", "= 0.5"]);
+    h.enter_all(&["QS", "", "LW", "= 0.5", ""]);
     assert_eq!(selected(&h), vec![ids[2]]);
-    h.enter_all(&["QS", "", "LT", "= continuous"]);
+    h.enter_all(&["QS", "", "LT", "= continuous", ""]);
     assert_eq!(last(&h), "0 found.");
-    h.enter_all(&["QS", "", "LT", "<> continuous"]);
+    h.enter_all(&["QS", "", "LT", "<> continuous", ""]);
     assert_eq!(last(&h), "4 found.");
 }
 
@@ -516,7 +518,7 @@ fn qselect_refuses_what_makes_no_sense_and_asks_again() {
     assert_eq!(last(&h), "A layer is tested with = or <>.");
     h.enter("nowhere");
     assert_eq!(last(&h), "No layer named \"nowhere\".");
-    h.enter("= walls");
+    h.enter_all(&["= walls", ""]);
     assert_eq!(last(&h), "2 found.");
     h.enter_all(&["QS", "", "C", "< bylayer"]);
     assert_eq!(last(&h), "< and > compare colour numbers.");
@@ -533,4 +535,154 @@ fn qselect_refuses_what_makes_no_sense_and_asks_again() {
     h.escape();
     h.enter_all(&["QS", "", "LT", "< continuous"]);
     assert_eq!(last(&h), "A linetype is tested with = or <>.");
+}
+
+/// #207: several tests narrow to what passes all of them; `Append` adds
+/// what is found to the selection, `Remove` takes it away; the text
+/// style, dimension style, and block tests read the row's name.
+#[test]
+fn qselect_narrows_by_several_properties_and_appends_or_removes() {
+    let mut h = styled();
+    let ids = h.ids();
+    // Lines on walls, then not red: of the two lines on walls, both.
+    h.enter_all(&["QS", "line", "L", "= walls"]);
+    assert_eq!(last(&h), "1 match so far.");
+    assert_eq!(
+        h.prompt(),
+        "Another property to test or [Layer/Color/LType/LWeight/Style/DIMstyle/Block/Append/Remove/Done] <done>:"
+    );
+    h.enter_all(&["LW", "= 0.5", "D"]);
+    assert_eq!(last(&h), "1 found.");
+    assert_eq!(selected(&h), vec![ids[2]]);
+    // Two tests that cannot both hold: nothing.
+    h.enter_all(&["QS", "", "C", "red", "C", "= 3", ""]);
+    assert_eq!(last(&h), "0 found.");
+    // Append the red line to a selection of the circle; remove it again.
+    h.enter_all(&["QS", "circle", ""]);
+    assert_eq!(selected(&h), vec![ids[3]]);
+    h.enter("QS");
+    h.enter_all(&["", "A"]);
+    assert_eq!(last(&h), "What is found will be added to the selection.");
+    h.enter_all(&["C", "red", ""]);
+    assert_eq!(last(&h), "1 found and added: 2 selected.");
+    assert_eq!(selected(&h), vec![ids[0], ids[3]]);
+    h.enter_all(&["QS", "", "R", "C", "red", ""]);
+    assert_eq!(last(&h), "1 found and removed: 1 selected.");
+    assert_eq!(selected(&h), vec![ids[3]]);
+}
+
+#[test]
+fn qselect_tests_text_styles_dimension_styles_and_blocks_by_name() {
+    use cad_document::{
+        Block, BlockReferenceEntity, DimensionEntity, EntityRecord, Measure, TextEntity,
+    };
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    let tick = tx
+        .define_block(Block::new(
+            "TICK",
+            p(0.0, 0.0),
+            vec![EntityRecord::new(
+                line(0.0, 0.0, 10.0, 0.0),
+                Properties::default(),
+            )],
+        ))
+        .unwrap();
+    tx.insert(TextEntity::new(p(0.0, 0.0), 5.0, 0.0, "Plain"))
+        .unwrap();
+    tx.insert(DimensionEntity::new(
+        Measure::Aligned {
+            a: p(0.0, 20.0),
+            b: p(50.0, 20.0),
+        },
+        p(25.0, 30.0),
+    ))
+    .unwrap();
+    tx.insert(BlockReferenceEntity::new(tick, p(200.0, 0.0), 1.0, 0.0))
+        .unwrap();
+    tx.insert(line(0.0, 60.0, 10.0, 60.0)).unwrap();
+    tx.commit();
+    let mut h = Harness::with_drawing(drawing);
+    h.enter_all(&["QS", "", "S", "= standard", ""]);
+    assert_eq!(last(&h), "1 found.", "the text alone has a text style");
+    h.enter_all(&["QS", "", "DIM", "= Standard", ""]);
+    assert_eq!(last(&h), "1 found.");
+    h.enter_all(&["QS", "", "B", "= tick", ""]);
+    assert_eq!(last(&h), "1 found.");
+    h.enter_all(&["QS", "", "B", "<> tick", ""]);
+    assert_eq!(last(&h), "0 found.", "only references have a block");
+    h.enter_all(&["QS", "", "B", "= nothing"]);
+    assert_eq!(last(&h), "No block named \"nothing\".");
+    h.enter("< tick");
+    assert_eq!(last(&h), "A block is tested with = or <>.");
+    h.escape();
+}
+
+/// #207: each selection method by its full name at the idle prompt builds
+/// the same selection as through SELECT, its method named in the panel;
+/// the short forms there are still other commands.
+#[test]
+fn the_selection_methods_by_name_at_the_idle_prompt_select_as_select_does() {
+    let lines = || {
+        Harness::with_entities([
+            line(0.0, 0.0, 100.0, 0.0),
+            line(0.0, 20.0, 100.0, 20.0),
+            line(0.0, 40.0, 100.0, 40.0),
+        ])
+    };
+    for (typed, through_select, method) in [
+        (
+            vec!["FENCE", "50,-10", "50,30", "", ""],
+            vec!["SELECT", "F", "50,-10", "50,30", "", ""],
+            "fence",
+        ),
+        (
+            vec!["WP", "-10,-10", "110,-10", "110,30", "-10,30", "", ""],
+            vec![
+                "SELECT", "WP", "-10,-10", "110,-10", "110,30", "-10,30", "", "",
+            ],
+            "window polygon",
+        ),
+        (
+            vec!["CPOLY", "50,-10", "60,-10", "60,30", "50,30", "", ""],
+            vec!["SELECT", "CP", "50,-10", "60,-10", "60,30", "50,30", "", ""],
+            "crossing polygon",
+        ),
+        (vec!["LAST", ""], vec!["SELECT", "L", ""], "last"),
+        (vec!["ALL", ""], vec!["SELECT", "ALL", ""], "all"),
+    ] {
+        let mut a = lines();
+        a.enter_all(&typed);
+        let mut b = lines();
+        b.enter_all(&through_select);
+        assert_eq!(selected(&a), selected(&b), "{typed:?}");
+        assert!(!selected(&a).is_empty(), "{typed:?}");
+        assert_eq!(a.session.selection_summary().method, method, "{typed:?}");
+        assert_eq!(a.prompt(), "Command:");
+    }
+    // PREVIOUS brings back what the last command took.
+    let mut h = lines();
+    h.enter_all(&["ALL", ""]);
+    h.enter_all(&["M", "0,0", "0,5"]);
+    assert!(selected(&h).is_empty());
+    h.enter_all(&["PREVIOUS", ""]);
+    assert_eq!(selected(&h).len(), 3);
+    assert_eq!(h.session.selection_summary().method, "previous");
+    // REMOVE takes clicked objects away from the selection.
+    h.enter("REMOVE");
+    h.click_world(p(50.0, 20.0));
+    h.enter("");
+    assert_eq!(selected(&h).len(), 2);
+    // The short forms are still the commands they always were.
+    h.escape();
+    h.enter("L");
+    assert_eq!(h.prompt(), "Specify first point:");
+    h.escape();
+    h.enter("F");
+    assert!(
+        h.prompt().starts_with("Select first object"),
+        "{}",
+        h.prompt()
+    );
+    h.escape();
 }

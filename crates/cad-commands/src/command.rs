@@ -241,6 +241,14 @@ pub trait Command: Debug {
     /// command waits for a paragraph (DESIGN §5: a narrow, task-specific
     /// editor). What the editor submits arrives as `CommandInput::Text`,
     /// line breaks included, through the command line like anything typed.
+    /// A keyword to take as the command's first input, given once, right
+    /// after it starts: `FENCE` at the idle prompt is `SELECT` with `Fence`
+    /// already typed (#207). The session feeds it through the same
+    /// handling as one typed.
+    fn take_opening_keyword(&mut self) -> Option<Keyword> {
+        None
+    }
+
     fn editor(&self) -> Option<&str> {
         None
     }

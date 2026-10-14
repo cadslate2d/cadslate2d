@@ -45,18 +45,18 @@ const PICK_TOLERANCE: PixelTolerance = PixelTolerance(5.0);
 
 /// The option keywords every "Select objects" prompt offers (#185). They
 /// are the session's, not a command's: the session builds the selection.
-mod select_keywords {
+pub(crate) mod select_keywords {
     use cad_input::Keyword;
 
-    pub(super) const FENCE: Keyword = Keyword::new("Fence");
-    pub(super) const WPOLYGON: Keyword = Keyword::new("WPolygon");
-    pub(super) const CPOLYGON: Keyword = Keyword::new("CPolygon");
-    pub(super) const PREVIOUS: Keyword = Keyword::new("Previous");
-    pub(super) const LAST: Keyword = Keyword::new("Last");
-    pub(super) const ALL: Keyword = Keyword::new("ALL");
-    pub(super) const REMOVE: Keyword = Keyword::new("Remove");
-    pub(super) const ADD: Keyword = Keyword::new("Add");
-    pub(super) const UNDO: Keyword = Keyword::new("Undo");
+    pub(crate) const FENCE: Keyword = Keyword::new("Fence");
+    pub(crate) const WPOLYGON: Keyword = Keyword::new("WPolygon");
+    pub(crate) const CPOLYGON: Keyword = Keyword::new("CPolygon");
+    pub(crate) const PREVIOUS: Keyword = Keyword::new("Previous");
+    pub(crate) const LAST: Keyword = Keyword::new("Last");
+    pub(crate) const ALL: Keyword = Keyword::new("ALL");
+    pub(crate) const REMOVE: Keyword = Keyword::new("Remove");
+    pub(crate) const ADD: Keyword = Keyword::new("Add");
+    pub(crate) const UNDO: Keyword = Keyword::new("Undo");
 
     pub(super) const ADDING: [Keyword; 7] =
         [FENCE, WPOLYGON, CPOLYGON, PREVIOUS, LAST, ALL, REMOVE];
@@ -998,10 +998,19 @@ impl Session {
         self.remember_selection();
         // One invocation is one undo step, however many transactions it commits.
         self.drawing.begin_group();
-        cancelled
+        let mut dirty = cancelled
             | self.advance(ActiveCommand { name, command }, |command, ctx| {
                 command.start(ctx)
-            })
+            });
+        // A command started with its first keyword given (#207).
+        if let Some(keyword) = self
+            .active
+            .as_mut()
+            .and_then(|active| active.command.take_opening_keyword())
+        {
+            dirty |= self.keyword(keyword);
+        }
+        dirty
     }
 
     pub fn key(&mut self, action: KeyAction) -> Dirty {
