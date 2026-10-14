@@ -1674,6 +1674,32 @@ fn text_and_styles_from_another_writer() {
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }
 
+/// Frozen and off layers from another writer (#213): frozen is frozen,
+/// off is off, and a layer both stays both; none of their lines is shown;
+/// each comes back as it went.
+#[test]
+fn frozen_and_off_layers_from_another_writer_round_trip_as_they_were() {
+    let import = load("valid", "ezdxf-r2010-frozen-layers.dxf").unwrap();
+    let drawing = &import.drawing;
+    let layer = |name: &str| {
+        let layers = drawing.layers();
+        let layer = layers.get(layers.find(name).unwrap()).unwrap();
+        (layer.on, layer.frozen)
+    };
+    assert_eq!(layer("FROZEN"), (true, true));
+    assert_eq!(layer("OFF"), (false, false));
+    assert_eq!(layer("BOTH"), (false, true));
+    assert_eq!(layer("SHOWN"), (true, false));
+    assert_eq!(drawing.shown().count(), 1, "only the line on SHOWN");
+
+    let text = export(drawing);
+    assert!(text.contains("\n  2\nFROZEN\n 70\n1\n 62\n1\n"));
+    assert!(text.contains("\n  2\nOFF\n 70\n0\n 62\n-3\n"));
+    assert!(text.contains("\n  2\nBOTH\n 70\n1\n 62\n-5\n"));
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(export(&back.drawing), text, "export → import → export");
+}
+
 /// A baseline chain from another writer (#212): its style's `DIMDLI` is
 /// the baseline spacing, and each dimension stands where chaining the one
 /// before it by that spacing would put it; the spacing round-trips.

@@ -11,6 +11,7 @@ use cad_core::{EntityId, Point2, Vec2, View};
 use cad_document::{Drawing, Entity, LayoutId, TransactionBuilder};
 use cad_input::{CommandAliases, ExpectedInput, Keyword};
 
+use crate::commands::Isolation;
 use crate::log::CommandLog;
 use crate::{DraftingSettings, Grip, HostRequest, OverlayItem, Selection, Toggles};
 
@@ -118,6 +119,9 @@ pub struct CommandContext<'a> {
     /// The space the session is in (#191): the model, or a layout. New
     /// entities go into it through [`transaction`](Self::transaction).
     pub space: LayoutId,
+    /// What the last `LAYISO` changed, for `LAYUNISO` (#213): session
+    /// state, like the view, kept apart from the drawing's history.
+    pub(crate) isolation: &'a mut Option<Isolation>,
     pub(crate) log: &'a mut CommandLog,
     pub(crate) host_request: &'a mut Option<HostRequest>,
     pub(crate) space_request: &'a mut Option<SpaceRequest>,
@@ -237,10 +241,6 @@ pub trait Command: Debug {
         &[]
     }
 
-    /// The text the host should open its paragraph editor with, while this
-    /// command waits for a paragraph (DESIGN §5: a narrow, task-specific
-    /// editor). What the editor submits arrives as `CommandInput::Text`,
-    /// line breaks included, through the command line like anything typed.
     /// A keyword to take as the command's first input, given once, right
     /// after it starts: `FENCE` at the idle prompt is `SELECT` with `Fence`
     /// already typed (#207). The session feeds it through the same
@@ -249,6 +249,18 @@ pub trait Command: Debug {
         None
     }
 
+    /// Whether the object this command asks for may be on a locked layer.
+    /// Nothing acts on what a locked layer holds, so the session refuses
+    /// such a pick — except for a command that changes the layer, not the
+    /// object: `LAYULK` (#213).
+    fn picks_locked_objects(&self) -> bool {
+        false
+    }
+
+    /// The text the host should open its paragraph editor with, while this
+    /// command waits for a paragraph (DESIGN §5: a narrow, task-specific
+    /// editor). What the editor submits arrives as `CommandInput::Text`,
+    /// line breaks included, through the command line like anything typed.
     fn editor(&self) -> Option<&str> {
         None
     }

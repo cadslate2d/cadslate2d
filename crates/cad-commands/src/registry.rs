@@ -15,14 +15,15 @@ use crate::commands::{
     CornerCommand, DimAngularCommand, DimChainCommand, DimLinearCommand, DimRadialCommand,
     DimStyleCommand, DistCommand, DivideCommand, DonutCommand, EdgeCommand, EllipseCommand,
     EraseCommand, ExplodeCommand, ExportCommand, GridCommand, HatchCommand, HatchEditCommand,
-    IdCommand, InsertCommand, JoinCommand, LayerCommand, LayoutCommand, LeaderCommand,
-    LengthenCommand, LineCommand, LinetypeCommand, ListCommand, LtscaleCommand, LweightCommand,
-    MTextCommand, MatchpropCommand, MeasureCommand, MirrorCommand, ModelCommand, MspaceCommand,
-    MviewCommand, OffsetCommand, OpenCommand, OsnapCommand, PanCommand, PeditCommand, PlineCommand,
-    PlotCommand, PointCommand, PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand,
-    PurgeCommand, QselectCommand, RayCommand, RectangCommand, RedoCommand, RenameCommand,
-    SaveCommand, SelectCommand, SettingsCommand, SplineCommand, StretchCommand, TextCommand,
-    TextEditCommand, TransformCommand, UndoCommand, UnitsCommand, XLineCommand, ZoomCommand,
+    IdCommand, InsertCommand, JoinCommand, LayIsoCommand, LayUnisoCommand, LayerAllCommand,
+    LayerCommand, LayerPickCommand, LayoutCommand, LeaderCommand, LengthenCommand, LineCommand,
+    LinetypeCommand, ListCommand, LtscaleCommand, LweightCommand, MTextCommand, MatchpropCommand,
+    MeasureCommand, MirrorCommand, ModelCommand, MspaceCommand, MviewCommand, OffsetCommand,
+    OpenCommand, OsnapCommand, PanCommand, PeditCommand, PlineCommand, PlotCommand, PointCommand,
+    PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand, QselectCommand,
+    RayCommand, RectangCommand, RedoCommand, RenameCommand, SaveCommand, SelectCommand,
+    SettingsCommand, SplineCommand, StretchCommand, TextCommand, TextEditCommand, TransformCommand,
+    UndoCommand, UnitsCommand, XLineCommand, ZoomCommand,
 };
 use crate::session::select_keywords;
 
@@ -59,7 +60,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 93] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 102] = [
             ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
             ("RAY", &[], || Box::new(RayCommand::new())),
             ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
@@ -193,6 +194,19 @@ impl CommandRegistry {
             ("DIMDIAMETER", &["DDI", "DIMDIA"], || {
                 Box::new(DimRadialCommand::diameter())
             }),
+            ("LAYISO", &[], || Box::new(LayIsoCommand::new())),
+            ("LAYUNISO", &[], || Box::new(LayUnisoCommand)),
+            ("LAYOFF", &[], || Box::new(LayerPickCommand::off())),
+            ("LAYON", &[], || Box::new(LayerAllCommand::on())),
+            ("LAYFRZ", &[], || Box::new(LayerPickCommand::freeze())),
+            ("LAYTHW", &[], || Box::new(LayerAllCommand::thaw())),
+            ("LAYLCK", &[], || Box::new(LayerPickCommand::lock())),
+            ("LAYULK", &[], || Box::new(LayerPickCommand::unlock())),
+            (
+                "LAYMCUR",
+                &[],
+                || Box::new(LayerPickCommand::make_current()),
+            ),
             ("DIMBASELINE", &["DBA", "DIMBASE"], || {
                 Box::new(DimChainCommand::baseline())
             }),

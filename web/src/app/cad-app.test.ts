@@ -543,6 +543,7 @@ describe("layers for the panel", () => {
         name: "0",
         color: 7,
         on: true,
+        frozen: false,
         locked: false,
         current: true,
         linetype: "Continuous",
@@ -561,7 +562,7 @@ describe("layers for the panel", () => {
     ]);
     // Every step is in the log, as if typed.
     expect(snapshot.log).toContain(
-      "Press Enter to finish or [?/New/Set/Color/LWeight/LType/ON/OFF/Lock/Unlock/Rename/Delete]: New",
+      "Press Enter to finish or [?/New/Set/Color/LWeight/LType/ON/OFF/Freeze/Thaw/Lock/Unlock/Rename/Delete]: New",
     );
     expect(snapshot.log).toContain("Enter name(s) for new layer(s): walls");
     expect(snapshot.log).toContain("1 layer created.");
@@ -573,7 +574,7 @@ describe("layers for the panel", () => {
     app.run("LAYER", "Delete", "walls", "");
     await tick();
     expect(app.ui.getSnapshot().log.at(-2)).toBe(
-      'Layer "walls" is the current layer: it cannot be switched off or deleted.',
+      'Layer "walls" is the current layer: it cannot be switched off, frozen, or deleted.',
     );
     expect(app.ui.getSnapshot().layers).toHaveLength(2);
 

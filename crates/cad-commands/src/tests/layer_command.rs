@@ -8,8 +8,7 @@ use cad_document::{Color, Layer, LayerId, Properties};
 
 use crate::testing::Harness;
 
-const OPTIONS: &str =
-    "Press Enter to finish or [?/New/Set/Color/LWeight/LType/ON/OFF/Lock/Unlock/Rename/Delete]:";
+const OPTIONS: &str = "Press Enter to finish or [?/New/Set/Color/LWeight/LType/ON/OFF/Freeze/Thaw/Lock/Unlock/Rename/Delete]:";
 
 fn last(h: &Harness) -> String {
     h.log().last().cloned().unwrap_or_default()
@@ -267,7 +266,7 @@ fn on_off_lock_and_unlock_switch_the_layers_named() {
     h.enter_all(&["LA", "OFF", "walls,0"]);
     assert_eq!(
         last(&h),
-        "Layer \"0\" is the current layer: it cannot be switched off or deleted."
+        "Layer \"0\" is the current layer: it cannot be switched off, frozen, or deleted."
     );
     h.enter("");
     assert!(layer(&h, "walls").on);
@@ -277,6 +276,48 @@ fn on_off_lock_and_unlock_switch_the_layers_named() {
     assert_eq!(h.prompt(), OPTIONS);
     assert_eq!(last(&h), "An option keyword is required.");
     h.escape();
+}
+
+#[test]
+fn freeze_and_thaw_hide_and_show_a_layer_apart_from_on_and_off() {
+    let mut h = with_layers();
+    h.enter_all(&[
+        "LA", "S", "walls", "", "L", "0,0", "100,0", "", "LA", "S", "0",
+    ]);
+    h.enter("F");
+    assert_eq!(h.prompt(), "Enter name(s) of layer(s) to freeze:");
+    h.enter("walls");
+    assert_eq!(last(&h), "1 layer frozen.");
+    assert!(layer(&h, "walls").frozen && layer(&h, "walls").on);
+    h.enter("");
+    h.click_world(Point2::new(50.0, 0.0));
+    h.escape();
+    assert!(
+        h.session.selection().is_empty(),
+        "a frozen layer's objects are not there"
+    );
+
+    // Frozen and made current: refused; the current layer cannot be frozen.
+    h.enter_all(&["LA", "S", "walls"]);
+    assert_eq!(
+        last(&h),
+        "Layer \"walls\" is frozen: thaw it before making it current."
+    );
+    h.enter_all(&["F", "0"]);
+    assert_eq!(
+        last(&h),
+        "Layer \"0\" is the current layer: it cannot be switched off, frozen, or deleted."
+    );
+    // Listed as frozen; thawed, its objects are there again.
+    h.enter("?");
+    assert!(
+        h.log()
+            .contains(&"  \"walls\": colour 7, on, frozen".to_owned())
+    );
+    h.enter_all(&["T", "walls", ""]);
+    assert!(h.log().contains(&"1 layer thawed.".to_owned()));
+    h.click_world(Point2::new(50.0, 0.0));
+    assert_eq!(h.session.selection().len(), 1);
 }
 
 #[test]
@@ -362,7 +403,7 @@ fn delete_removes_empty_layers_and_refuses_the_rest() {
         ("walls", "Layer \"walls\" has objects on it."),
         (
             "doors",
-            "Layer \"doors\" is the current layer: it cannot be switched off or deleted.",
+            "Layer \"doors\" is the current layer: it cannot be switched off, frozen, or deleted.",
         ),
         ("nowhere", "There is no layer \"nowhere\"."),
         ("spare,walls", "Layer \"walls\" has objects on it."),
@@ -448,6 +489,7 @@ fn the_ui_state_lists_the_layers_as_the_panel_shows_them() {
         color,
         rgb,
         on: true,
+        frozen: false,
         locked: false,
         current: false,
         linetype: "Continuous".to_owned(),

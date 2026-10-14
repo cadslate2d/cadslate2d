@@ -92,6 +92,8 @@ pub struct LayerRow {
     /// What the colour looks like, or `None` for the theme's foreground.
     pub rgb: Option<[u8; 3]>,
     pub on: bool,
+    /// Frozen (#213): hidden like a layer that is off, switched apart.
+    pub frozen: bool,
     pub locked: bool,
     /// New objects go on this layer.
     pub current: bool,

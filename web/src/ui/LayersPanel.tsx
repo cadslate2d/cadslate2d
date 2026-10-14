@@ -11,6 +11,7 @@ import {
   renameLayer,
   setCurrent,
   swatchColor,
+  toggleFrozen,
   toggleLocked,
   toggleOn,
   type CommandScript,
@@ -36,6 +37,15 @@ const EYE = icon(
 );
 const EYE_OFF = icon(
   <path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8zM3 13 13 3" />,
+);
+const SNOWFLAKE = icon(
+  <path d="M8 1.5v13M2.4 4.75l11.2 6.5M2.4 11.25l11.2-6.5M6.5 2.5 8 4l1.5-1.5M6.5 13.5 8 12l1.5 1.5" />,
+);
+const SUN = icon(
+  <>
+    <circle cx="8" cy="8" r="2.5" />
+    <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" />
+  </>,
 );
 const LOCK = icon(
   <>
@@ -132,6 +142,14 @@ function Row({
           layer.on,
           toggleOn(layer),
           layer.on ? EYE : EYE_OFF,
+        )}
+      </td>
+      <td>
+        {button(
+          layer.frozen ? "Thaw" : "Freeze",
+          layer.frozen,
+          toggleFrozen(layer),
+          layer.frozen ? SNOWFLAKE : SUN,
         )}
       </td>
       <td>
@@ -243,6 +261,9 @@ export function LayersPanel({ app }: { app: CadApp }) {
             <tr>
               <th scope="col" title="On">
                 On
+              </th>
+              <th scope="col" title="Frozen">
+                Freeze
               </th>
               <th scope="col" title="Locked">
                 Lock

@@ -26,6 +26,11 @@ pub struct Layer {
     pub lineweight: Lineweight,
     /// Whether the layer's objects are shown and can be picked.
     pub on: bool,
+    /// Whether the layer is frozen (#213): its objects are not shown or
+    /// picked, as when it is off. A separate switch so that a file's
+    /// frozen layer stays frozen, and thawing it does not switch on what
+    /// was off.
+    pub frozen: bool,
     /// Whether the layer's objects are protected from change.
     pub locked: bool,
 }
@@ -45,8 +50,14 @@ impl Layer {
             linetype: Linetype::CONTINUOUS,
             lineweight: Lineweight::Default,
             on: true,
+            frozen: false,
             locked: false,
         }
+    }
+
+    /// Whether what is on the layer is shown: it is on and not frozen.
+    pub fn is_shown(&self) -> bool {
+        self.on && !self.frozen
     }
 }
 

@@ -18,6 +18,13 @@ export const toggleOn = (layer: LayerRow): CommandScript => [
   "",
 ];
 
+export const toggleFrozen = (layer: LayerRow): CommandScript => [
+  "LAYER",
+  layer.frozen ? "Thaw" : "Freeze",
+  layer.name,
+  "",
+];
+
 export const toggleLocked = (layer: LayerRow): CommandScript => [
   "LAYER",
   layer.locked ? "Unlock" : "Lock",

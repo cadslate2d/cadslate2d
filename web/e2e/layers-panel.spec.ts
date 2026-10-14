@@ -60,7 +60,8 @@ test.describe("Layers panel", () => {
     await panel(page).getByRole("button", { name: "Delete partitions" }).click();
     await expect(
       logLines(page).filter({
-        hasText: 'Layer "partitions" is the current layer: it cannot be switched off or deleted.',
+        hasText:
+          'Layer "partitions" is the current layer: it cannot be switched off, frozen, or deleted.',
       }),
     ).toHaveCount(1);
     // Layer 0 is permanent: nothing offers to delete or rename it.

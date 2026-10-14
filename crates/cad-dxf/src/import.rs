@@ -1150,8 +1150,8 @@ impl<'a> Reader<'a> {
     }
 
     /// A row of the LAYER table. Its name must be one a layer can have; the
-    /// first row of a name counts. A negative colour, or the frozen flag,
-    /// is a layer that is off.
+    /// first row of a name counts. A negative colour is a layer that is
+    /// off; the frozen flag, one that is frozen (#213).
     fn table_layer(&mut self, body: &RecordBody) -> Result<(), DxfError> {
         let Some(name) = body.name.as_deref().filter(|name| check_name(name).is_ok()) else {
             self.report.count_unsupported(BAD_LAYER_NAME);
@@ -1171,9 +1171,7 @@ impl<'a> Reader<'a> {
         if true_colour_dropped {
             self.report.count_unsupported(LAYER_TRUE_COLOUR);
         }
-        if body.flags & LAYER_FROZEN != 0 {
-            layer.on = false;
-        }
+        layer.frozen = body.flags & LAYER_FROZEN != 0;
         layer.locked = body.flags & LAYER_LOCKED != 0;
         if let Some(Lineweight::Hundredths(hundredths)) =
             body.lineweight.and_then(lineweight_from_dxf)
@@ -1847,7 +1845,7 @@ impl<'a> Reader<'a> {
             .current_layer
             .as_deref()
             .and_then(|name| drawing.layers().find(name))
-            .filter(|id| drawing.layers().get(*id).is_some_and(|layer| layer.on))
+            .filter(|id| drawing.layers().get(*id).is_some_and(Layer::is_shown))
             .unwrap_or(LayerId::FIRST);
         let current_linetype = match &self.header.current_linetype {
             Some(LinetypeRef::ByBlock) => Linetype::ByBlock,
@@ -3232,7 +3230,7 @@ mod tests {
     }
 
     #[test]
-    fn a_frozen_layer_is_off_and_a_lineweight_on_a_layer_is_kept() {
+    fn a_frozen_layer_is_frozen_and_a_lineweight_on_a_layer_is_kept() {
         let tables = [
             (0, "TABLE"),
             (2, "LAYER"),
@@ -3261,7 +3259,11 @@ mod tests {
         let layers = import.drawing.layers();
         assert_eq!(layers.len(), 3, "a repeated name counts once");
         let frozen = layers.get(layers.find("FROZEN").unwrap()).unwrap();
-        assert!(!frozen.on && !frozen.locked);
+        assert!(
+            frozen.frozen && frozen.on && !frozen.locked,
+            "frozen, not off (#213)"
+        );
+        assert!(!frozen.is_shown());
         assert_eq!(frozen.color, Color::Index(3), "the first row of a name");
         assert_eq!(frozen.lineweight, Lineweight::Hundredths(100));
         let odd = layers.get(layers.find("odd").unwrap()).unwrap();

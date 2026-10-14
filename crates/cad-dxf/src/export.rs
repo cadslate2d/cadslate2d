@@ -25,8 +25,8 @@ use cad_document::{
 };
 
 use crate::properties::{
-    LAYER_LOCKED, LINETYPE_ALIGNMENT_A, LINETYPE_BY_BLOCK, LINETYPE_BY_LAYER, color_to_dxf,
-    lineweight_to_dxf, pattern_to_dxf,
+    LAYER_FROZEN, LAYER_LOCKED, LINETYPE_ALIGNMENT_A, LINETYPE_BY_BLOCK, LINETYPE_BY_LAYER,
+    color_to_dxf, lineweight_to_dxf, pattern_to_dxf,
 };
 
 /// The DXF release written, as stored in `$ACADVER`: R2000, the first
@@ -796,11 +796,14 @@ impl Writer {
         }
     }
 
-    /// A LAYER row's own groups: flags, colour — negative when the layer
-    /// is off — linetype, lineweight, and the plot style every layer shares.
+    /// A LAYER row's own groups: flags — frozen, locked — colour —
+    /// negative when the layer is off — linetype, lineweight, and the plot
+    /// style every layer shares.
     fn layer(&mut self, layer: &Layer, table: &LinetypeTable, plot_style: Handle) {
         self.group(2, &layer.name);
-        self.int(70, if layer.locked { LAYER_LOCKED } else { 0 });
+        let frozen = if layer.frozen { LAYER_FROZEN } else { 0 };
+        let locked = if layer.locked { LAYER_LOCKED } else { 0 };
+        self.int(70, frozen | locked);
         let color = match layer.color {
             Color::Index(index) => i64::from(index),
             // A layer's colour is what ByLayer means: an indirection here is

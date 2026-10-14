@@ -27,10 +27,12 @@ const ON: Keyword = Keyword::new("ON");
 const OFF: Keyword = Keyword::new("OFF");
 const LOCK: Keyword = Keyword::new("Lock");
 const UNLOCK: Keyword = Keyword::new("Unlock");
+const FREEZE: Keyword = Keyword::new("Freeze");
+const THAW: Keyword = Keyword::new("Thaw");
 const RENAME: Keyword = Keyword::new("Rename");
 const DELETE: Keyword = Keyword::new("Delete");
-const OPTIONS: [Keyword; 12] = [
-    LIST, NEW, SET, COLOR, LWEIGHT, LTYPE, ON, OFF, LOCK, UNLOCK, RENAME, DELETE,
+const OPTIONS: [Keyword; 14] = [
+    LIST, NEW, SET, COLOR, LWEIGHT, LTYPE, ON, OFF, FREEZE, THAW, LOCK, UNLOCK, RENAME, DELETE,
 ];
 
 /// A switch that some options throw on every layer named.
@@ -38,6 +40,8 @@ const OPTIONS: [Keyword; 12] = [
 enum Switch {
     On,
     Off,
+    Freeze,
+    Thaw,
     Lock,
     Unlock,
 }
@@ -47,6 +51,8 @@ impl Switch {
         match self {
             Self::On => layer.on = true,
             Self::Off => layer.on = false,
+            Self::Freeze => layer.frozen = true,
+            Self::Thaw => layer.frozen = false,
             Self::Lock => layer.locked = true,
             Self::Unlock => layer.locked = false,
         }
@@ -57,6 +63,8 @@ impl Switch {
         match self {
             Self::On => "switch on",
             Self::Off => "switch off",
+            Self::Freeze => "freeze",
+            Self::Thaw => "thaw",
             Self::Lock => "lock",
             Self::Unlock => "unlock",
         }
@@ -67,6 +75,8 @@ impl Switch {
         match self {
             Self::On => "switched on",
             Self::Off => "switched off",
+            Self::Freeze => "frozen",
+            Self::Thaw => "thawed",
             Self::Lock => "locked",
             Self::Unlock => "unlocked",
         }
@@ -127,7 +137,7 @@ fn find(ctx: &CommandContext<'_>, name: &str) -> Result<LayerId, String> {
 }
 
 /// Why the layer table refused a change, in the user's terms.
-fn explain(ctx: &CommandContext<'_>, error: TransactionError) -> String {
+pub(super) fn explain(ctx: &CommandContext<'_>, error: TransactionError) -> String {
     let name = |id: LayerId| {
         ctx.drawing
             .layers()
@@ -142,11 +152,15 @@ fn explain(ctx: &CommandContext<'_>, error: TransactionError) -> String {
         TransactionError::PermanentLayer => "Layer \"0\" cannot be renamed or deleted.".to_owned(),
         TransactionError::LayerInUse(id) => format!("Layer \"{}\" has objects on it.", name(id)),
         TransactionError::CurrentLayer(id) => format!(
-            "Layer \"{}\" is the current layer: it cannot be switched off or deleted.",
+            "Layer \"{}\" is the current layer: it cannot be switched off, frozen, or deleted.",
             name(id)
         ),
         TransactionError::LayerIsOff(id) => format!(
             "Layer \"{}\" is off: switch it on before making it current.",
+            name(id)
+        ),
+        TransactionError::LayerIsFrozen(id) => format!(
+            "Layer \"{}\" is frozen: thaw it before making it current.",
             name(id)
         ),
         other => other.to_string(),
@@ -195,6 +209,9 @@ impl LayerCommand {
                         ", {}",
                         layer.linetype.describe(ctx.drawing.linetypes())
                     ));
+                }
+                if layer.frozen {
+                    line.push_str(", frozen");
                 }
                 if layer.locked {
                     line.push_str(", locked");
@@ -420,6 +437,8 @@ impl Command for LayerCommand {
                     LTYPE => State::Ltype,
                     ON => State::Switch(Switch::On),
                     OFF => State::Switch(Switch::Off),
+                    FREEZE => State::Switch(Switch::Freeze),
+                    THAW => State::Switch(Switch::Thaw),
                     LOCK => State::Switch(Switch::Lock),
                     UNLOCK => State::Switch(Switch::Unlock),
                     RENAME => State::RenameFrom,

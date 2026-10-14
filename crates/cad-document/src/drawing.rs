@@ -106,10 +106,13 @@ pub enum TransactionError {
     BadLayerName(NameError),
     /// This layer already has the name, give or take its case.
     DuplicateLayerName(LayerId),
-    /// The layer is the current one, so it cannot be removed or switched off.
+    /// The layer is the current one, so it cannot be removed, switched
+    /// off, or frozen.
     CurrentLayer(LayerId),
     /// The layer is off, so it cannot be made the current one.
     LayerIsOff(LayerId),
+    /// The layer is frozen, so it cannot be made the current one (#213).
+    LayerIsFrozen(LayerId),
     /// The linetype does not exist, in the drawing or earlier in this
     /// transaction.
     UnknownLinetype(LinetypeId),
@@ -214,6 +217,7 @@ impl fmt::Display for TransactionError {
             Self::DuplicateLayerName(id) => write!(f, "layer {id} already has that name"),
             Self::CurrentLayer(id) => write!(f, "layer {id} is the current layer"),
             Self::LayerIsOff(id) => write!(f, "layer {id} is off"),
+            Self::LayerIsFrozen(id) => write!(f, "layer {id} is frozen"),
             Self::UnknownLinetype(id) => write!(f, "linetype {id} does not exist"),
             Self::LinetypeAlreadyChanged(id) => {
                 write!(f, "linetype {id} was already changed in this transaction")
@@ -846,7 +850,7 @@ impl Drawing {
                     && self
                         .layers
                         .get(record.properties.layer)
-                        .is_some_and(|layer| layer.on)
+                        .is_some_and(Layer::is_shown)
             })
             .map(|(id, record)| (id, &*record.entity))
     }
@@ -992,11 +996,11 @@ impl Drawing {
         self.layers.get(self.properties(id)?.layer)
     }
 
-    /// Whether the entity is shown: it exists and its layer is on. What is
-    /// not shown is not there for the pointer either — not picked, not
-    /// selected, not snapped to.
+    /// Whether the entity is shown: it exists and its layer is on and not
+    /// frozen. What is not shown is not there for the pointer either — not
+    /// picked, not selected, not snapped to.
     pub fn is_shown(&self, id: EntityId) -> bool {
-        self.layer_of(id).is_some_and(|layer| layer.on)
+        self.layer_of(id).is_some_and(Layer::is_shown)
     }
 
     /// Whether the entity is protected from change: its layer is locked.
@@ -1120,15 +1124,16 @@ impl Drawing {
     fn apply(&mut self, transaction: &Transaction) -> ApplyReport {
         let mut report = ApplyReport::default();
         let mut shown_changed = false;
-        // A layer switched on or off changes what is shown without naming
-        // an entity: everything may have changed.
+        // A layer switched on or off, frozen or thawed, changes what is
+        // shown without naming an entity: everything may have changed.
         let mut everything = false;
         for change in transaction.changes() {
             shown_changed |= match change {
                 Change::Entity(_) => true,
                 Change::Layer(TableChange::Replace { before, after, .. }) => {
-                    everything |= before.on != after.on;
-                    before.on != after.on
+                    let switched = before.is_shown() != after.is_shown();
+                    everything |= switched;
+                    switched
                 }
                 // A layer that is made or removed has nothing on it.
                 // A block redefined changes the geometry of every reference;
@@ -1837,7 +1842,7 @@ impl TransactionBuilder<'_> {
             self.free_name(&layer.name, Some(id))?;
         }
         self.known_linetype(layer.linetype)?;
-        if !layer.on && self.settings_now().current_layer == id {
+        if !layer.is_shown() && self.settings_now().current_layer == id {
             return Err(TransactionError::CurrentLayer(id));
         }
         self.push_other(Change::Layer(TableChange::Replace {
@@ -1884,13 +1889,17 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
-    /// Makes `id` the layer new objects are put on. It must exist and be on.
+    /// Makes `id` the layer new objects are put on. It must exist, be on,
+    /// and not be frozen.
     pub fn set_current_layer(&mut self, id: LayerId) -> Result<(), TransactionError> {
         let layer = self
             .layer_now(id)
             .ok_or(TransactionError::UnknownLayer(id))?;
         if !layer.on {
             return Err(TransactionError::LayerIsOff(id));
+        }
+        if layer.frozen {
+            return Err(TransactionError::LayerIsFrozen(id));
         }
         self.set_settings(DrawingSettings {
             current_layer: id,
@@ -3674,6 +3683,54 @@ mod tests {
         let imported = Drawing::new().with_unit(Some(LengthUnit::Inches));
         assert_eq!(imported.unit(), Some(LengthUnit::Inches));
         assert!(!imported.can_undo());
+    }
+
+    #[test]
+    fn a_frozen_layer_is_not_shown_and_the_current_layer_cannot_be_frozen() {
+        let mut drawing = Drawing::new();
+        let walls = add_layer(&mut drawing, "walls");
+        let mut tx = drawing.transaction();
+        let wall = tx
+            .insert_with(
+                LineEntity::new(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0)),
+                Properties::on(walls),
+            )
+            .unwrap();
+        tx.commit();
+        let shown = drawing.shown_revision();
+
+        change_layer(&mut drawing, walls, |layer| layer.frozen = true).unwrap();
+        assert!(!drawing.is_shown(wall));
+        assert_eq!(drawing.shown().count(), 0);
+        assert!(drawing.query_shown(&everything()).is_empty());
+        assert_ne!(
+            drawing.shown_revision(),
+            shown,
+            "freezing changes what is shown"
+        );
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.set_current_layer(walls),
+            Err(TransactionError::LayerIsFrozen(walls))
+        );
+        drop(tx);
+
+        // Thawed, it is shown again; off and thawed, it stays hidden.
+        change_layer(&mut drawing, walls, |layer| {
+            layer.on = false;
+            layer.frozen = false;
+        })
+        .unwrap();
+        assert!(!drawing.is_shown(wall));
+        change_layer(&mut drawing, walls, |layer| layer.on = true).unwrap();
+        assert!(drawing.is_shown(wall));
+
+        assert_eq!(
+            change_layer(&mut drawing, LayerId::FIRST, |layer| layer.frozen = true),
+            Err(TransactionError::CurrentLayer(LayerId::FIRST))
+        );
+        drawing.undo();
+        assert!(!drawing.is_shown(wall), "undone, it is off again");
     }
 
     #[test]
@@ -5507,7 +5564,7 @@ mod tests {
         Restyle(usize, usize, u8),
         AddLayer(u8),
         RenameLayer(usize, u8),
-        SwitchLayer(usize, bool, bool),
+        SwitchLayer(usize, bool, bool, bool),
         RemoveLayer(usize),
         SetCurrent(usize),
         SetUnit(usize),
@@ -5602,7 +5659,8 @@ mod tests {
             2 => (any::<usize>(), any::<usize>(), 1..8u8).prop_map(|(i, layer, color)| Op::Restyle(i, layer, color)),
             2 => (0..12u8).prop_map(Op::AddLayer),
             1 => (any::<usize>(), 0..12u8).prop_map(|(i, name)| Op::RenameLayer(i, name)),
-            1 => (any::<usize>(), any::<bool>(), any::<bool>()).prop_map(|(i, on, locked)| Op::SwitchLayer(i, on, locked)),
+            1 => (any::<usize>(), any::<bool>(), prop::bool::weighted(0.25), any::<bool>())
+                .prop_map(|(i, on, frozen, locked)| Op::SwitchLayer(i, on, frozen, locked)),
             1 => any::<usize>().prop_map(Op::RemoveLayer),
             1 => any::<usize>().prop_map(Op::SetCurrent),
             1 => any::<usize>().prop_map(Op::SetUnit),
@@ -5809,13 +5867,14 @@ mod tests {
                         let renamed = change_layer(&mut drawing, id, |layer| layer.name = name);
                         prop_assert_eq!(renamed.is_ok(), id != LayerId::FIRST && taken.is_none(), "{:?}", renamed);
                     }
-                    Op::SwitchLayer(pick, on, locked) => {
+                    Op::SwitchLayer(pick, on, frozen, locked) => {
                         let id = layer(pick);
                         let switched = change_layer(&mut drawing, id, |layer| {
                             layer.on = on;
+                            layer.frozen = frozen;
                             layer.locked = locked;
                         });
-                        prop_assert_eq!(switched.is_ok(), on || id != drawing.current_layer(), "{:?}", switched);
+                        prop_assert_eq!(switched.is_ok(), (on && !frozen) || id != drawing.current_layer(), "{:?}", switched);
                     }
                     Op::RemoveLayer(pick) => {
                         let id = layer(pick);
@@ -5828,11 +5887,11 @@ mod tests {
                     }
                     Op::SetCurrent(pick) => {
                         let id = layer(pick);
-                        let on = drawing.layers().get(id).unwrap().on;
+                        let shown = drawing.layers().get(id).unwrap().is_shown();
                         let mut tx = drawing.transaction();
                         let set = tx.set_current_layer(id);
                         tx.commit();
-                        prop_assert_eq!(set.is_ok(), on);
+                        prop_assert_eq!(set.is_ok(), shown);
                     }
                     Op::SetUnit(pick) => {
                         let units = LengthUnit::ALL;
@@ -6255,7 +6314,7 @@ mod tests {
                     );
                 }
                 let current = drawing.layers().get(drawing.current_layer());
-                prop_assert!(current.is_some_and(|layer| layer.on), "the current layer is {:?}", current);
+                prop_assert!(current.is_some_and(Layer::is_shown), "the current layer is {:?}", current);
                 let known = |linetype: Linetype| match linetype {
                     Linetype::Named(id) => drawing.linetypes().contains(id),
                     Linetype::ByLayer | Linetype::ByBlock => true,

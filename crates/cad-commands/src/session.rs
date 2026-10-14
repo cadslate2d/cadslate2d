@@ -13,7 +13,7 @@ use cad_input::{ExpectedInput, Input, InputKind, Keyword};
 
 use crate::aids::{self, POLAR_APERTURE, Track, TrackKind};
 use crate::command::angle_degrees;
-use crate::commands::{GripEditCommand, grip};
+use crate::commands::{GripEditCommand, Isolation, grip};
 use crate::grips::{grip_at, grips_of};
 use crate::history::InputHistory;
 use crate::log::CommandLog;
@@ -161,6 +161,8 @@ pub struct Session {
     view: View,
     /// The views ZOOM and PAN moved away from, newest last (#180).
     previous_views: Vec<View>,
+    /// What the last `LAYISO` changed, for `LAYUNISO` (#213).
+    isolation: Option<Isolation>,
     registry: CommandRegistry,
     active: Option<ActiveCommand>,
     selection: Selection,
@@ -244,6 +246,7 @@ impl Session {
             drawing,
             view: View::new(1.0, 1.0),
             previous_views: Vec::new(),
+            isolation: None,
             registry,
             active: None,
             selection: Selection::default(),
@@ -519,6 +522,7 @@ impl Session {
                     color,
                     rgb,
                     on: layer.on,
+                    frozen: layer.frozen,
                     locked: layer.locked,
                     current: id == current,
                     linetype: layer.linetype.describe(self.drawing.linetypes()),
@@ -673,8 +677,15 @@ impl Session {
             PointerButton::Primary if self.expected().kind == InputKind::Object => {
                 match self.pick(at) {
                     // A command acts on what it picks, and nothing acts on
-                    // an object on a locked layer.
-                    Some(entity) if self.drawing.is_locked(entity) => {
+                    // an object on a locked layer — but a command may
+                    // change the layer itself (#213).
+                    Some(entity)
+                        if self.drawing.is_locked(entity)
+                            && !self
+                                .active
+                                .as_ref()
+                                .is_some_and(|active| active.command.picks_locked_objects()) =>
+                    {
                         self.log.push(self.locked_message(entity));
                         Dirty::UI
                     }
@@ -1084,6 +1095,7 @@ impl Session {
         self.views.clear();
         self.through = None;
         self.previous_views.clear();
+        self.isolation = None;
         if let Some(extents) = self.drawing.extents() {
             self.view.fit(&extents);
         }
@@ -1571,6 +1583,7 @@ impl Session {
             previous_views: &mut self.previous_views,
             aliases: self.registry.aliases_mut(),
             space: self.space,
+            isolation: &mut self.isolation,
             log: &mut self.log,
             host_request: &mut self.host_request,
             space_request: &mut self.space_request,

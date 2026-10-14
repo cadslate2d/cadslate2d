@@ -54,6 +54,7 @@ mod inquiry;
 mod join;
 mod layer;
 mod layout;
+mod laytools;
 mod leader;
 mod lengthen;
 mod line;
@@ -120,6 +121,9 @@ pub(crate) use inquiry::{AreaCommand, DistCommand, IdCommand, ListCommand};
 pub(crate) use join::JoinCommand;
 pub(crate) use layer::LayerCommand;
 pub(crate) use layout::{LayoutCommand, ModelCommand, MspaceCommand, PspaceCommand};
+pub(crate) use laytools::{
+    Isolation, LayIsoCommand, LayUnisoCommand, LayerAllCommand, LayerPickCommand,
+};
 pub(crate) use leader::LeaderCommand;
 pub(crate) use lengthen::LengthenCommand;
 pub(crate) use line::LineCommand;

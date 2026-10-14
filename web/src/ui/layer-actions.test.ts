@@ -9,6 +9,7 @@ import {
   renameLayer,
   setCurrent,
   swatchColor,
+  toggleFrozen,
   toggleLocked,
   toggleOn,
 } from "./layer-actions";
@@ -18,6 +19,7 @@ const walls: LayerRow = {
   color: 1,
   rgb: [255, 0, 0],
   on: true,
+  frozen: false,
   locked: false,
   current: false,
   linetype: "Continuous",
@@ -29,6 +31,7 @@ describe("the Layers panel's actions are LAYER options with their answers", () =
     for (const script of [
       setCurrent(walls),
       toggleOn(walls),
+      toggleFrozen(walls),
       toggleLocked(walls),
       createLayer("doors"),
       renameLayer(walls, "partitions"),
@@ -42,6 +45,8 @@ describe("the Layers panel's actions are LAYER options with their answers", () =
   test("switches answer with the opposite of the layer's state", () => {
     expect(toggleOn(walls)).toEqual(["LAYER", "OFF", "walls", ""]);
     expect(toggleOn({ ...walls, on: false })).toEqual(["LAYER", "ON", "walls", ""]);
+    expect(toggleFrozen(walls)).toEqual(["LAYER", "Freeze", "walls", ""]);
+    expect(toggleFrozen({ ...walls, frozen: true })).toEqual(["LAYER", "Thaw", "walls", ""]);
     expect(toggleLocked(walls)).toEqual(["LAYER", "Lock", "walls", ""]);
     expect(toggleLocked({ ...walls, locked: true })).toEqual(["LAYER", "Unlock", "walls", ""]);
   });

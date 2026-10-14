@@ -11,7 +11,7 @@ import {
 } from "./support";
 
 const OPTIONS =
-  "Press Enter to finish or [?/New/Set/Color/LWeight/LType/ON/OFF/Lock/Unlock/Rename/Delete]:";
+  "Press Enter to finish or [?/New/Set/Color/LWeight/LType/ON/OFF/Freeze/Thaw/Lock/Unlock/Rename/Delete]:";
 
 test.describe("LAYER", () => {
   test("makes a layer whose name has a space, and draws on it", async ({ page }) => {
@@ -83,7 +83,7 @@ test.describe("LAYER", () => {
     await expect(logLines(page).last()).toHaveText('Layer "0" cannot be renamed or deleted.');
     await enter(page, "OFF", "0");
     await expect(logLines(page).last()).toHaveText(
-      'Layer "0" is the current layer: it cannot be switched off or deleted.',
+      'Layer "0" is the current layer: it cannot be switched off, frozen, or deleted.',
     );
     await expect(prompt(page)).toHaveText(OPTIONS);
   });

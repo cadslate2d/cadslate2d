@@ -161,6 +161,8 @@ export interface LayerRow {
   /** What the colour looks like, or `undefined` for the theme's foreground. */
   readonly rgb?: readonly [number, number, number];
   readonly on: boolean;
+  /** Frozen (#213): hidden like a layer that is off, switched apart. */
+  readonly frozen: boolean;
   readonly locked: boolean;
   /** New objects go on this layer. */
   readonly current: boolean;
