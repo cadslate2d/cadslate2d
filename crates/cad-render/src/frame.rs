@@ -489,6 +489,12 @@ pub fn walk_entity(entity: &Entity, tables: Tables<'_>, sink: &mut impl Geometry
         // distance runs on through the vertices — by chord along a
         // straight segment, by arc length along an arc segment — so a
         // linetype pattern does not start again at each.
+        // A wide polyline is its band (#204): triangles, as a fill is.
+        Entity::Polyline(polyline) if polyline.width() > 0.0 => {
+            for triangle in polyline.band() {
+                sink.triangle(triangle);
+            }
+        }
         Entity::Polyline(polyline) => {
             let vertices = &polyline.vertices;
             let mut distance = 0.0;

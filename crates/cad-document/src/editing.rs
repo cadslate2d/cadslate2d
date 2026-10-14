@@ -244,7 +244,7 @@ impl Entity {
                 polyline
                     .path()
                     .lengthened(from_end, delta)
-                    .map(|longer| PolylineEntity::from(longer).into())
+                    .map(|longer| polyline.with_path(longer).into())
                     .ok_or(LengthenError::Vanishes)
             }
             _ => unreachable!("refused above"),
@@ -413,6 +413,7 @@ impl Entity {
                         polyline.bulges().collect(),
                         polyline.closed,
                     )
+                    .with_width(polyline.width())
                     .into()
                 })
             }
@@ -503,7 +504,7 @@ impl Entity {
                     .map(|pieces| {
                         pieces
                             .into_iter()
-                            .map(|piece| PolylineEntity::from(piece).into())
+                            .map(|piece| polyline.with_path(piece).into())
                             .collect()
                     })
                     .ok_or_else(|| {
@@ -596,7 +597,7 @@ impl Entity {
                 }
             }
             Entity::Polyline(entity) => {
-                let polyline = |path: Path| Entity::from(PolylineEntity::from(path));
+                let polyline = |path: Path| Entity::from(entity.with_path(path));
                 match entity.path().trimmed(cuts, pick, TOLERANCE) {
                     Ok(parts) => Ok(TrimParts {
                         kept: parts.kept.into_iter().map(polyline).collect(),
@@ -654,7 +655,7 @@ impl Entity {
                 polyline
                     .path()
                     .extended(from_end, boundary, TOLERANCE)
-                    .map(|longer| PolylineEntity::from(longer).into())
+                    .map(|longer| polyline.with_path(longer).into())
                     .ok_or(ExtendError::NoMeeting)
             }
             Entity::Circle(_) => Err(ExtendError::Unsupported(self.kind_name())),
@@ -832,7 +833,7 @@ impl Entity {
             other => other,
         };
         path.with_corner(vertex, join, TOLERANCE)
-            .map(|path| PolylineEntity::from(path).into())
+            .map(|path| polyline.with_path(path).into())
             .map_err(|error| match error {
                 PathCornerError::NotACorner => CornerError::NotAdjacent,
                 PathCornerError::Curved => CornerError::Unsupported("arc segment"),
@@ -851,7 +852,7 @@ impl Entity {
             return Err(CornerError::Unsupported(self.kind_name()));
         };
         let (path, done, skipped) = polyline.path().with_every_corner(join, TOLERANCE);
-        Ok((PolylineEntity::from(path).into(), done, skipped))
+        Ok((polyline.with_path(path).into(), done, skipped))
     }
 
     /// This line and `other` cut back by `distances` from where they meet —
@@ -933,7 +934,7 @@ impl Entity {
                 .map(|paths| {
                     paths
                         .into_iter()
-                        .map(|path| PolylineEntity::from(path).into())
+                        .map(|path| polyline.with_path(path).into())
                         .collect()
                 })
                 .map_err(|error| match error {

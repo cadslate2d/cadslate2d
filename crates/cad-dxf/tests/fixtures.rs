@@ -485,6 +485,53 @@ fn a_layout_made_here_and_a_renamed_one_are_written_and_read_back() {
     assert_eq!(back.report.layouts, vec!["Layout1", "Details"]);
 }
 
+/// #204: a polyline's constant width from another writer — an
+/// LWPOLYLINE's (43), a POLYLINE's defaults (40, 41), VERTEX widths that
+/// all agree — is read as the width; one that varies along the polyline
+/// is dropped and counted; the width is written back as 43.
+#[test]
+fn wide_polylines_from_another_writer_keep_their_width_and_a_varying_one_is_dropped() {
+    for (file, widths) in [
+        ("ezdxf-r2010-wide-polylines.dxf", [2.0, 1.5, 0.0]),
+        ("ezdxf-r12-wide-polylines.dxf", [2.5, 1.0, 0.0]),
+    ] {
+        let import = load("valid", file).unwrap();
+        assert_eq!(import.report.polylines, 3, "{file}");
+        assert_eq!(
+            import.report.with_dropped_properties, 1,
+            "{file}: the varying one"
+        );
+        let polylines: Vec<f64> = import
+            .drawing
+            .shown()
+            .filter_map(|(_, entity)| match entity {
+                Entity::Polyline(polyline) => Some(polyline.width()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(polylines, widths, "{file}");
+        let text = export(&import.drawing);
+        assert!(
+            text.contains("\n 43\n2.5\n") || text.contains("\n 43\n2.0\n"),
+            "{file}"
+        );
+        let back = cad_dxf::import(text.as_bytes()).unwrap();
+        let again: Vec<f64> = back
+            .drawing
+            .shown()
+            .filter_map(|(_, entity)| match entity {
+                Entity::Polyline(polyline) => Some(polyline.width()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(again, widths, "{file}: read back");
+        assert_eq!(
+            back.report.with_dropped_properties, 0,
+            "{file}: nothing to drop in our own file"
+        );
+    }
+}
+
 /// #200: a file purged has no trace of the rows that went, and what a
 /// second read reports is what the purge left.
 #[test]

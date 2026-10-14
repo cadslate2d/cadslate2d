@@ -586,6 +586,30 @@ struct Reader<'a> {
     block_record_names: HashMap<String, String>,
 }
 
+/// The one width a polyline's groups give (#204), and whether something
+/// was dropped to get it: the constant width (43), or the start and end
+/// widths when every one agrees; a width that varies along the polyline
+/// is not held, and neither is a negative one.
+fn polyline_width(constant: Option<f64>, starts: &[f64], ends: &[f64]) -> (f64, bool) {
+    let mut all: Vec<f64> = starts.iter().chain(ends).copied().collect();
+    if let Some(constant) = constant {
+        all.push(constant);
+    }
+    let Some(first) = all.first().copied() else {
+        return (0.0, false);
+    };
+    if !first.is_finite() || first < 0.0 {
+        return (0.0, true);
+    }
+    if all
+        .iter()
+        .any(|width| !width.is_finite() || (*width - first).abs() > 0.0)
+    {
+        return (0.0, true);
+    }
+    (first, false)
+}
+
 /// Collects a polyline that may span several records.
 #[derive(Debug, Default)]
 struct PolylineBuilder {
@@ -593,6 +617,13 @@ struct PolylineBuilder {
     /// One per vertex: the bulge of the segment that starts there.
     bulges: Vec<f64>,
     closed: bool,
+    /// The widths the file gave (#204): a constant width (43), and every
+    /// start (40) and end (41) width in order — one pair per vertex, or
+    /// a POLYLINE's defaults. One width when they all agree; anything
+    /// else is dropped and counted.
+    constant_width: Option<f64>,
+    start_widths: Vec<f64>,
+    end_widths: Vec<f64>,
     /// Not a 2D polyline at all (mesh, 3D polyline): already reported; its
     /// vertices are swallowed.
     unsupported: bool,
@@ -851,14 +882,15 @@ impl<'a> Reader<'a> {
             (RecordContext::Tables, "STYLE") => self.table_text_style(body)?,
             (RecordContext::Tables, "DIMSTYLE") => self.table_dim_style(body)?,
             (_, "LWPOLYLINE") if entities => {
-                let mut properties = body.pending();
-                properties.dropped |= body.constant_width.is_some_and(|width| width != 0.0);
                 let builder = PolylineBuilder {
                     vertices: body.points(record.line, "LWPOLYLINE")?,
                     closed: body.flags & POLYLINE_CLOSED != 0,
                     bulges: body.bulges.clone(),
                     unsupported: false,
-                    properties,
+                    properties: body.pending(),
+                    constant_width: body.constant_width,
+                    start_widths: body.start_widths.clone(),
+                    end_widths: body.end_widths.clone(),
                 };
                 self.finish_polyline(builder)?;
             }
@@ -867,10 +899,20 @@ impl<'a> Reader<'a> {
                 if unsupported {
                     self.report.count_unsupported("POLYLINE");
                 }
+                // A POLYLINE's own 40 and 41 are the default widths of
+                // its vertices.
                 self.open_polyline = Some(PolylineBuilder {
                     closed: body.flags & POLYLINE_CLOSED != 0,
                     unsupported,
                     properties: body.pending(),
+                    constant_width: match (body.radius, body.width) {
+                        (Some(start), Some(end)) if (start - end).abs() < f64::EPSILON => {
+                            Some(start)
+                        }
+                        (Some(start), None) => Some(start),
+                        (None, Some(end)) => Some(end),
+                        _ => None,
+                    },
                     ..Default::default()
                 });
             }
@@ -884,6 +926,8 @@ impl<'a> Reader<'a> {
                         .vertices
                         .extend(body.points(record.line, "VERTEX")?);
                     polyline.bulges.extend(&body.bulges);
+                    polyline.start_widths.extend(&body.start_widths);
+                    polyline.end_widths.extend(&body.end_widths);
                 }
             }
             (_, "SEQEND") if entities => {
@@ -1417,12 +1461,18 @@ impl<'a> Reader<'a> {
         if polyline.vertices.len() < 2 {
             self.report.count_unsupported(INVALID);
         } else {
-            let entity = Entity::Polyline(PolylineEntity::with_bulges(
-                polyline.vertices,
-                polyline.bulges,
-                polyline.closed,
-            ));
-            self.push(entity, polyline.properties)?;
+            let (width, dropped) = polyline_width(
+                polyline.constant_width,
+                &polyline.start_widths,
+                &polyline.end_widths,
+            );
+            let mut properties = polyline.properties;
+            properties.dropped |= dropped;
+            let entity = Entity::Polyline(
+                PolylineEntity::with_bulges(polyline.vertices, polyline.bulges, polyline.closed)
+                    .with_width(width),
+            );
+            self.push(entity, properties)?;
         }
         Ok(())
     }
@@ -1812,6 +1862,10 @@ struct RecordBody {
     /// Group 43: an LWPOLYLINE's constant width, which is dropped; a
     /// reference's Z scale, which a plane does without.
     constant_width: Option<f64>,
+    /// Every group 40 and 41 in order (#204): an LWPOLYLINE's start and
+    /// end widths, one per vertex, or a POLYLINE's or VERTEX's widths.
+    start_widths: Vec<f64>,
+    end_widths: Vec<f64>,
     /// Group 66: vertices follow a POLYLINE, attributes an INSERT.
     follow: bool,
     /// Groups 71, 72, 73: attachment, and horizontal and vertical justification.
@@ -1892,7 +1946,11 @@ impl RecordBody {
             16 => self.x16 = Some(real(group)?),
             26 => self.y16 = Some(real(group)?),
             53 => self.text_rotation = Some(real(group)?),
-            40 => self.radius = Some(real(group)?),
+            40 => {
+                let value = real(group)?;
+                self.radius = Some(value);
+                self.start_widths.push(value);
+            }
             50 => self.start_degrees = Some(real(group)?),
             51 => self.end_degrees = Some(real(group)?),
             2 => {
@@ -1905,7 +1963,11 @@ impl RecordBody {
             }
             1 => self.text = Some(group.raw.to_owned()),
             7 => self.style = Some(group.value.to_owned()),
-            41 => self.width = Some(real(group)?),
+            41 => {
+                let value = real(group)?;
+                self.width = Some(value);
+                self.end_widths.push(value);
+            }
             71 => self.attachment = group.value.parse().ok(),
             72 => self.halign = group.value.parse().ok(),
             73 => self.valign = group.value.parse().ok(),

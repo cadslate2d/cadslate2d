@@ -57,6 +57,7 @@ Tests: `cad-commands/src/tests/layers.rs`, `cad-document/src/drawing.rs`, `cad-r
 | [BREAK](#break) | yes | yes | two points; becomes an arc | two points; becomes an arc of it | no | yes | two points; opens | no | no | no | no | no: not a curve |
 | [JOIN](#join) | yes | yes | no: it has no end | no | no | yes | no: it has no end | no: it has no ends | no | no | no | no: not a curve |
 | [STRETCH](#stretch) | by its ends | by its ends | whole, by its centre | whole, by its centre | by its fit points, re-fitted | by its vertices | by its vertices | whole, by its insertion point | whole, by its insertion point | by its points: a measured point inside the window moves and the dimension measures anew | by its loop vertices | whole, by its centre |
+| [PEDIT](#pedit) | offered as a polyline | offered as a polyline | no | no | no | yes | yes | no | no | no | no | no |
 | [LENGTHEN](#lengthen) | yes | yes, by length or angle | no: it has no end | no | no | at its end segment | no: it has no end | no | no | no | no | no |
 | [ALIGN](#align) | yes | yes | yes | yes | yes | yes | yes | yes, turned and scaled whole | yes, turned and scaled whole | yes, by its points | yes, whole | yes; its frame stays square to the paper |
 | ERASE | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes |
@@ -333,6 +334,23 @@ Rules:
 Not implemented: choosing objects by clicking them (they would move whole) or with several windows; the `Displacement` option; a selection made before the command, which is ignored.
 
 Tests: `cad-document/src/editing.rs` (`stretch_hold`, `stretched`), `cad-commands/src/tests/stretch.rs`, `web/e2e/stretch.spec.ts`.
+
+## PEDIT
+
+Pick a polyline — or a line or an arc, which is offered as a polyline of one segment first — then choose options until Enter. Every option is one transaction; the command is one undo step, and `Undo` within it steps back through its own changes.
+
+| Option | What it does |
+| --- | --- |
+| `Close`, `Open` | Closes an open polyline of three or more vertices with a straight segment, or opens a closed one |
+| `Join` | Selects objects; those that meet the polyline's ends end to end — lines, arcs, open polylines, chained as `JOIN` chains them — become segments of it, and are removed; a closed polyline has no ends to join to |
+| `Width` | A constant width for the whole polyline, zero for none: drawn as a filled band half the width to either side of the path, round at every vertex and end, on screen and on the page; picked anywhere on the band; the width stays through every edit of the path — stretch, trim, extend, break, offset, lengthen, fillet, chamfer, a grip, a join, a scaling (which scales it) |
+| `Edit vertex` | Marks a vertex (`Next`, `Previous`, round a closed polyline); `Insert` a vertex after it, `Move` it, `Straighten` the arc segment that starts at it; `Exit` back to the options |
+| `Decurve` | Every arc segment made straight |
+| `Undo` | The last change this command made, taken back |
+
+A wide polyline's geometry is its centre line: offset, trim, extend, break, join, intersections, and snaps read the path, not the band. `DONUT` draws a ring as a closed wide polyline of two half turns.
+
+Tests: `cad-geometry/src/band.rs` (the band within half the width of the path), `cad-document/src/entity.rs`, `cad-commands/src/tests/pedit.rs`, `cad-dxf/tests/fixtures.rs` (`wide_polylines_from_another_writer_keep_their_width_and_a_varying_one_is_dropped`), `web/e2e/wide-polylines.spec.ts`.
 
 ## LENGTHEN
 

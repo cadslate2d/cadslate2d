@@ -264,14 +264,18 @@ pub(crate) fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, St
                     cad_geometry::Primitive::Circle(circle) => TAU * circle.radius,
                 })
                 .sum();
-            vec![
+            let mut rows = vec![
                 row("Vertices", polyline.vertices.len().to_string()),
                 row(
                     "Closed",
                     (if polyline.closed { "Yes" } else { "No" }).to_owned(),
                 ),
                 row("Length", number(length)),
-            ]
+            ];
+            if polyline.width() > 0.0 {
+                rows.push(row("Width", number(polyline.width())));
+            }
+            rows
         }
         Entity::Text(text) => vec![
             row("Contents", text.content.clone()),

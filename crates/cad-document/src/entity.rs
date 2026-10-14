@@ -288,6 +288,9 @@ pub struct PolylineEntity {
     /// One per vertex, for the segment starting there; missing ones are zero.
     bulges: Vec<f64>,
     pub closed: bool,
+    /// A constant width (#204): drawn as a filled band half this wide to
+    /// either side of the path; zero for a plain polyline.
+    width: f64,
 }
 
 impl PolylineEntity {
@@ -297,7 +300,48 @@ impl PolylineEntity {
             vertices,
             bulges: Vec::new(),
             closed,
+            width: 0.0,
         }
+    }
+
+    /// This polyline with a constant width: a positive one drawn as a
+    /// band, zero for none. Anything else is taken as none.
+    #[must_use]
+    pub fn with_width(self, width: f64) -> Self {
+        Self {
+            width: if width.is_finite() && width > 0.0 {
+                width
+            } else {
+                0.0
+            },
+            ..self
+        }
+    }
+
+    /// The constant width, or zero.
+    pub fn width(&self) -> f64 {
+        self.width
+    }
+
+    /// This polyline closed, or opened: the closing segment is straight
+    /// when closed, and an open polyline's last vertex starts no segment.
+    #[must_use]
+    pub fn with_closed(&self, closed: bool) -> Self {
+        Self::with_bulges(self.vertices.clone(), self.bulges().collect(), closed)
+            .with_width(self.width)
+    }
+
+    /// This polyline's geometry replaced by `path` — cut, grown, offset —
+    /// with its width kept.
+    #[must_use]
+    pub fn with_path(&self, path: Path) -> Self {
+        Self::with_bulges(path.vertices, path.bulges, path.closed).with_width(self.width)
+    }
+
+    /// The band the width fills, as triangles (ADR-0021): empty for a
+    /// plain polyline.
+    pub fn band(&self) -> Vec<[Point2; 3]> {
+        self.path().band(self.width)
     }
 
     /// A polyline whose segment from vertex `i` has bulge `bulges[i]`.
@@ -321,6 +365,7 @@ impl PolylineEntity {
             vertices,
             bulges,
             closed,
+            width: 0.0,
         }
     }
 
@@ -420,7 +465,8 @@ impl Entity {
                 .primitives()
                 .map(|primitive| primitive.bounds())
                 .reduce(|a, b| a.union(&b))
-                .unwrap_or_else(|| Aabb::from_points(Point2::ORIGIN, Point2::ORIGIN)),
+                .unwrap_or_else(|| Aabb::from_points(Point2::ORIGIN, Point2::ORIGIN))
+                .expanded(polyline.width() / 2.0),
             Entity::Text(text) => text.bounds(),
             Entity::MText(text) => text.bounds(),
             Entity::AttributeDefinition(definition) => definition.as_text().bounds(),
@@ -442,9 +488,12 @@ impl Entity {
             Entity::Arc(arc) => arc.arc().distance_to_point(point),
             Entity::Ellipse(ellipse) => ellipse.ellipse().distance_to_point(point),
             Entity::Spline(spline) => spline.spline().distance_to_point(point),
+            // A wide polyline is picked anywhere on its band (#204).
             Entity::Polyline(polyline) => polyline
                 .primitives()
-                .map(|primitive| primitive.distance_to_point(point))
+                .map(|primitive| {
+                    (primitive.distance_to_point(point) - polyline.width() / 2.0).max(0.0)
+                })
                 .fold(f64::INFINITY, f64::min),
             Entity::Text(text) => text.distance_to(point),
             Entity::MText(text) => text.distance_to(point),
@@ -701,6 +750,7 @@ impl Entity {
                     polyline.bulges().map(|bulge| bulge * flip).collect(),
                     polyline.closed,
                 )
+                .with_width(polyline.width() * transform.scale_factor())
                 .into()
             }
             Entity::Text(text) => text.transformed(transform).into(),

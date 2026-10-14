@@ -957,6 +957,44 @@ fn a_dimension_is_drawn_by_its_style_and_redrawn_when_the_style_changes() {
 }
 
 /// ADR-0021: a hatch is committed triangles — a style index each, batches
+/// #204: a wide polyline is committed as its band's triangles and no
+/// strokes; its width set, the scene is rebuilt with them, and the
+/// pointer never touches it.
+#[test]
+fn a_wide_polyline_is_committed_as_its_band_and_a_plain_one_as_strokes() {
+    use cad_document::{Entity, PolylineEntity};
+    let run = PolylineEntity::new(
+        vec![
+            cad_core::Point2::new(-50.0, 0.0),
+            cad_core::Point2::new(50.0, 0.0),
+            cad_core::Point2::new(50.0, 40.0),
+        ],
+        false,
+    );
+    let mut h = Harness::with_entities([Entity::from(run)]);
+    let mut cache = SceneCache::new();
+    let plain = cache.scene(h.session.drawing());
+    assert_eq!(plain.frame().triangle_count(), 0);
+    assert_eq!(plain.frame().segment_count(), 2);
+    h.enter("PEDIT");
+    h.click_world(cad_core::Point2::new(0.0, 0.0));
+    h.enter_all(&["W", "6", ""]);
+    let wide = cache.scene(h.session.drawing());
+    assert_eq!(
+        wide.frame().segment_count(),
+        0,
+        "the band, not the centre line"
+    );
+    assert!(
+        wide.frame().triangle_count() >= 4,
+        "{}",
+        wide.frame().triangle_count()
+    );
+    let revision = wide.revision();
+    h.move_to(300.0, 200.0);
+    assert_eq!(cache.scene(h.session.drawing()).revision(), revision);
+}
+
 /// that tile the buffer — beside the strokes of its boundary; the pointer
 /// leaves them alone, and a fill being previewed travels in the overlay.
 #[test]

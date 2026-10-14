@@ -1305,6 +1305,9 @@ impl Writer {
         self.group(100, "AcDbPolyline");
         self.int(90, polyline.vertices.len() as i64);
         self.int(70, if polyline.closed { CLOSED } else { 0 });
+        if polyline.width() > 0.0 {
+            self.real(43, polyline.width());
+        }
         for (vertex, bulge) in polyline.vertices.iter().zip(polyline.bulges()) {
             self.real(10, vertex.x);
             self.real(20, vertex.y);

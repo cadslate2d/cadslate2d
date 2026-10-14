@@ -300,6 +300,7 @@ impl Entity {
                         polyline.bulges().collect(),
                         polyline.closed,
                     )
+                    .with_width(polyline.width())
                     .into(),
                 )
             }
@@ -407,7 +408,11 @@ impl Entity {
             vertices.push(polyline.vertices[after]);
             bulges.push(polyline.bulge(index));
         }
-        (vertices.len() > 1).then(|| PolylineEntity::with_bulges(vertices, bulges, false).into())
+        (vertices.len() > 1).then(|| {
+            PolylineEntity::with_bulges(vertices, bulges, false)
+                .with_width(polyline.width())
+                .into()
+        })
     }
 }
 

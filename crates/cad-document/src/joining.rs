@@ -168,7 +168,20 @@ pub fn join(entities: &[&Entity]) -> Result<Vec<Joined>, JoinError> {
                 .iter()
                 .map(|member| sources[*member])
                 .collect(),
-            entity: PolylineEntity::from(chain.path).into(),
+            // The width of the first polyline among the members, if any:
+            // a joined wide polyline stays wide.
+            entity: PolylineEntity::from(chain.path)
+                .with_width(
+                    chain
+                        .members
+                        .iter()
+                        .find_map(|member| match entities[*member] {
+                            Entity::Polyline(polyline) => Some(polyline.width()),
+                            _ => None,
+                        })
+                        .unwrap_or(0.0),
+                )
+                .into(),
         })
         .collect())
 }

@@ -35,6 +35,7 @@ mod lweight;
 mod modify;
 mod mtext;
 mod offset;
+mod pedit;
 mod plot;
 mod points;
 mod polygon;
