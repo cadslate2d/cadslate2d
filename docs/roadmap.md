@@ -18,9 +18,34 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M9 — Paper Space | Complete and closed ([review](reviews/m9-exit-review.md)). |
 | M10 — Daily Drafting | Complete and closed ([review](reviews/m10-exit-review.md)). |
 | M11 — Polylines, Leaders, and Loose Ends | Complete and closed ([review](reviews/m11-exit-review.md)). |
-| M12 — Drafting Conveniences | Next. Broken into issues at the M11 exit. |
+| M12 — Drafting Conveniences | Complete and closed ([review](reviews/m12-exit-review.md)). |
+| M13 — Drafting Aids and Reuse | Next. Broken into issues at the M12 exit. |
+
+## M13, as broken down after M12
+
+The conveniences shipped in M12. The [M12 review](reviews/m12-exit-review.md) sweeps the registry again and finds two drafting aids the design's own status bar names (§5) unbuilt, text styles that only a file can make, and no reuse across drawings. M13 takes them up; the epic is #218.
+
+### Order of work
+
+1. **Grid snap** (#219): `SNAP` and F9, in `Session::aim` after object snap.
+2. **Object snap tracking** (#220): `OTRACK` and F11, alignment paths from acquired snap points.
+3. **Text styles** (#221): `STYLE` with a height, a width factor, and an oblique angle.
+4. **A drawing as a block, a block as a drawing** (#222): `INSERT` a DXF file, `WBLOCK`.
+5. **The clipboard** (#223): `COPYCLIP`, `CUTCLIP`, `COPYBASE`, `PASTECLIP`, the session's own, kept across `OPEN`.
+6. **Exit** (#224): the scenario, the review with the registry swept again, and what follows.
+
+### Not in M13
+
+- `DRAWORDER` and `WIPEOUT`, which need an ADR against ADR-0021's fills-beneath-strokes order; `DIMORDINATE`, `QDIM`, `BOUNDARY`; layer states, freezing in one viewport.
+- `MLEADER`, tables, fields; SHX fonts, xrefs, scripting, plugins, native packaging, a DWG strategy, a native project format (§39), a WebGPU adapter (§38), associative dimensions, advanced hatch, plot style tables, searchable PDF text; the system clipboard.
+
+### Needs a person
+
+- #109 WebKit, #110 real GPUs (and #175, which waits on it), #111 the R-tree crash upstream; the PDF of a layout in a desktop viewer.
 
 ## M12, as broken down after M11
+
+Kept for the record; the [review](reviews/m12-exit-review.md) says how it went.
 
 The loose ends shipped in M11. The [M11 review](reviews/m11-exit-review.md) sweeps the registry against the commands a production drawing uses daily, not against what earlier reviews accepted, and finds five gaps no review had listed. M12 takes them up; the epic is #211.
 
