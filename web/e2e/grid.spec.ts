@@ -83,7 +83,7 @@ test.describe("GRID", () => {
     const dense = await gridPixels(canvas);
 
     await enter(page, "GRID");
-    await expect(prompt(page)).toHaveText("Specify grid spacing <10>:");
+    await expect(prompt(page)).toHaveText("Specify grid spacing or [Snap] <10>:");
     await enter(page, "100");
     await expect(logLines(page).last()).toHaveText("Grid spacing: 100");
     const sparse = await gridPixels(canvas);

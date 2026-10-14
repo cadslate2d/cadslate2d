@@ -2,7 +2,7 @@
 // their state; this table only says how each is labelled and reached.
 import { KeyAction, ToggleBit } from "../cad/engine";
 
-export type ToggleId = "osnap" | "grid" | "ortho" | "polar" | "lineweight";
+export type ToggleId = "snap" | "osnap" | "grid" | "ortho" | "polar" | "lineweight";
 
 export interface ToggleSpec {
   readonly id: ToggleId;
@@ -17,6 +17,14 @@ export interface ToggleSpec {
 
 /** Toggles the session knows about, in status-bar order. */
 export const TOGGLES: readonly ToggleSpec[] = [
+  {
+    id: "snap",
+    label: "SNAP",
+    key: "F9",
+    bit: ToggleBit.Snap,
+    action: KeyAction.ToggleSnap,
+    hint: "The pointer lands on the snap grid. Type SNAP to set its spacing.",
+  },
   {
     id: "grid",
     label: "GRID",
@@ -52,7 +60,7 @@ export const TOGGLES: readonly ToggleSpec[] = [
 ];
 
 /** Shown in the reference design but not implemented: visibly unavailable. */
-export const UNAVAILABLE_TOGGLES = ["SNAP", "OTRACK"] as const;
+export const UNAVAILABLE_TOGGLES = ["OTRACK"] as const;
 
 /** Lineweight display. It has no function key: it is flipped from the status bar. */
 export const LINEWEIGHT_TOGGLE: ToggleSpec = {

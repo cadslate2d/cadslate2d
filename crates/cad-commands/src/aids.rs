@@ -1,15 +1,17 @@
-//! Drafting aids that constrain the pointer's direction (DESIGN §13.4):
-//! ORTHO and POLAR.
+//! Drafting aids that move the pointer (DESIGN §13.4): grid snap, which
+//! puts the free cursor on a grid, and ORTHO and POLAR, which constrain
+//! its direction.
 //!
-//! Both work from the anchor of the rubber band — the point the active
-//! command is drawing from — and both apply to the pointer only. The order
-//! of precedence for a point is fixed:
+//! ORTHO and POLAR work from the anchor of the rubber band — the point the
+//! active command is drawing from. Every aid applies to the pointer only.
+//! The order of precedence for a point is fixed:
 //!
 //! ```text
-//! typed coordinates  >  object snap  >  ORTHO or POLAR  >  free cursor
+//! typed coordinates  >  object snap  >  grid snap, then ORTHO or POLAR  >  free cursor
 //! ```
 //!
 //! ORTHO and POLAR are never on together: both claim the same rubber band.
+//! They constrain the grid-snapped point, as a classic drafter expects.
 
 use cad_core::{PixelTolerance, Point2};
 use cad_geometry::unit_at_degrees;
@@ -54,6 +56,20 @@ impl Track {
         let angle = angle.trim_end_matches('0').trim_end_matches('.');
         format!("{aid}: {:.4} < {angle}°", self.distance())
     }
+}
+
+/// SNAP (#219): `point` moved to the nearest point of the grid whose
+/// spacing across and up is `spacing`, from the origin. A spacing that is
+/// not a positive number leaves that coordinate free.
+pub fn grid_snap(point: Point2, spacing: [f64; 2]) -> Point2 {
+    let snap = |value: f64, step: f64| {
+        if step.is_finite() && step > 0.0 {
+            (value / step).round() * step
+        } else {
+            value
+        }
+    };
+    Point2::new(snap(point.x, spacing[0]), snap(point.y, spacing[1]))
 }
 
 /// ORTHO: the cursor constrained to horizontal or vertical from `base`,
@@ -104,6 +120,14 @@ mod tests {
 
     fn p(x: f64, y: f64) -> Point2 {
         Point2::new(x, y)
+    }
+
+    #[test]
+    fn grid_snap_takes_the_nearest_grid_point_on_each_axis() {
+        assert_eq!(grid_snap(p(21.0, 29.0), [10.0, 10.0]), p(20.0, 30.0));
+        assert_eq!(grid_snap(p(-14.0, 6.0), [10.0, 5.0]), p(-10.0, 5.0));
+        assert_eq!(grid_snap(p(2.6, 0.0), [2.5, 2.5]), p(2.5, 0.0));
+        assert_eq!(grid_snap(p(3.0, 7.0), [0.0, f64::NAN]), p(3.0, 7.0));
     }
 
     #[test]

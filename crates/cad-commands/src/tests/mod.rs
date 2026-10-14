@@ -24,6 +24,7 @@ mod edge;
 mod ellipse;
 mod far_from_origin;
 mod find;
+mod grid_snap;
 mod grips;
 mod groups;
 mod hatch;

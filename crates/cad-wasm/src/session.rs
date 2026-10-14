@@ -50,6 +50,7 @@ fn key_action(code: u32) -> Option<KeyAction> {
         9 => Some(KeyAction::Toggle(Toggle::Polar)),
         10 => Some(KeyAction::Toggle(Toggle::Lineweight)),
         11 => Some(KeyAction::GroupSelection),
+        12 => Some(KeyAction::Toggle(Toggle::Snap)),
         _ => None,
     }
 }

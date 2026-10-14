@@ -18,10 +18,13 @@ pub enum Toggle {
     /// Lineweight display (LWT): lines drawn as heavy as their lineweight
     /// says. Off, every line is drawn at the ordinary width.
     Lineweight,
+    /// Grid snap (F9, #219): the free cursor lands on the snap grid.
+    Snap,
 }
 
 impl Toggle {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
+        Self::Snap,
         Self::Osnap,
         Self::Grid,
         Self::Ortho,
@@ -40,7 +43,7 @@ impl Toggle {
         match self {
             Self::Ortho => Some(Self::Polar),
             Self::Polar => Some(Self::Ortho),
-            Self::Osnap | Self::Grid | Self::Lineweight => None,
+            Self::Osnap | Self::Grid | Self::Lineweight | Self::Snap => None,
         }
     }
 
@@ -52,6 +55,7 @@ impl Toggle {
             Self::Ortho => "ORTHO",
             Self::Polar => "POLAR",
             Self::Lineweight => "LWT",
+            Self::Snap => "SNAP",
         }
     }
 }
@@ -133,9 +137,16 @@ mod tests {
     #[test]
     fn every_toggle_has_its_own_bit_and_label() {
         let bits: Vec<u32> = Toggle::ALL.iter().map(|toggle| toggle.bit()).collect();
-        assert_eq!(bits, vec![1, 2, 4, 8, 16]);
+        assert_eq!(
+            bits,
+            vec![32, 1, 2, 4, 8, 16],
+            "SNAP came last, so the others keep their bits"
+        );
         let labels: Vec<&str> = Toggle::ALL.iter().map(|toggle| toggle.label()).collect();
-        assert_eq!(labels, vec!["OSNAP", "GRID", "ORTHO", "POLAR", "LWT"]);
+        assert_eq!(
+            labels,
+            vec!["SNAP", "OSNAP", "GRID", "ORTHO", "POLAR", "LWT"]
+        );
         assert!(
             !Toggles::default().is_on(Toggle::Lineweight),
             "LWT starts off"

@@ -810,6 +810,8 @@ F10        POLAR
 ```
 
 > **Resolved in M2:** a pointer-derived point is decided in a fixed order — object snap, then ORTHO or POLAR, then the free cursor — and typed coordinates bypass all three. ORTHO and POLAR are mutually exclusive: switching one on switches the other off. OSNAP and GRID are on in a new session; ORTHO and POLAR are off. POLAR locks within 8 CSS pixels of a tracked direction; its increment is set with `POLARANG` (90° at start). The readout is shown in the status bar, since text in the drawing area arrives with M4.
+>
+> **Resolved in M13 (#219):** F9 switches grid snap (`SNAP`), which moves the free cursor to the snap grid after object snap has found nothing and before ORTHO or POLAR constrain it; typed coordinates bypass it like every aid.
 
 Right-click-as-Enter is PROVISIONAL and may become a preference.
 

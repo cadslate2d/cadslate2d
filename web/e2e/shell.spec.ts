@@ -120,7 +120,7 @@ test.describe("status toggles", () => {
 
   test("toggles without an implementation are shown as unavailable", async ({ page }) => {
     await openApp(page);
-    for (const label of ["SNAP", "OTRACK"]) {
+    for (const label of ["OTRACK"]) {
       await expect(page.getByText(label, { exact: true })).toHaveAttribute("aria-disabled", "true");
     }
   });

@@ -43,6 +43,7 @@ export const KeyAction = {
   TogglePolar: 9,
   ToggleLineweight: 10,
   GroupSelection: 11,
+  ToggleSnap: 12,
 } as const;
 export type KeyAction = (typeof KeyAction)[keyof typeof KeyAction];
 
@@ -53,6 +54,7 @@ export const ToggleBit = {
   Ortho: 1 << 2,
   Polar: 1 << 3,
   Lineweight: 1 << 4,
+  Snap: 1 << 5,
 } as const;
 
 /** Something only the host can do, requested by a command. */

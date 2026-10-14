@@ -42,6 +42,10 @@ pub struct DraftingSettings {
     pub group_selection: bool,
     /// The shortest and longest arc of a revision cloud (#215).
     pub cloud_arcs: [f64; 2],
+    /// The snap grid's spacing across and up (#219), from the origin.
+    pub snap_spacing: [f64; 2],
+    /// The grid drawn at the snap spacing rather than its own (`GRID Snap`).
+    pub grid_follows_snap: bool,
 }
 
 /// A paper size PLOT offers, by name.
@@ -138,6 +142,18 @@ impl Default for PlotSettings {
     }
 }
 
+impl DraftingSettings {
+    /// The spacing the grid is drawn at: its own, or the snap spacing
+    /// across when it follows snap (#219).
+    pub fn grid_spacing_shown(&self) -> f64 {
+        if self.grid_follows_snap {
+            self.snap_spacing[0]
+        } else {
+            self.grid_spacing
+        }
+    }
+}
+
 impl Default for DraftingSettings {
     fn default() -> Self {
         Self {
@@ -153,6 +169,8 @@ impl Default for DraftingSettings {
             hatch_scale: 1.0,
             group_selection: true,
             cloud_arcs: [7.5, 15.0],
+            snap_spacing: [DEFAULT_GRID_SPACING, DEFAULT_GRID_SPACING],
+            grid_follows_snap: false,
         }
     }
 }

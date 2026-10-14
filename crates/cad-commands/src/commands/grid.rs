@@ -1,7 +1,7 @@
-//! GRID: sets the spacing of the reference grid (DESIGN §13.4). F7 shows and
-//! hides it.
+//! GRID: sets the spacing of the reference grid (DESIGN §13.4), or draws it
+//! at the snap spacing (`Snap`, #219). F7 shows and hides it.
 
-use cad_input::ExpectedInput;
+use cad_input::{ExpectedInput, Keyword};
 
 use crate::{Command, CommandContext, CommandInput, Prompt, Step};
 
@@ -11,8 +11,10 @@ pub(crate) struct GridCommand {
     current: f64,
 }
 
+const SNAP: Keyword = Keyword::new("Snap");
+
 /// `10`, `2.5`: as short as the value allows.
-fn display(spacing: f64) -> String {
+pub(super) fn display(spacing: f64) -> String {
     let text = format!("{spacing:.4}");
     text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
@@ -28,13 +30,19 @@ impl Command for GridCommand {
     }
 
     fn expected(&self) -> ExpectedInput {
-        ExpectedInput::distance()
+        ExpectedInput::distance().with_keywords(&[SNAP])
     }
 
     fn step(&mut self, input: CommandInput, ctx: &mut CommandContext<'_>) -> Step {
         match input {
+            CommandInput::Keyword(_) => {
+                ctx.settings.grid_follows_snap = true;
+                ctx.message("The grid follows the snap spacing.");
+                Step::Finished
+            }
             CommandInput::Distance(spacing) if spacing.is_finite() && spacing > 0.0 => {
                 ctx.settings.grid_spacing = spacing;
+                ctx.settings.grid_follows_snap = false;
                 ctx.message(format!("Grid spacing: {}", display(spacing)));
                 Step::Finished
             }
@@ -57,7 +65,7 @@ mod tests {
     fn the_spacing_is_set_by_typing_a_distance() {
         let mut h = Harness::new();
         h.enter("GRID");
-        assert_eq!(h.prompt(), "Specify grid spacing <10>:");
+        assert_eq!(h.prompt(), "Specify grid spacing or [Snap] <10>:");
         h.enter("2.5");
         assert_eq!(h.prompt(), "Command:");
         assert_eq!(h.session.settings().grid_spacing, 2.5);
@@ -68,9 +76,9 @@ mod tests {
     fn enter_keeps_the_spacing_and_nonsense_is_refused() {
         let mut h = Harness::new();
         h.enter_all(&["GRID", "0"]);
-        assert_eq!(h.prompt(), "Specify grid spacing <10>:");
+        assert_eq!(h.prompt(), "Specify grid spacing or [Snap] <10>:");
         h.enter("-5");
-        assert_eq!(h.prompt(), "Specify grid spacing <10>:");
+        assert_eq!(h.prompt(), "Specify grid spacing or [Snap] <10>:");
         h.enter("");
         assert_eq!(h.prompt(), "Command:");
         assert_eq!(h.session.settings().grid_spacing, 10.0);

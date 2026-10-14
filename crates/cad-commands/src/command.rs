@@ -107,8 +107,8 @@ pub struct CommandContext<'a> {
     pub selection: &'a mut Selection,
     /// How the drafting aids behave; session state, never undoable.
     pub settings: &'a mut DraftingSettings,
-    /// Which status-bar toggles are on, as the command finds them.
-    pub toggles: Toggles,
+    /// Which status-bar toggles are on; `SNAP ON` switches one (#219).
+    pub toggles: &'a mut Toggles,
     /// The view: session state, never undoable. ZOOM and PAN move it
     /// (#180); the session reports the change as `Dirty::VIEW`.
     pub view: &'a mut View,

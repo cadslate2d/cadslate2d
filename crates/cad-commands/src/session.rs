@@ -393,6 +393,20 @@ impl Session {
                 ..free
             });
         }
+        // Grid snap moves the free cursor, unless what is asked for is a
+        // place on the screen, as object snap does not apply there (#219).
+        let on_screen = self
+            .point_target()
+            .is_some_and(|command| !command.takes_object_snap());
+        let cursor = if self.toggles.is_on(Toggle::Snap) && !on_screen {
+            aids::grid_snap(cursor, self.settings.snap_spacing)
+        } else {
+            cursor
+        };
+        let free = Aim {
+            point: cursor,
+            ..free
+        };
         let base = self
             .point_target()
             .and_then(|command| command.tracking_base());
@@ -543,7 +557,7 @@ impl Session {
         let mut items = Vec::new();
         if self.toggles.is_on(Toggle::Grid) {
             items.push(OverlayItem::Grid {
-                spacing: self.settings.grid_spacing,
+                spacing: self.settings.grid_spacing_shown(),
             });
         }
         items.extend(self.selection.iter().map(OverlayItem::Highlight));
@@ -1614,7 +1628,7 @@ impl Session {
             drawing: &mut self.drawing,
             selection: &mut self.selection,
             settings: &mut self.settings,
-            toggles: self.toggles,
+            toggles: &mut self.toggles,
             view: &mut self.view,
             previous_views: &mut self.previous_views,
             aliases: self.registry.aliases_mut(),
