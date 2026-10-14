@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 00fc286314adc741869bf54bb98e23989cd4cdb5cfe5f2e3cce41e071da54ace # shrinks to ops = [DefineBlock(0, 1.0), DefineBlock(1, 1.0), CreateText(0.0, 0), NestBlock(6924073672793876747, 16046953086831318415), Purge], queries = [(0.0, 0.0, 0.0, 0.0)]
+cc d68cdc2637d88af80b339aa2901f906d882e987005951df6fabf19e6c031d1e4 # shrinks to ops = [AddLayer(4), AddLayer(0), LoadLinetype(0), DashLayer(86878549981171840, 8173367698703791315), Purge], queries = [(0.0, 0.0, 0.0, 0.0)]

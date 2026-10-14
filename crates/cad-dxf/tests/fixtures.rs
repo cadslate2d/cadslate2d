@@ -7,7 +7,7 @@ use cad_core::{Point2, Vec2};
 use cad_document::{
     BlockReferenceEntity, Color, DimStyleId, Drawing, Entity, Justification, Layer, LayerId,
     Layout, LayoutId, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight, MTextEntity,
-    PointStyle, Properties, TextEntity, TextStyleId, ViewportEntity,
+    PointStyle, Properties, PurgeScope, TextEntity, TextStyleId, ViewportEntity,
 };
 use cad_dxf::{DxfError, Import, export, import};
 
@@ -483,6 +483,48 @@ fn a_layout_made_here_and_a_renamed_one_are_written_and_read_back() {
     assert!(!text.contains("\n  1\nLayout2\n"));
     let back = cad_dxf::import(text.as_bytes()).unwrap();
     assert_eq!(back.report.layouts, vec!["Layout1", "Details"]);
+}
+
+/// #200: a file purged has no trace of the rows that went, and what a
+/// second read reports is what the purge left.
+#[test]
+fn a_purged_file_is_written_without_the_rows_that_went() {
+    let import = load("valid", "ezdxf-r12-layers-linetypes.dxf").unwrap();
+    let mut drawing = import.drawing;
+    let before = (drawing.layers().len(), drawing.linetypes().len());
+    let mut tx = drawing.transaction();
+    let purged = tx.purge(PurgeScope::ALL);
+    tx.commit();
+    // Every layer but ezdxf's Defpoints has something on it, and every
+    // linetype is used by an entity or a layer.
+    assert_eq!(purged.layers, vec!["Defpoints"]);
+    assert!(purged.linetypes.is_empty());
+    assert!(purged.blocks.is_empty() && purged.text_styles.is_empty());
+    let text = export(&drawing);
+    for name in purged.layers.iter().chain(&purged.linetypes) {
+        assert!(
+            !text.contains(&format!("\n  2\n{name}\n")),
+            "{name} still written"
+        );
+    }
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(
+        back.report.layers,
+        before.0 - purged.layers.len() - 1,
+        "less layer 0"
+    );
+    assert_eq!(
+        back.report.linetypes,
+        before.1 - purged.linetypes.len() - 1,
+        "less Continuous"
+    );
+    assert_eq!(back.drawing.layers().len(), drawing.layers().len());
+    assert_eq!(back.drawing.linetypes().len(), drawing.linetypes().len());
+    // Nothing left to purge in what was written.
+    let mut again = back.drawing;
+    let mut tx = again.transaction();
+    assert!(tx.purge(PurgeScope::ALL).is_empty());
+    drop(tx);
 }
 
 /// #198: points from another writer — on layer 0, on a layer of their

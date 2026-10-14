@@ -258,6 +258,57 @@ impl fmt::Display for TransactionError {
 
 impl std::error::Error for TransactionError {}
 
+/// Which tables `PURGE` sweeps (#200).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PurgeScope {
+    pub blocks: bool,
+    pub dim_styles: bool,
+    pub layers: bool,
+    pub linetypes: bool,
+    pub text_styles: bool,
+}
+
+impl PurgeScope {
+    pub const ALL: Self = Self {
+        blocks: true,
+        dim_styles: true,
+        layers: true,
+        linetypes: true,
+        text_styles: true,
+    };
+    pub const NONE: Self = Self {
+        blocks: false,
+        dim_styles: false,
+        layers: false,
+        linetypes: false,
+        text_styles: false,
+    };
+}
+
+/// What a purge removed, by name, table by table.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Purged {
+    pub blocks: Vec<String>,
+    pub dim_styles: Vec<String>,
+    pub layers: Vec<String>,
+    pub linetypes: Vec<String>,
+    pub text_styles: Vec<String>,
+}
+
+impl Purged {
+    pub fn total(&self) -> usize {
+        self.blocks.len()
+            + self.dim_styles.len()
+            + self.layers.len()
+            + self.linetypes.len()
+            + self.text_styles.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.total() == 0
+    }
+}
+
 /// A viewport (#192) must be one the paper can hold, and is a window of a
 /// layout's paper: in the model, or in a block, it has nothing to be a
 /// window of.
@@ -1321,6 +1372,259 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
+    /// Replaces an existing entity's geometry and its properties at once
+    /// (`MATCHPROP`, #200), keeping its ID.
+    pub fn replace_with(
+        &mut self,
+        id: EntityId,
+        entity: impl Into<Entity>,
+        properties: Properties,
+    ) -> Result<(), TransactionError> {
+        let entity = entity.into();
+        self.known_text_style(&entity)?;
+        self.known_block(&entity)?;
+        self.known_layer(properties.layer)?;
+        self.known_linetype(properties.linetype)?;
+        let before = self.existing(id)?;
+        viewport_placeable(&entity, before.space)?;
+        let after = before.with_entity(entity).with_properties(properties);
+        self.push(EntityChange::Replace { id, before, after });
+        Ok(())
+    }
+
+    /// Renames a layer (`RENAME`, #200): its row with the new name, every
+    /// entity on it untouched. Layer `0` keeps its name.
+    pub fn rename_layer(
+        &mut self,
+        id: LayerId,
+        name: impl Into<String>,
+    ) -> Result<(), TransactionError> {
+        let layer = Layer {
+            name: name.into(),
+            ..self.existing_layer(id)?
+        };
+        self.replace_layer(id, layer)
+    }
+
+    /// Renames a linetype: its row with the new name, which must be allowed
+    /// and not taken. `Continuous` keeps its name.
+    pub fn rename_linetype(
+        &mut self,
+        id: LinetypeId,
+        name: impl Into<String>,
+    ) -> Result<(), TransactionError> {
+        if id == LinetypeId::FIRST {
+            return Err(TransactionError::PermanentLinetype);
+        }
+        if self.linetype_change(id).is_some() {
+            return Err(TransactionError::LinetypeAlreadyChanged(id));
+        }
+        let before = self
+            .drawing
+            .linetypes
+            .get(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownLinetype(id))?;
+        let after = LinetypeDef {
+            name: name.into(),
+            ..before.clone()
+        };
+        after.check().map_err(TransactionError::BadLinetype)?;
+        if !same_name(&after.name, &before.name) {
+            let added = self.others().filter_map(|change| match change {
+                Change::Linetype(TableChange::Insert { id, row }) => Some((*id, row)),
+                _ => None,
+            });
+            let taken = self
+                .drawing
+                .linetypes
+                .iter()
+                .filter(|(other, _)| *other != id)
+                .filter_map(|(other, _)| self.linetype_now(other).map(|row| (other, row)))
+                .chain(added)
+                .find(|(_, row)| same_name(&row.name, &after.name));
+            if let Some((other, _)) = taken {
+                return Err(TransactionError::DuplicateLinetypeName(other));
+            }
+        }
+        self.push_other(Change::Linetype(TableChange::Replace { id, before, after }));
+        Ok(())
+    }
+
+    /// Renames a text style: its row with the new name, which must be
+    /// allowed and not taken. `Standard` keeps its name.
+    pub fn rename_text_style(
+        &mut self,
+        id: TextStyleId,
+        name: impl Into<String>,
+    ) -> Result<(), TransactionError> {
+        if id == TextStyleId::FIRST {
+            return Err(TransactionError::PermanentTextStyle);
+        }
+        let before = self
+            .text_style_now(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownTextStyle(id))?;
+        let name = name.into();
+        check_name(&name).map_err(TransactionError::BadTextStyleName)?;
+        if !same_name(&name, &before.name) {
+            let added = self.others().filter_map(|change| match change {
+                Change::TextStyle(TableChange::Insert { id, row }) => Some((*id, row)),
+                _ => None,
+            });
+            let taken = self
+                .drawing
+                .text_styles
+                .iter()
+                .filter(|(other, _)| *other != id)
+                .filter_map(|(other, _)| self.text_style_now(other).map(|row| (other, row)))
+                .chain(added)
+                .find(|(_, row)| same_name(&row.name, &name));
+            if let Some((other, _)) = taken {
+                return Err(TransactionError::DuplicateTextStyleName(other));
+            }
+        }
+        let after = TextStyle { name };
+        self.push_other(Change::TextStyle(TableChange::Replace {
+            id,
+            before,
+            after,
+        }));
+        Ok(())
+    }
+
+    /// Renames a block: its definition with the new name, every reference
+    /// untouched.
+    pub fn rename_block(
+        &mut self,
+        id: BlockId,
+        name: impl Into<String>,
+    ) -> Result<(), TransactionError> {
+        let block = Block {
+            name: name.into(),
+            ..self
+                .block_now(id)
+                .cloned()
+                .ok_or(TransactionError::UnknownBlock(id))?
+        };
+        self.redefine_block(id, block)
+    }
+
+    /// Renames a dimension style: its row with the new name, every
+    /// dimension drawn by it untouched. `Standard` keeps its name.
+    pub fn rename_dim_style(
+        &mut self,
+        id: DimStyleId,
+        name: impl Into<String>,
+    ) -> Result<(), TransactionError> {
+        let style = DimStyle {
+            name: name.into(),
+            ..self
+                .dim_style_now(id)
+                .cloned()
+                .ok_or(TransactionError::UnknownDimStyle(id))?
+        };
+        self.replace_dim_style(id, style)
+    }
+
+    /// Removes every row of the tables in `scope` that nothing uses
+    /// (`PURGE`, #200) — not the permanent rows, not the current ones, not
+    /// one an entity, a layer, a block's entity, or another block refers
+    /// to — and says which went, by name. Blocks go first, and again while
+    /// removing one frees another it placed; layers before linetypes,
+    /// since a layer may hold a linetype's only use.
+    pub fn purge(&mut self, scope: PurgeScope) -> Purged {
+        let mut purged = Purged::default();
+        if scope.blocks {
+            loop {
+                let candidates: Vec<(BlockId, String)> = self
+                    .drawing
+                    .blocks
+                    .iter()
+                    .filter_map(|(id, _)| self.block_now(id).map(|block| (id, block.name.clone())))
+                    .collect();
+                let before = purged.blocks.len();
+                for (id, name) in candidates {
+                    if self.remove_block(id).is_ok() {
+                        purged.blocks.push(name);
+                    }
+                }
+                if purged.blocks.len() == before {
+                    break;
+                }
+            }
+        }
+        if scope.text_styles {
+            let candidates: Vec<(TextStyleId, String)> = self
+                .drawing
+                .text_styles
+                .iter()
+                .filter_map(|(id, _)| self.text_style_now(id).map(|row| (id, row.name.clone())))
+                .collect();
+            for (id, name) in candidates {
+                if self.remove_text_style(id).is_ok() {
+                    purged.text_styles.push(name);
+                }
+            }
+        }
+        if scope.dim_styles {
+            let candidates: Vec<(DimStyleId, String)> = self
+                .drawing
+                .dim_styles
+                .iter()
+                .filter_map(|(id, _)| self.dim_style_now(id).map(|row| (id, row.name.clone())))
+                .collect();
+            for (id, name) in candidates {
+                if self.remove_dim_style(id).is_ok() {
+                    purged.dim_styles.push(name);
+                }
+            }
+        }
+        if scope.layers {
+            let candidates: Vec<(LayerId, String)> = self
+                .drawing
+                .layers
+                .iter()
+                .filter_map(|(id, _)| self.layer_now(id).map(|row| (id, row.name.clone())))
+                .collect();
+            for (id, name) in candidates {
+                if self.remove_layer(id).is_ok() {
+                    purged.layers.push(name);
+                }
+            }
+        }
+        if scope.linetypes {
+            let candidates: Vec<(LinetypeId, String)> = self
+                .drawing
+                .linetypes
+                .iter()
+                .filter_map(|(id, _)| self.linetype_now(id).map(|row| (id, row.name.clone())))
+                .collect();
+            for (id, name) in candidates {
+                if self.remove_linetype(id).is_ok() {
+                    purged.linetypes.push(name);
+                }
+            }
+        }
+        purged
+    }
+
+    /// Whether an entity inside a block — as the drawing holds the blocks,
+    /// less those this transaction removes, plus those it adds or
+    /// redefines — satisfies `uses`.
+    fn blocks_use(&self, uses: impl Fn(&EntityRecord) -> bool) -> bool {
+        let added = self.others().filter_map(|change| match change {
+            Change::Block(TableChange::Insert { row, .. }) => Some(row),
+            _ => None,
+        });
+        self.drawing
+            .blocks
+            .iter()
+            .filter_map(|(id, _)| self.block_now(id))
+            .chain(added)
+            .any(|block| block.entities.iter().any(&uses))
+    }
+
     /// Adds a layer and returns its ID. Its name must be allowed and not
     /// taken, and its linetype must exist. Like an entity's, the ID is
     /// consumed even if the transaction is abandoned.
@@ -1383,7 +1687,10 @@ impl TransactionBuilder<'_> {
             | Change::Layout(_)
             | Change::Settings(_) => false,
         });
-        if pending || self.drawing.records().any(|(_, record)| on_layer(record)) {
+        if pending
+            || self.drawing.records().any(|(_, record)| on_layer(record))
+            || self.blocks_use(on_layer)
+        {
             return Err(TransactionError::LayerInUse(id));
         }
         self.push_other(Change::Layer(TableChange::Remove { id, row }));
@@ -1492,7 +1799,9 @@ impl TransactionBuilder<'_> {
                 .drawing
                 .layers
                 .iter()
-                .any(|(_, layer)| layer.linetype == named);
+                .filter_map(|(id, _)| self.layer_now(id))
+                .any(|layer| layer.linetype == named)
+            || self.blocks_use(|record| record.properties.linetype == named);
         if in_use {
             return Err(TransactionError::LinetypeInUse(id));
         }
@@ -1579,6 +1888,7 @@ impl TransactionBuilder<'_> {
         let uses = |entity: &Entity| match entity {
             Entity::Text(text) => text.style == id,
             Entity::MText(text) => text.style == id,
+            Entity::AttributeDefinition(definition) => definition.text.style == id,
             _ => false,
         };
         let pending = self.changes.iter().any(|change| match change {
@@ -1586,7 +1896,10 @@ impl TransactionBuilder<'_> {
             Change::Entity(EntityChange::Replace { after, .. }) => uses(&after.entity),
             _ => false,
         });
-        if pending || self.drawing.entities().any(|(_, entity)| uses(entity)) {
+        if pending
+            || self.drawing.entities().any(|(_, entity)| uses(entity))
+            || self.blocks_use(|record| uses(&record.entity))
+        {
             return Err(TransactionError::TextStyleInUse(id));
         }
         self.push_other(Change::TextStyle(TableChange::Remove { id, row }));
@@ -1657,6 +1970,7 @@ impl TransactionBuilder<'_> {
                 .drawing
                 .records()
                 .any(|(_, record)| uses(&record.entity))
+            || self.blocks_use(|record| uses(&record.entity))
         {
             return Err(TransactionError::DimStyleInUse(id));
         }
@@ -1782,12 +2096,17 @@ impl TransactionBuilder<'_> {
             }
             _ => false,
         });
-        let in_use =
-            pending
-                || self.drawing.entities().any(|(_, entity)| places(entity))
-                || self.drawing.blocks.iter().any(|(other, block)| {
-                    other != id && block.references().any(|inner| inner == id)
-                });
+        // Placed by another block as the drawing holds it — one this
+        // transaction removes places nothing any more (PURGE sweeps a
+        // block and then what only it placed); one it redefines still
+        // counts until commit, like a layer an entity is taken off.
+        let removed_here =
+            |other: BlockId| matches!(self.block_change(other), Some(TableChange::Remove { .. }));
+        let in_use = pending
+            || self.drawing.entities().any(|(_, entity)| places(entity))
+            || self.drawing.blocks.iter().any(|(other, block)| {
+                other != id && !removed_here(other) && block.references().any(|inner| inner == id)
+            });
         if in_use {
             return Err(TransactionError::BlockInUse(id));
         }
@@ -2145,7 +2464,10 @@ mod tests {
 
     use super::*;
     use crate::spatial::LinearIndex;
-    use crate::{BlockReferenceEntity, LineEntity, TextEntity};
+    use crate::{
+        AttributeDefinitionEntity, BlockReferenceEntity, DimensionEntity, LineEntity, Measure,
+        TextEntity,
+    };
 
     fn line(x0: f64, y0: f64, x1: f64, y1: f64) -> LineEntity {
         LineEntity::new(Point2::new(x0, y0), Point2::new(x1, y1))
@@ -4183,22 +4505,21 @@ mod tests {
         );
         drop(tx);
         let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.remove_block(chair),
+            Err(TransactionError::BlockInUse(chair)),
+            "Pair places it"
+        );
         tx.remove_block(pair).unwrap();
         assert_eq!(
             tx.remove_block(pair),
             Err(TransactionError::BlockAlreadyChanged(pair))
         );
-        assert_eq!(
-            tx.remove_block(chair),
-            Err(TransactionError::BlockInUse(chair)),
-            "Pair still holds it in the drawing until commit"
-        );
-        tx.commit();
-        let mut tx = drawing.transaction();
+        // Pair gone in this transaction, nothing places the chair: PURGE
+        // sweeps a block and then what only it placed, as one change.
         tx.remove_block(chair).unwrap();
         tx.commit();
         assert_eq!(drawing.blocks().len(), 1);
-        drawing.undo();
         drawing.undo();
         assert_eq!(drawing.blocks().len(), 3, "one history for every table");
     }
@@ -4375,6 +4696,327 @@ mod tests {
         assert_eq!(sorted(drawing.query(&everything())), vec![paper, model]);
         drawing.redo();
         assert!(drawing.entity(paper).is_none());
+    }
+
+    /// #200: PURGE removes every row nothing uses — not the permanent
+    /// rows, not the current ones, not a row an entity, a layer, a
+    /// block's entity, or another block refers to — as one change, and
+    /// says which went; a scope purges one table alone.
+    #[test]
+    fn purge_removes_what_nothing_uses_and_keeps_the_permanent_the_current_and_the_used() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let dashed = tx
+            .add_linetype(LinetypeDef::built_in_named("DASHED").unwrap())
+            .unwrap();
+        let dot = tx
+            .add_linetype(LinetypeDef::built_in_named("DOT").unwrap())
+            .unwrap();
+        let center = tx
+            .add_linetype(LinetypeDef::built_in_named("CENTER").unwrap())
+            .unwrap();
+        let hidden = tx
+            .add_linetype(LinetypeDef::built_in_named("HIDDEN").unwrap())
+            .unwrap();
+        let used = tx
+            .add_layer(Layer {
+                linetype: Linetype::Named(dashed),
+                ..Layer::named("USED")
+            })
+            .unwrap();
+        let current = tx.add_layer(Layer::named("CURRENT")).unwrap();
+        let in_block = tx.add_layer(Layer::named("INBLOCK")).unwrap();
+        let free = tx.add_layer(Layer::named("FREE")).unwrap();
+        tx.set_current_layer(current).unwrap();
+        let titles = tx.add_text_style(TextStyle::named("TITLES")).unwrap();
+        let notes = tx.add_text_style(TextStyle::named("NOTES")).unwrap();
+        let tags = tx.add_text_style(TextStyle::named("TAGS")).unwrap();
+        let arch = tx.add_dim_style(DimStyle::named("ARCH")).unwrap();
+        let civil = tx.add_dim_style(DimStyle::named("CIVIL")).unwrap();
+        let current_dim = tx.add_dim_style(DimStyle::named("CURRENTDS")).unwrap();
+        tx.set_current_dim_style(current_dim).unwrap();
+        let part = tx
+            .define_block(Block::new(
+                "PART",
+                Point2::ORIGIN,
+                vec![
+                    EntityRecord::new(
+                        Entity::Line(line(0.0, 0.0, 1.0, 0.0)),
+                        Properties {
+                            layer: in_block,
+                            linetype: Linetype::Named(hidden),
+                            ..Properties::default()
+                        },
+                    ),
+                    EntityRecord::new(
+                        Entity::AttributeDefinition(AttributeDefinitionEntity::new(
+                            "TAG",
+                            "Tag",
+                            TextEntity {
+                                style: tags,
+                                ..TextEntity::new(Point2::ORIGIN, 1.0, 0.0, "x")
+                            },
+                        )),
+                        Properties::default(),
+                    ),
+                ],
+            ))
+            .unwrap();
+        let inner = tx
+            .define_block(Block::new("INNER", Point2::ORIGIN, vec![]))
+            .unwrap();
+        let outer = tx
+            .define_block(Block::new(
+                "OUTER",
+                Point2::ORIGIN,
+                vec![EntityRecord::new(
+                    Entity::BlockRef(BlockReferenceEntity::new(inner, Point2::ORIGIN, 1.0, 0.0)),
+                    Properties::default(),
+                )],
+            ))
+            .unwrap();
+        tx.insert_with(
+            line(0.0, 0.0, 10.0, 0.0),
+            Properties {
+                layer: used,
+                linetype: Linetype::Named(dot),
+                ..Properties::default()
+            },
+        )
+        .unwrap();
+        tx.insert(TextEntity {
+            style: titles,
+            ..TextEntity::new(Point2::ORIGIN, 2.0, 0.0, "Title")
+        })
+        .unwrap();
+        tx.insert(DimensionEntity {
+            style: arch,
+            ..DimensionEntity::new(
+                Measure::Aligned {
+                    a: Point2::ORIGIN,
+                    b: Point2::new(10.0, 0.0),
+                },
+                Point2::new(5.0, 5.0),
+            )
+        })
+        .unwrap();
+        tx.insert(BlockReferenceEntity::new(part, Point2::ORIGIN, 1.0, 0.0))
+            .unwrap();
+        tx.commit();
+        let rows = (
+            drawing.layers().len(),
+            drawing.linetypes().len(),
+            drawing.text_styles().len(),
+            drawing.dim_styles().len(),
+            drawing.blocks().len(),
+        );
+
+        // What would go, without going: an abandoned transaction.
+        let mut dry = drawing.transaction();
+        let would = dry.purge(PurgeScope::ALL);
+        drop(dry);
+        assert_eq!(drawing.layers().len(), rows.0);
+
+        let mut tx = drawing.transaction();
+        let purged = tx.purge(PurgeScope::ALL);
+        tx.commit();
+        assert_eq!(purged, would);
+        assert_eq!(purged.layers, vec!["FREE"]);
+        assert_eq!(
+            purged.linetypes,
+            vec!["Center"],
+            "as the built-in table names it"
+        );
+        assert_eq!(purged.text_styles, vec!["NOTES"]);
+        assert_eq!(purged.dim_styles, vec!["CIVIL"]);
+        assert_eq!(
+            purged.blocks,
+            vec!["OUTER", "INNER"],
+            "the outer first frees the inner"
+        );
+        assert_eq!(purged.total(), 6);
+        assert!(!drawing.layers().contains(free));
+        assert!(drawing.layers().contains(current) && drawing.layers().contains(in_block));
+        assert!(drawing.linetypes().contains(hidden), "used inside a block");
+        assert!(drawing.linetypes().contains(dashed), "used by a layer");
+        assert!(
+            drawing.text_styles().contains(tags),
+            "an attribute definition's, in a block"
+        );
+        assert!(drawing.dim_styles().contains(current_dim) && drawing.dim_styles().contains(arch));
+        assert!(!drawing.blocks().contains(outer) && !drawing.blocks().contains(inner));
+        assert!(drawing.blocks().contains(part));
+        let _ = (center, notes, civil);
+
+        // One undo brings every row back; one redo takes them again.
+        assert!(drawing.undo().is_some());
+        assert_eq!(
+            (
+                drawing.layers().len(),
+                drawing.linetypes().len(),
+                drawing.text_styles().len(),
+                drawing.dim_styles().len(),
+                drawing.blocks().len(),
+            ),
+            rows
+        );
+        assert!(drawing.redo().is_some());
+        assert!(!drawing.layers().contains(free));
+        drawing.undo();
+
+        // A scope of one table.
+        let mut tx = drawing.transaction();
+        let purged = tx.purge(PurgeScope {
+            layers: true,
+            ..PurgeScope::NONE
+        });
+        tx.commit();
+        assert_eq!(purged.layers, vec!["FREE"]);
+        assert!(purged.linetypes.is_empty() && purged.blocks.is_empty());
+        assert!(drawing.linetypes().contains(center));
+        // Nothing left to purge in that table.
+        let mut tx = drawing.transaction();
+        assert!(
+            tx.purge(PurgeScope {
+                layers: true,
+                ..PurgeScope::NONE
+            })
+            .is_empty()
+        );
+        drop(tx);
+    }
+
+    /// #200: a row of any table is renamed through its builder, which
+    /// refuses a taken or bad name and the permanent rows; references by
+    /// ID are untouched.
+    #[test]
+    fn rows_of_every_table_are_renamed_with_the_refusals_and_references_hold() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let walls = tx.add_layer(Layer::named("WALLS")).unwrap();
+        let other = tx.add_layer(Layer::named("OTHER")).unwrap();
+        let dashed = tx
+            .add_linetype(LinetypeDef::built_in_named("DASHED").unwrap())
+            .unwrap();
+        let dot = tx
+            .add_linetype(LinetypeDef::built_in_named("DOT").unwrap())
+            .unwrap();
+        let titles = tx.add_text_style(TextStyle::named("TITLES")).unwrap();
+        let notes = tx.add_text_style(TextStyle::named("NOTES")).unwrap();
+        let arch = tx.add_dim_style(DimStyle::named("ARCH")).unwrap();
+        let part = tx
+            .define_block(Block::new("PART", Point2::ORIGIN, vec![]))
+            .unwrap();
+        let on_walls = tx
+            .insert_with(
+                line(0.0, 0.0, 1.0, 0.0),
+                Properties {
+                    layer: walls,
+                    linetype: Linetype::Named(dashed),
+                    ..Properties::default()
+                },
+            )
+            .unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.rename_layer(walls, "Partitions").unwrap();
+        tx.rename_linetype(dashed, "Broken").unwrap();
+        tx.rename_text_style(titles, "Headings").unwrap();
+        tx.rename_block(part, "Widget").unwrap();
+        tx.rename_dim_style(arch, "Building").unwrap();
+        tx.commit();
+        assert_eq!(drawing.layers().get(walls).unwrap().name, "Partitions");
+        assert_eq!(drawing.linetypes().get(dashed).unwrap().name, "Broken");
+        assert_eq!(drawing.text_styles().get(titles).unwrap().name, "Headings");
+        assert_eq!(drawing.blocks().get(part).unwrap().name, "Widget");
+        assert_eq!(drawing.dim_styles().get(arch).unwrap().name, "Building");
+        let properties = drawing.properties(on_walls).unwrap();
+        assert_eq!(
+            (properties.layer, properties.linetype),
+            (walls, Linetype::Named(dashed))
+        );
+        assert!(drawing.undo().is_some(), "one change");
+        assert_eq!(drawing.layers().get(walls).unwrap().name, "WALLS");
+        assert_eq!(drawing.blocks().get(part).unwrap().name, "PART");
+        drawing.redo();
+
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.rename_layer(LayerId::FIRST, "Zero"),
+            Err(TransactionError::PermanentLayer)
+        );
+        assert_eq!(
+            tx.rename_layer(walls, "other"),
+            Err(TransactionError::DuplicateLayerName(other)),
+            "give or take its case"
+        );
+        assert!(matches!(
+            tx.rename_layer(walls, "a,b"),
+            Err(TransactionError::BadLayerName(_))
+        ));
+        assert_eq!(
+            tx.rename_linetype(LinetypeId::FIRST, "Solid"),
+            Err(TransactionError::PermanentLinetype)
+        );
+        assert_eq!(
+            tx.rename_linetype(dashed, "dot"),
+            Err(TransactionError::DuplicateLinetypeName(dot))
+        );
+        assert!(matches!(
+            tx.rename_linetype(dashed, ""),
+            Err(TransactionError::BadLinetype(_))
+        ));
+        assert_eq!(
+            tx.rename_text_style(TextStyleId::FIRST, "Plain"),
+            Err(TransactionError::PermanentTextStyle)
+        );
+        assert_eq!(
+            tx.rename_text_style(titles, "NOTES"),
+            Err(TransactionError::DuplicateTextStyleName(notes))
+        );
+        assert_eq!(
+            tx.rename_block(BlockId::FIRST, "Model"),
+            Err(TransactionError::PermanentBlock)
+        );
+        assert_eq!(
+            tx.rename_dim_style(DimStyleId::FIRST, "Plain"),
+            Err(TransactionError::PermanentDimStyle)
+        );
+        // The same name, in another case, is allowed: it is not taken by another.
+        tx.rename_layer(walls, "PARTITIONS").unwrap();
+        tx.commit();
+        assert_eq!(drawing.layers().get(walls).unwrap().name, "PARTITIONS");
+    }
+
+    /// #200: geometry and properties replaced as one (`MATCHPROP`).
+    #[test]
+    fn replace_with_changes_geometry_and_properties_in_one_change() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let walls = tx.add_layer(Layer::named("WALLS")).unwrap();
+        let id = tx.insert(line(0.0, 0.0, 1.0, 0.0)).unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.replace_with(
+            id,
+            line(0.0, 0.0, 5.0, 0.0),
+            Properties {
+                layer: walls,
+                color: Color::Index(1),
+                ..Properties::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            tx.set_properties(id, Properties::default()),
+            Err(TransactionError::AlreadyChanged(id))
+        );
+        tx.commit();
+        assert_eq!(drawing.properties(id).unwrap().layer, walls);
+        assert_eq!(drawing.entity(id).unwrap().as_line().unwrap().end.x, 5.0);
+        drawing.undo();
+        assert_eq!(drawing.properties(id).unwrap().layer, LayerId::FIRST);
+        assert_eq!(drawing.entity(id).unwrap().as_line().unwrap().end.x, 1.0);
     }
 
     #[test]
@@ -4583,6 +5225,8 @@ mod tests {
         RedefineBlock(usize, f64),
         NestBlock(usize, usize),
         RemoveBlock(usize),
+        /// Every unused row swept away (#200).
+        Purge,
         /// A layer, an entity on it, and an edit of another, as one step.
         Together(usize, f64),
         /// A layout by name; one renamed; one removed with what is on it;
@@ -4628,6 +5272,7 @@ mod tests {
             2 => (any::<usize>(), 1.0..50.0f64).prop_map(|(b, len)| Op::RedefineBlock(b, len)),
             1 => (any::<usize>(), any::<usize>()).prop_map(|(b, inner)| Op::NestBlock(b, inner)),
             1 => any::<usize>().prop_map(Op::RemoveBlock),
+            1 => Just(Op::Purge),
             2 => (coordinate(), any::<usize>()).prop_map(|(x, style)| Op::CreateText(x, style)),
             1 => any::<usize>().prop_map(Op::RemoveTextStyle),
             1 => (0..4u8).prop_map(Op::AddLayout),
@@ -5147,6 +5792,75 @@ mod tests {
                         let removed = tx.remove_block(id);
                         tx.commit();
                         prop_assert_eq!(removed.is_ok(), id != BlockId::FIRST && !used, "{:?}", removed);
+                    }
+                    Op::Purge => {
+                        let layers_before: Vec<(LayerId, String)> = drawing.layers().iter().map(|(id, l)| (id, l.name.clone())).collect();
+                        let layer_used = |drawing: &Drawing, id: LayerId| {
+                            drawing.records().any(|(_, r)| r.properties.layer == id)
+                                || drawing.blocks().iter().any(|(_, b)| b.entities.iter().any(|r| r.properties.layer == id))
+                                || drawing.current_layer() == id
+                                || id == LayerId::FIRST
+                        };
+                        let block_used = |drawing: &Drawing, id: BlockId| {
+                            drawing.entities().any(|(_, e)| matches!(e, Entity::BlockRef(r) if r.block == id))
+                                || drawing.blocks().iter().any(|(other, b)| other != id && b.references().any(|i| i == id))
+                                || id == BlockId::FIRST
+                        };
+                        // A block stays when an entity places it, or a block
+                        // that stays does; a layer, when an entity or a kept
+                        // block's entity is on it.
+                        let mut kept_blocks: Vec<BlockId> = drawing.blocks().iter().map(|(id, _)| id)
+                            .filter(|id| *id == BlockId::FIRST || drawing.entities().any(|(_, e)| matches!(e, Entity::BlockRef(r) if r.block == *id)))
+                            .collect();
+                        loop {
+                            let more: Vec<BlockId> = drawing.blocks().iter()
+                                .filter(|(id, _)| !kept_blocks.contains(id))
+                                .filter(|(id, _)| kept_blocks.iter().any(|k| drawing.blocks().get(*k).is_some_and(|b| b.references().any(|i| i == *id))))
+                                .map(|(id, _)| id)
+                                .collect();
+                            if more.is_empty() { break; }
+                            kept_blocks.extend(more);
+                        }
+                        let in_kept_block = |uses: &dyn Fn(&EntityRecord) -> bool| kept_blocks.iter().any(|k| drawing.blocks().get(*k).is_some_and(|b| b.entities.iter().any(uses)));
+                        let kept_layers: Vec<LayerId> = layers_before.iter()
+                            .filter(|(id, _)| *id == LayerId::FIRST || drawing.current_layer() == *id
+                                || drawing.records().any(|(_, r)| r.properties.layer == *id)
+                                || in_kept_block(&|r| r.properties.layer == *id))
+                            .map(|(id, _)| *id).collect();
+                        let kept_linetypes: Vec<LinetypeId> = drawing.linetypes().iter().map(|(id, _)| id)
+                            .filter(|id| {
+                                let named = Linetype::Named(*id);
+                                *id == LinetypeId::FIRST
+                                    || drawing.current_linetype() == named
+                                    || drawing.records().any(|(_, r)| r.properties.linetype == named)
+                                    || kept_layers.iter().any(|l| drawing.layers().get(*l).is_some_and(|layer| layer.linetype == named))
+                                    || in_kept_block(&|r| r.properties.linetype == named)
+                            })
+                            .collect();
+                        let _ = (&layer_used, &block_used);
+                        let mut tx = drawing.transaction();
+                        let purged = tx.purge(PurgeScope::ALL);
+                        tx.commit();
+                        for id in &kept_layers {
+                            prop_assert!(drawing.layers().contains(*id), "a used layer was purged");
+                        }
+                        for id in &kept_blocks {
+                            prop_assert!(drawing.blocks().contains(*id), "a used block was purged");
+                        }
+                        for id in &kept_linetypes {
+                            prop_assert!(drawing.linetypes().contains(*id), "a used linetype was purged");
+                        }
+                        // What is left and not permanent or current is in use;
+                        // nothing else stayed.
+                        prop_assert_eq!(drawing.blocks().len(), kept_blocks.len(), "an unused block stayed");
+                        prop_assert_eq!(drawing.layers().len(), kept_layers.len(), "an unused layer stayed");
+                        for (id, _) in drawing.layers().iter() {
+                            prop_assert!(layer_used(&drawing, id));
+                        }
+                        for (id, _) in drawing.blocks().iter() {
+                            prop_assert!(block_used(&drawing, id));
+                        }
+                        prop_assert_eq!(purged.layers.len(), layers_before.len() - kept_layers.len());
                     }
                     Op::Together(pick, x) => {
                         together += 1;
