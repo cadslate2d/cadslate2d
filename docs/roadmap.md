@@ -19,9 +19,32 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M10 — Daily Drafting | Complete and closed ([review](reviews/m10-exit-review.md)). |
 | M11 — Polylines, Leaders, and Loose Ends | Complete and closed ([review](reviews/m11-exit-review.md)). |
 | M12 — Drafting Conveniences | Complete and closed ([review](reviews/m12-exit-review.md)). |
-| M13 — Drafting Aids and Reuse | Next. Broken into issues at the M12 exit. |
+| M13 — Drafting Aids and Reuse | Complete and closed ([review](reviews/m13-exit-review.md)). |
+| M14 — Production Annotation | Next. Broken into issues at the M13 exit. |
+
+## M14, as broken down after M13
+
+The drafting aids and reuse shipped in M13. The [M13 review](reviews/m13-exit-review.md) sweeps the registry again and finds what production sheets still reach for. M14 takes it up; the epic is #225.
+
+### Order of work
+
+1. **Draw order and wipeouts, by an ADR** (#226): `DRAWORDER`, `TEXTTOFRONT`, `WIPEOUT`; DXF `SORTENTSTABLE` and `WIPEOUT`.
+2. **Ordinate dimensions and QDIM** (#227).
+3. **Saved layer states** (#228): `LAYERSTATE`, kept in the drawing and its file.
+4. **BOUNDARY** (#229): the loop HATCH finds, as a polyline.
+5. **Exit** (#230): the scenario, the review with the registry swept again, and whether the product is complete.
+
+### Not in M14
+
+- `MLEADER`, tables, fields; raster image underlays; SHX fonts, xrefs, scripting, plugins, native packaging, a DWG strategy, a native project format (§39), a WebGPU adapter (§38), associative dimensions, advanced hatch, plot style tables, searchable PDF text; the system clipboard; freezing in one viewport.
+
+### Needs a person
+
+- #109 WebKit, #110 real GPUs (and #175, which waits on it), #111 the R-tree crash upstream; the PDF of a layout in a desktop viewer.
 
 ## M13, as broken down after M12
+
+Kept for the record; the [review](reviews/m13-exit-review.md) says how it went.
 
 The conveniences shipped in M12. The [M12 review](reviews/m12-exit-review.md) sweeps the registry again and finds two drafting aids the design's own status bar names (§5) unbuilt, text styles that only a file can make, and no reuse across drawings. M13 takes them up; the epic is #218.
 

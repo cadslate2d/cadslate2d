@@ -172,7 +172,9 @@ pub fn object_tracking(
 pub fn grid_snap(point: Point2, spacing: [f64; 2]) -> Point2 {
     let snap = |value: f64, step: f64| {
         if step.is_finite() && step > 0.0 {
-            (value / step).round() * step
+            // Adding zero turns a negative zero — a point just below the
+            // origin rounded up to it — into zero, which a file writes as 0.
+            (value / step).round() * step + 0.0
         } else {
             value
         }
@@ -258,6 +260,12 @@ mod tests {
         assert_eq!(grid_snap(p(-14.0, 6.0), [10.0, 5.0]), p(-10.0, 5.0));
         assert_eq!(grid_snap(p(2.6, 0.0), [2.5, 2.5]), p(2.5, 0.0));
         assert_eq!(grid_snap(p(3.0, 7.0), [0.0, f64::NAN]), p(3.0, 7.0));
+        // Just below zero snaps to zero, not to negative zero.
+        let zero = grid_snap(p(-1.2, -2.7), [10.0, 10.0]);
+        assert!(
+            zero.x.is_sign_positive() && zero.y.is_sign_positive(),
+            "{zero:?}"
+        );
     }
 
     #[test]
