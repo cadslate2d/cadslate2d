@@ -85,6 +85,7 @@ mod style;
 mod text;
 mod transform;
 mod units;
+mod wblock;
 mod zoom;
 
 /// Option keywords shared by more than one command.
@@ -159,4 +160,5 @@ pub(crate) use style::StyleCommand;
 pub(crate) use text::{TextCommand, TextEditCommand};
 pub(crate) use transform::TransformCommand;
 pub(crate) use units::UnitsCommand;
+pub(crate) use wblock::WBlockCommand;
 pub(crate) use zoom::{PanCommand, ZoomCommand};

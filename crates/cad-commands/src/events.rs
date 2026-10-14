@@ -65,4 +65,10 @@ pub enum HostRequest {
     /// Plot model space to a PDF (#187) with the session's plot settings,
     /// and offer the file for download.
     Plot,
+    /// Let the user pick a drawing file to insert as a block (#222), then
+    /// hand it to `Session::insert_drawing`.
+    InsertFile,
+    /// Save the drawing `WBLOCK` made (#222), from
+    /// `Session::take_block_file`, to a file the user chooses.
+    WriteBlock,
 }

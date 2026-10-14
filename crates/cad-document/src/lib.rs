@@ -76,7 +76,7 @@ pub use leader::{LeaderEntity, LeaderError, LeaderLayout};
 pub use linetype::{LinetypeChange, LinetypeDef, LinetypeError, LinetypeId, LinetypeTable};
 pub use lineweight::Weight;
 pub use mtext::LINE_SPACING;
-pub use names::{NameError, Named, check_name, same_name};
+pub use names::{FORBIDDEN, NameError, Named, check_name, same_name};
 pub use point::{PointEntity, PointStyle, PointStyleError};
 pub use properties::{Color, EntityRecord, Linetype, Lineweight, Properties};
 pub use revision::Revision;

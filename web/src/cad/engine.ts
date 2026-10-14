@@ -67,6 +67,8 @@ export const HostRequest = {
   SaveFile: 3,
   Settings: 4,
   Plot: 5,
+  InsertFile: 6,
+  WriteBlock: 7,
 } as const;
 export type HostRequest = (typeof HostRequest)[keyof typeof HostRequest];
 
@@ -501,6 +503,17 @@ export class CadEngine {
    */
   loadDxf(bytes: Uint8Array, name: string): number {
     return this.#session.load_dxf(bytes, name);
+  }
+
+  /** The file INSERT asked for (#222), read and handed to the waiting command. */
+  insertDxf(bytes: Uint8Array, name: string): number {
+    return this.#session.insert_dxf(bytes, name);
+  }
+
+  /** The file WBLOCK made (#222), once: its name and its text. */
+  takeBlockFile(): { name: string; text: string } | undefined {
+    const [name, text] = this.#session.take_block_file();
+    return name === undefined || text === undefined ? undefined : { name, text };
   }
 
   /**

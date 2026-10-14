@@ -238,7 +238,7 @@ fn a_block_cannot_contain_itself() {
 fn insert_places_a_reference_with_its_scale_and_rotation_and_one_undo_removes_it() {
     let mut h = with_chair();
     h.enter("I");
-    assert_eq!(h.prompt(), "Enter block name:");
+    assert_eq!(h.prompt(), "Enter block name, or ~ for a file:");
     h.enter("chair");
     assert_eq!(h.prompt(), "Specify insertion point:");
     h.enter("50,50");
@@ -270,7 +270,7 @@ fn insert_takes_enter_for_its_defaults_and_lists_blocks() {
     let mut h = with_chair();
     h.enter_all(&["I", "?"]);
     assert_eq!(h.log().last().unwrap(), "Blocks: Chair.");
-    assert_eq!(h.prompt(), "Enter block name:");
+    assert_eq!(h.prompt(), "Enter block name, or ~ for a file:");
     h.enter_all(&["Chair", "0,0", "", ""]);
     let placed = references(&h);
     assert_eq!(
@@ -284,7 +284,7 @@ fn insert_refuses_an_unknown_name_and_a_scale_that_is_not_one() {
     let mut h = with_chair();
     h.enter_all(&["I", "Table"]);
     assert_eq!(h.log().last().unwrap(), "There is no block \"Table\".");
-    assert_eq!(h.prompt(), "Enter block name:");
+    assert_eq!(h.prompt(), "Enter block name, or ~ for a file:");
     h.enter_all(&["Chair", "0,0", "0"]);
     assert_eq!(
         h.log().last().unwrap(),

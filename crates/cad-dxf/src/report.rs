@@ -249,7 +249,9 @@ impl ImportReport {
         .collect()
     }
 
-    fn unsupported_line(&self) -> Option<String> {
+    /// The one line naming what the file held that the drawing cannot,
+    /// when there was any: what an inserted file says (#222).
+    pub fn unsupported_line(&self) -> Option<String> {
         if self.unsupported.is_empty() {
             return None;
         }

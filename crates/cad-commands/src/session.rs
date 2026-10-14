@@ -21,8 +21,8 @@ use crate::history::InputHistory;
 use crate::log::CommandLog;
 use crate::snap::find_snap_from;
 use crate::{
-    Command, CommandContext, CommandInput, CommandRegistry, Dirty, DraftingSettings, Grip,
-    HostRequest, HoveredObject, ImportReport, KeyAction, LayerRow, Modifiers, OverlayItem,
+    Command, CommandContext, CommandInput, CommandRegistry, Dirty, DraftingSettings, FileDrawing,
+    Grip, HostRequest, HoveredObject, ImportReport, KeyAction, LayerRow, Modifiers, OverlayItem,
     PointerButton, Prompt, Selection, SelectionMethod, SelectionSummary, SnapModes, SnapPoint,
     SpaceRequest, Step, Toggle, Toggles, UiState,
 };
@@ -170,6 +170,8 @@ pub struct Session {
     acquired: Vec<Point2>,
     /// What the last `LAYISO` changed, for `LAYUNISO` (#213).
     isolation: Option<Isolation>,
+    /// The drawing `WBLOCK` made, for the host to write (#222).
+    block_file: Option<(String, Drawing)>,
     registry: CommandRegistry,
     active: Option<ActiveCommand>,
     selection: Selection,
@@ -255,6 +257,7 @@ impl Session {
             previous_views: Vec::new(),
             acquired: Vec::new(),
             isolation: None,
+            block_file: None,
             registry,
             active: None,
             selection: Selection::default(),
@@ -1153,6 +1156,24 @@ impl Session {
 
     // ── host integration ──
 
+    /// A drawing the host read from the file `INSERT` asked for (#222):
+    /// given to the command as its input, with what the file held that
+    /// the drawing cannot written to the log first.
+    pub fn insert_drawing(&mut self, drawing: Drawing, name: &str, messages: Vec<String>) -> Dirty {
+        for message in messages {
+            self.log.push(message);
+        }
+        self.feed(CommandInput::File(FileDrawing {
+            name: name.to_owned(),
+            drawing: std::rc::Rc::new(drawing),
+        })) | Dirty::UI
+    }
+
+    /// The drawing `WBLOCK` made and its file name, once (#222).
+    pub fn take_block_file(&mut self) -> Option<(String, Drawing)> {
+        self.block_file.take()
+    }
+
     /// The request raised by the last input that reported `Dirty::HOST`.
     pub fn take_host_request(&mut self) -> Option<HostRequest> {
         self.host_request.take()
@@ -1715,6 +1736,7 @@ impl Session {
             aliases: self.registry.aliases_mut(),
             space: self.space,
             isolation: &mut self.isolation,
+            block_file: &mut self.block_file,
             log: &mut self.log,
             host_request: &mut self.host_request,
             space_request: &mut self.space_request,

@@ -383,6 +383,8 @@ impl CadSession {
             Some(HostRequest::SaveFile) => 3,
             Some(HostRequest::Settings) => 4,
             Some(HostRequest::Plot) => 5,
+            Some(HostRequest::InsertFile) => 6,
+            Some(HostRequest::WriteBlock) => 7,
         }
     }
 
@@ -422,6 +424,31 @@ impl CadSession {
             Err(error) => self.session.notify(format!("Cannot open {name}: {error}.")),
         };
         self.report(dirty)
+    }
+
+    /// The file `INSERT ~` asked for (#222), read and handed to the
+    /// command as a drawing; what the file held that the drawing cannot
+    /// goes to the log. A file that is not a drawing is said so.
+    pub fn insert_dxf(&mut self, bytes: &[u8], name: &str) -> u32 {
+        let dirty = match cad_dxf::import(bytes) {
+            Ok(import) => {
+                let messages = import.report.unsupported_line().into_iter().collect();
+                self.session.insert_drawing(import.drawing, name, messages)
+            }
+            Err(error) => self
+                .session
+                .notify(format!("Cannot insert {name}: {error}.")),
+        };
+        self.report(dirty)
+    }
+
+    /// The file `WBLOCK` made (#222), once: its name and its text, as two
+    /// strings, or none.
+    pub fn take_block_file(&mut self) -> Vec<String> {
+        self.session
+            .take_block_file()
+            .map(|(name, drawing)| vec![name, cad_dxf::export(&drawing)])
+            .unwrap_or_default()
     }
 
     /// Takes the import report off the screen (#157).

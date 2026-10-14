@@ -38,7 +38,7 @@ test.describe("blocks", () => {
 
     // INSERT twice: as it is at (100, 0), and twice the size at (100, 100).
     await enter(page, "I");
-    await expect(prompt(page)).toHaveText("Enter block name:");
+    await expect(prompt(page)).toHaveText("Enter block name, or ~ for a file:");
     await enter(page, "Chair", "100,0");
     await expect(prompt(page)).toHaveText("Specify scale factor <1>:");
     await enter(page, "");

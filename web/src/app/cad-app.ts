@@ -1,6 +1,6 @@
 // The application object: one engine session, one UI store, one frame loop.
 // React components and the canvas binding talk to the engine only through it.
-import { Dirty, HostRequest, SnapshotStatus, type CadEngine, type KeyAction } from "../cad/engine";
+import { Dirty, HostRequest, KeyAction, SnapshotStatus, type CadEngine } from "../cad/engine";
 import { FrameLoop, type ScheduleFrame } from "./frame-loop";
 import {
   browserHost,
@@ -434,9 +434,28 @@ export class CadApp {
         return;
       case HostRequest.Plot:
         return this.#plot();
+      case HostRequest.InsertFile:
+        return this.#insertFile();
+      case HostRequest.WriteBlock:
+        return this.#writeBlock();
       case HostRequest.None:
         return;
     }
+  }
+
+  /** INSERT's file (#222): picked, read, and handed to the waiting command; none, and it gives up. */
+  async #insertFile(): Promise<void> {
+    const file = await this.#host.files.open(DXF_ACCEPT);
+    this.loop.invalidate(
+      file ? this.engine.insertDxf(file.bytes, file.name) : this.engine.key(KeyAction.Escape),
+    );
+    this.ui.refresh(this.engine);
+  }
+
+  /** WBLOCK's file (#222): saved where the user chooses. */
+  async #writeBlock(): Promise<void> {
+    const file = this.engine.takeBlockFile();
+    if (file) await this.#host.files.saveAs(file.name, file.text, DXF_MIME_TYPE);
   }
 
   async #openFile(): Promise<void> {

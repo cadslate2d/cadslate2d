@@ -1,6 +1,8 @@
 //! The drawing: the authoritative CAD state.
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+
+mod merge;
 use std::fmt;
 use std::sync::Arc;
 

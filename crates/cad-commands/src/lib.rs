@@ -32,7 +32,7 @@ mod ui_state;
 
 pub use aids::{Track, TrackKind};
 pub use command::{
-    Command, CommandContext, CommandInput, HoveredObject, Prompt, SpaceRequest, Step,
+    Command, CommandContext, CommandInput, FileDrawing, HoveredObject, Prompt, SpaceRequest, Step,
 };
 pub use dirty::Dirty;
 pub use events::{HostRequest, KeyAction, Modifiers, PointerButton};

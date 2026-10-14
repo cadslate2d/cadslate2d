@@ -32,6 +32,22 @@ pub enum CommandInput {
     Text(String),
     /// Enter or Space on an empty line.
     Accept,
+    /// A drawing the host read from a file the command asked for (#222).
+    File(FileDrawing),
+}
+
+/// A drawing read from a file, and the file's name (#222). Shared, as the
+/// input is cloned; two are the same input when they are the same read.
+#[derive(Clone, Debug)]
+pub struct FileDrawing {
+    pub name: String,
+    pub drawing: std::rc::Rc<Drawing>,
+}
+
+impl PartialEq for FileDrawing {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && std::rc::Rc::ptr_eq(&self.drawing, &other.drawing)
+    }
 }
 
 /// The angle, in degrees counter-clockwise from +X in `[0, 360)`, that a
@@ -122,6 +138,9 @@ pub struct CommandContext<'a> {
     /// What the last `LAYISO` changed, for `LAYUNISO` (#213): session
     /// state, like the view, kept apart from the drawing's history.
     pub(crate) isolation: &'a mut Option<Isolation>,
+    /// A drawing `WBLOCK` made, and the file name to write it under, for
+    /// the host to take (#222).
+    pub(crate) block_file: &'a mut Option<(String, Drawing)>,
     pub(crate) log: &'a mut CommandLog,
     pub(crate) host_request: &'a mut Option<HostRequest>,
     pub(crate) space_request: &'a mut Option<SpaceRequest>,

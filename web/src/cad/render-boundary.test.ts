@@ -28,6 +28,8 @@ describe("WASM API surface", () => {
       "dismiss_import_report",
       "history_next",
       "history_previous",
+      // #222: a file INSERT asked for, read whole and handed over in one call.
+      "insert_dxf",
       "invoke",
       "key",
       "load_dxf",
@@ -87,6 +89,8 @@ describe("WASM API surface", () => {
       "snapshot_dxf",
       "snapshot_step",
       "submit_text",
+      // #222: the file WBLOCK made, name and text in one call.
+      "take_block_file",
       "take_host_request",
       "ui_state",
       "wheel",

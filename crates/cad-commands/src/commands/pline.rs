@@ -162,7 +162,8 @@ impl Command for PlineCommand {
             | CommandInput::Distance(_)
             | CommandInput::Angle(_)
             | CommandInput::Text(_)
-            | CommandInput::Pick { .. } => {}
+            | CommandInput::Pick { .. }
+            | CommandInput::File(_) => {}
         }
         Step::Continue
     }

@@ -227,6 +227,8 @@ impl Command for BlockCommand {
 #[derive(Debug)]
 enum InsertState {
     Name,
+    /// `~` typed: the host's file picker is open (#222).
+    File,
     Point {
         block: BlockId,
     },
@@ -302,6 +304,66 @@ impl InsertCommand {
         Step::Continue
     }
 
+    /// A drawing read from a file, as a block named after the file (#222):
+    /// its model's objects, with the rows they refer to brought in by name.
+    /// A block of that name already here is the one placed.
+    fn from_file(ctx: &mut CommandContext<'_>, file: &crate::FileDrawing) -> Option<BlockId> {
+        let stem = file
+            .name
+            .rsplit_once('.')
+            .map_or(file.name.as_str(), |(stem, _)| stem);
+        let name: String = stem
+            .chars()
+            .map(|c| {
+                if cad_document::FORBIDDEN.contains(&c) || c.is_control() {
+                    '_'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let name = name.trim().to_owned();
+        if check_name(&name).is_err() {
+            ctx.message(format!("\"{}\" cannot name a block.", file.name));
+            return None;
+        }
+        if let Some(block) = find(ctx, &name) {
+            ctx.message(format!("Block \"{name}\" is already defined: placing it."));
+            return Some(block);
+        }
+        let source = &file.drawing;
+        let records: Vec<EntityRecord> = source
+            .records()
+            .filter(|(_, record)| record.space == cad_document::LayoutId::MODEL)
+            .map(|(_, record)| record.clone())
+            .collect();
+        if records.is_empty() {
+            ctx.message(format!("{} has nothing in its model to insert.", file.name));
+            return None;
+        }
+        let count = records.len();
+        let mut transaction = ctx.transaction();
+        let defined = transaction.bring_in(source, &records).and_then(|brought| {
+            transaction.define_block(Block::new(name.clone(), Point2::ORIGIN, brought))
+        });
+        match defined {
+            Ok(block) => {
+                transaction.commit();
+                ctx.message(format!(
+                    "Block \"{name}\" made from {}: {}.",
+                    file.name,
+                    counted(count, "object")
+                ));
+                Some(block)
+            }
+            Err(error) => {
+                drop(transaction);
+                ctx.message(format!("{} cannot be inserted: {error}.", file.name));
+                None
+            }
+        }
+    }
+
     fn commit(ctx: &mut CommandContext<'_>, reference: BlockReferenceEntity) -> Step {
         let mut transaction = ctx.transaction();
         transaction
@@ -333,7 +395,8 @@ fn is_scale(factor: f64) -> bool {
 impl Command for InsertCommand {
     fn prompt(&self) -> Prompt {
         match &self.state {
-            InsertState::Name => Prompt::new(ENTER_NAME),
+            InsertState::Name => Prompt::new("Enter block name, or ~ for a file"),
+            InsertState::File => Prompt::new("Choose the file to insert"),
             InsertState::Point { .. } => Prompt::new("Specify insertion point"),
             InsertState::Scale { .. } => Prompt::new("Specify scale factor").with_default("1"),
             InsertState::Rotation { .. } => Prompt::new("Specify rotation angle").with_default("0"),
@@ -344,6 +407,7 @@ impl Command for InsertCommand {
     fn expected(&self) -> ExpectedInput {
         match &self.state {
             InsertState::Name | InsertState::Attributes { .. } => ExpectedInput::text(),
+            InsertState::File => ExpectedInput::new(InputKind::Nothing),
             InsertState::Point { .. } => ExpectedInput::point(),
             // A factor is a plain number: `2mm` is not a scale.
             InsertState::Scale { .. } => ExpectedInput::factor(),
@@ -354,6 +418,15 @@ impl Command for InsertCommand {
     fn step(&mut self, input: CommandInput, ctx: &mut CommandContext<'_>) -> Step {
         match (&self.state, input) {
             (InsertState::Name, CommandInput::Text(name)) if name == "?" => Self::list(ctx),
+            (InsertState::Name, CommandInput::Text(name)) if name.trim() == "~" => {
+                ctx.request_host(crate::HostRequest::InsertFile);
+                self.state = InsertState::File;
+            }
+            (InsertState::File, CommandInput::File(file)) => match Self::from_file(ctx, &file) {
+                Some(block) => self.state = InsertState::Point { block },
+                None => return Step::Finished,
+            },
+            (InsertState::File, CommandInput::Accept) => return Step::Finished,
             (InsertState::Name, CommandInput::Text(name)) => match find(ctx, &name) {
                 Some(block) => self.state = InsertState::Point { block },
                 None => ctx.message(format!("There is no block \"{name}\".")),
@@ -448,7 +521,7 @@ impl Command for InsertCommand {
     /// then turned towards the pointer.
     fn preview(&self, cursor: Point2, out: &mut Vec<OverlayItem>) {
         let reference = match &self.state {
-            InsertState::Name => return,
+            InsertState::Name | InsertState::File => return,
             InsertState::Point { block } => BlockReferenceEntity::new(*block, cursor, 1.0, 0.0),
             InsertState::Scale { block, insertion } => {
                 out.push(OverlayItem::PreviewSegment {
@@ -481,7 +554,10 @@ impl Command for InsertCommand {
             InsertState::Scale { insertion, .. } | InsertState::Rotation { insertion, .. } => {
                 Some(*insertion)
             }
-            InsertState::Name | InsertState::Point { .. } | InsertState::Attributes { .. } => None,
+            InsertState::Name
+            | InsertState::File
+            | InsertState::Point { .. }
+            | InsertState::Attributes { .. } => None,
         }
     }
 }
