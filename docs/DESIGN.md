@@ -2062,6 +2062,8 @@ Nothing in M8 should constrain M0.
 > **Complete (2026-10-13):** every item shipped and tested ([M8 review](reviews/m8-exit-review.md); ADR-0025 to ADR-0028). M9 is paper space — layouts drawn, viewports, the current space, plotting a layout — broken down in the [roadmap](roadmap.md) (epic #190).
 >
 > **M9 complete (2026-10-13):** paper space shipped — spaces ([ADR-0029](adr/0029-spaces.md)), viewports ([ADR-0030](adr/0030-viewports.md)), the layout tabs and the current space, a layout plotted ([ADR-0027](adr/0027-pdf-plot.md) §5); the [M9 review](reviews/m9-exit-review.md) finds every milestone of Part IV shipped and breaks M10 — daily drafting: inquiry, points, arrays, matched properties, purge and rename, lengthen and align — down in the [roadmap](roadmap.md) (epic #196).
+>
+> **M10 complete (2026-10-14):** the daily commands shipped — `DIST`, `ID`, `AREA`, `LIST`; points with their style, `DIVIDE`, `MEASURE`, the `NODe` snap; `ARRAY`; `MATCHPROP`, `PURGE`, `RENAME`; `LENGTHEN`, `ALIGN`, `POLYGON`. The [M10 review](reviews/m10-exit-review.md) finds the product one milestone of loose ends short of complete and breaks M11 — `PEDIT` and polyline width, leaders, construction lines by an ADR, the selection's loose ends, a layout's plot settings on the page — down in the [roadmap](roadmap.md) (epic #203).
 
 ---
 

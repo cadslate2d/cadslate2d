@@ -16,9 +16,33 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M7 — Rendering and Performance Hardening | Complete and closed ([review](reviews/m7-exit-review.md)); the text atlas (#175) waits on real GPUs and moved to M8 with the other person-blocked items. |
 | M8 — Compatibility Expansion | Complete and closed ([review](reviews/m8-exit-review.md)). |
 | M9 — Paper Space | Complete and closed ([review](reviews/m9-exit-review.md)). |
-| M10 — Daily Drafting | Next. Broken into issues at the M9 exit. |
+| M10 — Daily Drafting | Complete and closed ([review](reviews/m10-exit-review.md)). |
+| M11 — Polylines, Leaders, and Loose Ends | Next. Broken into issues at the M10 exit. |
+
+## M11, as broken down after M10
+
+The daily commands shipped in M10. The [M10 review](reviews/m10-exit-review.md) finds the product one milestone short of complete: the loose ends the M8 to M10 reviews accepted for now. M11 takes them up; the epic is #203.
+
+### Order of work
+
+1. **PEDIT, polyline width, and DONUT** (#204): the polyline edited as one, a constant width drawn as a filled band, DXF both ways.
+2. **Leaders** (#205): a leader entity laid out by the dimension style, `LEADER`, grips, DXF both ways.
+3. **Construction lines by an ADR** (#206): `XLINE` and `RAY`, after an ADR on indexing and drawing an entity without bounds (ADR-0003).
+4. **Selection loose ends** (#207): `QSELECT` on several properties at once; the selection methods at the idle prompt.
+5. **A layout's plot settings on the page** (#208): margins, scale, area, and rotation from the file, offered by `PLOT` and kept on the row.
+6. **Exit** (#209): the scenario, the review, and what follows.
+
+### Not in M11
+
+- `MLEADER`, tables, fields; SHX fonts, xrefs, scripting, plugins, native packaging, a DWG strategy, a native project format (§39), a WebGPU adapter (§38), associative dimensions, advanced hatch, plot style tables, searchable PDF text.
+
+### Needs a person
+
+- #109 WebKit, #110 real GPUs (and #175, which waits on it), #111 the R-tree crash upstream; the PDF of a layout in a desktop viewer.
 
 ## M10, as broken down after M9
+
+Kept for the record; the [review](reviews/m10-exit-review.md) says how it went.
 
 Every milestone DESIGN Part IV planned has shipped. The [M9 review](reviews/m9-exit-review.md) asks whether the product is complete for its purpose and answers: a drafter can open, draft on the model and on sheets, and print, but still cannot ask the drawing a question, put a point down, array a thing, match properties, purge a file, or set a length. M10 adds those classic commands on the machinery that exists; the epic is #196.
 
