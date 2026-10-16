@@ -28,6 +28,7 @@ mod arc;
 mod array;
 mod attributes;
 pub(crate) mod block;
+mod boundary;
 #[path = "break_.rs"]
 mod break_command;
 mod chprop;
@@ -109,6 +110,7 @@ pub(crate) use array::ArrayCommand;
 pub(crate) use array::{Polar, Rectangular};
 pub(crate) use attributes::{AttdefCommand, AtteditCommand};
 pub(crate) use block::{BlockCommand, ExplodeCommand, InsertCommand};
+pub(crate) use boundary::BoundaryCommand;
 pub(crate) use break_command::BreakCommand;
 pub(crate) use chprop::ChpropCommand;
 pub(crate) use circle::CircleCommand;

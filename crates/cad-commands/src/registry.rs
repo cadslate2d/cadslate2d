@@ -11,21 +11,21 @@ use cad_input::{CommandAliases, DuplicateCommandName};
 use crate::Command;
 use crate::commands::{
     AliasEditCommand, AlignCommand, ArcCommand, AreaCommand, ArrayCommand, AttdefCommand,
-    AtteditCommand, BlockCommand, BreakCommand, ChpropCommand, CircleCommand, ColorCommand,
-    CopyClipCommand, CornerCommand, DimAngularCommand, DimChainCommand, DimLinearCommand,
-    DimOrdinateCommand, DimRadialCommand, DimStyleCommand, DistCommand, DivideCommand,
-    DonutCommand, DrawOrderCommand, EdgeCommand, EllipseCommand, EraseCommand, ExplodeCommand,
-    ExportCommand, FindCommand, GridCommand, GroupCommand, HatchCommand, HatchEditCommand,
-    IdCommand, InsertCommand, JoinCommand, LayIsoCommand, LayUnisoCommand, LayerAllCommand,
-    LayerCommand, LayerPickCommand, LayerStateCommand, LayoutCommand, LeaderCommand,
-    LengthenCommand, LineCommand, LinetypeCommand, ListCommand, LtscaleCommand, LweightCommand,
-    MTextCommand, MatchpropCommand, MeasureCommand, MirrorCommand, ModelCommand, MspaceCommand,
-    MviewCommand, OffsetCommand, OpenCommand, OsnapCommand, PanCommand, PasteClipCommand,
-    PeditCommand, PickStyleCommand, PlineCommand, PlotCommand, PointCommand, PolarAngleCommand,
-    PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand, QdimCommand, QselectCommand,
-    RayCommand, RectangCommand, RedoCommand, RenameCommand, RevCloudCommand, SaveCommand,
-    SelectCommand, SettingsCommand, SnapCommand, SplineCommand, StretchCommand, StyleCommand,
-    TextCommand, TextEditCommand, TextToFrontCommand, TransformCommand, UndoCommand,
+    AtteditCommand, BlockCommand, BoundaryCommand, BreakCommand, ChpropCommand, CircleCommand,
+    ColorCommand, CopyClipCommand, CornerCommand, DimAngularCommand, DimChainCommand,
+    DimLinearCommand, DimOrdinateCommand, DimRadialCommand, DimStyleCommand, DistCommand,
+    DivideCommand, DonutCommand, DrawOrderCommand, EdgeCommand, EllipseCommand, EraseCommand,
+    ExplodeCommand, ExportCommand, FindCommand, GridCommand, GroupCommand, HatchCommand,
+    HatchEditCommand, IdCommand, InsertCommand, JoinCommand, LayIsoCommand, LayUnisoCommand,
+    LayerAllCommand, LayerCommand, LayerPickCommand, LayerStateCommand, LayoutCommand,
+    LeaderCommand, LengthenCommand, LineCommand, LinetypeCommand, ListCommand, LtscaleCommand,
+    LweightCommand, MTextCommand, MatchpropCommand, MeasureCommand, MirrorCommand, ModelCommand,
+    MspaceCommand, MviewCommand, OffsetCommand, OpenCommand, OsnapCommand, PanCommand,
+    PasteClipCommand, PeditCommand, PickStyleCommand, PlineCommand, PlotCommand, PointCommand,
+    PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand, QdimCommand,
+    QselectCommand, RayCommand, RectangCommand, RedoCommand, RenameCommand, RevCloudCommand,
+    SaveCommand, SelectCommand, SettingsCommand, SnapCommand, SplineCommand, StretchCommand,
+    StyleCommand, TextCommand, TextEditCommand, TextToFrontCommand, TransformCommand, UndoCommand,
     UngroupCommand, UnitsCommand, WBlockCommand, WipeoutCommand, XLineCommand, ZoomCommand,
 };
 use crate::session::select_keywords;
@@ -63,7 +63,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 120] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 121] = [
             ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
             ("RAY", &[], || Box::new(RayCommand::new())),
             ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
@@ -133,6 +133,9 @@ impl CommandRegistry {
             ("BREAK", &["BR"], || Box::new(BreakCommand::new())),
             ("JOIN", &["J"], || Box::new(JoinCommand)),
             ("BLOCK", &["B"], || Box::new(BlockCommand::new())),
+            ("BOUNDARY", &["BO", "BPOLY"], || {
+                Box::new(BoundaryCommand::new())
+            }),
             ("INSERT", &["I"], || Box::new(InsertCommand::new())),
             ("ATTDEF", &["ATT"], || Box::new(AttdefCommand::new())),
             ("ATTEDIT", &["ATE"], || Box::new(AtteditCommand::new())),

@@ -37,7 +37,7 @@ enum State {
 
 /// A loop the drawing offers as a boundary, with its ring for the tests.
 #[derive(Clone, Debug)]
-struct Candidate {
+pub(crate) struct Candidate {
     path: Path,
     ring: Vec<Point2>,
 }
@@ -87,28 +87,8 @@ impl HatchCommand {
         HatchEntity::solid(loops).styled(self.options.look.style())
     }
 
-    /// The region a point inside it bounds: the smallest loop around the
-    /// point, then every loop inside that one.
     fn region_at(&self, point: Point2) -> Option<Vec<Path>> {
-        let outer = self
-            .candidates
-            .iter()
-            .enumerate()
-            .filter(|(_, candidate)| candidate.contains(point))
-            .min_by(|(_, a), (_, b)| a.area().total_cmp(&b.area()))
-            .map(|(index, _)| index)?;
-        let boundary = &self.candidates[outer];
-        let mut loops = vec![boundary.path.clone()];
-        for (index, candidate) in self.candidates.iter().enumerate() {
-            let inside = candidate
-                .ring
-                .first()
-                .is_some_and(|probe| boundary.contains(*probe));
-            if index != outer && inside && !candidate.contains(point) {
-                loops.push(candidate.path.clone());
-            }
-        }
-        Some(loops)
+        region_at(&self.candidates, point)
     }
 
     /// Commits a hatch of `loops` and finishes, or explains why not.
@@ -131,6 +111,40 @@ impl HatchCommand {
             }
         }
     }
+}
+
+/// The loops the objects shown in the current space make: what a point is
+/// looked up in by HATCH and BOUNDARY (#229).
+pub(crate) fn candidates(ctx: &CommandContext<'_>) -> Vec<Candidate> {
+    let shown: Vec<&Entity> = ctx
+        .drawing
+        .shown_in(ctx.space)
+        .map(|(_, entity)| entity)
+        .collect();
+    loops_of(&shown).into_iter().map(Candidate::new).collect()
+}
+
+/// The region a point inside it bounds: the smallest loop around the
+/// point, then every loop inside that one — its islands.
+pub(crate) fn region_at(candidates: &[Candidate], point: Point2) -> Option<Vec<Path>> {
+    let outer = candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| candidate.contains(point))
+        .min_by(|(_, a), (_, b)| a.area().total_cmp(&b.area()))
+        .map(|(index, _)| index)?;
+    let boundary = &candidates[outer];
+    let mut loops = vec![boundary.path.clone()];
+    for (index, candidate) in candidates.iter().enumerate() {
+        let inside = candidate
+            .ring
+            .first()
+            .is_some_and(|probe| boundary.contains(*probe));
+        if index != outer && inside && !candidate.contains(point) {
+            loops.push(candidate.path.clone());
+        }
+    }
+    Some(loops)
 }
 
 /// The loops `entities` make: every closed polyline and circle as it is,
@@ -191,12 +205,7 @@ pub(crate) fn loops_of(entities: &[&Entity]) -> Vec<Path> {
 
 impl Command for HatchCommand {
     fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
-        let shown: Vec<&Entity> = ctx
-            .drawing
-            .shown_in(ctx.space)
-            .map(|(_, entity)| entity)
-            .collect();
-        self.candidates = loops_of(&shown).into_iter().map(Candidate::new).collect();
+        self.candidates = candidates(ctx);
         self.options = LookOptions::new(Look::remembered(ctx));
         Step::Continue
     }
