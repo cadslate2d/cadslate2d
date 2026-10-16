@@ -60,6 +60,7 @@ mod selection;
 mod selection_sets;
 mod snapping;
 mod spline;
+mod splinedit;
 mod stretch;
 mod style;
 mod text;
