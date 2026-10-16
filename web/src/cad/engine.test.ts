@@ -211,6 +211,7 @@ describe("commands", () => {
     enter(cad, "LA", "N", "walls", "S", "walls", "");
     enter(cad, "L", "0,0", "100,0", "");
     const styles = () => cad.readStyles(({ styles }) => [...styles]);
+    // The style index is the low half of each word; the drawing order, the high half, is 0.
     const indices = () => cad.readScene((frame) => [...(frame.segmentStyles ?? [])]);
     expect(indices()).toEqual([0]);
     // Colour 7 is the theme's foreground; the weight is the ordinary one.

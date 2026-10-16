@@ -17,6 +17,7 @@ use crate::point::PointEntity;
 use crate::tables::Tables;
 pub use crate::text::TextEntity;
 use crate::viewport::ViewportEntity;
+use crate::wipeout::WipeoutEntity;
 
 /// A straight line between two points.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -454,6 +455,8 @@ pub enum Entity {
     XLine(XLineEntity),
     /// A construction line endless one way (#206; ADR-0031).
     Ray(RayEntity),
+    /// A polygon that masks what is beneath it (#226; ADR-0032).
+    Wipeout(WipeoutEntity),
 }
 
 impl Entity {
@@ -490,6 +493,19 @@ impl Entity {
             // It is kept out of the index's tree and the extents.
             Entity::XLine(line) => line.segment().bounds(),
             Entity::Ray(ray) => ray.segment().bounds(),
+            Entity::Wipeout(wipeout) => wipeout.bounds(),
+        }
+    }
+
+    /// Whether the entity is drawn as an area — a solid hatch, a wipeout,
+    /// a wide polyline — rather than as strokes: within a tier of the
+    /// drawing order, an area lies beneath every stroke (ADR-0032).
+    pub fn is_fill(&self) -> bool {
+        match self {
+            Entity::Hatch(hatch) => matches!(hatch.style, crate::HatchStyle::Solid),
+            Entity::Wipeout(_) => true,
+            Entity::Polyline(polyline) => polyline.width() > 0.0,
+            _ => false,
         }
     }
 
@@ -532,6 +548,8 @@ impl Entity {
                 .distance_to(point),
             Entity::XLine(line) => line.distance_to(point),
             Entity::Ray(ray) => ray.distance_to(point),
+            // A wipeout by its frame, as a closed polyline is.
+            Entity::Wipeout(wipeout) => wipeout.distance_to(point),
         }
     }
 
@@ -578,6 +596,8 @@ impl Entity {
             // cut, and snaps as a segment that long.
             Entity::XLine(line) => vec![Primitive::Segment(line.segment())],
             Entity::Ray(ray) => vec![Primitive::Segment(ray.segment())],
+            // A wipeout's frame is a polygon: it snaps and cuts as one.
+            Entity::Wipeout(wipeout) => wipeout.primitives(),
             Entity::BlockRef(reference) => tables
                 .blocks
                 .flatten(reference, crate::Properties::default())
@@ -666,7 +686,8 @@ impl Entity {
             | Entity::Arc(_)
             | Entity::Ellipse(_)
             | Entity::Spline(_)
-            | Entity::Polyline(_) => self.primitives(tables),
+            | Entity::Polyline(_)
+            | Entity::Wipeout(_) => self.primitives(tables),
             Entity::Text(text) => frame_edges(&text.frame()),
             Entity::MText(text) => frame_edges(&text.frame()),
             Entity::AttributeDefinition(definition) => frame_edges(&definition.as_text().frame()),
@@ -747,6 +768,7 @@ impl Entity {
                 .text
                 .is_some_and(|text| text.frame().contains(point)),
             Entity::XLine(_) | Entity::Ray(_) => false,
+            Entity::Wipeout(wipeout) => wipeout.contains(point),
         }
     }
 
@@ -834,6 +856,7 @@ impl Entity {
             Entity::Viewport(viewport) => viewport.transformed(transform).into(),
             Entity::Point(point) => point.transformed(transform).into(),
             Entity::Leader(leader) => leader.transformed(transform).into(),
+            Entity::Wipeout(wipeout) => wipeout.transformed(transform).into(),
             Entity::XLine(line) => line.transformed(transform).into(),
             Entity::Ray(ray) => ray.transformed(transform).into(),
         }
@@ -918,6 +941,12 @@ impl Entity {
     /// clipped to the view.
     pub fn is_unbounded(&self) -> bool {
         matches!(self, Entity::XLine(_) | Entity::Ray(_))
+    }
+}
+
+impl From<WipeoutEntity> for Entity {
+    fn from(wipeout: WipeoutEntity) -> Self {
+        Entity::Wipeout(wipeout)
     }
 }
 
@@ -1090,6 +1119,13 @@ mod tests {
             )
             .into(),
             PointEntity::new(Point2::new(7.0, 2.0)).into(),
+            WipeoutEntity::new(vec![
+                Point2::new(1.0, 1.0),
+                Point2::new(6.0, 1.0),
+                Point2::new(3.0, 4.0),
+            ])
+            .unwrap()
+            .into(),
         ]
     }
 
@@ -1126,6 +1162,7 @@ mod tests {
             Entity::Leader(leader) => leader.vertices.clone(),
             Entity::XLine(line) => vec![line.base, line.base + line.direction * 10.0],
             Entity::Ray(ray) => vec![ray.start, ray.start + ray.direction * 10.0],
+            Entity::Wipeout(wipeout) => wipeout.vertices.clone(),
         }
     }
 
@@ -1583,7 +1620,7 @@ mod tests {
             all.iter()
                 .map(|entity| entity.primitives(Tables::none()).len())
                 .collect::<Vec<_>>(),
-            vec![1, 1, 1, 3, 0]
+            vec![1, 1, 1, 3, 0, 3]
         );
 
         // A vertical line through the circle's centre crosses it twice.

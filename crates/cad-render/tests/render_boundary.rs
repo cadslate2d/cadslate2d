@@ -465,6 +465,77 @@ fn an_edit_repacks_one_chunk_and_reports_the_ranges_it_changed() {
     assert_eq!((ranges[0].first, ranges[0].count), (0, count), "everything");
 }
 
+/// #226 (ADR-0032): an instance's style word carries its entity's tier in
+/// the drawing order beside its style; a wipeout's mask is a background
+/// row; a change of order re-packs only the chunk it touched, with no new
+/// geometry, and the pointer moving re-packs nothing.
+#[test]
+fn the_drawing_order_crosses_in_the_style_words_and_repacks_only_what_moved() {
+    let mut h = Harness::new();
+    // A chunk's worth of lines, so the line moved below is not in the
+    // last chunk.
+    for n in 0..600 {
+        h.enter_all(&["L", &format!("0,{n}"), &format!("100,{n}"), ""]);
+    }
+    h.enter_all(&["WIPEOUT", "10,10", "60,10", "60,30", ""]);
+    let mut cache = SceneCache::new();
+    let scene = cache.scene(h.session.drawing()).clone();
+    cache.take_dirty();
+    let tier = |word: u32| (word >> RenderScene::ORDER_SHIFT) as u16 as i16;
+    let style = |word: u32| (word & 0xFFFF) as usize;
+    assert!(
+        scene.segment_styles()[..600]
+            .iter()
+            .all(|word| tier(*word) == 0)
+    );
+    // The wipeout: its mask in the background row, over everything; its
+    // frame in its own style, in the same tier.
+    let masks = scene.triangle_styles();
+    assert_eq!(masks.len(), 1);
+    assert_eq!(tier(masks[0]), 1);
+    let row = style(masks[0]) * RenderScene::BYTES_PER_STYLE;
+    assert_eq!(scene.styles()[row + 3], RenderScene::STYLE_BACKGROUND);
+    let frame = &scene.segment_styles()[600..];
+    assert_eq!(frame.len(), 3);
+    assert!(
+        frame
+            .iter()
+            .all(|word| tier(*word) == 1 && style(*word) == 0)
+    );
+
+    h.move_to(300.0, 300.0);
+    cache.scene(h.session.drawing());
+    assert!(
+        cache.take_dirty().is_empty(),
+        "pointer movement re-packs nothing"
+    );
+
+    // The fifth line to the front: one chunk, its segments' words alone.
+    h.click_world(cad_core::Point2::new(50.0, 4.0));
+    h.enter_all(&["DR", "F"]);
+    let builds = cache.build_count();
+    let after = cache.scene(h.session.drawing()).clone();
+    assert_eq!(cache.build_count(), builds + 1);
+    assert_eq!(cache.partial_build_count(), 1);
+    assert_eq!(
+        after.frame().segments(),
+        scene.frame().segments(),
+        "no new geometry"
+    );
+    assert_eq!(tier(after.segment_styles()[4]), 2);
+    let changed: Vec<usize> = (0..after.segment_styles().len())
+        .filter(|n| after.segment_styles()[*n] != scene.segment_styles()[*n])
+        .collect();
+    assert_eq!(changed, [4]);
+    let ranges = cache.take_dirty();
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].kind, InstanceKind::Segments);
+    assert!(
+        ranges[0].first == 0 && ranges[0].count as u64 == cad_render::CHUNK_IDS - 1,
+        "{ranges:?}: the first chunk, IDs 1 to 511"
+    );
+}
+
 /// #112: zooming far in on a curve draws its visible span in the overlay
 /// and touches nothing committed.
 #[test]
@@ -603,7 +674,7 @@ fn styled_scenes_are_consistent_and_deterministic() {
     );
     assert_eq!(scene.style_count(), 3, "layer 0, walls, and doors");
     for style in scene.segment_styles().iter().chain(scene.arc_styles()) {
-        assert!(usize::from(*style) < scene.style_count());
+        assert!(((*style & 0xFFFF) as usize) < scene.style_count());
     }
     // Committed geometry is still one batch per buffer, however many colours:
     // colour is not what batches are for any more.
@@ -693,7 +764,7 @@ fn an_objects_own_colour_wins_over_its_layers_on_screen() {
         scene
             .segment_styles()
             .iter()
-            .map(|style| rows[usize::from(*style)])
+            .map(|style| rows[(*style & 0xFFFF) as usize])
             .map(|row| [row[0], row[1], row[2], row[3]])
             .collect()
     };

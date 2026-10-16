@@ -37,6 +37,10 @@ pub struct DrawingSettings {
     pub unit: Option<LengthUnit>,
     /// How every point is drawn (`PTYPE`; `$PDMODE`, `$PDSIZE`; #198).
     pub point_style: PointStyle,
+    /// Whether wipeouts show their frames (`WIPEOUT Frames`; DXF
+    /// `WIPEOUTVARIABLES`; #226). On by default, as in the classic
+    /// programs: a frameless wipeout is hard to find.
+    pub wipeout_frame: bool,
 }
 
 impl DrawingSettings {
@@ -58,6 +62,7 @@ impl Default for DrawingSettings {
             ltscale: Self::DEFAULT_LTSCALE,
             unit: None,
             point_style: PointStyle::default(),
+            wipeout_frame: true,
         }
     }
 }
@@ -110,6 +115,7 @@ mod tests {
                 ltscale: 2.5,
                 unit: Some(LengthUnit::Metres),
                 point_style: PointStyle::new(35, 4.0),
+                wipeout_frame: false,
             },
         };
         assert_eq!(change.inverse().before, change.after);

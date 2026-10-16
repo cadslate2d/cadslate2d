@@ -132,6 +132,7 @@ pub(crate) fn replaced_in(
         | Entity::Polyline(_)
         | Entity::Hatch(_)
         | Entity::Viewport(_)
+        | Entity::Wipeout(_)
         | Entity::Point(_)
         | Entity::XLine(_)
         | Entity::Ray(_) => {}

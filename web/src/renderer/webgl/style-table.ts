@@ -9,6 +9,7 @@
 import {
   BYTES_PER_STYLE,
   PATTERN_CONTINUOUS,
+  STYLE_BACKGROUND,
   STYLE_FOREGROUND,
   STYLE_WEIGHT_DEFAULT,
 } from "../../cad/engine";
@@ -21,8 +22,14 @@ const TEXELS_PER_STYLE = 2;
 /** Styles per row of the texture; more wrap to further rows. */
 export const STYLES_PER_ROW = STYLE_TABLE_WIDTH / TEXELS_PER_STYLE;
 
-/** Where the per-instance style index is bound, in both the stroke and the arc program. */
+/**
+ * Where the per-instance style word is bound, in the stroke, arc, and fill
+ * programs: the style index in its low half, the tier of the drawing order
+ * in its high half, a signed number (ADR-0032).
+ */
 export const STYLE_ATTRIBUTE_LOCATION = 2;
+/** Tiers per unit of clip-space depth: a tier of ±32768 stays inside the clip volume. */
+const TIERS_PER_DEPTH = 32769;
 
 /** A half width is stored in sixteenths of a device pixel, in one byte. */
 const HALF_WIDTH_STEPS = 16;
@@ -35,7 +42,7 @@ const HALF_WIDTH_STEPS = 16;
  * declare `u_scale` and `u_viewport` first.
  */
 export const STYLE_VERTEX_DECLARATIONS = `
-layout(location = ${STYLE_ATTRIBUTE_LOCATION}) in float a_style; // a row of the style table
+layout(location = ${STYLE_ATTRIBUTE_LOCATION}) in uint a_style; // a row of the style table, and the tier
 uniform sampler2D u_styles;
 uniform float u_styled;       // 1: style from the table; 0: from the uniforms
 uniform vec4 u_color;         // straight alpha
@@ -46,11 +53,19 @@ flat out float v_pattern;     // a row of the pattern table; 0 for continuous
 flat out float v_unit_px;     // device pixels per drawing unit
 `;
 
-/** Vertex-shader statements that set `v_color`, `v_half_width`, `v_pattern`, and `v_unit_px`. */
+/**
+ * Vertex-shader statements that set `v_color`, `v_half_width`, `v_pattern`,
+ * and `v_unit_px`, and declare `order_depth`: the clip-space depth of the
+ * instance's tier, nearer for a higher one, which the program writes as its
+ * `gl_Position.z` (ADR-0032). The overlay is drawn without a depth test.
+ */
 export const STYLE_VERTEX_RESOLVE = `
   v_unit_px = u_scale.x * u_viewport.x * 0.5;
+  float order_depth = 0.0;
   if (u_styled > 0.5) {
-    int style = int(a_style);
+    int style = int(a_style & 0xFFFFu);
+    // The high half, sign and all: an int keeps the word's bits.
+    order_depth = -float(int(a_style) >> 16) / ${TIERS_PER_DEPTH}.0;
     ivec2 texel = ivec2((style % ${STYLES_PER_ROW}) * ${TEXELS_PER_STYLE}, style / ${STYLES_PER_ROW});
     v_color = texelFetch(u_styles, texel, 0);
     vec4 look = texelFetch(u_styles, texel + ivec2(1, 0), 0);
@@ -67,6 +82,8 @@ export const STYLE_VERTEX_RESOLVE = `
 export interface StyleLook {
   /** The theme's colour for ordinary geometry: what a "foreground" row is drawn in. */
   readonly foreground: Rgba;
+  /** The canvas's colour: what a "background" row — a wipeout's mask — is drawn in. */
+  readonly background: Rgba;
   /** The theme's ordinary line width, in CSS pixels. */
   readonly defaultWidth: number;
   /** Whether lineweights are shown (the LWT toggle); off, every line has the ordinary width. */
@@ -108,11 +125,14 @@ export function styleTexels(rows: Uint8Array, look: StyleLook): StyleTexels {
   const data = new Uint8Array(STYLE_TABLE_WIDTH * height * 4);
   const byte = (channel: number) => Math.round(Math.min(1, Math.max(0, channel)) * 255);
   const theme = look.foreground.map(byte);
+  const ground = look.background.map(byte);
   for (let style = 0; style < count; style += 1) {
     const row = style * BYTES_PER_STYLE;
     const texel = style * TEXELS_PER_STYLE * 4;
     if (rows[row + 3] === STYLE_FOREGROUND) {
       data.set(theme, texel);
+    } else if (rows[row + 3] === STYLE_BACKGROUND) {
+      data.set([ground[0] ?? 0, ground[1] ?? 0, ground[2] ?? 0, 255], texel);
     } else {
       data.set([rows[row] ?? 0, rows[row + 1] ?? 0, rows[row + 2] ?? 0, 255], texel);
     }

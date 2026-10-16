@@ -42,6 +42,7 @@ There are two kinds:
 | [0029](0029-spaces.md) | Every entity is in a space; the model is the first row of the layout table; a file's paper entities are entities of their layout | Accepted | Design |
 | [0030](0030-viewports.md) | A viewport is an entity of a layout's paper; its contents are the model's committed scene drawn again under its own transform | Accepted | Design |
 | [0031](0031-construction-lines.md) | A construction line is an entity without bounds: kept beside the index, out of the extents, read along a million-unit reach, and drawn clipped to the view in the overlay | Accepted | Design |
+| [0032](0032-draw-order.md) | The drawing order is a tier on each record, carried in the high half of each instance's style word and drawn as depth: fills write it, strokes test it | Accepted | Design |
 
 ## Expected evidence ADRs
 

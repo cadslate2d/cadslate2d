@@ -7,11 +7,11 @@ use cad_commands::{
 use cad_core::{ClipTransform, LengthUnit, Point2, ScreenPoint};
 use cad_document::{Entity, LayoutId, ViewportEntity};
 use cad_render::{OverlayFrame, RenderScene, SceneCache, viewport_view};
-use js_sys::{Float32Array, Uint8Array, Uint16Array, Uint32Array};
+use js_sys::{Float32Array, Uint8Array, Uint32Array};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-use crate::views::{f32_view, u8_view, u16_view, u32_view};
+use crate::views::{f32_view, u8_view, u32_view};
 
 const MODIFIER_SHIFT: u32 = 1;
 const MODIFIER_CTRL: u32 = 1 << 1;
@@ -577,16 +577,17 @@ impl CadSession {
         f32_view(self.scene().frame().arc_distances())
     }
 
-    /// One style index per committed segment instance. A view into WASM
-    /// memory — consume before the next call.
-    pub fn scene_segment_styles(&mut self) -> Uint16Array {
-        u16_view(self.scene().segment_styles())
+    /// One style word per committed segment instance: the style index in
+    /// the low half, the tier of the drawing order, an `i16`, in the high
+    /// (ADR-0032). A view into WASM memory — consume before the next call.
+    pub fn scene_segment_styles(&mut self) -> Uint32Array {
+        u32_view(self.scene().segment_styles())
     }
 
-    /// One style index per committed arc instance. A view into WASM memory —
+    /// One style word per committed arc instance. A view into WASM memory —
     /// consume before the next call.
-    pub fn scene_arc_styles(&mut self) -> Uint16Array {
-        u16_view(self.scene().arc_styles())
+    pub fn scene_arc_styles(&mut self) -> Uint32Array {
+        u32_view(self.scene().arc_styles())
     }
 
     /// Committed segment instances: `x0, y0, x1, y1` per segment, relative to
@@ -730,10 +731,10 @@ impl CadSession {
         u32_view(self.scene().frame().triangle_batch_words())
     }
 
-    /// One style index per committed triangle instance. A view into WASM
+    /// One style word per committed triangle instance. A view into WASM
     /// memory — consume before the next call.
-    pub fn scene_triangle_styles(&mut self) -> Uint16Array {
-        u16_view(self.scene().triangle_styles())
+    pub fn scene_triangle_styles(&mut self) -> Uint32Array {
+        u32_view(self.scene().triangle_styles())
     }
 
     /// Which committed instances changed since this was last called

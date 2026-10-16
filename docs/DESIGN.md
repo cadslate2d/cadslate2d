@@ -1413,6 +1413,8 @@ CadSlate2D must not depend on platform-native wide `GL_LINES`.
 
 > **Resolved in M6 (hatch):** a filled region is triangle instances — six floats, a style index each, no path distance — in a third committed buffer beside segments and arcs, cut by ear clipping from the boundary rings with the holes bridged in; the adapter draws fills before strokes. A fill of lines would depend on the zoom, which committed geometry may not — [ADR-0021](adr/0021-filled-regions.md).
 
+> **Resolved in M14 (draw order):** what is painted over what is a tier on each record, an `i16`; a new object takes the top tier, and within a tier fills lie beneath strokes, as before. The scene carries the tier in the high half of each instance's style word and the adapter draws it as depth — fills write it, strokes only test it — so batching by style and chunk re-packing are kept; `DRAWORDER`, `TEXTTOFRONT`, and `WIPEOUT` build on it, and a DXF file keeps it as the order of its records, a `SORTENTSTABLE` being read — [ADR-0032](adr/0032-draw-order.md).
+
 CAD strokes should be expanded into triangle geometry to support:
 
 - screen-space lineweight;

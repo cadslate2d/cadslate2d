@@ -45,28 +45,30 @@ Tests: `cad-commands/src/tests/layers.rs`, `cad-document/src/drawing.rs`, `cad-r
 
 ## At a glance
 
-| Command | Line | Arc | Circle | Ellipse | Spline | Open polyline | Closed polyline | Text | Block reference | Dimension | Hatch | Viewport |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| [MOVE, COPY, ROTATE, SCALE, MIRROR](#move-copy-rotate-scale-mirror) | yes | yes | yes | yes | yes | yes | yes | yes; a mirrored text stays readable | yes; a mirrored reference stays a reference | yes, by its points; its text always reads the right way up; a scaled dimension measures the scaled points | yes, whole; a mirrored hatch keeps its fill | yes; its frame stays square to the paper |
-| [Grip editing](#grip-editing) | ends, midpoint | ends, midpoint, centre | centre, quadrants | centre, axis ends; an arc's ends and centre | fit points, or control points | vertices | vertices | insertion point | insertion point | the points it measures, and where it is placed | loop vertices | a corner resizes it about the opposite one; the centre moves it |
-| [OFFSET](#offset) | yes | yes | yes | no: an offset ellipse is not one | no | yes | yes | no: not a curve | no | no: not a curve | no: not a curve | no: not a curve |
-| [TRIM](#trim) | yes | yes | if crossed twice | if crossed twice; a cutting edge, as its chords | no; a cutting edge, as its chords | yes | if crossed twice | no; never a cutting edge | no; its lines and arcs are cutting edges | no; never a cutting edge | no; never a cutting edge | no; never a cutting edge |
-| [EXTEND](#extend) | yes | yes | no: it has no end | no; a boundary, as its chords | no; a boundary, as its chords | yes | no: it has no end | no; never a boundary | no; its lines and arcs are boundaries | no; never a boundary | no; never a boundary | no; never a boundary |
-| [FILLET](#fillet) | with a line, arc, or circle | with a line, arc, or circle | with a line, arc, or circle; left whole | no | no | between two of its own segments | between two of its own segments | no | no | no | no | no: not a curve |
-| [CHAMFER](#chamfer) | with a line | no | no | no | no | between two of its own segments | between two of its own segments | no | no | no | no | no: not a curve |
-| [BREAK](#break) | yes | yes | two points; becomes an arc | two points; becomes an arc of it | no | yes | two points; opens | no | no | no | no | no: not a curve |
-| [JOIN](#join) | yes | yes | no: it has no end | no | no | yes | no: it has no end | no: it has no ends | no | no | no | no: not a curve |
-| [STRETCH](#stretch) | by its ends | by its ends | whole, by its centre | whole, by its centre | by its fit points, re-fitted | by its vertices | by its vertices | whole, by its insertion point | whole, by its insertion point | by its points: a measured point inside the window moves and the dimension measures anew | by its loop vertices | whole, by its centre |
-| [PEDIT](#pedit) | offered as a polyline | offered as a polyline | no | no | no | yes | yes | no | no | no | no | no |
-| [LENGTHEN](#lengthen) | yes | yes, by length or angle | no: it has no end | no | no | at its end segment | no: it has no end | no | no | no | no | no |
-| [ALIGN](#align) | yes | yes | yes | yes | yes | yes | yes | yes, turned and scaled whole | yes, turned and scaled whole | yes, by its points | yes, whole | yes; its frame stays square to the paper |
-| ERASE | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes |
-| TEXTEDIT | — | — | — | — | — | — | — | changes what it says | — | — | — | — |
-| EXPLODE | — | — | — | — | — | its lines and arcs | its lines and arcs | — | its definition's objects | its lines, its arrowheads (closed polylines), its arc, its text | a pattern hatch its pattern's lines; a solid hatch has nothing to come apart into | no |
+| Command | Line | Arc | Circle | Ellipse | Spline | Open polyline | Closed polyline | Text | Block reference | Dimension | Hatch | Viewport | Wipeout |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| [MOVE, COPY, ROTATE, SCALE, MIRROR](#move-copy-rotate-scale-mirror) | yes | yes | yes | yes | yes | yes | yes | yes; a mirrored text stays readable | yes; a mirrored reference stays a reference | yes, by its points; its text always reads the right way up; a scaled dimension measures the scaled points | yes, whole; a mirrored hatch keeps its fill | yes; its frame stays square to the paper | yes, by its corners |
+| [Grip editing](#grip-editing) | ends, midpoint | ends, midpoint, centre | centre, quadrants | centre, axis ends; an arc's ends and centre | fit points, or control points | vertices | vertices | insertion point | insertion point | the points it measures, and where it is placed | loop vertices | a corner resizes it about the opposite one; the centre moves it | corners |
+| [OFFSET](#offset) | yes | yes | yes | no: an offset ellipse is not one | no | yes | yes | no: not a curve | no | no: not a curve | no: not a curve | no: not a curve | no: not a curve |
+| [TRIM](#trim) | yes | yes | if crossed twice | if crossed twice; a cutting edge, as its chords | no; a cutting edge, as its chords | yes | if crossed twice | no; never a cutting edge | no; its lines and arcs are cutting edges | no; never a cutting edge | no; never a cutting edge | no; never a cutting edge | no; its frame is a cutting edge |
+| [EXTEND](#extend) | yes | yes | no: it has no end | no; a boundary, as its chords | no; a boundary, as its chords | yes | no: it has no end | no; never a boundary | no; its lines and arcs are boundaries | no; never a boundary | no; never a boundary | no; never a boundary | no; its frame is a boundary |
+| [FILLET](#fillet) | with a line, arc, or circle | with a line, arc, or circle | with a line, arc, or circle; left whole | no | no | between two of its own segments | between two of its own segments | no | no | no | no | no: not a curve | no: not a curve |
+| [CHAMFER](#chamfer) | with a line | no | no | no | no | between two of its own segments | between two of its own segments | no | no | no | no | no: not a curve | no: not a curve |
+| [BREAK](#break) | yes | yes | two points; becomes an arc | two points; becomes an arc of it | no | yes | two points; opens | no | no | no | no | no: not a curve | no: not a curve |
+| [JOIN](#join) | yes | yes | no: it has no end | no | no | yes | no: it has no end | no: it has no ends | no | no | no | no: not a curve | no: not a curve |
+| [STRETCH](#stretch) | by its ends | by its ends | whole, by its centre | whole, by its centre | by its fit points, re-fitted | by its vertices | by its vertices | whole, by its insertion point | whole, by its insertion point | by its points: a measured point inside the window moves and the dimension measures anew | by its loop vertices | whole, by its centre | by its corners |
+| [PEDIT](#pedit) | offered as a polyline | offered as a polyline | no | no | no | yes | yes | no | no | no | no | no | no |
+| [LENGTHEN](#lengthen) | yes | yes, by length or angle | no: it has no end | no | no | at its end segment | no: it has no end | no | no | no | no | no | no |
+| [ALIGN](#align) | yes | yes | yes | yes | yes | yes | yes | yes, turned and scaled whole | yes, turned and scaled whole | yes, by its points | yes, whole | yes; its frame stays square to the paper | yes, by its corners |
+| ERASE | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes |
+| TEXTEDIT | — | — | — | — | — | — | — | changes what it says | — | — | — | — | — |
+| EXPLODE | — | — | — | — | — | its lines and arcs | its lines and arcs | — | its definition's objects | its lines, its arrowheads (closed polylines), its arc, its text | a pattern hatch its pattern's lines; a solid hatch has nothing to come apart into | no | no |
 
 An ellipse is read as its chords (#181), a third of a thousandth of its major axis from the curve: it is picked on the curve, snaps at its centre, its axis ends, and an arc's ends and middle (never at a chord's end), and cuts and bounds other objects to that accuracy. Its own cuts — BREAK, TRIM — are by parameter, exact. It is not offset, filleted, extended, joined, or exploded, each refused by name.
 
 A spline is read as its chords too (#182), subdivided until flat to a quarter of a thousandth of its extent: picked on the curve, snapping at its ends and middle, cutting and bounding other objects to that accuracy. Its grips are the fit points it was drawn through — dragging one re-fits the curve — or its control points when a file gave it those alone. It is not trimmed, broken, extended, offset, filleted, joined, or exploded; each is refused by name.
+
+A wipeout (#226) is its frame for every modify command: a polygon of straight edges, picked on them, snapping at its corners and the middle of its edges, cutting and bounding other objects there. It moves, turns, scales, mirrors, aligns, and stretches by its corners, and its corners are its grips. It is not offset, trimmed, extended, broken, filleted, chamfered, joined, lengthened, or exploded; each is refused by name. Where it lies in the drawing order is `DRAWORDER`'s ([ADR-0032](adr/0032-draw-order.md)): an object made from another keeps that one's tier, as it keeps its properties.
 
 A hatch is an area, not a curve ([ADR-0021](adr/0021-filled-regions.md)): it is picked by its fill and its boundary; nothing snaps to, intersects, or trims against it. Tests: `cad-commands/src/tests/hatch.rs`, `cad-document/src/hatch.rs`.
 

@@ -1049,3 +1049,47 @@ proptest! {
         }
     }
 }
+
+/// #226 (ADR-0032): the page is painted in the drawing order — a line
+/// brought to the front is painted last — and a wipeout's mask is the
+/// paper's white, painted over what is beneath it and under its frame.
+#[test]
+fn the_page_is_painted_in_the_drawing_order_and_a_wipeout_masks_in_white() {
+    let mut drawing = coloured();
+    let red = drawing
+        .records()
+        .find(|(_, record)| record.properties.color == Color::Index(1))
+        .map(|(id, _)| id)
+        .unwrap();
+    let mut tx = drawing.transaction();
+    tx.set_order(red, 1).unwrap();
+    tx.commit();
+    let ops = parse(content_of(&plot_pdf(&drawing, &settings())));
+    assert_eq!(
+        ops.strokes,
+        vec![[0.0, 0.0, 1.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+        "the red line last, over the others"
+    );
+
+    let mut tx = drawing.transaction();
+    tx.insert_on_top(
+        cad_document::WipeoutEntity::new(vec![p(10.0, -5.0), p(60.0, -5.0), p(60.0, 25.0)])
+            .unwrap(),
+    )
+    .unwrap();
+    tx.commit();
+    let pdf = plot_pdf(&drawing, &settings());
+    let content = content_of(&pdf);
+    let mask = content.find("q 1 1 1 rg\n").expect("a white mask");
+    let red_line = content.find("1 0 0 RG").expect("the red line");
+    assert!(red_line < mask, "the mask over what is beneath it");
+    let frame = content[mask..].find("S\n").expect("its frame, stroked");
+    assert!(
+        content[mask..mask + frame].contains("f\nQ\n"),
+        "the mask, then the frame"
+    );
+    let page = media_box(&pdf);
+    for point in &parse(content).points {
+        assert!(page.contains_point(*point), "{point:?} is off the page");
+    }
+}

@@ -24,6 +24,9 @@ pub struct Tables<'a> {
     /// tables because a point's marker depends on it as a dimension's
     /// layout depends on its style.
     pub point_style: PointStyle,
+    /// Whether a wipeout's frame is drawn (#226): a setting, as the point
+    /// style is.
+    pub wipeout_frame: bool,
 }
 
 impl<'a> Tables<'a> {
@@ -37,6 +40,7 @@ impl<'a> Tables<'a> {
             blocks: empty_blocks(),
             dim_styles: STYLES.get_or_init(initial_dim_styles),
             point_style: PointStyle::default(),
+            wipeout_frame: true,
         }
     }
 
@@ -47,6 +51,7 @@ impl<'a> Tables<'a> {
             blocks,
             dim_styles: Tables::none().dim_styles,
             point_style: PointStyle::default(),
+            wipeout_frame: true,
         }
     }
 

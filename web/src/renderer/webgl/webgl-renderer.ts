@@ -188,7 +188,8 @@ export class WebGlRenderer implements FrameSink {
   #devicePixelRatio = 1;
 
   constructor(canvas: HTMLCanvasElement, palette: CanvasPalette) {
-    const gl = canvas.getContext("webgl2", { alpha: false, antialias: false });
+    // A depth buffer for the drawing order (ADR-0032).
+    const gl = canvas.getContext("webgl2", { alpha: false, antialias: false, depth: true });
     if (!gl) throw new Error("WebGL2 is not available; check webGl2Available() first");
     this.#canvas = canvas;
     this.#gl = gl;
@@ -262,6 +263,7 @@ export class WebGlRenderer implements FrameSink {
       // The theme's colour and width for ordinary geometry stand in for
       // "foreground" and "default".
       foreground: entity.color,
+      background: this.#palette.background,
       defaultWidth: entity.width,
       lineweights: this.#showLineweights,
       devicePixelRatio: this.#devicePixelRatio,
@@ -314,7 +316,14 @@ export class WebGlRenderer implements FrameSink {
 
     gl.viewport(0, 0, this.#canvas.width, this.#canvas.height);
     gl.clearColor(red, green, blue, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.clearDepth(1);
+    gl.depthMask(true);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    // The drawing order (ADR-0032): an instance's tier is its depth, nearer
+    // for a higher one. Fills write it, so what is beneath a fill is hidden;
+    // strokes only test it, so their antialiased edges hide nothing, and a
+    // stroke in the tier of a fill is drawn over it.
+    gl.depthFunc(gl.LEQUAL);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied alpha
     gl.activeTexture(gl.TEXTURE1);
@@ -336,7 +345,9 @@ export class WebGlRenderer implements FrameSink {
       ] as const;
       const { regions } = layers;
       if (regions === undefined) {
-        // The overlay: its batches under the one transform.
+        // The overlay: its batches under the one transform, in no order
+        // but its own.
+        gl.disable(gl.DEPTH_TEST);
         for (const [pipeline, layer] of kinds) {
           this.#usePipeline(pipeline);
           this.stats.drawCalls += layer.draw(
@@ -357,6 +368,7 @@ export class WebGlRenderer implements FrameSink {
       const stride = FLOATS_PER_VIEWPORT_FRAME + FLOATS_PER_TRANSFORM * regionCount;
       const onPaper = viewports.length > 0;
       const stroke = this.#palette.strokes[StyleRole.Entity];
+      gl.enable(gl.DEPTH_TEST);
       if (onPaper) {
         gl.enable(gl.SCISSOR_TEST);
         for (let at = 0; at + stride <= viewports.length; at += stride) {
@@ -366,8 +378,12 @@ export class WebGlRenderer implements FrameSink {
             viewports[at + 2] ?? 0,
             viewports[at + 3] ?? 0,
           );
+          // Each viewport's model in its own order, over what is beneath.
+          gl.depthMask(true);
+          gl.clear(gl.DEPTH_BUFFER_BIT);
           const transforms = viewports.subarray(at + FLOATS_PER_VIEWPORT_FRAME, at + stride);
           for (const [pipeline, layer, kind] of kinds) {
+            gl.depthMask(kind === DirtyKind.Triangles);
             this.#usePipeline(pipeline);
             this.stats.drawCalls += layer.drawRegions(
               pipeline.uniforms,
@@ -379,8 +395,12 @@ export class WebGlRenderer implements FrameSink {
           }
         }
         gl.disable(gl.SCISSOR_TEST);
+        // The paper's own objects lie over every viewport.
+        gl.depthMask(true);
+        gl.clear(gl.DEPTH_BUFFER_BIT);
       }
       for (const [pipeline, layer, kind] of kinds) {
+        gl.depthMask(kind === DirtyKind.Triangles);
         this.#usePipeline(pipeline);
         this.stats.drawCalls += layer.drawRegions(
           pipeline.uniforms,
@@ -391,6 +411,8 @@ export class WebGlRenderer implements FrameSink {
         );
       }
     }
+    gl.depthMask(true);
+    gl.disable(gl.DEPTH_TEST);
     this.stats.frames += 1;
   }
 

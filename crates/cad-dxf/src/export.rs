@@ -22,6 +22,7 @@ use cad_document::{
     LayoutId, LayoutPlot, LayoutTable, LeaderEntity, LineEntity, Linetype, LinetypeDef,
     LinetypeTable, Lineweight, MTextEntity, Measure, PointEntity, PolylineEntity, Properties,
     Revision, SplineEntity, TextEntity, TextStyle, TextStyleId, TextStyleTable, ViewportEntity,
+    WipeoutEntity, draw_order,
 };
 
 use crate::properties::{
@@ -187,15 +188,26 @@ impl Structure {
     }
 }
 
-/// The entities of `space`, in ID order: how a space's records are written.
+/// Whether the drawing holds a wipeout, in any space.
+fn has_wipeouts(drawing: &Drawing) -> bool {
+    drawing
+        .entities()
+        .any(|(_, entity)| matches!(entity, Entity::Wipeout(_)))
+}
+
+/// The entities of `space` in the order they are painted (#226,
+/// ADR-0032): how a space's records are written. A reader paints the
+/// records of a space in the order it reads them, so that order is the
+/// drawing order, and the file needs no table of it. A drawing nobody
+/// reorders, with no area made after a stroke, is written in ID order.
 fn records_in(drawing: &Drawing, space: LayoutId) -> Vec<EntityId> {
-    let mut ids: Vec<EntityId> = drawing
+    let mut painted: Vec<(i16, bool, EntityId)> = drawing
         .records()
         .filter(|(_, record)| record.space == space)
-        .map(|(id, _)| id)
+        .map(|(id, record)| draw_order::paint_key(id, record.order, record.entity.is_fill()))
         .collect();
-    ids.sort_unstable();
-    ids
+    painted.sort_unstable();
+    painted.into_iter().map(|(_, _, id)| id).collect()
 }
 
 /// Serialises the drawing as ASCII DXF.
@@ -291,6 +303,7 @@ impl Export {
             .collect();
         body.group(0, "SECTION");
         body.group(2, "CLASSES");
+        body.classes(drawing);
         body.group(0, "ENDSEC");
         body.section("TABLES", |w| {
             w.tables(drawing, &structure, &block_records, &dimension_records);
@@ -1057,6 +1070,7 @@ impl Writer {
             Entity::Leader(_) => "LEADER",
             Entity::XLine(_) => "XLINE",
             Entity::Ray(_) => "RAY",
+            Entity::Wipeout(_) => "WIPEOUT",
         };
         self.entity(kind, owner, layer, &record.properties, drawing.linetypes());
         match &*record.entity {
@@ -1093,6 +1107,7 @@ impl Writer {
                 self.point(10, ray.start);
                 self.point(11, Point2::ORIGIN + ray.direction);
             }
+            Entity::Wipeout(wipeout) => self.wipeout(wipeout),
         }
     }
 
@@ -1659,6 +1674,10 @@ impl Writer {
     /// entries the release expects; the two layouts, one per space; and
     /// the one plot style, a placeholder.
     fn objects(&mut self, structure: &Structure, drawing: &Drawing) {
+        // Whether wipeouts show their frames, when there is a wipeout for
+        // it to matter to or it is not the default (#226).
+        let wipeout_variables = (has_wipeouts(drawing) || !drawing.settings().wipeout_frame)
+            .then(|| self.handles.take());
         self.dictionary(structure.root, Handle::NONE);
         self.group(3, "ACAD_GROUP");
         self.handle(350, structure.groups);
@@ -1666,6 +1685,10 @@ impl Writer {
         self.handle(350, structure.layouts);
         self.group(3, "ACAD_PLOTSTYLENAME");
         self.handle(350, structure.plot_styles);
+        if let Some(handle) = wipeout_variables {
+            self.group(3, "ACAD_WIPEOUT_VARS");
+            self.handle(350, handle);
+        }
 
         self.dictionary(structure.groups, structure.root);
         // Each group by name, then its GROUP object (#214).
@@ -1748,6 +1771,76 @@ impl Writer {
                 let groups = layout_groups_as_now(&layout.kept, layout);
                 self.kept_groups(&groups, sheet.layout, structure.layouts, &structure.remap);
             }
+        }
+
+        if let Some(handle) = wipeout_variables {
+            self.group(0, "WIPEOUTVARIABLES");
+            self.handle(5, handle);
+            self.handle(330, structure.root);
+            self.group(100, "AcDbWipeoutVariables");
+            self.int(70, i64::from(drawing.settings().wipeout_frame));
+        }
+    }
+
+    /// The CLASSES a file needs for the records of later releases it
+    /// holds (#226): a wipeout and its variables.
+    fn classes(&mut self, drawing: &Drawing) {
+        let wipeouts = has_wipeouts(drawing) || !drawing.settings().wipeout_frame;
+        let classes = [
+            (
+                wipeouts,
+                ["WIPEOUTVARIABLES", "AcDbWipeoutVariables", "WipeOut"],
+                0,
+                false,
+            ),
+            (
+                has_wipeouts(drawing),
+                ["WIPEOUT", "AcDbWipeout", "WipeOut"],
+                127,
+                true,
+            ),
+        ];
+        for (needed, [record, class, application], flags, entity) in classes {
+            if !needed {
+                continue;
+            }
+            self.group(0, "CLASS");
+            self.group(1, record);
+            self.group(2, class);
+            self.group(3, application);
+            self.int(90, flags);
+            self.int(280, 0);
+            self.int(281, i64::from(entity));
+        }
+    }
+
+    /// A WIPEOUT (#226): an image of no picture, one pixel square, whose
+    /// clipping polygon is the boundary. The image sits on the boundary's
+    /// box — its corner (10), its width and height as the pixel's
+    /// vectors (11, 12) — and the polygon (71 = 2, 91 corners, the first
+    /// again last) is in pixel coordinates, from −½ to ½ with y down.
+    fn wipeout(&mut self, wipeout: &WipeoutEntity) {
+        let bounds = wipeout.bounds();
+        let (low, size) = (bounds.min(), bounds.max() - bounds.min());
+        self.group(100, "AcDbWipeout");
+        self.int(90, 0);
+        self.point(10, low);
+        self.point(11, Point2::new(size.x, 0.0));
+        self.point(12, Point2::new(0.0, size.y));
+        self.real(13, 1.0);
+        self.real(23, 1.0);
+        self.group(340, "0");
+        self.int(70, 7);
+        self.int(280, 1);
+        self.int(281, 50);
+        self.int(282, 50);
+        self.int(283, 0);
+        self.group(360, "0");
+        self.int(71, 2);
+        self.int(91, wipeout.vertices.len() as i64 + 1);
+        for vertex in wipeout.vertices.iter().chain(wipeout.vertices.first()) {
+            self.real(14, (vertex.x - low.x) / size.x - 0.5);
+            self.real(24, 0.5 - (vertex.y - low.y) / size.y);
         }
     }
 
@@ -2358,6 +2451,7 @@ mod tests {
                 ltscale: 20.0,
                 unit: None,
                 point_style: cad_document::PointStyle::new(35, 2.5),
+                wipeout_frame: true,
             })
             .unwrap()
     }

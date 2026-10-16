@@ -128,6 +128,19 @@ A frame at the extents of the 100k drawing is half what it was, and back to the 
 
 Zoomed in at 10k the rebuild is two tenths of a microsecond dearer: the list is walked to its cap before the index is asked. The list is kept with the index, on every insert, replace, removal, and redefinition, and built in one sort when a drawing opens: `mixed/open/100000` went from 201 ms to 211 ms on the same machine.
 
+## The drawing order (2026-10-15, #226)
+
+[ADR-0032](adr/0032-draw-order.md): every instance carries its entity's tier of the drawing order in the high half of its style word, and the adapter draws it as depth. `cargo bench -p cad-benchmarks --bench mixed`, natively:
+
+| | 10k | 50k | 100k |
+| --- | --- | --- | --- |
+| A line brought to the front: its chunk re-packed (`mixed/reorder_and_repack`) | 0.33 ms | 0.33 ms | 0.37 ms |
+| Every hatch to the back: nearly every chunk re-packed (`mixed/hatches_to_back_and_repack`) | 7.4 ms | 39 ms | 81 ms |
+| Open, before / after | 25 / 21 ms | 130 / 111 ms | 249 / 223 ms |
+| Scene build, before / after | 10.1 / 8.3 ms | 44.5 / 40.2 ms | 94.7 / 85.6 ms |
+
+In Firefox, at 100k, mean of sixty frames, before and after: pan 63.9 / 60.0 ms, zoom 41.0 / 38.2 ms, pointer 62.1 / 58.8 ms, zoomed in 40.4 / 36.5 ms, an edit 82.1 / 79.0 ms. Reading the tier as a second float attribute had cost five to seven milliseconds a frame; one integer attribute for the whole word costs nothing measurable.
+
 ## Against the targets
 
 | Target | 10k effortless | 50k smooth | 100k usable |

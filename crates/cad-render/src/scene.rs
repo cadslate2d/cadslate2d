@@ -112,16 +112,17 @@ pub struct RenderScene {
     space: LayoutId,
     model_chunks: usize,
     frame: PackedFrame,
-    /// The style index of each segment instance, in instance order.
-    segment_styles: Vec<u16>,
-    /// The style index of each arc instance, in instance order.
-    arc_styles: Vec<u16>,
-    /// The style index of each triangle instance, in instance order.
-    triangle_styles: Vec<u16>,
-    /// The properties each style index stands for; appended to, never
-    /// reordered, so an index stays what it was across repacks.
-    properties: Vec<Properties>,
-    style_indices: HashMap<Properties, u16>,
+    /// The style word of each segment instance, in instance order: see
+    /// [`Self::segment_styles`].
+    segment_styles: Vec<u32>,
+    /// The style word of each arc instance, in instance order.
+    arc_styles: Vec<u32>,
+    /// The style word of each triangle instance, in instance order.
+    triangle_styles: Vec<u32>,
+    /// What each style index stands for; appended to, never reordered, so
+    /// an index stays what it was across repacks.
+    properties: Vec<Look>,
+    style_indices: HashMap<Look, u16>,
     style_revision: Revision,
     /// The style table as it crosses the boundary: see [`Self::styles`].
     styles: Vec<u8>,
@@ -133,6 +134,22 @@ pub struct RenderScene {
     /// What changed since the last [`Self::take_dirty`], or everything.
     dirty: Vec<DirtyRange>,
     dirty_all: bool,
+}
+
+/// What a row of the style table is drawn in: an object's properties,
+/// resolved against its layer, or the background (#226) — a wipeout's
+/// mask, whose colour the adapter supplies from the theme.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Look {
+    Drawn(Properties),
+    Background,
+}
+
+/// The style word of an instance: the style index in the low half, the
+/// tier of its entity in the drawing order in the high half, as the two's
+/// complement `i16` (ADR-0032).
+fn style_word(style: u16, order: i16) -> u32 {
+    u32::from(style) | (u32::from(order.cast_unsigned()) << RenderScene::ORDER_SHIFT)
 }
 
 /// More dirty ranges than this are reported as everything: a frame that
@@ -147,6 +164,12 @@ impl RenderScene {
     pub const STYLE_FOREGROUND: u8 = 0;
     /// The fourth byte of a row whose first three bytes are red, green, blue.
     pub const STYLE_RGB: u8 = 255;
+    /// The fourth byte of a row drawn in the canvas's own colour — a
+    /// wipeout's mask (#226) — which the adapter supplies.
+    pub const STYLE_BACKGROUND: u8 = 1;
+    /// Where in a style word the tier of the drawing order begins: the
+    /// bits below are the style index (ADR-0032).
+    pub const ORDER_SHIFT: u32 = 16;
     /// The fifth byte of a row drawn at the theme's ordinary width. Any
     /// other value is a lineweight in hundredths of a millimetre, of which
     /// the heaviest standard one is 211.
@@ -304,19 +327,22 @@ impl RenderScene {
         &self.frame
     }
 
-    /// One style index per segment instance: a row of [`Self::styles`].
-    pub fn segment_styles(&self) -> &[u16] {
+    /// One style word per segment instance: in the low
+    /// [`Self::ORDER_SHIFT`] bits a row of [`Self::styles`], in the high
+    /// ones the tier of its entity in the drawing order, an `i16`
+    /// (ADR-0032), which the adapter draws as depth.
+    pub fn segment_styles(&self) -> &[u32] {
         &self.segment_styles
     }
 
-    /// One style index per arc instance.
-    pub fn arc_styles(&self) -> &[u16] {
+    /// One style word per arc instance.
+    pub fn arc_styles(&self) -> &[u32] {
         &self.arc_styles
     }
 
-    /// One style index per triangle instance (ADR-0021): a fill takes the
+    /// One style word per triangle instance (ADR-0021): a fill takes the
     /// row's colour and nothing else.
-    pub fn triangle_styles(&self) -> &[u16] {
+    pub fn triangle_styles(&self) -> &[u32] {
         &self.triangle_styles
     }
 
@@ -328,8 +354,8 @@ impl RenderScene {
 
     /// The style table: [`Self::BYTES_PER_STYLE`] bytes per row — `red,
     /// green, blue, kind, weight, pattern`, then two bytes kept for what a
-    /// style gains next. `kind` is [`Self::STYLE_RGB`] or
-    /// [`Self::STYLE_FOREGROUND`]; `weight` is a lineweight in hundredths of
+    /// style gains next. `kind` is [`Self::STYLE_RGB`],
+    /// [`Self::STYLE_FOREGROUND`], or [`Self::STYLE_BACKGROUND`]; `weight` is a lineweight in hundredths of
     /// a millimetre or [`Self::STYLE_WEIGHT_DEFAULT`]; `pattern` is a row of
     /// [`Self::patterns`]. Row `i` is what an instance with style index `i`
     /// is drawn with.
@@ -469,7 +495,7 @@ impl RenderScene {
                 let start = at as usize * per;
                 into.splice(start..start + old as usize * per, from.iter().copied());
             };
-            let splice_styles = |into: &mut Vec<u16>, from: &[u16], at: u32, old: u32| {
+            let splice_styles = |into: &mut Vec<u32>, from: &[u32], at: u32, old: u32| {
                 into.splice(at as usize..(at + old) as usize, from.iter().copied());
             };
             let seg = PackedFrame::FLOATS_PER_SEGMENT;
@@ -615,22 +641,48 @@ impl RenderScene {
             if !drawing.is_shown_in(id, space) {
                 continue;
             }
-            let properties = drawing.properties(id).unwrap_or_default();
+            let (properties, order) = drawing
+                .record(id)
+                .map_or((Properties::default(), 0), |record| {
+                    (record.properties, record.order)
+                });
             // A block reference is its definition's entities, each drawn
             // with its own properties resolved against the reference's
-            // (ADR-0017): one style per distinct result.
+            // (ADR-0017): one style per distinct result. They are all in
+            // the reference's tier.
             let parts: Vec<(Entity, Properties)> = match entity {
                 Entity::BlockRef(reference) => drawing.blocks().flatten(reference, properties),
                 other => vec![(other.clone(), properties)],
             };
             for (entity, properties) in parts {
-                self.push_part(drawing, &entity, properties);
+                self.push_part(drawing, &entity, properties, order);
             }
         }
     }
 
-    /// One drawn entity with the properties it is drawn with.
-    fn push_part(&mut self, drawing: &Drawing, entity: &Entity, mut properties: Properties) {
+    /// The style index of `look`: its row, made the first time it is
+    /// asked for.
+    fn style_of(&mut self, look: Look) -> u16 {
+        *self.style_indices.entry(look).or_insert_with(|| {
+            // More distinct styles than indices: the surplus share the
+            // last one rather than wrapping round onto the first.
+            let index = self.properties.len().min(usize::from(u16::MAX));
+            if index == self.properties.len() {
+                self.properties.push(look);
+            }
+            index as u16
+        })
+    }
+
+    /// One drawn entity with the properties it is drawn with, in tier
+    /// `order` of the drawing order.
+    fn push_part(
+        &mut self,
+        drawing: &Drawing,
+        entity: &Entity,
+        mut properties: Properties,
+        order: i16,
+    ) {
         // A linetype is for curves: a text is drawn continuous, or its
         // glyphs would fall apart into dashes. Nor a dimension's text, nor
         // a hatch, whose pattern carries its own dashes.
@@ -646,15 +698,14 @@ impl RenderScene {
         ) {
             properties.linetype = Linetype::CONTINUOUS;
         }
-        let style = *self.style_indices.entry(properties).or_insert_with(|| {
-            // More distinct styles than indices: the surplus share the
-            // last one rather than wrapping round onto the first.
-            let index = self.properties.len().min(usize::from(u16::MAX));
-            if index == self.properties.len() {
-                self.properties.push(properties);
-            }
-            index as u16
-        });
+        let style = style_word(self.style_of(Look::Drawn(properties)), order);
+        // A wipeout's triangles are its mask, in the background's colour;
+        // its frame is drawn in its own.
+        let fill = if matches!(entity, Entity::Wipeout(_)) {
+            style_word(self.style_of(Look::Background), order)
+        } else {
+            style
+        };
         let before = self.counts();
         self.frame
             .push_entity(StyleRole::Entity, entity, drawing.tables());
@@ -667,7 +718,7 @@ impl RenderScene {
         self.arc_styles
             .extend(std::iter::repeat_n(style, added(before.arcs, after.arcs)));
         self.triangle_styles.extend(std::iter::repeat_n(
-            style,
+            fill,
             added(before.triangles, after.triangles),
         ));
     }
@@ -680,7 +731,23 @@ impl RenderScene {
         self.patterns
             .extend(std::iter::repeat_n(0.0, Self::FLOATS_PER_PATTERN));
         let mut pattern_rows: HashMap<LinetypeId, u8> = HashMap::new();
-        for properties in &self.properties {
+        for look in &self.properties {
+            let properties = match look {
+                Look::Drawn(properties) => properties,
+                Look::Background => {
+                    self.styles.extend([
+                        0,
+                        0,
+                        0,
+                        Self::STYLE_BACKGROUND,
+                        Self::STYLE_WEIGHT_DEFAULT,
+                        Self::PATTERN_CONTINUOUS,
+                        0,
+                        0,
+                    ]);
+                    continue;
+                }
+            };
             let layer = drawing.layers().get(properties.layer);
             let paint = layer.map_or(Paint::Foreground, |layer| properties.color.paint_on(layer));
             let weight = layer.map_or(Weight::Default, |layer| {
@@ -1072,7 +1139,7 @@ mod tests {
         let all = scene.segment_styles().iter().chain(scene.arc_styles());
         assert!(
             all.clone()
-                .all(|style| usize::from(*style) < scene.style_count())
+                .all(|style| ((*style & 0xFFFF) as usize) < scene.style_count())
         );
         assert_eq!(
             scene.styles().len(),

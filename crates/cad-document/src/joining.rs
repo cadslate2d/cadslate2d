@@ -108,6 +108,7 @@ fn open_path(entity: &Entity) -> Option<Path> {
         | Entity::Dimension(_)
         | Entity::Hatch(_)
         | Entity::Viewport(_)
+        | Entity::Wipeout(_)
         | Entity::Point(_)
         | Entity::Leader(_)
         | Entity::XLine(_)

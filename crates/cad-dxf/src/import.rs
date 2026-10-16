@@ -164,6 +164,8 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
         block_record_names: HashMap::new(),
         group_records: Vec::new(),
         entry_names: HashMap::new(),
+        sort_tables: Vec::new(),
+        wipeout_frame: None,
     };
     reader.read_file()?;
     reader.finish()
@@ -607,6 +609,11 @@ struct Reader<'a> {
     /// What every DICTIONARY entry names, by the handle it points at: a
     /// group's name is its entry in `ACAD_GROUP` (#214).
     entry_names: HashMap<String, String>,
+    /// SORTENTSTABLE objects as the file held them (#226).
+    sort_tables: Vec<Vec<RawGroup>>,
+    /// Whether wipeouts show their frames, when the file says
+    /// (`WIPEOUTVARIABLES`, 70; #226).
+    wipeout_frame: Option<bool>,
 }
 
 /// An angle in degrees brought into (−180, 180]: a slant of 345° is one of
@@ -831,10 +838,15 @@ impl<'a> Reader<'a> {
             // layout keeps (#184, #191): a paper-space block's records the
             // drawing has no entity for, LAYOUT objects, and BLOCK_RECORD
             // rows, whose handles name the layouts' blocks.
-            let keep_raw = matches!(record.value, "HATCH" | "SPLINE" | "LAYOUT" | "BLOCK_RECORD")
-                || matches!(self.open_block, Some(OpenBlock::Paper(_)))
+            let keep_raw = matches!(
+                record.value,
+                "HATCH" | "SPLINE" | "WIPEOUT" | "LAYOUT" | "BLOCK_RECORD"
+            ) || matches!(self.open_block, Some(OpenBlock::Paper(_)))
                 || (matches!(context, RecordContext::Objects)
-                    && matches!(record.value, "DICTIONARY" | "GROUP"));
+                    && matches!(
+                        record.value,
+                        "DICTIONARY" | "GROUP" | "SORTENTSTABLE" | "WIPEOUTVARIABLES"
+                    ));
             if keep_raw {
                 body.raw = Some(Vec::new());
             }
@@ -890,6 +902,10 @@ impl<'a> Reader<'a> {
             match (record.value, &body.raw) {
                 ("LAYOUT", Some(raw)) => self.layouts.push(raw.clone()),
                 ("GROUP", Some(raw)) => self.group_records.push(raw.clone()),
+                ("SORTENTSTABLE", Some(raw)) => self.sort_tables.push(raw.clone()),
+                ("WIPEOUTVARIABLES", Some(raw)) => {
+                    self.wipeout_frame = crate::spline::Groups(raw).int(70).map(|frame| frame != 0);
+                }
                 // Each entry: its name (3), then the handle it names (350,
                 // or 360 for one the dictionary owns).
                 ("DICTIONARY", Some(raw)) => {
@@ -1007,6 +1023,11 @@ impl<'a> Reader<'a> {
                 }
             }
             (_, "HATCH") if entities => self.hatch(body)?,
+            (_, "WIPEOUT") if entities => match body.raw.as_deref().map(crate::wipeout::read) {
+                Some(Ok(wipeout)) => self.import(Entity::Wipeout(wipeout), body)?,
+                Some(Err(key)) => self.report.count_unsupported(key),
+                None => self.report.count_unsupported(INVALID),
+            },
             (_, "SPLINE") if entities => match body.raw.as_deref().and_then(crate::spline::read) {
                 Some(spline) => self.import(Entity::Spline(spline), body)?,
                 None => self.report.count_unsupported(INVALID),
@@ -1595,6 +1616,7 @@ impl<'a> Reader<'a> {
                     Entity::Point(_) => self.report.points += 1,
                     Entity::Leader(_) => self.report.leaders += 1,
                     Entity::XLine(_) | Entity::Ray(_) => self.report.construction_lines += 1,
+                    Entity::Wipeout(_) => self.report.wipeouts += 1,
                 }
                 match &mut self.open_block {
                     Some(OpenBlock::Paper(paper)) => paper.entities.push((entity, properties)),
@@ -1854,6 +1876,118 @@ impl<'a> Reader<'a> {
         Some(group)
     }
 
+    /// Puts the drawing's entities in the tiers that paint each space as
+    /// the file does (#226, ADR-0032): by the sort handle its
+    /// SORTENTSTABLE gives an entity, or by the entity's own handle, which
+    /// is the order a reader without one paints in. A space with an entity
+    /// that has no handle is painted in the order of its records.
+    fn draw_order(&mut self, drawing: &mut Drawing, ids_by_handle: &HashMap<String, EntityId>) {
+        let hex = |handle: &str| u64::from_str_radix(handle.trim(), 16).ok();
+        // The drawing's IDs are 1, 2, … in the order the file listed them.
+        let mut handle_of: Vec<Option<u64>> = vec![None; drawing.id_bound() as usize + 1];
+        for (handle, id) in ids_by_handle {
+            if let Some(slot) = handle_of.get_mut(id.raw() as usize) {
+                *slot = hex(handle);
+            }
+        }
+        // Each table's space, by the block record it names after its
+        // subclass marker, and its entities' sort handles.
+        let spaces: HashMap<String, LayoutId> = drawing
+            .layouts()
+            .iter()
+            .map(|(id, layout)| {
+                let name = if id == LayoutId::MODEL {
+                    "*MODEL_SPACE".to_owned()
+                } else {
+                    layout.block_name.to_uppercase()
+                };
+                (name, id)
+            })
+            .collect();
+        // Sort handles by the handle of the entity they are for; a handle
+        // names one entity in the file, whatever its space.
+        let mut sort_handles: HashMap<u64, u64> = HashMap::new();
+        let mut sorted_spaces: Vec<LayoutId> = Vec::new();
+        for raw in std::mem::take(&mut self.sort_tables) {
+            let start = raw
+                .iter()
+                .position(|(code, value)| *code == 100 && value.trim() == "AcDbSortentsTable")
+                .unwrap_or(0);
+            let mut groups = raw[start..].iter();
+            let space = groups
+                .find(|(code, _)| *code == 330)
+                .and_then(|(_, record)| self.block_record_names.get(&record.trim().to_uppercase()))
+                .and_then(|name| spaces.get(&name.to_uppercase()).copied());
+            let Some(space) = space else {
+                // A block's own order, or one naming nothing: not held.
+                self.report.count_unsupported("SORTENTSTABLE");
+                continue;
+            };
+            sorted_spaces.push(space);
+            let mut entity = None;
+            for (code, value) in groups {
+                match code {
+                    331 => entity = hex(value),
+                    5 => {
+                        if let (Some(handle), Some(sort)) = (entity.take(), hex(value)) {
+                            sort_handles.insert(handle, sort);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // Each space's entities by their sort key, read once; a space with
+        // an entity that has no handle keeps the order of its records.
+        // A drawing has a few spaces: they are found by looking.
+        // Each entry: a sort key, the entity, and whether it is an area.
+        type Sequence = Vec<(u64, EntityId, bool)>;
+        let mut painted: Vec<(LayoutId, Sequence)> = Vec::new();
+        let mut unkeyed: Vec<LayoutId> = Vec::new();
+        for (id, record) in drawing.records() {
+            let space = record.space;
+            let Some(handle) = handle_of.get(id.raw() as usize).copied().flatten() else {
+                if !unkeyed.contains(&space) {
+                    unkeyed.push(space);
+                }
+                continue;
+            };
+            let key = if sorted_spaces.contains(&space) {
+                sort_handles.get(&handle).copied().unwrap_or(handle)
+            } else {
+                handle
+            };
+            let at = match painted.iter().position(|(listed, _)| *listed == space) {
+                Some(at) => at,
+                None => {
+                    painted.push((space, Vec::new()));
+                    painted.len() - 1
+                }
+            };
+            painted[at].1.push((key, id, record.entity.is_fill()));
+        }
+        let mut orders: Vec<(EntityId, i16)> = Vec::new();
+        for (space, mut sequence) in painted {
+            if unkeyed.contains(&space) {
+                continue;
+            }
+            // Most files paint in the order they list: nothing to sort.
+            if !sequence.is_sorted() {
+                sequence.sort_unstable();
+            }
+            let ids: Vec<(EntityId, bool)> =
+                sequence.iter().map(|(_, id, fill)| (*id, *fill)).collect();
+            let tiers = cad_document::draw_order::tiers_of(&ids);
+            orders.extend(
+                ids.into_iter()
+                    .map(|(id, _)| id)
+                    .zip(tiers)
+                    .filter(|(_, tier)| *tier != 0),
+            );
+        }
+        drawing.import_orders(orders);
+    }
+
     fn finish(mut self) -> Result<Import, DxfError> {
         // The file's layers first: their linetypes may make rows that
         // entities then use.
@@ -1961,6 +2095,7 @@ impl<'a> Reader<'a> {
                 None => self.report.count_unsupported(EMPTY_GROUP),
             }
         }
+        self.draw_order(&mut drawing, &ids_by_handle);
         self.report.layers = drawing.layers().len() - 1;
         self.report.linetypes = drawing.linetypes().len() - 1;
         self.report.text_styles = drawing.text_styles().len() - 1;
@@ -2024,6 +2159,7 @@ impl<'a> Reader<'a> {
                 .unwrap_or(DrawingSettings::DEFAULT_LTSCALE),
             unit: self.report.unit,
             point_style: self.point_style(),
+            wipeout_frame: self.wipeout_frame.unwrap_or(true),
         };
         let drawing = drawing
             .with_settings(settings)
@@ -4108,7 +4244,8 @@ mod tests {
                         Just("BLOCK"), Just("ENDBLK"), Just("LINE"), Just("CIRCLE"), Just("ARC"),
                         Just("LWPOLYLINE"), Just("POLYLINE"), Just("VERTEX"), Just("SEQEND"),
                         Just("TEXT"), Just("MTEXT"), Just("INSERT"), Just("ATTRIB"), Just("HATCH"),
-                        Just("EOF"), Just("DICTIONARY"), Just("LAYOUT"),
+                        Just("EOF"), Just("DICTIONARY"), Just("LAYOUT"), Just("WIPEOUT"),
+                        Just("SORTENTSTABLE"), Just("WIPEOUTVARIABLES"),
                     ],
                     proptest::collection::vec(
                         (
@@ -4117,7 +4254,9 @@ mod tests {
                                 Just(10), Just(20), Just(30), Just(11), Just(21), Just(40), Just(41),
                                 Just(42), Just(43), Just(48), Just(49), Just(50), Just(51), Just(62),
                                 Just(66), Just(70), Just(71), Just(72), Just(73), Just(74), Just(90),
-                                Just(100), Just(330), Just(370), Just(420), Just(1001), 0..2000i32,
+                                Just(100), Just(330), Just(370), Just(420), Just(1001), Just(12),
+                                Just(22), Just(13), Just(23), Just(14), Just(24), Just(331),
+                                Just(290), 0..2000i32,
                             ],
                             prop_oneof![
                                 (-1000i64..1000).prop_map(|n| n.to_string()),

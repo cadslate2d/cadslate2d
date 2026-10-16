@@ -21,7 +21,7 @@ use cad_core::tolerance::LinearTolerance;
 use cad_core::{Aabb, EntityId, Point2, Vec2};
 use cad_document::{
     Drawing, Entity, HatchEntity, Layout, LayoutArea, LayoutId, Linetype, LinetypeId, Paint,
-    Properties, ViewportEntity, Weight,
+    Properties, ViewportEntity, Weight, WipeoutEntity, draw_order,
 };
 use cad_geometry::{Arc, Primitive};
 use cad_render::{GeometrySink, walk_entity};
@@ -353,7 +353,8 @@ fn look_of(
     }
 }
 
-/// The content stream: every shown entity of the space, in ID order,
+/// The content stream: every shown entity of the space, in the drawing
+/// order (ADR-0032),
 /// each part with its look, inside a clip to the plotted area. On a
 /// layout, the paper's entities at the page's placement — a viewport
 /// itself draws nothing — then, for each viewport that is on, the model's
@@ -368,7 +369,7 @@ fn content(drawing: &Drawing, space: LayoutId, settings: &PlotSettings, page: &P
         settings,
         current: None,
     };
-    let ids = sorted_ids(drawing.shown_in(space).map(|(id, _)| id));
+    let ids = painted(drawing, drawing.shown_in(space).map(|(id, _)| id));
     painter.space(&mut out, &ids, page.placement(), page.area);
     let viewports: Vec<ViewportEntity> = ids
         .iter()
@@ -378,7 +379,7 @@ fn content(drawing: &Drawing, space: LayoutId, settings: &PlotSettings, page: &P
         })
         .collect();
     if !viewports.is_empty() {
-        let model = sorted_ids(drawing.shown().map(|(id, _)| id));
+        let model = painted(drawing, drawing.shown().map(|(id, _)| id));
         for viewport in viewports {
             out.push_str("q\n");
             let frame = viewport.frame();
@@ -401,10 +402,21 @@ fn content(drawing: &Drawing, space: LayoutId, settings: &PlotSettings, page: &P
     out
 }
 
-fn sorted_ids(ids: impl Iterator<Item = EntityId>) -> Vec<EntityId> {
-    let mut ids: Vec<_> = ids.collect();
+/// The entities in the order they are painted, first beneath: the
+/// drawing order, as the screen draws it (#226).
+fn painted(drawing: &Drawing, ids: impl Iterator<Item = EntityId>) -> Vec<EntityId> {
+    let mut ids: Vec<_> = ids
+        .filter_map(|id| {
+            let record = drawing.record(id)?;
+            Some(draw_order::paint_key(
+                id,
+                record.order,
+                record.entity.is_fill(),
+            ))
+        })
+        .collect();
     ids.sort_unstable();
-    ids
+    ids.into_iter().map(|(_, _, id)| id).collect()
 }
 
 /// `re W n`: everything after is clipped to the rectangle, in points.
@@ -508,6 +520,9 @@ struct PageSink {
     current: Option<Point2>,
     /// Fill paths, each complete, emitted after the strokes they came with.
     fills: Vec<String>,
+    /// Wipeouts' masks, in the paper's white, emitted before the strokes
+    /// they came with — a wipeout's frame — so as not to cover them.
+    masks: Vec<String>,
 }
 
 impl PageSink {
@@ -517,11 +532,15 @@ impl PageSink {
             path: String::new(),
             current: None,
             fills: Vec::new(),
+            masks: Vec::new(),
         }
     }
 
     /// Emits what was built: the strokes as one path, then the fills.
     fn flush(&mut self, out: &mut String) {
+        for mask in self.masks.drain(..) {
+            out.push_str(&mask);
+        }
         if !self.path.is_empty() {
             out.push_str(&self.path);
             out.push_str("S\n");
@@ -655,6 +674,15 @@ impl GeometrySink for PageSink {
             num(c.y)
         );
         self.fills.push(fill);
+    }
+
+    /// A wipeout's mask is its boundary filled in the paper's white (#226),
+    /// the look around it kept.
+    fn mask(&mut self, wipeout: &WipeoutEntity) {
+        let mut mask = String::from("q 1 1 1 rg\n");
+        Self::ring(&mut mask, &self.placement, &wipeout.primitives());
+        mask.push_str("f\nQ\n");
+        self.masks.push(mask);
     }
 
     /// A solid hatch is its loops, filled by the even-odd rule: one path,

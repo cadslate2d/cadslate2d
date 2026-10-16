@@ -90,6 +90,12 @@ pub struct EntityRecord {
     pub properties: Properties,
     /// The space the entity is in: the model, or a layout (#191).
     pub space: LayoutId,
+    /// Where it is in the drawing order (#226, ADR-0032): an object of a
+    /// higher tier is drawn over one of a lower. Within a tier, fills are
+    /// beneath strokes, and a later fill is over an earlier one. A new
+    /// object takes the drawing's top tier; `DRAWORDER` moves objects
+    /// between tiers.
+    pub order: i16,
 }
 
 impl EntityRecord {
@@ -98,14 +104,17 @@ impl EntityRecord {
             entity: Arc::new(entity.into()),
             properties,
             space: LayoutId::MODEL,
+            order: 0,
         }
     }
 
-    /// The same properties, in the same space, around different geometry.
+    /// The same properties, in the same space and tier, around different
+    /// geometry.
     #[must_use]
     pub fn with_entity(&self, entity: impl Into<Entity>) -> Self {
         Self {
             space: self.space,
+            order: self.order,
             ..Self::new(entity, self.properties)
         }
     }
@@ -117,6 +126,7 @@ impl EntityRecord {
             entity: Arc::clone(&self.entity),
             properties,
             space: self.space,
+            order: self.order,
         }
     }
 
@@ -127,6 +137,16 @@ impl EntityRecord {
             entity: Arc::clone(&self.entity),
             properties: self.properties,
             space,
+            order: self.order,
+        }
+    }
+
+    /// The same record in another tier of the drawing order (#226).
+    #[must_use]
+    pub fn in_order(&self, order: i16) -> Self {
+        Self {
+            order,
+            ..self.clone()
         }
     }
 }
@@ -138,6 +158,7 @@ impl From<SharedEntity> for EntityRecord {
             entity,
             properties: Properties::default(),
             space: LayoutId::MODEL,
+            order: 0,
         }
     }
 }

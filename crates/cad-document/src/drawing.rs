@@ -1,6 +1,6 @@
 //! The drawing: the authoritative CAD state.
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 mod merge;
 use std::fmt;
@@ -61,6 +61,9 @@ pub struct Drawing {
     /// (ADR-0009) is found without reading every entity.
     radii: BTreeSet<(Radius, EntityId)>,
     radius_of: HashMap<EntityId, f64>,
+    /// How many entities are in each tier of the drawing order (#226):
+    /// the top tier is where new objects go.
+    orders: BTreeMap<i16, usize>,
     history: History,
     revision: Revision,
     shown_revision: Revision,
@@ -357,6 +360,7 @@ fn largest_radius(entity: &Entity, tables: Tables<'_>) -> Option<f64> {
         | Entity::Dimension(_)
         | Entity::Hatch(_)
         | Entity::Viewport(_)
+        | Entity::Wipeout(_)
         | Entity::Point(_)
         | Entity::Leader(_)
         | Entity::XLine(_)
@@ -458,6 +462,7 @@ impl Drawing {
             unbounded: BTreeSet::new(),
             radii: BTreeSet::new(),
             radius_of: HashMap::new(),
+            orders: BTreeMap::new(),
             history: History::default(),
             revision: Revision::next(),
             shown_revision: Revision::next(),
@@ -729,6 +734,7 @@ impl Drawing {
             blocks: &self.blocks,
             dim_styles: &self.dim_styles,
             point_style: self.settings.point_style,
+            wipeout_frame: self.settings.wipeout_frame,
         };
         self.unbounded = self
             .entities
@@ -755,6 +761,33 @@ impl Drawing {
         radii.sort_unstable();
         self.radius_of = radii.iter().map(|(radius, id)| (*id, radius.0)).collect();
         self.radii = radii.into_iter().collect();
+        self.orders.clear();
+        for (_, record) in self.entities.records() {
+            *self.orders.entry(record.order).or_default() += 1;
+        }
+    }
+
+    /// Counts one more entity in tier `order`, or one fewer.
+    fn note_order(&mut self, order: i16, more: bool) {
+        if more {
+            *self.orders.entry(order).or_default() += 1;
+        } else if let Some(count) = self.orders.get_mut(&order) {
+            *count -= 1;
+            if *count == 0 {
+                self.orders.remove(&order);
+            }
+        }
+    }
+
+    /// The highest tier of the drawing order any entity is in, or 0 in an
+    /// empty drawing (#226): where a new object goes.
+    pub fn top_order(&self) -> i16 {
+        self.orders.keys().next_back().copied().unwrap_or(0)
+    }
+
+    /// The lowest tier any entity is in, or 0 in an empty drawing.
+    pub fn bottom_order(&self) -> i16 {
+        self.orders.keys().next().copied().unwrap_or(0)
     }
 
     /// Notes the largest radius of a circle or arc in entity `id`, or that
@@ -885,6 +918,22 @@ impl Drawing {
         Ok(id)
     }
 
+    /// Puts entities in tiers of the drawing order without history (#226):
+    /// the import path, after [`from_spaces`](Self::from_spaces), from the
+    /// order a file kept. An ID the drawing does not hold is passed over.
+    pub fn import_orders(&mut self, orders: impl IntoIterator<Item = (EntityId, i16)>) {
+        for (id, order) in orders {
+            let Some(record) = self.entities.record(id) else {
+                continue;
+            };
+            let before = record.order;
+            let after = record.in_order(order);
+            self.entities.replace(id, after);
+            self.note_order(before, false);
+            self.note_order(order, true);
+        }
+    }
+
     /// The space an entity is in.
     pub fn space_of(&self, id: EntityId) -> Option<LayoutId> {
         self.entities.record(id).map(|record| record.space)
@@ -982,6 +1031,7 @@ impl Drawing {
             blocks: &self.blocks,
             dim_styles: &self.dim_styles,
             point_style: self.settings.point_style,
+            wipeout_frame: self.settings.wipeout_frame,
         }
     }
 
@@ -1054,6 +1104,7 @@ impl Drawing {
         tx.set_current_lineweight(settings.current_lineweight);
         tx.set_unit(settings.unit);
         tx.set_point_style(settings.point_style)?;
+        tx.set_wipeout_frame(settings.wipeout_frame);
         tx.commit();
         self.history = History::default();
         Ok(self)
@@ -1208,9 +1259,11 @@ impl Drawing {
                 // a dimension style changed, of every dimension drawn by it.
                 Change::Block(TableChange::Replace { .. })
                 | Change::DimStyle(TableChange::Replace { .. }) => true,
-                // The point style drawn changes every point (#198).
+                // The point style drawn changes every point (#198), and
+                // whether frames are shown every wipeout (#226).
                 Change::Settings(change) => {
-                    let restyled = change.before.point_style != change.after.point_style;
+                    let restyled = change.before.point_style != change.after.point_style
+                        || change.before.wipeout_frame != change.after.wipeout_frame;
                     everything |= restyled;
                     restyled
                 }
@@ -1234,15 +1287,17 @@ impl Drawing {
                         .insert(*id, record.clone())
                         .expect("transactions never insert a live ID");
                     self.note_radius(*id);
+                    self.note_order(record.order, true);
                     report.inserted.push(*id);
                 }
-                Change::Entity(EntityChange::Remove { id, .. }) => {
+                Change::Entity(EntityChange::Remove { id, record }) => {
                     self.index.remove(*id);
                     self.unbounded.remove(id);
                     self.entities
                         .remove(*id)
                         .expect("transactions only remove live entities");
                     self.note_radius(*id);
+                    self.note_order(record.order, false);
                     report.removed.push(*id);
                 }
                 Change::Entity(EntityChange::Replace { id, before, after }) => {
@@ -1262,6 +1317,8 @@ impl Drawing {
                         .replace(*id, after.clone())
                         .expect("transactions only replace live entities");
                     self.note_radius(*id);
+                    self.note_order(before.order, false);
+                    self.note_order(after.order, true);
                     report.replaced.push(*id);
                 }
                 Change::Layer(change) => {
@@ -1307,6 +1364,7 @@ impl Drawing {
                                     blocks: &self.blocks,
                                     dim_styles: &self.dim_styles,
                                     point_style: self.settings.point_style,
+                                    wipeout_frame: self.settings.wipeout_frame,
                                 };
                                 self.index.update(entity_id, entity.bounds(tables));
                             }
@@ -1431,12 +1489,13 @@ impl TransactionBuilder<'_> {
             .drawing
             .record(source)
             .ok_or(TransactionError::UnknownEntity(source))?;
-        let (properties, space) = (record.properties, record.space);
+        let (properties, space, order) = (record.properties, record.space, record.order);
         let entity = entity.into();
         self.known_text_style(&entity)?;
         self.known_block(&entity)?;
         viewport_placeable(&entity, space)?;
-        Ok(self.insert_record(EntityRecord::new(entity, properties).in_space(space)))
+        let record = EntityRecord::new(entity, properties).in_space(space);
+        Ok(self.insert_record(record.in_order(order)))
     }
 
     /// Adds a new entity to `space` — the model, or a layout — with the
@@ -1458,7 +1517,8 @@ impl TransactionBuilder<'_> {
         self.known_text_style(&entity)?;
         self.known_block(&entity)?;
         viewport_placeable(&entity, space)?;
-        Ok(self.insert_record(EntityRecord::new(entity, properties).in_space(space)))
+        let record = EntityRecord::new(entity, properties).in_space(space);
+        Ok(self.insert_record(record.in_order(self.drawing.top_order())))
     }
 
     /// Adds a new entity to `space` with the given properties.
@@ -1475,7 +1535,33 @@ impl TransactionBuilder<'_> {
         self.known_text_style(&entity)?;
         self.known_block(&entity)?;
         viewport_placeable(&entity, space)?;
-        Ok(self.insert_record(EntityRecord::new(entity, properties).in_space(space)))
+        let record = EntityRecord::new(entity, properties).in_space(space);
+        Ok(self.insert_record(record.in_order(self.drawing.top_order())))
+    }
+
+    /// Adds a new entity over everything the drawing holds (#226): in a
+    /// tier of the drawing order of its own above the top one, as a
+    /// wipeout is made. The properties are those new objects take.
+    pub fn insert_on_top(
+        &mut self,
+        entity: impl Into<Entity>,
+    ) -> Result<EntityId, TransactionError> {
+        let id = self.insert(entity)?;
+        let Some(Change::Entity(EntityChange::Insert { record, .. })) = self.changes.last_mut()
+        else {
+            unreachable!("an insert was just recorded");
+        };
+        record.order = self.drawing.top_order().saturating_add(1);
+        Ok(id)
+    }
+
+    /// Puts an existing entity in tier `order` of the drawing order (#226),
+    /// keeping everything else about it.
+    pub fn set_order(&mut self, id: EntityId, order: i16) -> Result<(), TransactionError> {
+        let before = self.existing(id)?;
+        let after = before.in_order(order);
+        self.push(EntityChange::Replace { id, before, after });
+        Ok(())
     }
 
     /// Moves an existing entity to `space`, keeping its ID, its geometry,
@@ -2182,6 +2268,15 @@ impl TransactionBuilder<'_> {
             ..self.settings_now()
         });
         Ok(())
+    }
+
+    /// Shows or hides every wipeout's frame (#226): one change, however
+    /// many wipeouts there are.
+    pub fn set_wipeout_frame(&mut self, shown: bool) {
+        self.set_settings(DrawingSettings {
+            wipeout_frame: shown,
+            ..self.settings_now()
+        });
     }
 
     /// Says what the drawing's numbers are numbers of; `None` makes it
@@ -4696,6 +4791,7 @@ mod tests {
             ltscale: 25.0,
             unit: Some(LengthUnit::Millimetres),
             point_style: PointStyle::new(3, 2.0),
+            wipeout_frame: false,
         };
         let drawing = drawing.with_settings(settings).unwrap();
         assert_eq!(drawing.settings(), settings);
@@ -5814,6 +5910,61 @@ mod tests {
     }
 
     #[test]
+    fn new_objects_take_the_top_tier_and_pieces_their_source_s() {
+        let mut drawing = Drawing::new();
+        assert_eq!((drawing.bottom_order(), drawing.top_order()), (0, 0));
+        let mut tx = drawing.transaction();
+        let back = tx.insert(line(0.0, 0.0, 10.0, 0.0)).unwrap();
+        let front = tx.insert(line(0.0, 1.0, 10.0, 1.0)).unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.set_order(back, -2).unwrap();
+        tx.set_order(front, 3).unwrap();
+        tx.commit();
+        assert_eq!((drawing.bottom_order(), drawing.top_order()), (-2, 3));
+
+        let mut tx = drawing.transaction();
+        let new = tx.insert(line(0.0, 2.0, 10.0, 2.0)).unwrap();
+        let piece = tx.insert_like(back, line(0.0, 3.0, 10.0, 3.0)).unwrap();
+        let mask = tx.insert_on_top(line(0.0, 4.0, 10.0, 4.0)).unwrap();
+        tx.commit();
+        let order = |drawing: &Drawing, id| drawing.record(id).map(|record| record.order);
+        assert_eq!(order(&drawing, new), Some(3), "a new object goes on top");
+        assert_eq!(
+            order(&drawing, piece),
+            Some(-2),
+            "a piece stays where its source is"
+        );
+        assert_eq!(order(&drawing, mask), Some(4), "above everything");
+        assert_eq!(drawing.top_order(), 4);
+
+        assert!(drawing.undo().is_some());
+        assert_eq!(drawing.top_order(), 3);
+        assert!(drawing.undo().is_some());
+        assert_eq!(order(&drawing, back), Some(0), "one reorder, undone as one");
+        assert_eq!(order(&drawing, front), Some(0));
+        assert_eq!((drawing.bottom_order(), drawing.top_order()), (0, 0));
+    }
+
+    #[test]
+    fn a_change_of_tier_is_a_change_to_what_is_shown() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let id = tx.insert(line(0.0, 0.0, 10.0, 0.0)).unwrap();
+        tx.commit();
+        let before = drawing.shown_revision();
+        let mut tx = drawing.transaction();
+        tx.set_order(id, 1).unwrap();
+        tx.commit();
+        assert_ne!(drawing.shown_revision(), before);
+        assert_eq!(
+            drawing.shown_changes_since(before),
+            Some(vec![id]),
+            "only the entity reordered is repacked"
+        );
+    }
+
+    #[test]
     fn moving_an_entity_between_spaces_is_one_change() {
         let mut drawing = Drawing::new();
         let mut tx = drawing.transaction();
@@ -5997,6 +6148,11 @@ mod tests {
         RemoveLayout(usize),
         CreateIn(usize, f64),
         MoveTo(usize, usize),
+        /// An entity put in a tier of the drawing order; a line drawn over
+        /// everything (#226).
+        Reorder(usize, i16),
+        CreateOnTop(f64),
+        WipeoutFrame(bool),
         Undo,
         Redo,
     }
@@ -6013,6 +6169,25 @@ mod tests {
             .rev()
             .map(|(radius, id)| (*id, radius.0))
             .collect()
+    }
+
+    /// How many entities are in each tier, as the drawing keeps it and as
+    /// its records say.
+    type TierCounts = Vec<(i16, usize)>;
+
+    fn tiers(drawing: &Drawing) -> (TierCounts, TierCounts) {
+        let mut afresh: BTreeMap<i16, usize> = BTreeMap::new();
+        for (_, record) in drawing.records() {
+            *afresh.entry(record.order).or_default() += 1;
+        }
+        (
+            drawing
+                .orders
+                .iter()
+                .map(|(order, n)| (*order, *n))
+                .collect(),
+            afresh.into_iter().collect(),
+        )
     }
 
     /// The same list read from every entity's primitives, largest first.
@@ -6078,6 +6253,9 @@ mod tests {
             1 => (any::<usize>(), -1.0..5.0_f64, 0..5u8).prop_map(|(i, scale, turns)| Op::SetLayoutPlot(i, scale, turns)),
             2 => (any::<usize>(), coordinate()).prop_map(|(i, x)| Op::CreateIn(i, x)),
             1 => (any::<usize>(), any::<usize>()).prop_map(|(i, space)| Op::MoveTo(i, space)),
+            1 => (any::<usize>(), -3..4i16).prop_map(|(i, order)| Op::Reorder(i, order)),
+            1 => coordinate().prop_map(Op::CreateOnTop),
+            1 => any::<bool>().prop_map(Op::WipeoutFrame),
             1 => (0..5u8).prop_map(Op::AddDimStyle),
             1 => (any::<usize>(), -1.0..5.0f64, 0..5u8).prop_map(|(i, h, n)| Op::RestyleDimStyle(i, h, n)),
             1 => any::<usize>().prop_map(Op::RemoveDimStyle),
@@ -6095,7 +6273,7 @@ mod tests {
     /// Everything that is saved: every entity with its geometry and
     /// properties, every layer, every linetype, and the settings.
     type Saved = (
-        Vec<(EntityId, Entity, Properties, LayoutId)>,
+        Vec<(EntityId, Entity, Properties, LayoutId, i16)>,
         Vec<(LayerId, Layer)>,
         Vec<(LinetypeId, LinetypeDef)>,
         Vec<(TextStyleId, TextStyle)>,
@@ -6107,7 +6285,7 @@ mod tests {
     );
 
     fn saved(drawing: &Drawing) -> Saved {
-        let mut entities: Vec<(EntityId, Entity, Properties, LayoutId)> = drawing
+        let mut entities: Vec<(EntityId, Entity, Properties, LayoutId, i16)> = drawing
             .records()
             .map(|(id, record)| {
                 (
@@ -6115,6 +6293,7 @@ mod tests {
                     (*record.entity).clone(),
                     record.properties,
                     record.space,
+                    record.order,
                 )
             })
             .collect();
@@ -6481,6 +6660,32 @@ mod tests {
                         tx.commit();
                         prop_assert_eq!(drawing.space_of(id), Some(space));
                         allocated.push(id);
+                    }
+                    Op::Reorder(pick, order) => {
+                        let live = live_ids(&drawing);
+                        if let Some(&id) = live.get(pick % live.len().max(1)) {
+                            let mut tx = drawing.transaction();
+                            tx.set_order(id, order).unwrap();
+                            tx.commit();
+                            prop_assert_eq!(drawing.record(id).map(|r| r.order), Some(order));
+                        }
+                    }
+                    Op::WipeoutFrame(shown) => {
+                        let mut tx = drawing.transaction();
+                        tx.set_wipeout_frame(shown);
+                        tx.commit();
+                        prop_assert_eq!(drawing.settings().wipeout_frame, shown);
+                    }
+                    Op::CreateOnTop(x) => {
+                        let top = drawing.top_order();
+                        let mut tx = drawing.transaction();
+                        let id = tx
+                            .insert_on_top(LineEntity::new(Point2::new(x, 0.0), Point2::new(x, 1.0)))
+                            .unwrap();
+                        tx.commit();
+                        allocated.push(id);
+                        prop_assert_eq!(drawing.record(id).map(|r| r.order), Some(top + 1));
+                        prop_assert_eq!(drawing.top_order(), top + 1);
                     }
                     Op::MoveTo(pick, space) => {
                         let live = live_ids(&drawing);
@@ -6865,6 +7070,8 @@ mod tests {
 
             prop_assert_eq!(sorted(drawing.query(&everything())), live_ids(&drawing));
             prop_assert_eq!(curves_by_size(&drawing), radii_read_afresh(&drawing));
+            let (kept, afresh) = tiers(&drawing);
+            prop_assert_eq!(kept, afresh);
             for (x, y, w, h) in queries {
                 let query = Aabb::from_points(Point2::new(x, y), Point2::new(x + w, y + h));
                 prop_assert_eq!(sorted(drawing.query(&query)), sorted(reference.query(&query)));
@@ -6883,6 +7090,8 @@ mod tests {
             prop_assert_eq!(saved(&drawing), now);
             prop_assert_eq!(sorted(drawing.query(&everything())), live_ids(&drawing));
             prop_assert_eq!(curves_by_size(&drawing), radii_read_afresh(&drawing));
+            let (kept, afresh) = tiers(&drawing);
+            prop_assert_eq!(kept, afresh);
         }
     }
 }

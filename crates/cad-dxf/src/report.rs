@@ -25,6 +25,8 @@ pub struct ImportReport {
     pub leaders: usize,
     /// Xlines and rays (#206).
     pub construction_lines: usize,
+    /// Wipeouts (#226).
+    pub wipeouts: usize,
     /// Whether the file gave its points a size relative to the screen —
     /// `$PDSIZE` zero or negative — which the drawing does not hold: its
     /// points are drawn at the default size (#198).
@@ -151,6 +153,7 @@ impl ImportReport {
                 "construction line",
                 "construction lines",
             ),
+            (self.wipeouts, "wipeout", "wipeouts"),
         ];
         let imported: Vec<String> = kinds
             .into_iter()

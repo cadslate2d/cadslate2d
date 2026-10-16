@@ -13,19 +13,19 @@ use crate::commands::{
     AliasEditCommand, AlignCommand, ArcCommand, AreaCommand, ArrayCommand, AttdefCommand,
     AtteditCommand, BlockCommand, BreakCommand, ChpropCommand, CircleCommand, ColorCommand,
     CopyClipCommand, CornerCommand, DimAngularCommand, DimChainCommand, DimLinearCommand,
-    DimRadialCommand, DimStyleCommand, DistCommand, DivideCommand, DonutCommand, EdgeCommand,
-    EllipseCommand, EraseCommand, ExplodeCommand, ExportCommand, FindCommand, GridCommand,
-    GroupCommand, HatchCommand, HatchEditCommand, IdCommand, InsertCommand, JoinCommand,
-    LayIsoCommand, LayUnisoCommand, LayerAllCommand, LayerCommand, LayerPickCommand, LayoutCommand,
-    LeaderCommand, LengthenCommand, LineCommand, LinetypeCommand, ListCommand, LtscaleCommand,
-    LweightCommand, MTextCommand, MatchpropCommand, MeasureCommand, MirrorCommand, ModelCommand,
-    MspaceCommand, MviewCommand, OffsetCommand, OpenCommand, OsnapCommand, PanCommand,
-    PasteClipCommand, PeditCommand, PickStyleCommand, PlineCommand, PlotCommand, PointCommand,
-    PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand, QselectCommand,
-    RayCommand, RectangCommand, RedoCommand, RenameCommand, RevCloudCommand, SaveCommand,
-    SelectCommand, SettingsCommand, SnapCommand, SplineCommand, StretchCommand, StyleCommand,
-    TextCommand, TextEditCommand, TransformCommand, UndoCommand, UngroupCommand, UnitsCommand,
-    WBlockCommand, XLineCommand, ZoomCommand,
+    DimRadialCommand, DimStyleCommand, DistCommand, DivideCommand, DonutCommand, DrawOrderCommand,
+    EdgeCommand, EllipseCommand, EraseCommand, ExplodeCommand, ExportCommand, FindCommand,
+    GridCommand, GroupCommand, HatchCommand, HatchEditCommand, IdCommand, InsertCommand,
+    JoinCommand, LayIsoCommand, LayUnisoCommand, LayerAllCommand, LayerCommand, LayerPickCommand,
+    LayoutCommand, LeaderCommand, LengthenCommand, LineCommand, LinetypeCommand, ListCommand,
+    LtscaleCommand, LweightCommand, MTextCommand, MatchpropCommand, MeasureCommand, MirrorCommand,
+    ModelCommand, MspaceCommand, MviewCommand, OffsetCommand, OpenCommand, OsnapCommand,
+    PanCommand, PasteClipCommand, PeditCommand, PickStyleCommand, PlineCommand, PlotCommand,
+    PointCommand, PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand,
+    QselectCommand, RayCommand, RectangCommand, RedoCommand, RenameCommand, RevCloudCommand,
+    SaveCommand, SelectCommand, SettingsCommand, SnapCommand, SplineCommand, StretchCommand,
+    StyleCommand, TextCommand, TextEditCommand, TextToFrontCommand, TransformCommand, UndoCommand,
+    UngroupCommand, UnitsCommand, WBlockCommand, WipeoutCommand, XLineCommand, ZoomCommand,
 };
 use crate::session::select_keywords;
 
@@ -62,7 +62,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 114] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 117] = [
             ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
             ("RAY", &[], || Box::new(RayCommand::new())),
             ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
@@ -205,6 +205,9 @@ impl CommandRegistry {
             ("COPYBASE", &[], || Box::new(CopyClipCommand::with_base())),
             ("PASTECLIP", &[], || Box::new(PasteClipCommand::new())),
             ("REVCLOUD", &[], || Box::new(RevCloudCommand::new())),
+            ("DRAWORDER", &["DR"], || Box::new(DrawOrderCommand::new())),
+            ("TEXTTOFRONT", &[], || Box::new(TextToFrontCommand)),
+            ("WIPEOUT", &[], || Box::new(WipeoutCommand::new())),
             ("GROUP", &["G"], || Box::new(GroupCommand::new())),
             ("UNGROUP", &[], || Box::new(UngroupCommand)),
             ("PICKSTYLE", &[], || Box::new(PickStyleCommand::new())),

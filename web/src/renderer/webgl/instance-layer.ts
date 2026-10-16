@@ -62,9 +62,10 @@ export interface InstanceLayout {
 /**
  * GPU-side storage for one kind of primitive in one render lifetime: an
  * instance buffer plus the batches that say how to draw it. A *styled* layer
- * — committed geometry — has two more buffers: a style index per instance,
- * which picks its colour, width, and linetype from the style table
- * (ADR-0014), and the distance along its entity's path at which each
+ * — committed geometry — has two more buffers: a style word per instance,
+ * whose low half picks its colour, width, and linetype from the style table
+ * (ADR-0014) and whose high half is its tier of the drawing order, drawn as
+ * depth (ADR-0032), and the distance along its entity's path at which each
  * instance begins, which places the linetype on it (ADR-0015).
  */
 export class InstanceLayer {
@@ -72,7 +73,7 @@ export class InstanceLayer {
   readonly #layout: InstanceLayout;
   readonly #vao: WebGLVertexArrayObject;
   readonly #buffer: WebGLBuffer;
-  /** One style index per instance; absent for a layer styled by its batches. */
+  /** One style word per instance; absent for a layer styled by its batches. */
   readonly #styles: WebGLBuffer | undefined;
   /** The path distance of each instance; present exactly when `#styles` is. */
   readonly #distances: WebGLBuffer | undefined;
@@ -109,6 +110,11 @@ export class InstanceLayer {
     if (this.#styles) {
       gl.enableVertexAttribArray(STYLE_ATTRIBUTE_LOCATION);
       gl.vertexAttribDivisor(STYLE_ATTRIBUTE_LOCATION, 1);
+    } else {
+      // The overlay has no style words: the shader reads the generic
+      // value, which must be an unsigned integer like the attribute, or
+      // the draw is refused.
+      gl.vertexAttribI4ui(STYLE_ATTRIBUTE_LOCATION, 0, 0, 0, 0);
     }
     if (this.#distances) {
       gl.enableVertexAttribArray(DISTANCE_ATTRIBUTE_LOCATION);
@@ -127,7 +133,7 @@ export class InstanceLayer {
   upload(
     instances: Float32Array,
     batches: Uint32Array,
-    styles?: Uint16Array,
+    styles?: Uint32Array,
     distances?: Float32Array,
     ranges?: readonly InstanceRange[],
   ): number {
@@ -159,7 +165,7 @@ export class InstanceLayer {
     // A grown buffer holds nothing yet: everything goes up.
     const runs: readonly InstanceRange[] =
       ranges === undefined || reallocated > 0 ? [[0, instances.length / floats]] : ranges;
-    const copy = <T extends Float32Array | Uint16Array>(
+    const copy = <T extends Float32Array | Uint32Array>(
       buffer: WebGLBuffer,
       data: T,
       perInstance: number,
@@ -285,14 +291,13 @@ export class InstanceLayer {
       gl.vertexAttribPointer(attribute.location, attribute.size, gl.FLOAT, false, stride, offset);
     }
     if (this.#styles) {
-      // A 16-bit index per instance, read by the shader as a float.
-      const bytesPerStyle = Uint16Array.BYTES_PER_ELEMENT;
+      // A 32-bit word per instance, read whole as an unsigned integer.
+      const bytesPerStyle = Uint32Array.BYTES_PER_ELEMENT;
       gl.bindBuffer(gl.ARRAY_BUFFER, this.#styles);
-      gl.vertexAttribPointer(
+      gl.vertexAttribIPointer(
         STYLE_ATTRIBUTE_LOCATION,
         1,
-        gl.UNSIGNED_SHORT,
-        false,
+        gl.UNSIGNED_INT,
         bytesPerStyle,
         first * bytesPerStyle,
       );

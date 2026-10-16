@@ -21,6 +21,7 @@ mod properties;
 mod report;
 mod spline;
 mod text_codes;
+mod wipeout;
 
 pub use error::DxfError;
 pub use export::{DrawingChanged, Export, export};

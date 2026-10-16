@@ -12,7 +12,7 @@ use cad_document::{Drawing, Entity, Properties};
 use crate::Selection;
 
 /// The kinds an entity can be, in the order they are listed.
-const KINDS: [(&str, &str); 17] = [
+const KINDS: [(&str, &str); 18] = [
     ("line", "lines"),
     ("circle", "circles"),
     ("arc", "arcs"),
@@ -30,6 +30,7 @@ const KINDS: [(&str, &str); 17] = [
     ("leader", "leaders"),
     ("construction line", "construction lines"),
     ("ray", "rays"),
+    ("wipeout", "wipeouts"),
 ];
 
 /// The kind named by `name` — singular or plural, any case — if any.
@@ -64,6 +65,7 @@ pub(crate) fn kind_index(entity: &Entity) -> usize {
         Entity::Leader(_) => 14,
         Entity::XLine(_) => 15,
         Entity::Ray(_) => 16,
+        Entity::Wipeout(_) => 17,
     }
 }
 
@@ -316,6 +318,22 @@ pub(crate) fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, St
             row("On", if viewport.on { "yes" } else { "no" }.to_owned()),
         ],
         Entity::Point(place) => vec![row("Position", point(place.position))],
+        Entity::Wipeout(wipeout) => vec![
+            row("Vertices", wipeout.vertices.len().to_string()),
+            row(
+                "Area",
+                number(cad_geometry::signed_area(&wipeout.vertices).abs()),
+            ),
+            row(
+                "Frame",
+                if drawing.settings().wipeout_frame {
+                    "shown"
+                } else {
+                    "hidden"
+                }
+                .to_owned(),
+            ),
+        ],
         Entity::XLine(line) => vec![
             row("Base point", point(line.base)),
             row(

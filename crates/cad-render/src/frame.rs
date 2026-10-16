@@ -25,7 +25,9 @@
 //! handing a frame to JavaScript needs no conversion and no allocation.
 
 use cad_core::{Aabb, Point2};
-use cad_document::{Entity, HatchEntity, HatchStyle, PolylineEntity, Properties, Tables};
+use cad_document::{
+    Entity, HatchEntity, HatchStyle, PolylineEntity, Properties, Tables, WipeoutEntity,
+};
 use cad_geometry::{Arc, Primitive, bulge_primitive, polyline_spans};
 
 /// What a batch of geometry *is*. TypeScript resolves each role to a colour
@@ -428,6 +430,14 @@ pub trait GeometrySink {
             self.triangle(triangle);
         }
     }
+    /// A wipeout's mask (#226): its area, which the sink fills in the
+    /// colour of the ground — the theme's, the paper's — as triangles
+    /// unless it fills regions itself.
+    fn mask(&mut self, wipeout: &WipeoutEntity) {
+        for triangle in wipeout.fill() {
+            self.triangle(triangle);
+        }
+    }
 }
 
 /// A frame receiving one entity's geometry under one style.
@@ -449,6 +459,21 @@ impl GeometrySink for Styled<'_> {
 
     fn triangle(&mut self, corners: [Point2; 3]) {
         self.frame.push_triangle(self.style, corners);
+    }
+
+    /// The committed scene fills a mask, which it styles as the
+    /// background. The overlay outlines it instead: a highlight or a
+    /// preview filled in its own colour would hide what it is over.
+    fn mask(&mut self, wipeout: &WipeoutEntity) {
+        if self.style == StyleRole::Entity {
+            for triangle in wipeout.fill() {
+                self.triangle(triangle);
+            }
+        } else {
+            for edge in wipeout.edges() {
+                self.segment(edge.start, edge.end, 0.0);
+            }
+        }
     }
 }
 
@@ -563,6 +588,18 @@ pub fn walk_entity(entity: &Entity, tables: Tables<'_>, sink: &mut impl Geometry
         Entity::Viewport(viewport) => {
             for edge in viewport.edges() {
                 sink.segment(edge.start, edge.end, 0.0);
+            }
+        }
+        // A wipeout is its mask, then its frame when the drawing shows
+        // frames (#226).
+        Entity::Wipeout(wipeout) => {
+            sink.mask(wipeout);
+            if tables.wipeout_frame {
+                let mut distance = 0.0;
+                for edge in wipeout.edges() {
+                    sink.segment(edge.start, edge.end, distance);
+                    distance += edge.length();
+                }
             }
         }
         // A hatch is its fill — triangles for a solid one (ADR-0021),

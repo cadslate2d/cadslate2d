@@ -12,6 +12,7 @@
 //! | MText | Insertion | moves the paragraph |
 //! | Block reference | Insertion | moves the reference |
 //! | Viewport | Vertex at each corner, then Center | a corner resizes the frame about the opposite one; the centre moves it |
+//! | Wipeout | one Vertex per corner | moves that corner |
 //!
 //! Arc grips follow the familiar *stretch* behaviour (ADR-0010): an arc is
 //! always the arc through its start, its midpoint, and its end. Dragging
@@ -27,7 +28,7 @@ use cad_geometry::Arc;
 use crate::{
     ArcEntity, AttributeDefinitionEntity, BlockReferenceEntity, CircleEntity, EllipseEntity,
     Entity, LineEntity, MTextEntity, PointEntity, PolylineEntity, RayEntity, TextEntity,
-    ViewportEntity, XLineEntity,
+    ViewportEntity, WipeoutEntity, XLineEntity,
 };
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
@@ -152,6 +153,11 @@ impl Entity {
                 .vertices()
                 .into_iter()
                 .map(|vertex| grip(GripKind::Vertex, vertex))
+                .collect(),
+            Entity::Wipeout(wipeout) => wipeout
+                .vertices
+                .iter()
+                .map(|vertex| grip(GripKind::Vertex, *vertex))
                 .collect(),
             Entity::Dimension(dimension) => {
                 let measured = dimension.measure.points().len();
@@ -316,6 +322,15 @@ impl Entity {
             }
             Entity::Point(_) => (index == 0).then(|| PointEntity::new(to).into()),
             Entity::Leader(leader) => leader.with_vertex(index, to).map(Entity::from),
+            Entity::Wipeout(wipeout) => {
+                let mut vertices = wipeout.vertices.clone();
+                *vertices.get_mut(index)? = to;
+                // A corner dragged onto its neighbour would leave fewer.
+                WipeoutEntity::new(vertices)
+                    .ok()
+                    .filter(|moved| moved.vertices.len() == wipeout.vertices.len())
+                    .map(Entity::from)
+            }
             Entity::XLine(line) => (index == 0).then(|| XLineEntity { base: to, ..*line }.into()),
             Entity::Ray(ray) => (index == 0).then(|| RayEntity { start: to, ..*ray }.into()),
             Entity::Text(text) => (index == 0).then(|| {

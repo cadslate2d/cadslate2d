@@ -212,6 +212,8 @@ export const BYTES_PER_STYLE = 8;
 export const STYLE_FOREGROUND = 0;
 /** The kind of a style row whose first three bytes are its colour. */
 export const STYLE_RGB = 255;
+/** The kind of a style row drawn in the canvas's own colour: a wipeout's mask (#226). */
+export const STYLE_BACKGROUND = 1;
 /** The weight of a style row drawn at the theme's ordinary width; else hundredths of a millimetre. */
 export const STYLE_WEIGHT_DEFAULT = 255;
 /** The pattern of a style row drawn continuous: row 0 of the pattern table (ADR-0015). */
@@ -250,14 +252,16 @@ export interface FrameBuffers {
   /** `style, first, count` per triangle batch. */
   readonly triangleBatches: Uint32Array;
   /**
-   * One style index per segment instance: a row of the style table. Only the
+   * One style word per segment instance: in the low 16 bits a row of the
+   * style table, in the high 16 the tier of its entity in the drawing order,
+   * a signed number, which the renderer draws as depth (ADR-0032). Only the
    * committed scene has them; overlay geometry is styled by its batches.
    */
-  readonly segmentStyles?: Uint16Array;
-  /** One style index per arc instance; see `segmentStyles`. */
-  readonly arcStyles?: Uint16Array;
-  /** One style index per triangle instance; a fill takes the row's colour. */
-  readonly triangleStyles?: Uint16Array;
+  readonly segmentStyles?: Uint32Array;
+  /** One style word per arc instance; see `segmentStyles`. */
+  readonly arcStyles?: Uint32Array;
+  /** One style word per triangle instance; a fill takes the row's colour. */
+  readonly triangleStyles?: Uint32Array;
   /**
    * Per segment instance, the distance along its entity's path at its
    * start, in drawing units: where its linetype pattern is (ADR-0015).

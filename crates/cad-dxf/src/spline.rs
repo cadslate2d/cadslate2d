@@ -20,7 +20,7 @@ impl Groups<'_> {
             .collect()
     }
 
-    fn int(&self, code: i32) -> Option<i64> {
+    pub(crate) fn int(&self, code: i32) -> Option<i64> {
         self.0
             .iter()
             .find(|(c, _)| *c == code)
@@ -28,7 +28,7 @@ impl Groups<'_> {
     }
 
     /// The points whose x is `x` and y is `x + 10`, paired in order.
-    fn points(&self, x: i32) -> Vec<Point2> {
+    pub(crate) fn points(&self, x: i32) -> Vec<Point2> {
         let xs = self.reals(x);
         let ys = self.reals(x + 10);
         xs.into_iter()

@@ -86,7 +86,7 @@ void main() {
   v_start = a_arc.w;
   v_sweep = a_sweep;
   v_distance = a_distance;
-  gl_Position = vec4(position / half_viewport, 0.0, 1.0);
+  gl_Position = vec4(position / half_viewport, order_depth, 1.0);
 }
 `;
 

@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   BYTES_PER_STYLE,
   PATTERN_CONTINUOUS,
+  STYLE_BACKGROUND,
   STYLE_FOREGROUND,
   STYLE_RGB,
   STYLE_WEIGHT_DEFAULT,
@@ -16,6 +17,7 @@ import {
 
 const LOOK: StyleLook = {
   foreground: [0.5, 0.25, 1, 1],
+  background: [0.1, 0.2, 0.3, 1],
   defaultWidth: 1.25,
   lineweights: true,
   devicePixelRatio: 1,
@@ -58,6 +60,13 @@ describe("styleTexels: colour", () => {
     // The same drawing on a light theme: the same row, a dark texel.
     const light = { ...LOOK, foreground: [0.1, 0.1, 0.1, 1] as const };
     expect(style([row("foreground")], 0, light).colour).toEqual([26, 26, 26, 255]);
+  });
+
+  test("a background row — a wipeout's mask — takes the canvas's colour, opaque", () => {
+    const mask = [0, 0, 0, STYLE_BACKGROUND, STYLE_WEIGHT_DEFAULT, PATTERN_CONTINUOUS, 0, 0];
+    expect(style([mask], 0).colour).toEqual([26, 51, 77, 255]);
+    const dark = { ...LOOK, background: [0, 0, 0, 1] as const };
+    expect(style([mask], 0, dark).colour).toEqual([0, 0, 0, 255]);
   });
 
   test("an empty table is still one row of texels, so the sampler is complete", () => {

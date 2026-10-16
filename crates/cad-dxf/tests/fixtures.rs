@@ -166,7 +166,10 @@ fn the_matrix_names_only_tests_and_fixtures_that_exist() {
         "src/import.rs",
         "src/export.rs",
         "src/report.rs",
+        "src/wipeout.rs",
         "tests/fixtures.rs",
+        // The drawing order's tiers, which the reader and the writer share.
+        "../cad-document/src/draw_order.rs",
         "tests/corpus.rs",
     ]
     .iter()
@@ -2263,4 +2266,113 @@ fn a_viewport_round_trips_and_one_in_the_model_is_reported() {
         import.report.unsupported.get("(invalid geometry)"),
         Some(&1)
     );
+}
+
+/// The drawing order and a wipeout from another writer (#226): a
+/// SORTENTSTABLE sending a hatch to the back and a note to the front, a
+/// WIPEOUT drawn after the lines it hides, a note after it, and wipeout
+/// frames off. The tiers paint them as the file does; written back, the
+/// records are in the order they are painted, which needs no table, and
+/// the wipeout is the same polygon.
+#[test]
+fn the_drawing_order_and_a_wipeout_from_another_writer_round_trip() {
+    let import = load("valid", "ezdxf-r2010-draw-order.dxf").unwrap();
+    assert_eq!(import.report.wipeouts, 1);
+    assert!(
+        !import.report.has_unsupported_content(),
+        "{:?}",
+        import.report
+    );
+    assert!(
+        import
+            .report
+            .summary()
+            .iter()
+            .any(|line| line.contains("1 wipeout"))
+    );
+    let drawing = &import.drawing;
+    assert!(!drawing.settings().wipeout_frame, "frames off in the file");
+    let records: Vec<(&'static str, i16)> = {
+        let mut ids: Vec<_> = drawing.records().map(|(id, _)| id).collect();
+        ids.sort_unstable();
+        ids.into_iter()
+            .map(|id| {
+                let record = drawing.record(id).unwrap();
+                (record.entity.kind_name(), record.order)
+            })
+            .collect()
+    };
+    assert_eq!(
+        records,
+        [
+            ("line", 0),
+            ("hatch", 0),
+            ("text", 2),
+            ("line", 0),
+            ("wipeout", 1),
+            ("text", 1),
+        ],
+        "the hatch beneath the lines, the wipeout over them, a note over it, NOTE over all"
+    );
+    let wipeout = drawing
+        .entities()
+        .find_map(|(_, entity)| match entity {
+            Entity::Wipeout(wipeout) => Some(wipeout.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        wipeout.vertices,
+        [
+            Point2::new(60.0, -5.0),
+            Point2::new(90.0, -5.0),
+            Point2::new(90.0, 5.0),
+            Point2::new(60.0, 5.0)
+        ]
+    );
+
+    let text = export(drawing);
+    assert!(text.contains("\n  0\nCLASS\n  1\nWIPEOUT\n"));
+    assert!(text.contains("\n100\nAcDbWipeoutVariables\n 70\n0\n"));
+    assert!(!text.contains("SORTENTSTABLE"), "the order is the records'");
+    let section = &text[text.find("ENTITIES").unwrap()..text.find("OBJECTS").unwrap()];
+    let written: Vec<&str> = section
+        .split("\n  0\n")
+        .skip(1)
+        .filter_map(|record| record.lines().next())
+        .filter(|kind| !matches!(*kind, "ENDSEC" | "SECTION"))
+        .collect();
+    assert_eq!(
+        written,
+        ["HATCH", "LINE", "LINE", "WIPEOUT", "TEXT", "TEXT"],
+        "in the order they are painted"
+    );
+    let back = import_back(&text);
+    assert_eq!(painted(&back), painted(drawing), "painted as before");
+    assert_eq!(export(&back), text, "export → import → export");
+
+    // Nothing reordered, nothing written: no table, no class.
+    let plain = load("valid", "ezdxf-r2010-mixed-content.dxf").unwrap();
+    let text = export(&plain.drawing);
+    assert!(!text.contains("SORTENTSTABLE"));
+    assert!(!text.contains("WIPEOUT"));
+}
+
+/// The kinds of a drawing's entities, in the order they are painted.
+fn painted(drawing: &Drawing) -> Vec<&'static str> {
+    let mut keys: Vec<_> = drawing
+        .records()
+        .map(|(id, record)| {
+            (
+                cad_document::draw_order::paint_key(id, record.order, record.entity.is_fill()),
+                record.entity.kind_name(),
+            )
+        })
+        .collect();
+    keys.sort_unstable_by_key(|(key, _)| *key);
+    keys.into_iter().map(|(_, kind)| kind).collect()
+}
+
+fn import_back(text: &str) -> Drawing {
+    import(text.as_bytes()).unwrap().drawing
 }

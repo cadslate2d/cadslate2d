@@ -6,10 +6,12 @@
 //!
 //! Run with `cargo bench -p cad-benchmarks --bench mixed`.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use cad_benchmarks::{SIZES, mixed};
 use cad_core::{EntityId, Point2};
+use cad_document::draw_order::{Placement, reordered};
 use cad_document::{Entity, LineEntity};
 use cad_render::SceneCache;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -82,6 +84,54 @@ fn mixed_drawing(c: &mut Criterion) {
                     Point2::new(step, 1.0),
                 ))
                 .unwrap();
+                tx.commit();
+                cache.scene(&drawing).frame().segment_count()
+            })
+        });
+        group.finish();
+
+        // One line brought to the front and sent back again (#226,
+        // ADR-0032): a change of tier is a change to its record, and the
+        // chunk holding it is re-packed, as for any edit.
+        let mut group = c.benchmark_group("mixed/reorder_and_repack");
+        group.bench_function(BenchmarkId::from_parameter(size), |b| {
+            let mut front = false;
+            b.iter(|| {
+                front = !front;
+                let mut tx = drawing.transaction();
+                tx.set_order(moved, i16::from(front)).unwrap();
+                tx.commit();
+                cache.scene(&drawing).frame().segment_count()
+            })
+        });
+        group.finish();
+
+        // Every hatch sent to the back, and brought forward again: one
+        // DRAWORDER over a selection spread across the whole drawing, so
+        // nearly every chunk is re-packed.
+        let hatches: HashSet<EntityId> = drawing
+            .records()
+            .filter(|(_, record)| matches!(*record.entity, Entity::Hatch(_)))
+            .map(|(id, _)| id)
+            .collect();
+        let mut group = c.benchmark_group("mixed/hatches_to_back_and_repack");
+        group.bench_function(BenchmarkId::from_parameter(size), |b| {
+            let mut back = false;
+            b.iter(|| {
+                back = !back;
+                let all: Vec<(EntityId, i16)> = drawing
+                    .records()
+                    .map(|(id, record)| (id, record.order))
+                    .collect();
+                let placement = if back {
+                    Placement::Back
+                } else {
+                    Placement::Front
+                };
+                let mut tx = drawing.transaction();
+                for (id, order) in reordered(&all, &hatches, placement) {
+                    tx.set_order(id, order).unwrap();
+                }
                 tx.commit();
                 cache.scene(&drawing).frame().segment_count()
             })

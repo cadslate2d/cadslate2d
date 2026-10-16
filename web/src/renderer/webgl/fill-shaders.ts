@@ -24,7 +24,7 @@ ${STYLE_VERTEX_DECLARATIONS}
 void main() {
   ${STYLE_VERTEX_RESOLVE}
   vec2 corner = gl_VertexID == 0 ? a_corners.xy : (gl_VertexID == 1 ? a_corners.zw : a_third);
-  gl_Position = vec4(corner * u_scale + u_translate, 0.0, 1.0);
+  gl_Position = vec4(corner * u_scale + u_translate, order_depth, 1.0);
 }
 `;
 

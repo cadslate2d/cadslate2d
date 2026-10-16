@@ -55,7 +55,7 @@ void main() {
 
   v_local = vec2(a_corner.x * len + end_sign * extent, a_corner.y * extent);
   v_length = len;
-  gl_Position = vec4(position / half_viewport, 0.0, 1.0);
+  gl_Position = vec4(position / half_viewport, order_depth, 1.0);
 }
 `;
 

@@ -20,7 +20,7 @@ use cad_geometry::{
 use crate::{
     ArcEntity, AttributeDefinitionEntity, BlockReferenceEntity, CircleEntity, EllipseEntity,
     Entity, LeaderEntity, LineEntity, MTextEntity, PointEntity, PolylineEntity, RayEntity,
-    TextEntity, ViewportEntity, XLineEntity,
+    TextEntity, ViewportEntity, WipeoutEntity, XLineEntity,
 };
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
@@ -273,6 +273,7 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
+            | Entity::Wipeout(_)
             | Entity::Point(_)
             | Entity::Leader(_)
             | Entity::XLine(_)
@@ -370,6 +371,7 @@ impl Entity {
             Entity::Viewport(viewport) => held(&[viewport.center]),
             Entity::Point(point) => held(&[point.position]),
             Entity::Leader(leader) => held(&leader.vertices),
+            Entity::Wipeout(wipeout) => held(&wipeout.vertices),
         }
     }
 
@@ -479,6 +481,15 @@ impl Entity {
                 }
                 .into(),
             ),
+            Entity::Wipeout(wipeout) => WipeoutEntity::new(
+                wipeout
+                    .vertices
+                    .iter()
+                    .map(|vertex| moved(*vertex))
+                    .collect(),
+            )
+            .ok()
+            .map(Entity::from),
             Entity::Hatch(hatch) => {
                 let stretched = hatch
                     .vertices()
@@ -611,6 +622,7 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
+            | Entity::Wipeout(_)
             | Entity::Point(_)
             | Entity::Leader(_) => Err(BreakError::Unsupported(self.kind_name())),
             Entity::Polyline(polyline) => {
@@ -676,6 +688,7 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
+            | Entity::Wipeout(_)
             | Entity::Point(_)
             | Entity::Leader(_) => Err(TrimError::Unsupported(self.kind_name())),
             Entity::XLine(line) => {
@@ -779,6 +792,7 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
+            | Entity::Wipeout(_)
             | Entity::Point(_)
             | Entity::Leader(_)
             | Entity::XLine(_)
@@ -851,6 +865,7 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
+            | Entity::Wipeout(_)
             | Entity::Point(_)
             | Entity::Leader(_)
             | Entity::XLine(_)
@@ -920,6 +935,7 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
+            | Entity::Wipeout(_)
             | Entity::Point(_)
             | Entity::Leader(_)
             | Entity::XLine(_)
@@ -1036,6 +1052,7 @@ impl Entity {
             Entity::Leader(_) => "leader",
             Entity::XLine(_) => "construction line",
             Entity::Ray(_) => "ray",
+            Entity::Wipeout(_) => "wipeout",
         }
     }
 
@@ -1123,6 +1140,7 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
+            | Entity::Wipeout(_)
             | Entity::Point(_)
             | Entity::Leader(_) => Err(OffsetError::Unsupported(self.kind_name())),
         }
@@ -1153,6 +1171,7 @@ impl Entity {
             | Entity::Dimension(_)
             | Entity::Hatch(_)
             | Entity::Viewport(_)
+            | Entity::Wipeout(_)
             | Entity::Point(_)
             | Entity::Leader(_) => {
                 return Err(OffsetError::Unsupported(self.kind_name()));

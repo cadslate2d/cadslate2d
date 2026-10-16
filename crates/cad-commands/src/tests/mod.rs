@@ -21,6 +21,7 @@ mod dimcurve;
 mod dimension;
 mod dimlinear;
 mod dimstyle;
+mod draworder;
 mod edge;
 mod ellipse;
 mod far_from_origin;
