@@ -47,6 +47,7 @@ mod lweight;
 mod modify;
 mod mtext;
 mod offset;
+mod overkill;
 mod pedit;
 mod plot;
 mod points;
