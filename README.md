@@ -10,7 +10,20 @@ CadSlate2D is a free, browser-native, local-first 2D CAD application inspired by
 
 ## Status
 
-Milestones **M0 — The Line**, **M1 — Input and Basic Entities**, and **M3 — Robust Modify Geometry** are complete ([M3 review](docs/reviews/m3-exit-review.md)). Everything planned for **M2 — OSNAP, Grips, and Basic Modify** is implemented; that milestone is waiting only for a hands-on assessment by someone with classic CAD experience ([review](docs/reviews/m2-exit-review.md)). **M4 — Drawing Organization** — layers, colours, linetypes, text, blocks — is next. You can draw lines, circles, arcs, rectangles, and polylines with arc segments by command or pointer, snap exactly to existing geometry, draft with ORTHO, POLAR, and a grid, select with clicks and boxes, edit by grips, move, copy, rotate, scale, mirror, stretch, offset, trim, extend, fillet, chamfer, break, join, and erase, undo and redo whole commands, export DXF, and reopen it — all in a static page with no backend. What each modify command does to each kind of object is listed in [`docs/modify-matrix.md`](docs/modify-matrix.md). See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues) for what comes next, in implementation order.
+Milestones **M0 to M14** are complete, and the [M14 review](docs/reviews/m14-exit-review.md) finds the product complete for its purpose: the classic daily drafting commands and every item of a successful v1 (DESIGN §47). **M2** is implemented but waits for a hands-on assessment by someone with classic CAD experience ([review](docs/reviews/m2-exit-review.md)).
+
+You can do all of this in a static page with no backend:
+- draw by command or pointer, with object snaps, tracking, ORTHO, POLAR, grid snap, and grips;
+- modify with the classic set;
+- organize with layers, layer states, blocks, groups, and draw order;
+- annotate with text, styles, dimensions of every kind, leaders, hatches, and wipeouts;
+- lay out sheets with viewports and plot them to PDF;
+- exchange DXF, with what is not held reported;
+- undo everything, and recover after a crash.
+
+The tables below list the commands; what each modify command does to each kind of object is in [`docs/modify-matrix.md`](docs/modify-matrix.md).
+
+What remains, **M15**, is verification that needs a person: real GPUs, WebKit, and a check in AutoCAD and a desktop PDF viewer. See the [milestones](https://github.com/LAA-Software-Engineering/cadslate2d/milestones) and [issues](https://github.com/LAA-Software-Engineering/cadslate2d/issues).
 
 ## What works today
 

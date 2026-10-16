@@ -20,7 +20,24 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M11 — Polylines, Leaders, and Loose Ends | Complete and closed ([review](reviews/m11-exit-review.md)). |
 | M12 — Drafting Conveniences | Complete and closed ([review](reviews/m12-exit-review.md)). |
 | M13 — Drafting Aids and Reuse | Complete and closed ([review](reviews/m13-exit-review.md)). |
-| M14 — Production Annotation | Next. Broken into issues at the M13 exit. |
+| M14 — Production Annotation | Complete and closed ([review](reviews/m14-exit-review.md)). The product is complete for its purpose. |
+| M15 — v1 Verification (needs a person) | Open: verification on real GPUs, WebKit, AutoCAD, and a desktop PDF viewer, which needs a person. No work for an agent on its own. |
+
+## M15, as broken down after M14
+
+The [M14 review](reviews/m14-exit-review.md) sweeps the registry against the classic daily command set and DESIGN §47 once more. It finds every daily command there and every item of a successful v1 met: **the product is complete for its purpose.** No milestone of features follows. The epic is #231.
+
+### What remains (needs a person)
+
+1. **Real GPUs** (#110), and the text atlas decided from those figures (#175).
+2. **WebKit** (#109).
+3. **The R-tree crash, reported upstream** (#111).
+4. **A check against AutoCAD and a desktop PDF viewer** (#232) of what the program writes: groups, wipeouts, ordinates, layer states, the draw order, and plotted layouts.
+
+### Long-term ideas
+
+- `MLEADER`, tables, fields; raster image underlays; SHX fonts; xrefs; scripting; plugins; native packaging; a DWG strategy; a native project format (§39); a WebGPU adapter (§38); associative dimensions; advanced hatch; plot style tables; searchable PDF text; the system clipboard; freezing in one viewport.
+- Occasional conveniences, when drafters ask for them: `OVERKILL`, named views (`VIEW`), `LAYMRG` and `LAYDEL`, `SPLINEDIT`.
 
 ## M14, as broken down after M13
 
