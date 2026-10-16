@@ -122,6 +122,7 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `UNDO` | `U`, Ctrl+Z | Reverts the last command. |
 | `REDO` | Ctrl+Y, Ctrl+Shift+Z | Re-applies the last undone command. |
 | `OSNAP` | `OS` | Chooses which object snaps run. Each mode is switched by its keyword; Enter finishes. |
+| `VIEW` | `V` | Named views: `Save` what the screen shows now under a name — of the model or the layout you are on — `Restore` one, which goes to its space and shows it as it was, `Delete`, and `?` to list. Saving and deleting are undone with `U`; restoring is a move of the view, which `ZOOM Previous` takes back. Kept in the DXF `VIEW` table. |
 | `ZOOM` | `Z` | Moves the view: `Extents` (and Enter alone, and `All`: the drawing's extents, framed with a margin), `Window` (two corners, picked or typed, which are places on the screen and do not snap), `Previous` (the last ten views ZOOM and PAN left), `Scale` (a factor relative to the view: `2x`, `0.5`), `Center` (a point of the drawing, then a view height or Enter to keep it). The view is session state: ZOOM commits nothing, and `U` does not undo it. A middle-button double-click on the canvas is `ZOOM Extents`; the toolbar's View group is the same commands. |
 | `PAN` | `P` | Moves the view by two points, or by one point taken as a displacement from the origin (Enter at the second prompt). Session state, like ZOOM. The middle button still drags. |
 | `GRID` | | Sets the grid spacing (10 at start); `Snap` draws it at the snap spacing instead. |

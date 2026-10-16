@@ -705,7 +705,28 @@ impl Writer {
                 w.text_style(style);
             }
         });
-        self.table("VIEW", 0, |_, _| {});
+        // Named views (#235): a paper-space view is flagged (70, 1).
+        self.table("VIEW", drawing.views().len(), |w, table| {
+            for (_, view) in drawing.views().iter() {
+                w.row("VIEW", table, "AcDbViewTableRecord");
+                w.group(2, &view.name);
+                w.int(70, i64::from(view.space != LayoutId::MODEL));
+                w.real(40, view.height);
+                w.real(10, view.center.x);
+                w.real(20, view.center.y);
+                w.real(41, view.width);
+                // Looking down the Z axis.
+                w.real(11, 0.0);
+                w.real(21, 0.0);
+                w.real(31, 1.0);
+                w.point(12, Point2::ORIGIN);
+                w.real(42, 50.0);
+                w.real(43, 0.0);
+                w.real(44, 0.0);
+                w.real(50, 0.0);
+                w.int(71, 0);
+            }
+        });
         self.table("UCS", 0, |_, _| {});
         self.table("APPID", 1, |w, table| {
             w.row("APPID", table, "AcDbRegAppTableRecord");

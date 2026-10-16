@@ -65,6 +65,7 @@ mod text;
 mod tracking;
 mod transform;
 mod units;
+mod view;
 mod viewport;
 mod wblock;
 mod zoom;

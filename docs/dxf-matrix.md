@@ -54,7 +54,8 @@ Everything else in the header is skipped.
 | `BLOCK_RECORD` | Its handle and name, only to tie a `LAYOUT` to its paper-space block (#184, #191); blocks themselves are read from `BLOCKS` | `*Model_Space` and `*Paper_Space`, pointing at their layouts — or, when the drawing has layouts, one record per layout in place of `*Paper_Space`, under the block name the file gave it or the next `*Paper_Space…`; one row per block | `blocks_are_written_as_records_definitions_and_inserts_and_survive_a_round_trip()` |, `layouts_are_kept_through_a_round_trip()` |
 | `VPORT` | Nothing | One `*Active` viewport centred on the drawing's extents | `the_viewport_looks_at_the_whole_drawing()` |
 | `DIMSTYLE` | Name (2); the suffix from `DIMPOST` (3), the text after `<>`, or all of it when there is no `<>`; arrow size (41); extension offset (42) and overshoot (44); the baseline spacing, `DIMDLI` (43, #212); text height (140); text gap (147); decimals (271). A value a dimension cannot be drawn by — a zero height, a negative gap or spacing, more than 8 decimals — keeps the default and is reported. The first row of a name counts; `Standard` restyles the permanent row | Every dimension style: handle (105), name, flags, `DIMPOST` as `<>` and the suffix when there is one, and the same seven variables | `dimension_styles_from_another_writer()`, `ezdxf-r2010-dimstyles.dxf`, `a_baseline_chain_from_another_writer_is_spaced_by_its_style()`, `ezdxf-r2010-dimension-chains.dxf` |
-| `VIEW`, `UCS` | Nothing | Empty | `an_empty_drawing_is_a_complete_file_with_its_permanent_rows()` |
+| `VIEW` | Each row a named view (#235): its name (2), centre (10, 20), width (41), and height (40); a paper-space view (70 bit 1) is the first layout's, the file not saying which. One whose name is taken or not allowed, or with no size, is `(view)`. The direction, target, lens, clipping, and twist are passed over | Every named view, with the direction down Z, the target at the origin, and lens 50 | `named_views_from_another_writer_round_trip()`, `ezdxf-r2010-named-views.dxf` |
+| `UCS` | Nothing | Empty | `an_empty_drawing_is_a_complete_file_with_its_permanent_rows()` |
 | `APPID` | Nothing | `ACAD` | the same |
 
 A layer, linetype, or text style that an entity or the header names but no table defines is made — a new layer's settings, a continuous linetype, a style with that name — and the import report says so (`names_the_file_uses_but_never_defines_are_created_and_reported()`).
@@ -130,6 +131,7 @@ What the reader could not hold is counted under these keys and named in the comm
 | A type name (`RAY`, `XLINE`, …) | An entity of a kind the drawing has no entity for |
 | `(DIMENSION of an unknown kind)` | A dimension of a kind the drawing has no measure for |
 | `(layer state)` | A layer state whose name another has, or one not allowed (#228) |
+| `(view)` | A named view whose name another has, or one not allowed, or with no size (#235) |
 | `(HATCH boundary with an ellipse)` | A hatch boundary path with an ellipse edge, which the drawing cannot hold (a spline edge is read as its chords since #182): the path is left out, and the hatch with it when none is left |
 | `(HATCH pattern not in the table)`, `(gradient HATCH)`, `(HATCH pattern too dense)` | A hatch filled solid in place of what the file had |
 | `POLYLINE` | A 3D polyline, mesh, or polyface mesh |

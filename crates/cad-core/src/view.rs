@@ -134,6 +134,21 @@ impl View {
         self.center = bounds.center();
     }
 
+    /// Shows `frame` whole, filling the canvas along whichever side it is
+    /// tighter along, with no margin: a view saved as what the canvas
+    /// showed comes back as it was (#235). A frame of no size changes
+    /// only the centre.
+    pub fn show(&mut self, frame: &Aabb) {
+        let size = frame.max() - frame.min();
+        if size.x > 0.0 && size.y > 0.0 {
+            let scale = (self.width / size.x).min(self.height / size.y);
+            if scale.is_finite() {
+                self.scale = scale.clamp(Self::MIN_SCALE, Self::MAX_SCALE);
+            }
+        }
+        self.look_at(frame.center());
+    }
+
     /// Moves the view so that `center` is in the middle of the canvas, at
     /// the same scale.
     pub fn look_at(&mut self, center: Point2) {
@@ -210,6 +225,25 @@ mod tests {
 
     fn close(a: f64, b: f64, tolerance: f64) -> bool {
         (a - b).abs() <= tolerance
+    }
+
+    #[test]
+    fn show_puts_back_what_the_canvas_showed() {
+        let mut view = View::new(800.0, 600.0);
+        view.zoom_about(ScreenPoint::new(100.0, 400.0), 3.7);
+        let shown = view.visible_bounds();
+        let mut other = View::new(800.0, 600.0);
+        other.show(&shown);
+        assert!((other.scale() - view.scale()).abs() < 1e-9 * view.scale());
+        assert!(other.center().distance_to(view.center()) < 1e-9);
+        // A frame of no size moves the centre and keeps the scale.
+        let before = other.scale();
+        other.show(&Aabb::from_points(
+            Point2::new(5.0, 5.0),
+            Point2::new(5.0, 5.0),
+        ));
+        assert_eq!(other.scale(), before);
+        assert_eq!(other.center(), Point2::new(5.0, 5.0));
     }
 
     #[test]

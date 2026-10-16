@@ -60,6 +60,9 @@ const BAD_DIM_STYLE: &str = "(dimension style values)";
 /// Report key for a layer state the drawing cannot hold: its name taken
 /// or not allowed (#228).
 const BAD_LAYER_STATE: &str = "(layer state)";
+/// Report key for a named view the drawing cannot hold: its name taken
+/// or not allowed, or no size (#235).
+const BAD_VIEW: &str = "(view)";
 /// Report key for a pattern too fine for its region at its scale: filled solid.
 const TOO_DENSE: &str = "(HATCH pattern too dense)";
 /// Report key for a DIMENSION of a kind the drawing has no measure for.
@@ -170,6 +173,7 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
         wipeout_frame: None,
         xrecords: Vec::new(),
         row_names: HashMap::new(),
+        views: Vec::new(),
     };
     reader.read_file()?;
     reader.finish()
@@ -623,6 +627,8 @@ struct Reader<'a> {
     /// LAYER and LTYPE rows' names by their handles, upper case, which a
     /// layer state names them by (#228).
     row_names: HashMap<String, String>,
+    /// VIEW rows as the file held them (#235).
+    views: Vec<Vec<RawGroup>>,
 }
 
 /// An angle in degrees brought into (−180, 180]: a slant of 345° is one of
@@ -849,7 +855,7 @@ impl<'a> Reader<'a> {
             // rows, whose handles name the layouts' blocks.
             let keep_raw = matches!(
                 record.value,
-                "HATCH" | "SPLINE" | "WIPEOUT" | "LAYOUT" | "BLOCK_RECORD"
+                "HATCH" | "SPLINE" | "WIPEOUT" | "LAYOUT" | "BLOCK_RECORD" | "VIEW"
             ) || matches!(self.open_block, Some(OpenBlock::Paper(_)))
                 || (matches!(context, RecordContext::Objects)
                     && matches!(
@@ -935,6 +941,12 @@ impl<'a> Reader<'a> {
                 _ => {}
             }
             return Ok(());
+        }
+        if matches!(context, RecordContext::Tables)
+            && record.value == "VIEW"
+            && let Some(raw) = &body.raw
+        {
+            self.views.push(raw.clone());
         }
         if matches!(context, RecordContext::Tables)
             && matches!(record.value, "LAYER" | "LTYPE")
@@ -2208,6 +2220,43 @@ impl<'a> Reader<'a> {
             }
         }
         self.draw_order(&mut drawing, &ids_by_handle);
+        // Named views (#235): the model's, or — flagged as paper (70, 1)
+        // — the first layout's, the file not saying which.
+        let paper = drawing
+            .layouts()
+            .iter()
+            .map(|(id, _)| id)
+            .find(|id| *id != LayoutId::MODEL)
+            .unwrap_or(LayoutId::MODEL);
+        for raw in std::mem::take(&mut self.views) {
+            let groups = crate::spline::Groups(&raw);
+            let real = |code: i32| {
+                raw.iter()
+                    .find(|(c, _)| *c == code)
+                    .and_then(|(_, value)| value.trim().parse::<f64>().ok())
+            };
+            let name = raw
+                .iter()
+                .find(|(code, _)| *code == 2)
+                .map(|(_, name)| name.trim().to_owned())
+                .unwrap_or_default();
+            let space = if groups.int(70).unwrap_or(0) & 1 != 0 {
+                paper
+            } else {
+                LayoutId::MODEL
+            };
+            let view = cad_document::NamedView {
+                name,
+                space,
+                center: Point2::new(real(10).unwrap_or(0.0), real(20).unwrap_or(0.0)),
+                width: real(41).unwrap_or(0.0),
+                height: real(40).unwrap_or(0.0),
+            };
+            match drawing.import_view(view) {
+                Ok(_) => self.report.views += 1,
+                Err(_) => self.report.count_unsupported(BAD_VIEW),
+            }
+        }
         for state in self.layer_states() {
             match drawing.import_layer_state(state) {
                 Ok(_) => self.report.layer_states += 1,

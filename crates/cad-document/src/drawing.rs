@@ -21,6 +21,7 @@ use crate::layer_state::{
 use crate::layout::{Layout, LayoutId, LayoutPlot, LayoutTable, initial_layouts};
 use crate::leader::LeaderError;
 use crate::linetype::{LinetypeDef, LinetypeError, LinetypeId, LinetypeTable, initial_linetypes};
+use crate::named_view::{NamedView, NamedViewId, NamedViewTable, initial_named_views};
 use crate::names::{NameError, check_name, same_name};
 use crate::point::{PointStyle, PointStyleError};
 use crate::spatial::RTreeIndex;
@@ -82,6 +83,8 @@ pub struct Drawing {
     groups: GroupTable,
     /// Saved layer states (#228).
     layer_states: LayerStateTable,
+    /// Named views (#235).
+    views: NamedViewTable,
 }
 
 /// How many changes the journal remembers; a scene further behind than
@@ -110,6 +113,15 @@ pub enum TransactionError {
     /// The layer state does not exist, in the drawing or after this
     /// transaction (#228).
     UnknownLayerState(LayerStateId),
+    /// The named view does not exist, in the drawing or after this
+    /// transaction (#235).
+    UnknownView(NamedViewId),
+    /// The name cannot be a view's name.
+    BadViewName(NameError),
+    /// This view already has the name, give or take its case.
+    DuplicateViewName(NamedViewId),
+    /// A view must show something: a finite centre and a positive size.
+    BadView,
     /// The name cannot be a layer state's name.
     BadLayerStateName(NameError),
     /// This layer state already has the name, give or take its case.
@@ -239,6 +251,10 @@ impl fmt::Display for TransactionError {
         match self {
             Self::UnknownEntity(id) => write!(f, "entity {id} does not exist"),
             Self::UnknownLayerState(id) => write!(f, "layer state {id} does not exist"),
+            Self::UnknownView(id) => write!(f, "view {id} does not exist"),
+            Self::BadViewName(error) => write!(f, "bad view name: {error:?}"),
+            Self::DuplicateViewName(id) => write!(f, "view {id} already has that name"),
+            Self::BadView => write!(f, "a view must show something"),
             Self::BadLayerStateName(error) => write!(f, "bad layer state name: {error:?}"),
             Self::DuplicateLayerStateName(id) => {
                 write!(f, "layer state {id} already has that name")
@@ -487,6 +503,7 @@ impl Drawing {
             layouts: initial_layouts(),
             groups: initial_groups(),
             layer_states: initial_layer_states(),
+            views: initial_named_views(),
         }
     }
 
@@ -909,6 +926,26 @@ impl Drawing {
     /// The drawing's groups (#214), in the order they were made.
     pub fn groups(&self) -> &GroupTable {
         &self.groups
+    }
+
+    /// The drawing's named views (#235), in the order they were saved.
+    pub fn views(&self) -> &NamedViewTable {
+        &self.views
+    }
+
+    /// Adds a named view without history: the import path. A refused one
+    /// leaves the drawing as it was.
+    pub fn import_view(&mut self, view: NamedView) -> Result<NamedViewId, TransactionError> {
+        let mut tx = self.transaction();
+        let id = tx.add_view(view)?;
+        let changes = std::mem::take(&mut tx.changes);
+        drop(tx);
+        for change in &changes {
+            if let Change::View(change) = change {
+                self.views.apply(change);
+            }
+        }
+        Ok(id)
     }
 
     /// The drawing's saved layer states (#228), in the order they were made.
@@ -1339,7 +1376,9 @@ impl Drawing {
                 | Change::Group(_)
                 // Nor does a saved layer state (#228): restoring one
                 // changes layers, which say so for themselves.
-                | Change::LayerState(_) => false,
+                | Change::LayerState(_)
+                // Nor does a named view (#235).
+                | Change::View(_) => false,
             };
             match change {
                 Change::Entity(EntityChange::Insert { id, record }) => {
@@ -1408,6 +1447,10 @@ impl Drawing {
                 }
                 Change::LayerState(change) => {
                     self.layer_states.apply(change);
+                    report.tables_changed = true;
+                }
+                Change::View(change) => {
+                    self.views.apply(change);
                     report.tables_changed = true;
                 }
                 Change::DimStyle(change) => {
@@ -1750,6 +1793,17 @@ impl TransactionBuilder<'_> {
         for entity in on_it {
             self.remove(entity)?;
         }
+        // Its named views go with it (#235).
+        let views: Vec<NamedViewId> = self
+            .drawing
+            .views
+            .iter()
+            .filter(|(_, view)| view.space == id)
+            .map(|(view, _)| view)
+            .collect();
+        for view in views {
+            self.remove_view(view)?;
+        }
         self.push_other(Change::Layout(TableChange::Remove { id, row }));
         Ok(())
     }
@@ -1814,6 +1868,38 @@ impl TransactionBuilder<'_> {
             before,
             after: group,
         }));
+        Ok(())
+    }
+
+    /// Saves a named view (#235). Its name must be allowed and not taken,
+    /// its space must exist, and it must show something.
+    pub fn add_view(&mut self, view: NamedView) -> Result<NamedViewId, TransactionError> {
+        self.check_view(&view, None)?;
+        let id = self.drawing.views.allocate();
+        self.push_other(Change::View(TableChange::Insert { id, row: view }));
+        Ok(id)
+    }
+
+    /// Replaces a named view: saved again, or renamed.
+    pub fn replace_view(
+        &mut self,
+        id: NamedViewId,
+        view: NamedView,
+    ) -> Result<(), TransactionError> {
+        let before = self.existing_view(id)?;
+        self.check_view(&view, Some(id))?;
+        self.push_other(Change::View(TableChange::Replace {
+            id,
+            before,
+            after: view,
+        }));
+        Ok(())
+    }
+
+    /// Deletes a named view.
+    pub fn remove_view(&mut self, id: NamedViewId) -> Result<(), TransactionError> {
+        let row = self.existing_view(id)?;
+        self.push_other(Change::View(TableChange::Remove { id, row }));
         Ok(())
     }
 
@@ -2257,6 +2343,7 @@ impl TransactionBuilder<'_> {
             | Change::Layout(_)
             | Change::Group(_)
             | Change::LayerState(_)
+            | Change::View(_)
             | Change::Settings(_) => false,
         });
         if pending
@@ -2955,6 +3042,49 @@ impl TransactionBuilder<'_> {
     }
 
     /// Refuses a name a group cannot have, or another group has.
+    fn existing_view(&self, id: NamedViewId) -> Result<NamedView, TransactionError> {
+        let changed = self
+            .others()
+            .any(|change| matches!(change, Change::View(change) if change.id() == id));
+        if changed {
+            return Err(TransactionError::UnknownView(id));
+        }
+        self.drawing
+            .views
+            .get(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownView(id))
+    }
+
+    /// Refuses a view that shows nothing, one of a space that will not
+    /// be, and a name not allowed or another view's.
+    fn check_view(
+        &self,
+        view: &NamedView,
+        except: Option<NamedViewId>,
+    ) -> Result<(), TransactionError> {
+        if !view.is_valid() {
+            return Err(TransactionError::BadView);
+        }
+        self.known_layout(view.space)?;
+        check_name(&view.name).map_err(TransactionError::BadViewName)?;
+        let added = self.others().filter_map(|change| match change {
+            Change::View(TableChange::Insert { id, row }) => Some((*id, row)),
+            Change::View(TableChange::Replace { id, after, .. }) => Some((*id, after)),
+            _ => None,
+        });
+        let taken = self
+            .drawing
+            .views
+            .iter()
+            .chain(added)
+            .find(|(id, other)| Some(*id) != except && same_name(&other.name, &view.name));
+        match taken {
+            Some((id, _)) => Err(TransactionError::DuplicateViewName(id)),
+            None => Ok(()),
+        }
+    }
+
     fn existing_layer_state(&self, id: LayerStateId) -> Result<LayerState, TransactionError> {
         let changed = self
             .others()
@@ -6154,6 +6284,58 @@ mod tests {
     }
 
     #[test]
+    fn named_views_are_checked_and_go_with_their_layout() {
+        let mut drawing = Drawing::new();
+        let view = |name: &str, space, width| NamedView {
+            name: name.to_owned(),
+            space,
+            center: Point2::new(10.0, 10.0),
+            width,
+            height: 20.0,
+        };
+        let mut tx = drawing.transaction();
+        let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+        let detail = tx.add_view(view("Detail", LayoutId::MODEL, 40.0)).unwrap();
+        let title = tx.add_view(view("Title", sheet, 40.0)).unwrap();
+        assert_eq!(
+            tx.add_view(view("DETAIL", LayoutId::MODEL, 40.0)),
+            Err(TransactionError::DuplicateViewName(detail))
+        );
+        assert_eq!(
+            tx.add_view(view("Flat", LayoutId::MODEL, 0.0)),
+            Err(TransactionError::BadView)
+        );
+        assert!(matches!(
+            tx.add_view(view("a<b", LayoutId::MODEL, 1.0)),
+            Err(TransactionError::BadViewName(_))
+        ));
+        let nowhere = LayoutId::from_raw(99);
+        assert_eq!(
+            tx.add_view(view("Nowhere", nowhere, 1.0)),
+            Err(TransactionError::UnknownLayout(nowhere))
+        );
+        tx.commit();
+        assert_eq!(
+            drawing.views().get(title).unwrap().frame().min(),
+            Point2::new(-10.0, 0.0)
+        );
+
+        let mut tx = drawing.transaction();
+        tx.remove_layout(sheet).unwrap();
+        tx.commit();
+        assert!(!drawing.views().contains(title), "gone with its layout");
+        assert!(drawing.views().contains(detail));
+        assert!(drawing.undo().is_some());
+        assert!(drawing.views().contains(title), "back with it");
+        let gone = NamedViewId::from_raw(99);
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.remove_view(gone),
+            Err(TransactionError::UnknownView(gone))
+        );
+    }
+
+    #[test]
     fn a_layer_state_restores_the_layers_it_names_as_one_undo() {
         let mut drawing = Drawing::new();
         let mut tx = drawing.transaction();
@@ -6491,6 +6673,9 @@ mod tests {
         SaveState(u8),
         RestoreState(usize),
         DeleteState(usize),
+        /// A view saved by name in a space by index, one deleted (#235).
+        SaveView(u8, usize, f64),
+        DeleteView(usize),
         Undo,
         Redo,
     }
@@ -6597,6 +6782,8 @@ mod tests {
             1 => (0..4u8).prop_map(Op::SaveState),
             2 => any::<usize>().prop_map(Op::RestoreState),
             1 => any::<usize>().prop_map(Op::DeleteState),
+            1 => (0..4u8, any::<usize>(), -1.0..50.0f64).prop_map(|(n, space, size)| Op::SaveView(n, space, size)),
+            1 => any::<usize>().prop_map(Op::DeleteView),
             1 => (0..5u8).prop_map(Op::AddDimStyle),
             1 => (any::<usize>(), -1.0..5.0f64, 0..5u8).prop_map(|(i, h, n)| Op::RestyleDimStyle(i, h, n)),
             1 => any::<usize>().prop_map(Op::RemoveDimStyle),
@@ -6623,6 +6810,7 @@ mod tests {
         Vec<(LayoutId, Layout)>,
         Vec<(GroupId, Group)>,
         Vec<(LayerStateId, LayerState)>,
+        Vec<(NamedViewId, NamedView)>,
         DrawingSettings,
     );
 
@@ -6688,6 +6876,11 @@ mod tests {
                 .layer_states()
                 .iter()
                 .map(|(id, state)| (id, state.clone()))
+                .collect(),
+            drawing
+                .views()
+                .iter()
+                .map(|(id, view)| (id, view.clone()))
                 .collect(),
             drawing.settings(),
         )
@@ -7062,6 +7255,31 @@ mod tests {
                         prop_assert!(!drawing.layer_states().contains(id));
                     }
                     Op::RestoreState(_) | Op::DeleteState(_) => {}
+                    Op::SaveView(name, space, size) => {
+                        let name = format!("view{name}");
+                        let spaces: Vec<LayoutId> = drawing.layouts().iter().map(|(id, _)| id).collect();
+                        let space = spaces[space % spaces.len()];
+                        let view = NamedView {
+                            name: name.clone(),
+                            space,
+                            center: Point2::new(size, -size),
+                            width: size,
+                            height: size / 2.0,
+                        };
+                        let taken = drawing.views().find(&name).is_some();
+                        let mut tx = drawing.transaction();
+                        let made = tx.add_view(view);
+                        prop_assert_eq!(made.is_err(), taken || size <= 0.0);
+                        tx.commit();
+                    }
+                    Op::DeleteView(pick) if !drawing.views().is_empty() => {
+                        let views: Vec<NamedViewId> = drawing.views().iter().map(|(id, _)| id).collect();
+                        let id = views[pick % views.len()];
+                        let mut tx = drawing.transaction();
+                        tx.remove_view(id).unwrap();
+                        tx.commit();
+                    }
+                    Op::DeleteView(_) => {}
                     Op::WipeoutFrame(shown) => {
                         let mut tx = drawing.transaction();
                         tx.set_wipeout_frame(shown);
@@ -7377,6 +7595,10 @@ mod tests {
                 }
                 prop_assert!(drawing.next_entity_id() >= high_water);
                 high_water = drawing.next_entity_id();
+                // Every named view is of a space the drawing has (#235).
+                for (id, view) in drawing.views().iter() {
+                    prop_assert!(drawing.layouts().contains(view.space), "view {} is of a space that is gone", id);
+                }
                 // Every group has members, each an entity of the drawing,
                 // once; no two groups share a name (#214).
                 let mut group_names = HashSet::new();

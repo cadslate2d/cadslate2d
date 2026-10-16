@@ -1036,6 +1036,15 @@ impl Session {
             Some(SpaceRequest::Go(space)) => self.set_space(space),
             Some(SpaceRequest::ModelThrough(viewport)) => self.enter_model_through(viewport),
             Some(SpaceRequest::Paper) => self.back_to_paper(),
+            Some(SpaceRequest::Show { space, frame }) => {
+                let dirty = self.set_space(space);
+                let before = self.view.clone();
+                self.view.show(&frame);
+                if self.view != before {
+                    self.previous_views.push(before);
+                }
+                dirty | Dirty::VIEW | Dirty::OVERLAY
+            }
         }
     }
 

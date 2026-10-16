@@ -2503,3 +2503,39 @@ fn layer_states_from_another_writer_restore_and_round_trip() {
     assert_eq!(names(&back.drawing), names(&drawing));
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }
+
+/// Named views from another writer (#235): two of the model and one
+/// flagged as paper, which goes to the first layout; written back the
+/// same.
+#[test]
+fn named_views_from_another_writer_round_trip() {
+    let import = load("valid", "ezdxf-r2010-named-views.dxf").unwrap();
+    assert_eq!(import.report.views, 3);
+    assert!(
+        import
+            .report
+            .summary()
+            .iter()
+            .any(|line| line.contains("3 named views"))
+    );
+    let drawing = &import.drawing;
+    let views = drawing.views();
+    let detail = views.get(views.find("detail a").unwrap()).unwrap();
+    assert_eq!(
+        (detail.center, detail.width, detail.height, detail.space),
+        (Point2::new(120.0, 80.0), 120.0, 90.0, LayoutId::MODEL)
+    );
+    let title = views.get(views.find("Title").unwrap()).unwrap();
+    assert_ne!(
+        title.space,
+        LayoutId::MODEL,
+        "a paper view, on the first layout"
+    );
+
+    let text = export(drawing);
+    assert!(text.contains("AcDbViewTableRecord\n  2\nDetail A\n 70\n0\n 40\n90.0\n"));
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(back.report.views, 3);
+    assert!(!back.report.has_unsupported_content());
+    assert_eq!(export(&back.drawing), text, "export → import → export");
+}

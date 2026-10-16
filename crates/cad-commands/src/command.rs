@@ -7,7 +7,7 @@
 
 use std::fmt::Debug;
 
-use cad_core::{EntityId, Point2, Vec2, View};
+use cad_core::{Aabb, EntityId, Point2, Vec2, View};
 use cad_document::{Drawing, Entity, LayoutId, TransactionBuilder};
 use cad_input::{CommandAliases, ExpectedInput, Keyword};
 
@@ -152,7 +152,7 @@ pub struct CommandContext<'a> {
 /// Where a command sends the session (#193): the space, which the
 /// session owns with its views, changes after the step, like a host
 /// request is served after it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SpaceRequest {
     /// Go to a space: the model, or a layout.
     Go(LayoutId),
@@ -162,6 +162,9 @@ pub enum SpaceRequest {
     /// Back to the paper from the model worked through a viewport
     /// (`PSPACE`); the viewport takes the view as it is now.
     Paper,
+    /// Go to a space and show this rectangle of it: a named view
+    /// restored (#235). `ZOOM Previous` comes back from it.
+    Show { space: LayoutId, frame: Aabb },
 }
 
 impl CommandContext<'_> {

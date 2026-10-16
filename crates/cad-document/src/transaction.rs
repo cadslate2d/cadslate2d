@@ -13,6 +13,7 @@ use crate::layer::LayerChange;
 use crate::layer_state::LayerStateChange;
 use crate::layout::LayoutChange;
 use crate::linetype::LinetypeChange;
+use crate::named_view::NamedViewChange;
 use crate::text_style::TextStyleChange;
 use crate::{EntityRecord, SettingsChange};
 
@@ -75,6 +76,7 @@ pub enum Change {
     Layout(LayoutChange),
     Group(GroupChange),
     LayerState(LayerStateChange),
+    View(NamedViewChange),
     Settings(SettingsChange),
 }
 
@@ -90,6 +92,7 @@ impl Change {
             Change::Layout(change) => Change::Layout(change.inverse()),
             Change::Group(change) => Change::Group(change.inverse()),
             Change::LayerState(change) => Change::LayerState(change.inverse()),
+            Change::View(change) => Change::View(change.inverse()),
             Change::Settings(change) => Change::Settings(change.inverse()),
         }
     }
@@ -246,6 +249,7 @@ mod tests {
                 Change::Layout(_) => "layout",
                 Change::Group(_) => "group",
                 Change::LayerState(_) => "layer state",
+                Change::View(_) => "view",
                 Change::Settings(_) => "settings",
             })
             .collect();
