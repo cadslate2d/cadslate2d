@@ -2077,6 +2077,8 @@ Nothing in M8 should constrain M0.
 >
 > **M14 complete (2026-10-16):** production annotation shipped. The drawing order is a tier on each record, drawn as depth ([ADR-0032](adr/0032-draw-order.md)), with `DRAWORDER`, `TEXTTOFRONT`, and `WIPEOUT`. Also: ordinate dimensions and `QDIM`; saved layer states (`LAYERSTATE`); and `BOUNDARY`. The [M14 review](reviews/m14-exit-review.md) sweeps the registry once more and finds the product complete for its purpose against §47. M15 holds only verification that needs a person: GPUs, WebKit, the upstream crash, and AutoCAD and a PDF viewer (epic #231).
 >
+> **M16 complete (2026-10-16):** the conveniences that review set aside, taken up on the user's word — `OVERKILL`, named views (`VIEW`, the DXF `VIEW` table), `LAYMRG` and `LAYDEL`, `SPLINEDIT` ([M16 review](reviews/m16-exit-review.md)). Nothing else is planned; M15's verification needs a person.
+>
 > **M13 complete (2026-10-14):** the drafting aids and reuse shipped — grid snap (`SNAP`, F9) and object snap tracking (`OTRACK`, F11) in the one pointer pipeline, the host timing a rest of the pointer; text styles from the command line with a height, a width factor, and a slant (`STYLE`); a file inserted as a block and a block written as a file (`INSERT ~`, `WBLOCK`), its rows matched by name; the session's clipboard across drawings. The [M13 review](reviews/m13-exit-review.md) sweeps the registry again and breaks M14 — draw order and wipeouts by an ADR, ordinate dimensions and `QDIM`, saved layer states, `BOUNDARY` — down in the [roadmap](roadmap.md) (epic #225).
 
 ---

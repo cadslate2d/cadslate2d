@@ -101,8 +101,9 @@ impl LayerMergeCommand {
                         counted(count, "object")
                     ),
                     None => format!(
-                        "{layers} deleted, with {} on them.",
-                        counted(count, "object")
+                        "{layers} deleted, with {} on {}.",
+                        counted(count, "object"),
+                        if names.len() == 1 { "it" } else { "them" }
                     ),
                 });
             }
