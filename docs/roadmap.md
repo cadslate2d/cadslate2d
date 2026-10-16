@@ -23,7 +23,7 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M14 — Production Annotation | Complete and closed ([review](reviews/m14-exit-review.md)). The product is complete for its purpose. |
 | M15 — v1 Verification (needs a person) | Open: verification on real GPUs, WebKit, AutoCAD, and a desktop PDF viewer, which needs a person. No work for an agent on its own. |
 | M16 — Occasional Conveniences | Complete and closed ([review](reviews/m16-exit-review.md)): `OVERKILL`, named views, `LAYMRG` and `LAYDEL`, `SPLINEDIT`. |
-| M17 — Multileaders | In progress: the entity, its style, `MLEADER`, block notes, `MLEADEREDIT`, `MLEADERSTYLE`, and DXF both ways are done (#240–#242); the exit is next. |
+| M17 — Multileaders | Complete and closed ([review](reviews/m17-exit-review.md)): `MLEADER` with text or block notes, `MLEADEREDIT`, `MLEADERSTYLE`, and DXF `MULTILEADER` and `MLEADERSTYLE` both ways. Nothing else is planned. |
 
 ## M17, multileaders
 
@@ -57,12 +57,12 @@ The [M14 review](reviews/m14-exit-review.md) sweeps the registry against the cla
 1. **Real GPUs** (#110), and the text atlas decided from those figures (#175).
 2. **WebKit** (#109).
 3. **The R-tree crash, reported upstream** (#111).
-4. **A check against AutoCAD and a desktop PDF viewer** (#232) of what the program writes: groups, wipeouts, ordinates, layer states, the draw order, and plotted layouts.
+4. **A check against AutoCAD and a desktop PDF viewer** (#232) of what the program writes: groups, wipeouts, ordinates, layer states, the draw order, plotted layouts, and, since M17, multileaders.
 
 ### Long-term ideas
 
-- `MLEADER`, tables, fields; raster image underlays; SHX fonts; xrefs; scripting; plugins; native packaging; a DWG strategy; a native project format (§39); a WebGPU adapter (§38); associative dimensions; advanced hatch; plot style tables; searchable PDF text; the system clipboard; freezing in one viewport.
-- Occasional conveniences, when drafters ask for them: `OVERKILL`, named views (`VIEW`), `LAYMRG` and `LAYDEL`, `SPLINEDIT`.
+- Tables, fields; raster image underlays; SHX fonts; xrefs; scripting; plugins; native packaging; a DWG strategy; a native project format (§39); a WebGPU adapter (§38); associative dimensions; advanced hatch; plot style tables; searchable PDF text; the system clipboard; freezing in one viewport.
+- Done since, on the user's word: the occasional conveniences — `OVERKILL`, named views, `LAYMRG` and `LAYDEL`, `SPLINEDIT` — in M16, and `MLEADER` in M17.
 
 ## M14, as broken down after M13
 

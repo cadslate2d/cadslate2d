@@ -2079,6 +2079,8 @@ Nothing in M8 should constrain M0.
 >
 > **M16 complete (2026-10-16):** the conveniences that review set aside, taken up on the user's word — `OVERKILL`, named views (`VIEW`, the DXF `VIEW` table), `LAYMRG` and `LAYDEL`, `SPLINEDIT` ([M16 review](reviews/m16-exit-review.md)). Nothing else is planned; M15's verification needs a person.
 >
+> **M17 complete (2026-10-16):** multileaders, the first long-term idea, on the user's choice ([ADR-0033](adr/0033-multileaders.md)). A multileader stores its leaders, one landing, its note, and its style, and the style lays out the rest, as dimensions are laid out (ADR-0020). Shipped: `MLEADER` with words or a block, `MLEADEREDIT`, `MLEADERSTYLE`, and DXF `MULTILEADER` and `MLEADERSTYLE` both ways ([M17 review](reviews/m17-exit-review.md)). Nothing else is planned.
+>
 > **M13 complete (2026-10-14):** the drafting aids and reuse shipped — grid snap (`SNAP`, F9) and object snap tracking (`OTRACK`, F11) in the one pointer pipeline, the host timing a rest of the pointer; text styles from the command line with a height, a width factor, and a slant (`STYLE`); a file inserted as a block and a block written as a file (`INSERT ~`, `WBLOCK`), its rows matched by name; the session's clipboard across drawings. The [M13 review](reviews/m13-exit-review.md) sweeps the registry again and breaks M14 — draw order and wipeouts by an ADR, ordinate dimensions and `QDIM`, saved layer states, `BOUNDARY` — down in the [roadmap](roadmap.md) (epic #225).
 
 ---
