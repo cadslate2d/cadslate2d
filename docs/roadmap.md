@@ -22,6 +22,19 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M13 — Drafting Aids and Reuse | Complete and closed ([review](reviews/m13-exit-review.md)). |
 | M14 — Production Annotation | Complete and closed ([review](reviews/m14-exit-review.md)). The product is complete for its purpose. |
 | M15 — v1 Verification (needs a person) | Open: verification on real GPUs, WebKit, AutoCAD, and a desktop PDF viewer, which needs a person. No work for an agent on its own. |
+| M16 — Occasional Conveniences | Next. The conveniences the M14 review set aside, taken up on the user's word (epic #233). |
+
+## M16, the occasional conveniences
+
+After the M14 review declared the product complete, the user asked to go on. M16 takes up the conveniences that review set aside; the epic is #233.
+
+### Order of work
+
+1. **`OVERKILL`** (#234): duplicates removed, overlapping collinear lines merged.
+2. **Named views** (#235): `VIEW`, kept in the drawing and its DXF `VIEW` table.
+3. **`LAYMRG` and `LAYDEL`** (#236): layers merged onto another, or deleted with what is on them.
+4. **`SPLINEDIT`** (#237): close or open, reverse, fit points added and deleted, a polyline.
+5. **Exit** (#238).
 
 ## M15, as broken down after M14
 
