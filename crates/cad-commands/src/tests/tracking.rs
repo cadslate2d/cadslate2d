@@ -64,6 +64,23 @@ fn resting_on_a_snap_point_acquires_it_and_resting_again_lets_it_go() {
     assert!(acquired(&h).is_empty());
 }
 
+/// A browser repeats a move where the pointer already is when the page
+/// around it changes — the tracking chip appearing — and the host times a
+/// rest from it. That rest is not the user's: the point stays acquired
+/// until the pointer goes away and comes back.
+#[test]
+fn a_move_where_the_pointer_already_is_does_not_let_the_point_go() {
+    let mut h = two_lines();
+    h.enter("L");
+    rest_on(&mut h, p(100.0, 0.0));
+    assert_eq!(acquired(&h), vec![p(100.0, 0.0)]);
+    rest_on(&mut h, p(100.0, 0.0));
+    assert_eq!(acquired(&h), vec![p(100.0, 0.0)], "the same place again");
+    rest_on(&mut h, p(60.0, 60.0));
+    rest_on(&mut h, p(100.0, 0.0));
+    assert!(acquired(&h).is_empty(), "away and back lets it go");
+}
+
 #[test]
 fn the_pointer_follows_a_path_and_takes_where_two_cross() {
     let mut h = two_lines();

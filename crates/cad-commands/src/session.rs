@@ -168,6 +168,11 @@ pub struct Session {
     /// The object snap points tracking runs from (#220), oldest first;
     /// cleared when a command ends.
     acquired: Vec<Point2>,
+    /// Where the pointer was when a rest last acquired or let go a point,
+    /// until it moves elsewhere: a browser repeats a move where the pointer
+    /// already is when the page around it changes, and the rest that
+    /// follows is not the user's.
+    rested_at: Option<ScreenPoint>,
     /// What the last `LAYISO` changed, for `LAYUNISO` (#213).
     isolation: Option<Isolation>,
     /// The drawing `WBLOCK` made, for the host to write (#222).
@@ -258,6 +263,7 @@ impl Session {
             view: View::new(1.0, 1.0),
             previous_views: Vec::new(),
             acquired: Vec::new(),
+            rested_at: None,
             isolation: None,
             block_file: None,
             clipboard: None,
@@ -691,6 +697,9 @@ impl Session {
 
     pub fn pointer_move(&mut self, at: ScreenPoint, _modifiers: Modifiers) -> Dirty {
         self.cursor = Some(at);
+        if self.rested_at != Some(at) {
+            self.rested_at = None;
+        }
         let mut dirty = Dirty::OVERLAY | Dirty::UI;
         if let Some(previous) = self.pan_anchor.replace_if_some(at) {
             self.view
@@ -704,9 +713,13 @@ impl Session {
     /// moment without a move, as Rust keeps no clock. Resting on an object
     /// snap point while a point is asked for, with OTRACK on, acquires it
     /// for tracking — or lets it go, if it was acquired already. At most
-    /// [`MAX_ACQUIRED`] are held; another lets the oldest go.
+    /// [`MAX_ACQUIRED`] are held; another lets the oldest go. A second
+    /// rest without the pointer going anywhere does nothing.
     pub fn pointer_rest(&mut self) -> Dirty {
-        if !self.toggles.is_on(Toggle::Otrack) || self.point_target().is_none() {
+        if !self.toggles.is_on(Toggle::Otrack)
+            || self.point_target().is_none()
+            || (self.rested_at.is_some() && self.rested_at == self.cursor)
+        {
             return Dirty::NONE;
         }
         let Some(snap) = self.snap() else {
@@ -723,6 +736,7 @@ impl Session {
                 }
             }
         }
+        self.rested_at = self.cursor;
         Dirty::OVERLAY | Dirty::UI
     }
 
