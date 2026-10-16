@@ -110,6 +110,8 @@ pub struct ApplyReport {
 pub enum TransactionError {
     /// The entity does not exist in the drawing.
     UnknownEntity(EntityId),
+    /// A layer cannot be merged into itself (#236).
+    MergedIntoItself(LayerId),
     /// The layer state does not exist, in the drawing or after this
     /// transaction (#228).
     UnknownLayerState(LayerStateId),
@@ -250,6 +252,7 @@ impl fmt::Display for TransactionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnknownEntity(id) => write!(f, "entity {id} does not exist"),
+            Self::MergedIntoItself(id) => write!(f, "layer {id} cannot be merged into itself"),
             Self::UnknownLayerState(id) => write!(f, "layer state {id} does not exist"),
             Self::UnknownView(id) => write!(f, "view {id} does not exist"),
             Self::BadViewName(error) => write!(f, "bad view name: {error:?}"),
@@ -2314,6 +2317,120 @@ impl TransactionBuilder<'_> {
             before,
             after: layer,
         }));
+        Ok(())
+    }
+
+    /// Moves every object on the layers `from` onto `into` — in the
+    /// drawing and in block definitions, keeping their other properties —
+    /// and removes those layers (`LAYMRG`, #236). Layer `0` and the
+    /// current layer cannot be merged away, nor a layer into itself.
+    /// Returns how many objects moved, in the drawing and in blocks.
+    pub fn merge_layers(
+        &mut self,
+        from: &[LayerId],
+        into: LayerId,
+    ) -> Result<usize, TransactionError> {
+        self.known_layer(into)?;
+        self.check_layers_going(from)?;
+        if from.contains(&into) {
+            return Err(TransactionError::MergedIntoItself(into));
+        }
+        let moved = self.rework_layers(from, |record| {
+            Some(record.with_properties(Properties {
+                layer: into,
+                ..record.properties
+            }))
+        })?;
+        self.drop_layers(from)?;
+        Ok(moved)
+    }
+
+    /// Erases every object on the layers `layers` — in the drawing and in
+    /// block definitions — and removes those layers (`LAYDEL`, #236).
+    /// Layer `0` and the current layer cannot be deleted. Returns how many
+    /// objects were erased.
+    pub fn delete_layers(&mut self, layers: &[LayerId]) -> Result<usize, TransactionError> {
+        self.check_layers_going(layers)?;
+        let erased = self.rework_layers(layers, |_| None)?;
+        self.drop_layers(layers)?;
+        Ok(erased)
+    }
+
+    /// Refuses layer `0`, the current layer, and one that is not there.
+    fn check_layers_going(&self, layers: &[LayerId]) -> Result<(), TransactionError> {
+        for id in layers {
+            if *id == LayerId::FIRST {
+                return Err(TransactionError::PermanentLayer);
+            }
+            self.existing_layer(*id)?;
+            if self.settings_now().current_layer == *id {
+                return Err(TransactionError::CurrentLayer(*id));
+            }
+        }
+        Ok(())
+    }
+
+    /// Gives every object on `layers`, in the drawing and in block
+    /// definitions, what `rework` makes of it — another record, or `None`
+    /// to erase it. Returns how many objects it touched.
+    fn rework_layers(
+        &mut self,
+        layers: &[LayerId],
+        rework: impl Fn(&EntityRecord) -> Option<EntityRecord>,
+    ) -> Result<usize, TransactionError> {
+        let on = |record: &EntityRecord| layers.contains(&record.properties.layer);
+        let ids: Vec<EntityId> = self
+            .drawing
+            .records()
+            .filter(|(_, record)| on(record))
+            .map(|(id, _)| id)
+            .collect();
+        let mut count = ids.len();
+        for id in ids {
+            let before = self.existing(id)?;
+            match rework(&before) {
+                Some(after) => self.push(EntityChange::Replace { id, before, after }),
+                None => self.remove(id)?,
+            }
+        }
+        let blocks: Vec<(BlockId, Block)> = self
+            .drawing
+            .blocks
+            .iter()
+            .filter(|(id, block)| *id != BlockId::FIRST && block.entities.iter().any(on))
+            .map(|(id, block)| (id, block.clone()))
+            .collect();
+        for (id, block) in blocks {
+            count += block.entities.iter().filter(|record| on(record)).count();
+            let entities: Vec<EntityRecord> = block
+                .entities
+                .iter()
+                .filter_map(|record| {
+                    if on(record) {
+                        rework(record)
+                    } else {
+                        Some(record.clone())
+                    }
+                })
+                .collect();
+            self.redefine_block(
+                id,
+                Block {
+                    entities: Arc::new(entities),
+                    ..block
+                },
+            )?;
+        }
+        Ok(count)
+    }
+
+    /// Removes layers this transaction has emptied: none of the drawing's
+    /// entities, as it will be, nor any block's, is on them.
+    fn drop_layers(&mut self, layers: &[LayerId]) -> Result<(), TransactionError> {
+        for id in layers {
+            let row = self.existing_layer(*id)?;
+            self.push_other(Change::Layer(TableChange::Remove { id: *id, row }));
+        }
         Ok(())
     }
 
@@ -6675,6 +6792,10 @@ mod tests {
         DeleteState(usize),
         /// A view saved by name in a space by index, one deleted (#235).
         SaveView(u8, usize, f64),
+        /// A layer merged into another, one deleted with what is on it
+        /// (#236).
+        MergeLayer(usize, usize),
+        DeleteLayer(usize),
         DeleteView(usize),
         Undo,
         Redo,
@@ -6784,6 +6905,8 @@ mod tests {
             1 => any::<usize>().prop_map(Op::DeleteState),
             1 => (0..4u8, any::<usize>(), -1.0..50.0f64).prop_map(|(n, space, size)| Op::SaveView(n, space, size)),
             1 => any::<usize>().prop_map(Op::DeleteView),
+            1 => (any::<usize>(), any::<usize>()).prop_map(|(from, into)| Op::MergeLayer(from, into)),
+            1 => any::<usize>().prop_map(Op::DeleteLayer),
             1 => (0..5u8).prop_map(Op::AddDimStyle),
             1 => (any::<usize>(), -1.0..5.0f64, 0..5u8).prop_map(|(i, h, n)| Op::RestyleDimStyle(i, h, n)),
             1 => any::<usize>().prop_map(Op::RemoveDimStyle),
@@ -6995,6 +7118,34 @@ mod tests {
                             layer.locked = locked;
                         });
                         prop_assert_eq!(switched.is_ok(), (on && !frozen) || id != drawing.current_layer(), "{:?}", switched);
+                    }
+                    Op::MergeLayer(from, into) => {
+                        let (from, into) = (layer(from), layer(into));
+                        let refused = from == LayerId::FIRST || from == into || drawing.current_layer() == from;
+                        let mut tx = drawing.transaction();
+                        let merged = tx.merge_layers(&[from], into);
+                        tx.commit();
+                        prop_assert_eq!(merged.is_ok(), !refused);
+                        if merged.is_ok() {
+                            prop_assert!(!drawing.layers().contains(from));
+                            let on_it = |record: &EntityRecord| record.properties.layer == from;
+                            prop_assert!(!drawing.records().any(|(_, record)| on_it(record)));
+                            prop_assert!(!drawing.blocks().iter().any(|(_, block)| block.entities.iter().any(on_it)));
+                        }
+                    }
+                    Op::DeleteLayer(pick) => {
+                        let id = layer(pick);
+                        let refused = id == LayerId::FIRST || drawing.current_layer() == id;
+                        let before = drawing.len();
+                        let on_it = drawing.records().filter(|(_, record)| record.properties.layer == id).count();
+                        let mut tx = drawing.transaction();
+                        let deleted = tx.delete_layers(&[id]);
+                        tx.commit();
+                        prop_assert_eq!(deleted.is_ok(), !refused);
+                        if deleted.is_ok() {
+                            prop_assert!(!drawing.layers().contains(id));
+                            prop_assert_eq!(drawing.len(), before - on_it);
+                        }
                     }
                     Op::RemoveLayer(pick) => {
                         let id = layer(pick);

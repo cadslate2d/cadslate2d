@@ -38,6 +38,7 @@ mod join;
 mod layer_command;
 mod layers;
 mod layerstate;
+mod laymerge;
 mod layouts;
 mod laytools;
 mod leader;

@@ -151,6 +151,9 @@ pub(super) fn explain(ctx: &CommandContext<'_>, error: TransactionError) -> Stri
         }
         TransactionError::PermanentLayer => "Layer \"0\" cannot be renamed or deleted.".to_owned(),
         TransactionError::LayerInUse(id) => format!("Layer \"{}\" has objects on it.", name(id)),
+        TransactionError::MergedIntoItself(id) => {
+            format!("Layer \"{}\" cannot be merged into itself.", name(id))
+        }
         TransactionError::CurrentLayer(id) => format!(
             "Layer \"{}\" is the current layer: it cannot be switched off, frozen, or deleted.",
             name(id)
