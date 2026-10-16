@@ -66,6 +66,7 @@ export class CanvasController {
     this.#renderer.onContextRestored = () => app.loop.invalidate(Dirty.Scene);
     publishDebugHandle({
       renderer: this.#renderer.stats,
+      pointerRests: () => app.rests,
       crash: () => {
         try {
           app.engine.panicForTest();

@@ -100,6 +100,17 @@ export async function rendererStats(page: Page): Promise<RendererStats> {
   });
 }
 
+/** How many times the pointer has rested on the page, and where on the canvas it last did (#220). */
+export async function pointerRests(
+  page: Page,
+): Promise<{ count: number; at: { x: number; y: number } | undefined }> {
+  return page.evaluate(() => {
+    const handle = window.__cadslate;
+    if (!handle) throw new Error("debug handle is not published");
+    return handle.pointerRests();
+  });
+}
+
 /** Lets queued animation frames run. */
 export async function settle(page: Page): Promise<void> {
   await page.evaluate(

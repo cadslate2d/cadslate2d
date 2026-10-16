@@ -6,12 +6,15 @@ import type { LinetypeReport } from "../renderer/webgl/linetype-probe";
 import type { StyleReport } from "../renderer/webgl/style-probe";
 import type { TextCandidate, TextReport } from "../renderer/webgl/text-probe";
 import type { TransportReport } from "../renderer/webgl/transport-probe";
+import type { PointerRests } from "./cad-app";
 import type { MainThreadReport } from "./main-thread-probe";
 import type { PersistenceReport } from "./persistence-probe";
 import type { RendererStats } from "../renderer/webgl/webgl-renderer";
 
 export interface DebugHandle {
   readonly renderer: Readonly<RendererStats>;
+  /** How many times the pointer has rested, and where on the canvas (#220): no CAD state. */
+  readonly pointerRests: () => PointerRests;
   /** Makes the engine panic (#176), so the recovery path can be tested end to end. */
   readonly crash: () => void;
   /** Runs the render-transport measurement (DESIGN §12.6) on the open drawing. */

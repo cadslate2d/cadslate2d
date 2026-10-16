@@ -21,6 +21,12 @@ const RECOVERED_FILE_NAME = "recovered.dxf";
 /** How long after the last change the drawing is kept (ADR-0019). */
 export const AUTOSAVE_DELAY_MS = 1000;
 
+/** How many times the pointer has rested, and where, in canvas pixels, it last did. */
+export interface PointerRests {
+  readonly count: number;
+  readonly at: { readonly x: number; readonly y: number } | undefined;
+}
+
 /**
  * How long the pointer must stay still to rest on a point (#220): object
  * snap tracking acquires the snap point it rests on. The engine keeps no
@@ -109,6 +115,10 @@ export class CadApp {
   #failed = false;
   /** Cancels the pending pointer rest, while the pointer is moving. */
   #cancelRest: (() => void) | undefined;
+  /** Pointer rests told to the engine so far, and where the last was: what a test waits for. */
+  #rests: PointerRests = { count: 0, at: undefined };
+  /** Where the pointer was last moved to, in canvas pixels. */
+  #pointerAt: { x: number; y: number } | undefined;
 
   constructor(engine: CadEngine, options: CadAppOptions = {}) {
     this.engine = engine;
@@ -122,6 +132,7 @@ export class CadApp {
     });
     this.loop = new FrameLoop(
       (sample) => {
+        this.#pointerAt = { x: sample.x, y: sample.y };
         this.#awaitRest();
         return engine.pointerMove(sample.x, sample.y, sample.modifiers);
       },
@@ -137,8 +148,18 @@ export class CadApp {
     this.#cancelRest?.();
     this.#cancelRest = this.#timer(() => {
       this.#cancelRest = undefined;
+      this.#rests = { count: this.#rests.count + 1, at: this.#pointerAt };
       if (!this.#failed) this.loop.invalidate(this.engine.pointerRest());
     }, POINTER_REST_MS);
+  }
+
+  /**
+   * How many times the pointer has rested. A browser may run timers and
+   * frames late, so a test waits for a rest to be told rather than for a
+   * time to pass.
+   */
+  get rests(): PointerRests {
+    return this.#rests;
   }
 
   /** Whether the engine has stopped. Everything the app is asked afterwards is declined. */

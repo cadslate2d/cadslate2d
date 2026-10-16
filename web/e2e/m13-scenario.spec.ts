@@ -15,26 +15,41 @@ import {
   logLines,
   num,
   openApp,
+  pointerRests,
   prompt,
   settle,
   tableRow,
 } from "./support";
 
 /**
- * Moves the pointer to `(x, y)` and lets it rest there, as tracking needs.
- * The move must reach the engine first: the frame loop keeps only the
- * latest pointer move of a frame, so under load a move followed at once by
- * another is never delivered, and nothing rests where it went. It comes
- * from a little way off, so that a pointer already near — the click
- * before — still makes a move the host times a rest from.
+ * Moves the pointer to `(x, y)` and waits until it has rested there, as
+ * tracking needs. It waits for that rest to be told, rather than for a
+ * time: under load a browser runs frames and timers late — Firefox a frame
+ * a second — and a fixed wait ran out first. A rest still due from where
+ * the pointer was before does not count: the rest must be at `(x, y)`.
  */
 async function restAt(page: Page, canvas: Locator, x: number, y: number): Promise<void> {
   const center = await centerOf(canvas);
-  await page.mouse.move(center.x + x + 30, center.y - y + 30);
-  await settle(page);
-  await page.mouse.move(center.x + x, center.y - y);
-  await settle(page);
-  await page.waitForTimeout(700);
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error("the canvas is not laid out");
+  const target = { x: center.x + x, y: center.y - y };
+  const before = (await pointerRests(page)).count;
+  await page.mouse.move(target.x, target.y);
+  await expect
+    .poll(
+      async () => {
+        const rests = await pointerRests(page);
+        const at = rests.at;
+        return (
+          rests.count > before &&
+          at !== undefined &&
+          Math.abs(at.x - (target.x - box.x)) < 1 &&
+          Math.abs(at.y - (target.y - box.y)) < 1
+        );
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true);
   await settle(page);
 }
 
