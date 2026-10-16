@@ -3,7 +3,7 @@
 //! A MULTILEADER's geometry is in its context data, between `300
 //! CONTEXT_DATA{` and `301 }`. Inside it come:
 //! - the content: an MTEXT's words (`290` 1, then `304`), or a block
-//!   (`296` 1);
+//!   (`296` 1, then its record's handle, `341`, and its scale, `16`);
 //! - then each leader root, between `302 LEADER{` and `303 }`: the last
 //!   leader point (`10`, `20`) — our landing — the dogleg's direction and
 //!   length, and its leader lines, each between `304 LEADER_LINE{` and
@@ -14,14 +14,16 @@
 //! at.
 
 use cad_core::Point2;
-use cad_document::{MLeaderContent, MLeaderEntity, MLeaderStyle, MLeaderStyleId};
+use std::collections::HashMap;
+
+use cad_document::{BlockId, MLeaderContent, MLeaderEntity, MLeaderStyle, MLeaderStyleId};
 
 use crate::text_codes::plain_mtext;
 
 /// A second leader root, its leaders brought to the first's landing.
 pub(crate) const SECOND_ROOT: &str = "(MULTILEADER with two roots)";
-/// Block content, not yet held: the note left out.
-pub(crate) const BLOCK_CONTENT: &str = "(MULTILEADER block content)";
+/// A block note of a block the file does not define: the note left out.
+pub(crate) const UNDEFINED_BLOCK: &str = "(MULTILEADER of an undefined block)";
 /// Spline leaders, read straight through their points.
 pub(crate) const SPLINE_LEADER: &str = "(MULTILEADER spline leader)";
 
@@ -32,6 +34,9 @@ pub(crate) struct Read {
     pub style: Option<String>,
     /// Report keys for what was left out.
     pub dropped: Vec<&'static str>,
+    /// A block note's BLOCK_RECORD handle, upper case, to be found among
+    /// the file's blocks; its content holds the scale until then.
+    pub block: Option<String>,
 }
 
 /// The multileader the groups describe, or `None` when they make none: no
@@ -43,6 +48,9 @@ pub(crate) fn read(raw: &[(i32, String)]) -> Option<Read> {
     let mut landing: Option<Point2> = None;
     let mut text: Option<String> = None;
     let mut has_text = false;
+    let mut has_block = false;
+    let mut block: Option<String> = None;
+    let mut block_scale: Option<f64> = None;
     let mut style = None;
     let mut roots = 0;
     // Where we are: in the context data, a root, a line.
@@ -88,7 +96,13 @@ pub(crate) fn read(raw: &[(i32, String)]) -> Option<Read> {
             (304, _) if context && !root && has_text && text.is_none() => {
                 text = Some(plain_mtext(value).0);
             }
-            (296, "1") if context && !root => dropped.push(BLOCK_CONTENT),
+            (296, "1") if context && !root => has_block = true,
+            (341, handle) if context && !root && has_block && block.is_none() => {
+                block = Some(handle.to_uppercase());
+            }
+            (16, scale) if context && !root && has_block && block_scale.is_none() => {
+                block_scale = number(scale);
+            }
             (340, handle) if !context && style.is_none() => style = Some(handle.to_uppercase()),
             // The leader type after the context data: 2 is a spline.
             (170, "2") if !context && roots > 0 => dropped.push(SPLINE_LEADER),
@@ -99,8 +113,15 @@ pub(crate) fn read(raw: &[(i32, String)]) -> Option<Read> {
     if leaders.is_empty() || !landing.is_finite() {
         return None;
     }
-    let content = match text {
-        Some(words) if !words.trim().is_empty() => MLeaderContent::Text(words),
+    let content = match (text, &block) {
+        (Some(words), _) if !words.trim().is_empty() => MLeaderContent::Text(words),
+        // The block is found by its handle once the file is read.
+        (_, Some(_)) => MLeaderContent::Block {
+            block: BlockId::FIRST,
+            scale: block_scale
+                .filter(|scale| scale.is_finite() && *scale > 0.0)
+                .unwrap_or(1.0),
+        },
         _ => MLeaderContent::None,
     };
     let mleader = MLeaderEntity {
@@ -110,18 +131,28 @@ pub(crate) fn read(raw: &[(i32, String)]) -> Option<Read> {
         style: MLeaderStyleId::FIRST,
     };
     mleader.check().ok()?;
+    let block = match mleader.content {
+        MLeaderContent::Block { .. } => block,
+        _ => None,
+    };
     Some(Read {
         mleader,
         style,
         dropped,
+        block,
     })
 }
 
 /// A MLEADERSTYLE object's values, under `name`: the arrowhead size (44),
-/// the landing gap (42), the dogleg (43, none unless 291 is 1), and the
-/// text height (45). `None` when the values are none a multileader can be
-/// drawn by.
-pub(crate) fn read_style(raw: &[(i32, String)], name: &str) -> Option<MLeaderStyle> {
+/// the landing gap (42), the dogleg (43, none unless 291 is 1), the text
+/// height (45), and the block a new note is (343, by the handle of its
+/// record, named through `blocks`) and its scale (47). `None` when the
+/// values are none a multileader can be drawn by.
+pub(crate) fn read_style(
+    raw: &[(i32, String)],
+    name: &str,
+    blocks: &HashMap<String, String>,
+) -> Option<MLeaderStyle> {
     let value = |code: i32| {
         raw.iter()
             .find(|(c, _)| *c == code)
@@ -141,6 +172,12 @@ pub(crate) fn read_style(raw: &[(i32, String)], name: &str) -> Option<MLeaderSty
             0.0
         },
         text_height: value(45).unwrap_or(defaults.text_height),
+        block: raw
+            .iter()
+            .find(|(code, _)| *code == 343)
+            .and_then(|(_, handle)| blocks.get(&handle.trim().to_uppercase()))
+            .cloned(),
+        block_scale: value(47).unwrap_or(defaults.block_scale),
         ..defaults
     };
     style.check().ok().map(|()| style)
@@ -150,8 +187,8 @@ pub(crate) fn read_style(raw: &[(i32, String)], name: &str) -> Option<MLeaderSty
 mod tests {
     use cad_core::Point2;
     use cad_document::{
-        Drawing, DrawingParts, Entity, MLeaderContent, MLeaderEntity, MLeaderStyle, MLeaderStyleId,
-        Properties,
+        Block, BlockId, CircleEntity, Drawing, DrawingParts, Entity, EntityRecord, MLeaderContent,
+        MLeaderEntity, MLeaderStyle, MLeaderStyleId, Properties,
     };
     use proptest::prelude::*;
 
@@ -169,21 +206,31 @@ mod tests {
             leaders in prop::collection::vec(prop::collection::vec(point(), 1..4), 1..4),
             landing in point(),
             words in prop_oneof![Just(None), "[A-Za-z0-9 ]{0,12}".prop_map(Some)],
+            block_scale in prop_oneof![Just(None), (0.01..100.0f64).prop_map(Some)],
             arrow in 0.1..10.0f64, gap in 0.0..5.0f64, dogleg in prop_oneof![Just(0.0), 0.1..20.0f64],
-            height in 0.1..10.0f64, own_style in any::<bool>(),
+            height in 0.1..10.0f64, own_style in any::<bool>(), default_block in any::<bool>(),
         ) {
-            let content = match words {
-                Some(words) if !words.trim().is_empty() => MLeaderContent::Text(words),
+            // A balloon: the drawing's one block, a circle.
+            let tag = BlockId::from_raw(1);
+            let content = match (block_scale, words) {
+                (Some(scale), _) => MLeaderContent::Block { block: tag, scale },
+                (None, Some(words)) if !words.trim().is_empty() => MLeaderContent::Text(words),
                 _ => MLeaderContent::None,
             };
             let style = MLeaderStyle {
                 arrow_size: arrow, landing_gap: gap, dogleg_length: dogleg, text_height: height,
+                block: default_block.then(|| "TAG".to_owned()),
+                block_scale: block_scale.unwrap_or(1.0),
                 ..MLeaderStyle::named(if own_style { "Callout" } else { MLeaderStyle::STANDARD })
             };
             let id = if own_style { MLeaderStyleId::from_raw(1) } else { MLeaderStyleId::FIRST };
             let mleader = MLeaderEntity { leaders, landing, content, style: id };
             let drawing = Drawing::assemble(DrawingParts {
                 mleader_styles: vec![style.clone()],
+                blocks: vec![Block::new("TAG", Point2::ORIGIN, vec![EntityRecord::new(
+                    Entity::from(CircleEntity::new(Point2::new(1.0, 2.0), 3.0)),
+                    Properties::default(),
+                )])],
                 entities: vec![(Entity::MLeader(mleader.clone()), Properties::default(), cad_document::LayoutId::MODEL)],
                 ..DrawingParts::default()
             }).unwrap();

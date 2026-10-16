@@ -350,6 +350,13 @@ impl Export {
             row_handles: HashMap::new(),
             layer_states: None,
             mleader_styles,
+            block_record_handles: drawing
+                .blocks()
+                .iter()
+                .map(|(id, _)| id)
+                .filter(|id| *id != BlockId::FIRST)
+                .zip(block_records.iter().copied())
+                .collect(),
         };
         body.grouped = drawing
             .groups()
@@ -455,6 +462,7 @@ impl Export {
             row_handles: HashMap::new(),
             layer_states: None,
             mleader_styles: self.body.mleader_styles.take(),
+            block_record_handles: HashMap::new(),
         };
         header.section("HEADER", |w| w.header(drawing, self.body.handles.seed()));
         Ok(header.out + &self.body.out)
@@ -491,6 +499,9 @@ struct Writer {
     layer_states: Option<(Handle, Handle)>,
     /// Where the multileader styles go, when the drawing needs them (#240).
     mleader_styles: Option<MLeaderStyleHandles>,
+    /// Each block's BLOCK_RECORD, which a multileader's block note and a
+    /// style's default block name it by (#241).
+    block_record_handles: HashMap<BlockId, Handle>,
 }
 
 /// Every dimension, with its properties, in the order their DIMENSION
@@ -1252,7 +1263,7 @@ impl Writer {
         /// one.
         const BY_BLOCK: i64 = -1_056_964_608;
         let style = drawing.tables().mleader_style(mleader.style);
-        let layout = mleader.layout(style);
+        let layout = mleader.layout(style, drawing.tables());
         let along = Vec2::new(layout.reads, 0.0);
         let dogleg_end = mleader.landing + along * style.dogleg_length;
         let text_style = self
@@ -1311,7 +1322,35 @@ impl Writer {
             self.int(294, 0);
             self.int(295, 1);
         }
-        self.int(296, 0);
+        // A block note (#241): its record, the normal, where the block's
+        // base point lands, its scale, no rotation, its colour by block,
+        // and the transform as identity, which readers pass over.
+        let block = layout.block.as_ref().map(|(reference, _)| {
+            let record = self
+                .block_record_handles
+                .get(&reference.block)
+                .copied()
+                .unwrap_or(Handle::NONE);
+            (record, reference.insertion, reference.scale)
+        });
+        self.int(296, i64::from(block.is_some()));
+        if let Some((record, insertion, scale)) = block {
+            self.handle(341, record);
+            self.real(14, 0.0);
+            self.real(24, 0.0);
+            self.real(34, 1.0);
+            self.point(15, insertion);
+            for code in [16, 26, 36] {
+                self.real(code, scale);
+            }
+            self.real(46, 0.0);
+            self.int(93, BY_BLOCK);
+            for row in 0..4 {
+                for column in 0..4 {
+                    self.real(47, if row == column { 1.0 } else { 0.0 });
+                }
+            }
+        }
         self.point(110, Point2::ORIGIN);
         self.point(111, Point2::new(1.0, 0.0));
         self.point(112, Point2::new(0.0, 1.0));
@@ -1348,17 +1387,26 @@ impl Writer {
         self.int(291, i64::from(style.dogleg_length > 0.0));
         self.real(41, style.dogleg_length);
         self.real(42, style.arrow_size);
-        self.int(172, if words.is_some() { 2 } else { 0 });
+        // What the note is: words (2), a block (1), or nothing (0).
+        let content = match (words, block) {
+            (Some(_), _) => 2,
+            (None, Some(_)) => 1,
+            (None, None) => 0,
+        };
+        self.int(172, content);
         self.handle(343, text_style);
         for (code, value) in [(173, 1), (95, 1), (174, 1), (175, 0)] {
             self.int(code, value);
         }
         self.int(92, BY_BLOCK);
         self.int(292, 0);
+        if let Some((record, ..)) = block {
+            self.handle(344, record);
+        }
         self.int(93, BY_BLOCK);
-        // The block's scale, none.
+        let scale = block.map_or(1.0, |(_, _, scale)| scale);
         for code in [10, 20, 30] {
-            self.real(code, 1.0);
+            self.real(code, scale);
         }
         self.real(43, 0.0);
         self.int(176, 0);
@@ -2142,7 +2190,16 @@ impl Writer {
             self.handle(5, handle);
             self.handle(330, styles.dictionary);
             self.group(100, "AcDbMLeaderStyle");
-            for (code, value) in [(179, 2), (170, 2), (171, 1), (172, 0), (90, 2)] {
+            // The block a new note is, when the drawing has one by that
+            // name (#241).
+            let block = style
+                .block
+                .as_deref()
+                .and_then(|name| drawing.blocks().find(name))
+                .and_then(|id| self.block_record_handles.get(&id).copied());
+            self.int(179, 2);
+            self.int(170, if block.is_some() { 1 } else { 2 });
+            for (code, value) in [(171, 1), (172, 0), (90, 2)] {
                 self.int(code, value);
             }
             self.real(40, 0.0);
@@ -2154,7 +2211,7 @@ impl Writer {
             self.real(42, style.landing_gap);
             self.int(291, i64::from(style.dogleg_length > 0.0));
             self.real(43, style.dogleg_length);
-            self.group(3, "");
+            self.group(3, &style.name);
             self.real(44, style.arrow_size);
             self.group(300, "");
             self.handle(342, text_style);
@@ -2166,9 +2223,12 @@ impl Writer {
             self.int(292, 0);
             self.int(297, 0);
             self.real(46, 4.0);
+            if let Some(record) = block {
+                self.handle(343, record);
+            }
             self.int(94, BY_BLOCK);
             for code in [47, 49, 140] {
-                self.real(code, 1.0);
+                self.real(code, style.block_scale);
             }
             self.int(294, 1);
             self.real(141, 0.0);

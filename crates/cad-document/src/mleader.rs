@@ -9,9 +9,10 @@
 use cad_core::{Aabb, Point2, Vec2};
 use cad_geometry::{Arrowhead, Segment, Transform, normalized};
 
-use crate::block::BlockId;
+use crate::block::{BlockId, BlockReferenceEntity};
 use crate::names::Named;
 use crate::table::{Table, TableChange, TableId};
+use crate::tables::Tables;
 use crate::text::{Justification, TextEntity};
 
 /// A multileader style. Lengths are in drawing units.
@@ -26,6 +27,11 @@ pub struct MLeaderStyle {
     pub dogleg_length: f64,
     /// The height of a text note. Positive.
     pub text_height: f64,
+    /// The block a new multileader's note is, by name, when it is one
+    /// (#241); a text note when there is none, or no block of that name.
+    pub block: Option<String>,
+    /// The scale a new multileader's block note is placed at. Positive.
+    pub block_scale: f64,
 }
 
 /// Why a multileader style cannot be as given.
@@ -60,6 +66,8 @@ impl MLeaderStyle {
             landing_gap: 1.0,
             dogleg_length: 5.0,
             text_height: 2.5,
+            block: None,
+            block_scale: 1.0,
         }
     }
 
@@ -80,6 +88,7 @@ impl MLeaderStyle {
         positive(self.text_height, "text height")?;
         not_negative(self.landing_gap, "landing gap")?;
         not_negative(self.dogleg_length, "dogleg length")?;
+        positive(self.block_scale, "block scale")?;
         Ok(())
     }
 }
@@ -128,6 +137,8 @@ pub struct MLeaderEntity {
 pub enum MLeaderError {
     /// It has no leader, or a leader with no point.
     NoLeader,
+    /// Its last leader cannot go: a multileader keeps one (#241).
+    LastLeader,
     /// A point that is not finite.
     NotFinite,
 }
@@ -136,6 +147,7 @@ impl std::fmt::Display for MLeaderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoLeader => write!(f, "a multileader needs a leader"),
+            Self::LastLeader => write!(f, "a multileader keeps at least one leader"),
             Self::NotFinite => write!(f, "a multileader's points must be finite"),
         }
     }
@@ -153,6 +165,9 @@ pub struct MLeaderLayout {
     pub arrowheads: Vec<Arrowhead>,
     /// A text note, placed past the dogleg.
     pub text: Option<TextEntity>,
+    /// A block note, placed with its nearer side's middle at the dogleg's
+    /// end (#241), and the box its geometry fills there.
+    pub block: Option<(BlockReferenceEntity, Aabb)>,
     /// Where a block note's base point goes, and which way the note reads
     /// from the dogleg: +1 right, −1 left.
     pub note_at: Point2,
@@ -178,12 +193,33 @@ impl MLeaderLayout {
         if let Some(text) = &self.text {
             bounds = bounds.union(&text.bounds());
         }
+        if let Some((_, frame)) = &self.block {
+            bounds = bounds.union(frame);
+        }
         bounds
     }
 
-    /// The distance to the nearest line, an arrowhead, or the note's box.
+    /// The edges of a block note's box: what a window crosses and a pick
+    /// finds of it.
+    pub fn block_edges(&self) -> Vec<Segment> {
+        self.block
+            .iter()
+            .flat_map(|(_, frame)| box_edges(frame))
+            .collect()
+    }
+
+    /// The distance to the nearest line, an arrowhead, or the note's box;
+    /// none inside a block note's box.
     pub fn distance_to(&self, point: Point2) -> f64 {
+        let inside_block = self
+            .block
+            .as_ref()
+            .is_some_and(|(_, frame)| frame.contains_point(point));
+        if inside_block {
+            return 0.0;
+        }
         self.segments()
+            .chain(self.block_edges())
             .map(|segment| segment.distance_to_point(point))
             .fold(
                 self.text
@@ -192,6 +228,28 @@ impl MLeaderLayout {
                 f64::min,
             )
     }
+
+    /// Whether `point` is inside the note: the text's box or the block's.
+    pub fn note_contains(&self, point: Point2) -> bool {
+        self.text
+            .as_ref()
+            .is_some_and(|text| text.frame().contains(point))
+            || self
+                .block
+                .as_ref()
+                .is_some_and(|(_, frame)| frame.contains_point(point))
+    }
+}
+
+/// The four edges of a box.
+fn box_edges(frame: &Aabb) -> [Segment; 4] {
+    let [a, b, c, d] = frame.corners();
+    [
+        Segment::new(a, b),
+        Segment::new(b, c),
+        Segment::new(c, d),
+        Segment::new(d, a),
+    ]
 }
 
 impl MLeaderEntity {
@@ -276,9 +334,11 @@ impl MLeaderEntity {
     }
 
     /// The multileader laid out by `style`: each leader to the landing with
-    /// an arrowhead at its tip, the dogleg, and a text note past it, its
-    /// middle on the dogleg's line.
-    pub fn layout(&self, style: &MLeaderStyle) -> MLeaderLayout {
+    /// an arrowhead at its tip, the dogleg, and the note — a text past the
+    /// gap, its middle on the dogleg's line, or a block from `tables`, the
+    /// middle of its nearer side at the dogleg's end, as other programs
+    /// place one.
+    pub fn layout(&self, style: &MLeaderStyle, tables: Tables<'_>) -> MLeaderLayout {
         let mut lines = Vec::new();
         let mut arrowheads = Vec::new();
         for leader in &self.leaders {
@@ -320,13 +380,61 @@ impl MLeaderEntity {
             ),
             _ => None,
         };
+        let block = match self.content {
+            MLeaderContent::Block { block, scale } => {
+                Some(place_block(block, scale, dogleg_end, reads, tables))
+            }
+            _ => None,
+        };
         MLeaderLayout {
             lines,
             arrowheads,
             text,
+            block,
             note_at,
             reads,
         }
+    }
+
+    /// This multileader with one more leader, from `tip` through `bends`
+    /// to the landing (#241).
+    #[must_use]
+    pub fn with_leader(&self, leader: Vec<Point2>) -> Self {
+        let mut more = self.clone();
+        more.leaders.push(leader);
+        more
+    }
+
+    /// This multileader without leader `index`; its last one stays.
+    pub fn without_leader(&self, index: usize) -> Result<Self, MLeaderError> {
+        if self.leaders.len() <= 1 {
+            return Err(MLeaderError::LastLeader);
+        }
+        let mut fewer = self.clone();
+        if index < fewer.leaders.len() {
+            fewer.leaders.remove(index);
+        }
+        Ok(fewer)
+    }
+
+    /// The leader nearest `point`, by its path to the landing.
+    pub fn nearest_leader(&self, point: Point2) -> usize {
+        let distance = |leader: &Vec<Point2>| {
+            let path: Vec<Point2> = leader
+                .iter()
+                .copied()
+                .chain(std::iter::once(self.landing))
+                .collect();
+            path.windows(2)
+                .map(|pair| Segment::new(pair[0], pair[1]).distance_to_point(point))
+                .fold(path[0].distance_to(point), f64::min)
+        };
+        self.leaders
+            .iter()
+            .enumerate()
+            .map(|(index, leader)| (index, distance(leader)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map_or(0, |(index, _)| index)
     }
 
     #[must_use]
@@ -351,6 +459,34 @@ impl MLeaderEntity {
     }
 }
 
+/// A block note: the reference placing `block` at `scale` with the middle
+/// of its nearer side at `at` — its left side when the note reads right
+/// (`reads` +1), its right when left — and the box it fills there. A
+/// block with nothing in it is placed by its base point.
+fn place_block(
+    block: BlockId,
+    scale: f64,
+    at: Point2,
+    reads: f64,
+    tables: Tables<'_>,
+) -> (BlockReferenceEntity, Aabb) {
+    let base = tables
+        .blocks
+        .get(block)
+        .map_or(Point2::ORIGIN, |definition| definition.base);
+    let own = tables.bounds_of(&BlockReferenceEntity::new(block, base, 1.0, 0.0));
+    let side = if reads > 0.0 {
+        own.min().x
+    } else {
+        own.max().x
+    };
+    let middle = (own.min().y + own.max().y) / 2.0;
+    let insertion = at - (Point2::new(side, middle) - base) * scale;
+    let reference = BlockReferenceEntity::new(block, insertion, scale, 0.0);
+    let frame = tables.bounds_of(&reference);
+    (reference, frame)
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
@@ -370,7 +506,7 @@ mod tests {
         let style = MLeaderStyle::named("S");
         let mut mleader = MLeaderEntity::new(p(0.0, 0.0), p(20.0, 10.0), note("Hole"));
         mleader.leaders.push(vec![p(5.0, -10.0), p(10.0, 0.0)]);
-        let layout = mleader.layout(&style);
+        let layout = mleader.layout(&style, Tables::none());
         // One segment, two segments, then the dogleg.
         assert_eq!(layout.lines.len(), 4);
         assert_eq!(layout.lines[3], Segment::new(p(20.0, 10.0), p(25.0, 10.0)));
@@ -383,7 +519,7 @@ mod tests {
 
         // Leaders from the right: the note reads left.
         let left = MLeaderEntity::new(p(40.0, 0.0), p(20.0, 10.0), note("L"));
-        let layout = left.layout(&style);
+        let layout = left.layout(&style, Tables::none());
         assert_eq!(layout.lines[1], Segment::new(p(20.0, 10.0), p(15.0, 10.0)));
         assert_eq!(layout.text.unwrap().justification, Justification::Right);
 
@@ -393,7 +529,7 @@ mod tests {
             dogleg_length: 0.0,
             ..style.clone()
         };
-        let layout = bare.layout(&flat);
+        let layout = bare.layout(&flat, Tables::none());
         assert_eq!(layout.lines.len(), 1);
         assert!(layout.text.is_none());
     }
@@ -427,6 +563,60 @@ mod tests {
         );
     }
 
+    /// #241: a block note's nearer side's middle is at the dogleg's end —
+    /// its left side reading right, its right side reading left — scaled;
+    /// leaders are added, the nearest taken away, and the last kept.
+    #[test]
+    fn a_block_note_meets_the_dogleg_and_leaders_come_and_go() {
+        use crate::CircleEntity;
+        use crate::block::{Block, BlockTable};
+        use crate::table::TableChange;
+        use crate::{Entity, EntityRecord, Properties};
+        let mut blocks: BlockTable = crate::block::initial_blocks();
+        let tag = blocks.allocate();
+        // A circle of radius 2 about (1, 1), the base point at the origin.
+        let circle = EntityRecord::new(
+            Entity::from(CircleEntity::new(p(1.0, 1.0), 2.0)),
+            Properties::default(),
+        );
+        blocks.apply(&TableChange::Insert {
+            id: tag,
+            row: Block::new("TAG", Point2::ORIGIN, vec![circle]),
+        });
+        let tables = Tables {
+            blocks: &blocks,
+            ..Tables::none()
+        };
+        let style = MLeaderStyle::named("S");
+        let note = MLeaderContent::Block {
+            block: tag,
+            scale: 2.0,
+        };
+        let right = MLeaderEntity::new(p(0.0, 0.0), p(20.0, 10.0), note.clone());
+        let (reference, frame) = right.layout(&style, tables).block.unwrap();
+        assert_eq!(reference.scale, 2.0);
+        assert!(frame.min().distance_to(p(25.0, 6.0)) < 1e-9, "{frame:?}");
+        assert!(frame.max().distance_to(p(33.0, 14.0)) < 1e-9);
+        let left = MLeaderEntity::new(p(40.0, 0.0), p(20.0, 10.0), note);
+        let (_, frame) = left.layout(&style, tables).block.unwrap();
+        assert!((frame.max().x - 15.0).abs() < 1e-9 && (frame.min().x - 7.0).abs() < 1e-9);
+        let layout = right.layout(&style, tables);
+        assert!(layout.bounds().contains(&frame_of(&layout)));
+        assert_eq!(layout.distance_to(p(29.0, 10.0)), 0.0, "inside the block");
+
+        let two = right.with_leader(vec![p(0.0, 30.0)]);
+        assert_eq!(two.leaders.len(), 2);
+        assert_eq!(two.nearest_leader(p(1.0, 29.0)), 1);
+        assert_eq!(two.nearest_leader(p(1.0, 1.0)), 0);
+        let one = two.without_leader(0).unwrap();
+        assert_eq!(one.leaders, vec![vec![p(0.0, 30.0)]]);
+        assert_eq!(one.without_leader(0), Err(MLeaderError::LastLeader));
+    }
+
+    fn frame_of(layout: &MLeaderLayout) -> Aabb {
+        layout.block.as_ref().unwrap().1
+    }
+
     proptest! {
         /// Every leader ends at the landing; every arrowhead's tip is a
         /// leader's first point; the dogleg reads away from the leaders;
@@ -446,7 +636,7 @@ mod tests {
             let landing = p(landing.0, landing.1);
             let mleader = MLeaderEntity { leaders: leaders.clone(), landing, content: note("Ab"), style: MLeaderStyleId::FIRST };
             let style = MLeaderStyle { dogleg_length: dogleg, landing_gap: gap, ..MLeaderStyle::named("S") };
-            let layout = mleader.layout(&style);
+            let layout = mleader.layout(&style, Tables::none());
             for leader in &leaders {
                 let reaches = layout.lines.iter().any(|line| line.end == landing) || leader.iter().all(|point| *point == landing);
                 prop_assert!(reaches, "a leader to the landing");
@@ -461,7 +651,7 @@ mod tests {
                 prop_assert!(bounds.contains_point(segment.start) && bounds.contains_point(segment.end));
             }
             let moved = mleader.transformed(&Transform::translation(Vec2::new(dx, dy)));
-            let moved_text = moved.layout(&style).text.unwrap();
+            let moved_text = moved.layout(&style, Tables::none()).text.unwrap();
             prop_assert!(moved_text.insertion.distance_to(text.insertion + Vec2::new(dx, dy)) < 1e-9);
         }
     }

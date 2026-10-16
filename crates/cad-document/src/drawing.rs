@@ -22,8 +22,8 @@ use crate::layout::{Layout, LayoutId, LayoutPlot, LayoutTable, initial_layouts};
 use crate::leader::LeaderError;
 use crate::linetype::{LinetypeDef, LinetypeError, LinetypeId, LinetypeTable, initial_linetypes};
 use crate::mleader::{
-    MLeaderError, MLeaderStyle, MLeaderStyleError, MLeaderStyleId, MLeaderStyleTable,
-    initial_mleader_styles,
+    MLeaderContent, MLeaderEntity, MLeaderError, MLeaderStyle, MLeaderStyleError, MLeaderStyleId,
+    MLeaderStyleTable, initial_mleader_styles,
 };
 use crate::named_view::{NamedView, NamedViewId, NamedViewTable, initial_named_views};
 use crate::names::{NameError, check_name, same_name};
@@ -873,6 +873,10 @@ impl Drawing {
             Entity::Leader(leader) if leader.check().is_err() => {
                 Err(TransactionError::BadLeader(leader.check().unwrap_err()))
             }
+            Entity::MLeader(MLeaderEntity {
+                content: MLeaderContent::Block { block, .. },
+                ..
+            }) if !drawing.blocks.contains(*block) => Err(TransactionError::UnknownBlock(*block)),
             Entity::MLeader(mleader) if !drawing.mleader_styles.contains(mleader.style) => {
                 Err(TransactionError::UnknownMLeaderStyle(mleader.style))
             }
@@ -1656,14 +1660,12 @@ impl Drawing {
                         let dependents: Vec<EntityId> = self
                             .entities
                             .iter()
-                            .filter_map(|(entity_id, entity)| match &**entity {
-                                Entity::BlockRef(reference)
-                                    if reference.block == *id
-                                        || self.blocks.reaches(reference.block, *id) =>
-                                {
-                                    Some(entity_id)
-                                }
-                                _ => None,
+                            .filter_map(|(entity_id, entity)| {
+                                // A reference, or a multileader's block
+                                // note (#241).
+                                let placed = entity.placed_block()?;
+                                (placed == *id || self.blocks.reaches(placed, *id))
+                                    .then_some(entity_id)
                             })
                             .collect();
                         for entity_id in dependents {
@@ -3155,7 +3157,7 @@ impl TransactionBuilder<'_> {
             .get(id)
             .cloned()
             .ok_or(TransactionError::UnknownBlock(id))?;
-        let places = |entity: &Entity| matches!(entity, Entity::BlockRef(r) if r.block == id);
+        let places = |entity: &Entity| entity.placed_block() == Some(id);
         let pending = self.changes.iter().any(|change| match change {
             Change::Entity(EntityChange::Insert { record, .. }) => places(&record.entity),
             Change::Entity(EntityChange::Replace { after, .. }) => places(&after.entity),
@@ -3286,6 +3288,15 @@ impl TransactionBuilder<'_> {
     /// Whether `entity` may be stored: a block reference must place a
     /// block that exists — never the drawing itself — at a positive scale.
     fn known_block(&self, entity: &Entity) -> Result<(), TransactionError> {
+        // A multileader's block note (#241): a block that is there.
+        if let Entity::MLeader(MLeaderEntity {
+            content: MLeaderContent::Block { block, .. },
+            ..
+        }) = entity
+            && (*block == BlockId::FIRST || self.block_now(*block).is_none())
+        {
+            return Err(TransactionError::UnknownBlock(*block));
+        }
         let Entity::BlockRef(reference) = entity else {
             return Ok(());
         };
@@ -3641,6 +3652,15 @@ impl TransactionBuilder<'_> {
                 }
                 return Ok(());
             }
+            // A multileader's style likewise, and points it can be drawn
+            // from (#240).
+            Entity::MLeader(mleader) => {
+                mleader.check().map_err(TransactionError::BadMLeader)?;
+                if self.mleader_style_now(mleader.style).is_none() {
+                    return Err(TransactionError::UnknownMLeaderStyle(mleader.style));
+                }
+                return Ok(());
+            }
             _ => return Ok(()),
         };
         if self.text_style_now(style).is_none() {
@@ -3757,6 +3777,90 @@ mod tests {
 
     fn line(x0: f64, y0: f64, x1: f64, y1: f64) -> LineEntity {
         LineEntity::new(Point2::new(x0, y0), Point2::new(x1, y1))
+    }
+
+    /// #241: a multileader's block note is drawn from the block's current
+    /// definition and the style's current values; the spatial index
+    /// follows either changing, and undo puts it back. A block cannot note
+    /// itself, and a note of no block is refused.
+    #[test]
+    fn a_block_note_follows_its_block_and_its_style() {
+        use crate::{Block, CircleEntity, MLeaderContent, MLeaderEntity};
+        let circle = |radius: f64| {
+            vec![EntityRecord::new(
+                Entity::from(CircleEntity::new(Point2::ORIGIN, radius)),
+                Properties::default(),
+            )]
+        };
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let tag = tx
+            .define_block(Block::new("TAG", Point2::ORIGIN, circle(2.0)))
+            .unwrap();
+        let note = MLeaderContent::Block {
+            block: tag,
+            scale: 1.0,
+        };
+        tx.insert(MLeaderEntity::new(
+            Point2::new(0.0, 0.0),
+            Point2::new(20.0, 10.0),
+            note.clone(),
+        ))
+        .unwrap();
+        tx.commit();
+        let right = |drawing: &Drawing| drawing.extents().unwrap().max().x;
+        // The dogleg ends at 25; the circle spans 4 from there.
+        assert!((right(&drawing) - 29.0).abs() < 1e-9);
+
+        let mut tx = drawing.transaction();
+        let longer = MLeaderStyle {
+            dogleg_length: 10.0,
+            ..MLeaderStyle::named(MLeaderStyle::STANDARD)
+        };
+        tx.replace_mleader_style(MLeaderStyleId::FIRST, longer)
+            .unwrap();
+        tx.commit();
+        assert!((right(&drawing) - 34.0).abs() < 1e-9, "the style's dogleg");
+        drawing.undo();
+        assert!((right(&drawing) - 29.0).abs() < 1e-9);
+
+        let mut tx = drawing.transaction();
+        tx.redefine_block(tag, Block::new("TAG", Point2::ORIGIN, circle(4.0)))
+            .unwrap();
+        tx.commit();
+        assert!(
+            (right(&drawing) - 33.0).abs() < 1e-9,
+            "the block's new definition"
+        );
+        drawing.undo();
+        assert!((right(&drawing) - 29.0).abs() < 1e-9);
+
+        let mut tx = drawing.transaction();
+        let noting_itself = vec![EntityRecord::new(
+            Entity::from(MLeaderEntity::new(
+                Point2::ORIGIN,
+                Point2::new(5.0, 5.0),
+                note,
+            )),
+            Properties::default(),
+        )];
+        assert_eq!(
+            tx.redefine_block(tag, Block::new("TAG", Point2::ORIGIN, noting_itself)),
+            Err(TransactionError::BlockCycle(tag))
+        );
+        let missing = BlockId::from_raw(99);
+        assert_eq!(
+            tx.insert(MLeaderEntity::new(
+                Point2::ORIGIN,
+                Point2::new(5.0, 5.0),
+                MLeaderContent::Block {
+                    block: missing,
+                    scale: 1.0
+                },
+            ))
+            .map(|_| ()),
+            Err(TransactionError::UnknownBlock(missing))
+        );
     }
 
     fn create(drawing: &mut Drawing, entity: LineEntity) -> EntityId {

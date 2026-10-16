@@ -637,12 +637,17 @@ pub fn walk_entity(entity: &Entity, tables: Tables<'_>, sink: &mut impl Geometry
         Entity::XLine(_) | Entity::Ray(_) => {}
         // A multileader likewise, by its own style (#240, ADR-0033).
         Entity::MLeader(mleader) => {
-            let layout = mleader.layout(tables.mleader_style(mleader.style));
+            let layout = mleader.layout(tables.mleader_style(mleader.style), tables);
             for segment in layout.segments() {
                 sink.segment(segment.start, segment.end, 0.0);
             }
             if let Some(text) = &layout.text {
                 walk_strokes(sink, text.strokes());
+            }
+            // A block note is its definition placed, as a reference is
+            // (#241), drawn as the multileader is.
+            if let Some((reference, _)) = layout.block {
+                walk_entity(&Entity::BlockRef(reference), tables, sink);
             }
         }
         // A leader is laid out by its style like a dimension (#205).

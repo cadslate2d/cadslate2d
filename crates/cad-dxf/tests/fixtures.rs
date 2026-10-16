@@ -2545,18 +2545,18 @@ fn named_views_from_another_writer_round_trip() {
 fn multileaders_from_another_writer_round_trip() {
     let import = load("valid", "ezdxf-r2010-multileaders.dxf").unwrap();
     let report = &import.report;
-    assert_eq!((report.mleaders, report.mleader_styles), (3, 1));
+    assert_eq!((report.mleaders, report.mleader_styles), (3, 2));
     assert_eq!(
-        report.unsupported.get("(MULTILEADER block content)"),
-        Some(&1),
-        "the balloon's block is reported until #241"
+        report.unsupported.keys().collect::<Vec<_>>(),
+        ["SOLID"],
+        "only the arrowhead block's solid: every multileader is held"
     );
     let summary = report.summary();
     assert!(summary.iter().any(|line| line.contains("3 multileaders")));
     assert!(
         summary
             .iter()
-            .any(|line| line.contains("1 multileader style"))
+            .any(|line| line.contains("2 multileader styles"))
     );
     let drawing = &import.drawing;
     let styles = drawing.mleader_styles();
@@ -2578,6 +2578,12 @@ fn multileaders_from_another_writer_round_trip() {
         "the file's Standard replaces the drawing's"
     );
     assert_eq!(drawing.settings().current_mleader_style, callout);
+    // A style whose new notes are a block, named through its record (343).
+    let balloons = styles.get(styles.find("Balloon").unwrap()).unwrap();
+    assert_eq!(
+        (balloons.block.as_deref(), balloons.block_scale),
+        (Some("BALLOON"), 1.5)
+    );
     let mleaders: Vec<(MLeaderEntity, String)> = drawing
         .records()
         .filter_map(|(id, record)| match &*record.entity {
@@ -2601,21 +2607,26 @@ fn multileaders_from_another_writer_round_trip() {
     assert_eq!(hole.style, MLeaderStyleId::FIRST);
     // The note sits where the other writer put it: past the dogleg and
     // the gap, its middle on the dogleg's line.
-    let laid_out = hole.layout(standard);
+    let laid_out = hole.layout(standard, drawing.tables());
     assert_eq!(laid_out.note_at, Point2::new(20.0, 8.0));
     let (valve, _) = &mleaders[1];
     assert_eq!(valve.style, callout);
     assert_eq!(valve.content, MLeaderContent::Text("VALVE".to_owned()));
     assert!(valve.reads() < 0.0, "a leader from the right reads left");
+    // The balloon is its block, placed where the other writer put it: its
+    // left side's middle at the dogleg's end (#241).
     let (balloon, _) = &mleaders[2];
-    assert_eq!(balloon.content, MLeaderContent::None);
+    let block = drawing.blocks().find("BALLOON").unwrap();
+    assert_eq!(balloon.content, MLeaderContent::Block { block, scale: 1.0 });
+    let (reference, _) = balloon.layout(standard, drawing.tables()).block.unwrap();
+    assert_eq!(reference.insertion, Point2::new(20.0, 60.0));
 
     let text = export(drawing);
     assert!(text.contains("  0\nCLASS\n  1\nMULTILEADER\n"));
     assert!(text.contains("  3\nACAD_MLEADERSTYLE\n"));
     assert!(text.contains("  9\n$CMLEADERSTYLE\n340\n"));
     let back = cad_dxf::import(text.as_bytes()).unwrap();
-    assert_eq!((back.report.mleaders, back.report.mleader_styles), (3, 1));
+    assert_eq!((back.report.mleaders, back.report.mleader_styles), (3, 2));
     assert!(!back.report.has_unsupported_content());
     assert_eq!(back.drawing.settings().current_mleader_style, callout);
     assert_eq!(export(&back.drawing), text, "export → import → export");

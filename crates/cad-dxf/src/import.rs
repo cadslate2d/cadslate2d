@@ -20,9 +20,10 @@ use cad_document::{
     CircleEntity, Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingParts,
     DrawingSettings, EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Justification,
     Layer, LayerId, LayerState, Layout, LayoutId, LeaderEntity, LineEntity, Linetype, LinetypeDef,
-    LinetypeId, Lineweight, MLeaderStyle, MLeaderStyleId, MTextEntity, Measure, PointEntity,
-    PointStyle, PolylineEntity, Properties, RawEntity, RawGroup, RayEntity, SavedLayer, TextEntity,
-    TextStyle, TextStyleId, ViewportEntity, XLineEntity, check_name, nearest_index, same_name,
+    LinetypeId, Lineweight, MLeaderContent, MLeaderStyle, MLeaderStyleId, MTextEntity, Measure,
+    PointEntity, PointStyle, PolylineEntity, Properties, RawEntity, RawGroup, RayEntity,
+    SavedLayer, TextEntity, TextStyle, TextStyleId, ViewportEntity, XLineEntity, check_name,
+    nearest_index, same_name,
 };
 
 use crate::export::insunits_code;
@@ -1652,7 +1653,23 @@ impl<'a> Reader<'a> {
         }
         let mut pending = body.pending();
         pending.mleader_style = read.style;
-        self.push(Entity::MLeader(read.mleader), pending)
+        // A block note's block, by name, found as a reference's is.
+        pending.block = match read.block {
+            Some(handle) => match self.block_record_names.get(&handle) {
+                Some(name) => Some(name.clone()),
+                None => {
+                    self.report
+                        .count_unsupported(crate::mleader::UNDEFINED_BLOCK);
+                    None
+                }
+            },
+            None => None,
+        };
+        let mut mleader = read.mleader;
+        if pending.block.is_none() && matches!(mleader.content, MLeaderContent::Block { .. }) {
+            mleader.content = MLeaderContent::None;
+        }
+        self.push(Entity::MLeader(mleader), pending)
     }
 
     /// The file's multileader styles, in the order read, each named by its
@@ -1678,7 +1695,7 @@ impl<'a> Reader<'a> {
                 .entry_names
                 .get(&handle)
                 .filter(|name| check_name(name).is_ok())
-                .and_then(|name| crate::mleader::read_style(&raw, name));
+                .and_then(|name| crate::mleader::read_style(&raw, name, &self.block_record_names));
             let Some(style) = style else {
                 self.report.count_unsupported(BAD_MLEADER_STYLE);
                 continue;
@@ -1841,7 +1858,9 @@ impl<'a> Reader<'a> {
                     .and_then(|name| self.tables.dim_style(name))
                     .unwrap_or(DimStyleId::FIRST);
             }
-            // A multileader's: the file's, or Standard (#240).
+            // A multileader's: the file's, or Standard (#240); and its
+            // block note's block (#241), or no note when the file defines
+            // none of that name.
             Entity::MLeader(mleader) => {
                 mleader.style = pending
                     .mleader_style
@@ -1849,6 +1868,20 @@ impl<'a> Reader<'a> {
                     .and_then(|handle| self.mleader_style_ids.get(handle))
                     .copied()
                     .unwrap_or(MLeaderStyleId::FIRST);
+                if let MLeaderContent::Block { block, .. } = &mut mleader.content {
+                    match pending
+                        .block
+                        .as_deref()
+                        .and_then(|name| self.tables.block(name))
+                    {
+                        Some(found) => *block = found,
+                        None => {
+                            self.report
+                                .count_unsupported(crate::mleader::UNDEFINED_BLOCK);
+                            mleader.content = MLeaderContent::None;
+                        }
+                    }
+                }
             }
             Entity::BlockRef(reference) => {
                 let block = pending

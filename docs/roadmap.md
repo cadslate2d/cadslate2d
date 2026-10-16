@@ -23,7 +23,7 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M14 — Production Annotation | Complete and closed ([review](reviews/m14-exit-review.md)). The product is complete for its purpose. |
 | M15 — v1 Verification (needs a person) | Open: verification on real GPUs, WebKit, AutoCAD, and a desktop PDF viewer, which needs a person. No work for an agent on its own. |
 | M16 — Occasional Conveniences | Complete and closed ([review](reviews/m16-exit-review.md)): `OVERKILL`, named views, `LAYMRG` and `LAYDEL`, `SPLINEDIT`. |
-| M17 — Multileaders | In progress: the entity, its style, `MLEADER`, and DXF with text notes are done (#240); block notes, `MLEADEREDIT`, and `MLEADERSTYLE` next. |
+| M17 — Multileaders | In progress: the entity, its style, `MLEADER`, block notes, `MLEADEREDIT`, `MLEADERSTYLE`, and DXF both ways are done (#240–#242); the exit is next. |
 
 ## M17, multileaders
 

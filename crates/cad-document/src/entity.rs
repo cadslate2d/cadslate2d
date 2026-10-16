@@ -7,12 +7,13 @@ use cad_geometry::{
     polyline_primitives,
 };
 
+use crate::block::BlockId;
 pub use crate::block::BlockReferenceEntity;
 use crate::construction::{RayEntity, XLineEntity};
 use crate::dimension::DimensionEntity;
 use crate::hatch::HatchEntity;
 use crate::leader::LeaderEntity;
-use crate::mleader::MLeaderEntity;
+use crate::mleader::{MLeaderContent, MLeaderEntity};
 pub use crate::mtext::MTextEntity;
 use crate::point::PointEntity;
 use crate::tables::Tables;
@@ -498,9 +499,22 @@ impl Entity {
             Entity::XLine(line) => line.segment().bounds(),
             Entity::Ray(ray) => ray.segment().bounds(),
             Entity::Wipeout(wipeout) => wipeout.bounds(),
-            Entity::MLeader(mleader) => {
-                mleader.layout(tables.mleader_style(mleader.style)).bounds()
-            }
+            Entity::MLeader(mleader) => mleader
+                .layout(tables.mleader_style(mleader.style), tables)
+                .bounds(),
+        }
+    }
+
+    /// The block the entity places: a reference's, or a multileader's
+    /// block note's (#241).
+    pub fn placed_block(&self) -> Option<BlockId> {
+        match self {
+            Entity::BlockRef(reference) => Some(reference.block),
+            Entity::MLeader(MLeaderEntity {
+                content: MLeaderContent::Block { block, .. },
+                ..
+            }) => Some(*block),
+            _ => None,
         }
     }
 
@@ -559,7 +573,7 @@ impl Entity {
             Entity::Wipeout(wipeout) => wipeout.distance_to(point),
             // By its lines, arrowheads, and note, as a leader is.
             Entity::MLeader(mleader) => mleader
-                .layout(tables.mleader_style(mleader.style))
+                .layout(tables.mleader_style(mleader.style), tables)
                 .distance_to(point),
         }
     }
@@ -746,9 +760,10 @@ impl Entity {
             Entity::XLine(line) => vec![Primitive::Segment(line.segment())],
             Entity::Ray(ray) => vec![Primitive::Segment(ray.segment())],
             Entity::MLeader(mleader) => {
-                let layout = mleader.layout(tables.mleader_style(mleader.style));
+                let layout = mleader.layout(tables.mleader_style(mleader.style), tables);
                 layout
                     .segments()
+                    .chain(layout.block_edges())
                     .map(Primitive::Segment)
                     .chain(
                         layout
@@ -795,9 +810,8 @@ impl Entity {
             Entity::XLine(_) | Entity::Ray(_) => false,
             Entity::Wipeout(wipeout) => wipeout.contains(point),
             Entity::MLeader(mleader) => mleader
-                .layout(tables.mleader_style(mleader.style))
-                .text
-                .is_some_and(|text| text.frame().contains(point)),
+                .layout(tables.mleader_style(mleader.style), tables)
+                .note_contains(point),
         }
     }
 

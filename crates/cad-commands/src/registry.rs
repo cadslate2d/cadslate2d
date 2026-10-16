@@ -19,15 +19,16 @@ use crate::commands::{
     HatchEditCommand, IdCommand, InsertCommand, JoinCommand, LayIsoCommand, LayUnisoCommand,
     LayerAllCommand, LayerCommand, LayerMergeCommand, LayerPickCommand, LayerStateCommand,
     LayoutCommand, LeaderCommand, LengthenCommand, LineCommand, LinetypeCommand, ListCommand,
-    LtscaleCommand, LweightCommand, MLeaderCommand, MTextCommand, MatchpropCommand, MeasureCommand,
-    MirrorCommand, ModelCommand, MspaceCommand, MviewCommand, OffsetCommand, OpenCommand,
-    OsnapCommand, OverkillCommand, PanCommand, PasteClipCommand, PeditCommand, PickStyleCommand,
-    PlineCommand, PlotCommand, PointCommand, PolarAngleCommand, PolygonCommand, PspaceCommand,
-    PtypeCommand, PurgeCommand, QdimCommand, QselectCommand, RayCommand, RectangCommand,
-    RedoCommand, RenameCommand, RevCloudCommand, SaveCommand, SelectCommand, SettingsCommand,
-    SnapCommand, SplineCommand, SplineEditCommand, StretchCommand, StyleCommand, TextCommand,
-    TextEditCommand, TextToFrontCommand, TransformCommand, UndoCommand, UngroupCommand,
-    UnitsCommand, ViewCommand, WBlockCommand, WipeoutCommand, XLineCommand, ZoomCommand,
+    LtscaleCommand, LweightCommand, MLeaderCommand, MLeaderEditCommand, MLeaderStyleCommand,
+    MTextCommand, MatchpropCommand, MeasureCommand, MirrorCommand, ModelCommand, MspaceCommand,
+    MviewCommand, OffsetCommand, OpenCommand, OsnapCommand, OverkillCommand, PanCommand,
+    PasteClipCommand, PeditCommand, PickStyleCommand, PlineCommand, PlotCommand, PointCommand,
+    PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand, QdimCommand,
+    QselectCommand, RayCommand, RectangCommand, RedoCommand, RenameCommand, RevCloudCommand,
+    SaveCommand, SelectCommand, SettingsCommand, SnapCommand, SplineCommand, SplineEditCommand,
+    StretchCommand, StyleCommand, TextCommand, TextEditCommand, TextToFrontCommand,
+    TransformCommand, UndoCommand, UngroupCommand, UnitsCommand, ViewCommand, WBlockCommand,
+    WipeoutCommand, XLineCommand, ZoomCommand,
 };
 use crate::session::select_keywords;
 
@@ -64,7 +65,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 127] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 129] = [
             ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
             ("RAY", &[], || Box::new(RayCommand::new())),
             ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
@@ -135,6 +136,12 @@ impl CommandRegistry {
             ("JOIN", &["J"], || Box::new(JoinCommand)),
             ("BLOCK", &["B"], || Box::new(BlockCommand::new())),
             ("MLEADER", &["MLD"], || Box::new(MLeaderCommand::new())),
+            ("MLEADEREDIT", &["MLE"], || {
+                Box::new(MLeaderEditCommand::new())
+            }),
+            ("MLEADERSTYLE", &["MLS"], || {
+                Box::new(MLeaderStyleCommand::new())
+            }),
             ("SPLINEDIT", &["SPE"], || Box::new(SplineEditCommand::new())),
             ("LAYMRG", &[], || Box::new(LayerMergeCommand::merge())),
             ("LAYDEL", &[], || Box::new(LayerMergeCommand::delete())),

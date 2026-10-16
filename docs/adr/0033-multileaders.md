@@ -24,10 +24,10 @@ ADR-0020 settled how annotation is kept: what defines it is stored, and what is 
    - its style, by the ID of a row of the multileader style table.
 
    There is one landing. AutoCAD's multileader may have two leader roots, one on each side of its note. A file's second root is folded into the first: its leaders come to the same landing.
-2. **What the style lays out.** A row of the `MLEADERSTYLE` table holds the arrowhead size, the landing gap, the dogleg length (none when zero), the text height, and a default block and its scale. `MLeaderEntity::layout(style, blocks)` draws:
+2. **What the style lays out.** A row of the `MLEADERSTYLE` table holds the arrowhead size, the landing gap, the dogleg length (none when zero), the text height, and a default block and its scale. The default block is kept by name, so a style needs no rule for a block removed or brought from another drawing; a name no block has means words. `MLeaderEntity::layout(style, blocks)` draws:
    - each leader with its arrowhead at its tip, pointing back along its first segment;
    - the dogleg from the landing, horizontally toward the side away from the leaders;
-   - the note past the dogleg's end by the gap: text with its middle on the dogleg's line, reading away from it, or a block whose nearer edge touches the dogleg's end.
+   - the note: text past the dogleg's end by the gap, its middle on the dogleg's line, reading away from it; or a block placed at its scale with the middle of its nearer side at the dogleg's end, the gap not applied, as AutoCAD and ezdxf place one (#241).
 
    Nothing of the layout is stored: `Entity::bounds`, picking, snapping, and drawing lay it out from `Tables`, which gains the multileader style table, as dimensions do (ADR-0020). A style row replaced re-indexes the multileaders drawn by it in the same `apply`, as a dimension style's does.
 3. **One walk.** `walk_entity` draws the layout's lines, the arrowheads' outlines, and the text's strokes; a block's content is walked through the block table, as a reference is (ADR-0017). Screen and page see the same thing; no new instance kind or style rule is needed (ADR-0014, ADR-0021).
@@ -46,7 +46,8 @@ ADR-0020 settled how annotation is kept: what defines it is stored, and what is 
 ## Consequences
 
 - Multileaders are annotation: they are not cut by `TRIM`, offset, or joined, and their own lines are not snapped to, as with dimensions (ADR-0020).
-- A multileader with a block draws the block's current definition, so redefining the block redraws every balloon (ADR-0017).
+- A multileader with a block draws the block's current definition, so redefining the block redraws every balloon (ADR-0017). The block cannot be removed while a note shows it, and a block cannot hold a multileader noting itself.
+- A block note is drawn in the multileader's own look: its parts' colours are not resolved one by one, as a reference's are. AutoCAD's default block colour is by block, which this matches.
 - The style table is one more table with a permanent `Standard` row, and the history property test covers it.
 
 ## Revisit when

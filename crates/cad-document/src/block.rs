@@ -70,14 +70,12 @@ impl Block {
             })
     }
 
-    /// The blocks this definition references directly.
+    /// The blocks this definition references directly: by a reference, or
+    /// as a multileader's note (#241).
     pub fn references(&self) -> impl Iterator<Item = BlockId> + '_ {
         self.entities
             .iter()
-            .filter_map(|record| match &*record.entity {
-                Entity::BlockRef(reference) => Some(reference.block),
-                _ => None,
-            })
+            .filter_map(|record| record.entity.placed_block())
     }
 }
 
