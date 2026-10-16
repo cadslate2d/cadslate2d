@@ -10,6 +10,7 @@ use crate::block::BlockChange;
 use crate::dim_style::DimStyleChange;
 use crate::group::GroupChange;
 use crate::layer::LayerChange;
+use crate::layer_state::LayerStateChange;
 use crate::layout::LayoutChange;
 use crate::linetype::LinetypeChange;
 use crate::text_style::TextStyleChange;
@@ -73,6 +74,7 @@ pub enum Change {
     Block(BlockChange),
     Layout(LayoutChange),
     Group(GroupChange),
+    LayerState(LayerStateChange),
     Settings(SettingsChange),
 }
 
@@ -87,6 +89,7 @@ impl Change {
             Change::Block(change) => Change::Block(change.inverse()),
             Change::Layout(change) => Change::Layout(change.inverse()),
             Change::Group(change) => Change::Group(change.inverse()),
+            Change::LayerState(change) => Change::LayerState(change.inverse()),
             Change::Settings(change) => Change::Settings(change.inverse()),
         }
     }
@@ -242,6 +245,7 @@ mod tests {
                 Change::Block(_) => "block",
                 Change::Layout(_) => "layout",
                 Change::Group(_) => "group",
+                Change::LayerState(_) => "layer state",
                 Change::Settings(_) => "settings",
             })
             .collect();

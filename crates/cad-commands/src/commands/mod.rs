@@ -58,6 +58,7 @@ mod housekeeping;
 mod inquiry;
 mod join;
 mod layer;
+mod layerstate;
 mod layout;
 mod laytools;
 mod leader;
@@ -135,6 +136,7 @@ pub(crate) use housekeeping::{MatchpropCommand, PurgeCommand, RenameCommand};
 pub(crate) use inquiry::{AreaCommand, DistCommand, IdCommand, ListCommand};
 pub(crate) use join::JoinCommand;
 pub(crate) use layer::LayerCommand;
+pub(crate) use layerstate::LayerStateCommand;
 pub(crate) use layout::{LayoutCommand, ModelCommand, MspaceCommand, PspaceCommand};
 pub(crate) use laytools::{
     Isolation, LayIsoCommand, LayUnisoCommand, LayerAllCommand, LayerPickCommand,

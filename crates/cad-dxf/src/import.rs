@@ -19,10 +19,10 @@ use cad_document::{
     ArcEntity, AttributeDefinitionEntity, Block, BlockId, BlockReferenceEntity, BlockTable,
     CircleEntity, Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings,
     EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Justification, Layer, LayerId,
-    Layout, LayoutId, LeaderEntity, LineEntity, Linetype, LinetypeDef, LinetypeId, Lineweight,
-    MTextEntity, Measure, PointEntity, PointStyle, PolylineEntity, Properties, RawEntity, RawGroup,
-    RayEntity, TextEntity, TextStyle, TextStyleId, ViewportEntity, XLineEntity, check_name,
-    nearest_index, same_name,
+    LayerState, Layout, LayoutId, LeaderEntity, LineEntity, Linetype, LinetypeDef, LinetypeId,
+    Lineweight, MTextEntity, Measure, PointEntity, PointStyle, PolylineEntity, Properties,
+    RawEntity, RawGroup, RayEntity, SavedLayer, TextEntity, TextStyle, TextStyleId, ViewportEntity,
+    XLineEntity, check_name, nearest_index, same_name,
 };
 
 use crate::export::insunits_code;
@@ -57,6 +57,9 @@ const BAD_DIM_STYLE_NAME: &str = "(dimension style name)";
 /// Report key for a dimension style with a value a dimension cannot be
 /// drawn by: the row is kept with the default for that value.
 const BAD_DIM_STYLE: &str = "(dimension style values)";
+/// Report key for a layer state the drawing cannot hold: its name taken
+/// or not allowed (#228).
+const BAD_LAYER_STATE: &str = "(layer state)";
 /// Report key for a pattern too fine for its region at its scale: filled solid.
 const TOO_DENSE: &str = "(HATCH pattern too dense)";
 /// Report key for a DIMENSION of a kind the drawing has no measure for.
@@ -165,6 +168,8 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
         entry_names: HashMap::new(),
         sort_tables: Vec::new(),
         wipeout_frame: None,
+        xrecords: Vec::new(),
+        row_names: HashMap::new(),
     };
     reader.read_file()?;
     reader.finish()
@@ -613,6 +618,11 @@ struct Reader<'a> {
     /// Whether wipeouts show their frames, when the file says
     /// (`WIPEOUTVARIABLES`, 70; #226).
     wipeout_frame: Option<bool>,
+    /// XRECORD objects as the file held them: a layer state is one (#228).
+    xrecords: Vec<Vec<RawGroup>>,
+    /// LAYER and LTYPE rows' names by their handles, upper case, which a
+    /// layer state names them by (#228).
+    row_names: HashMap<String, String>,
 }
 
 /// An angle in degrees brought into (−180, 180]: a slant of 345° is one of
@@ -844,7 +854,7 @@ impl<'a> Reader<'a> {
                 || (matches!(context, RecordContext::Objects)
                     && matches!(
                         record.value,
-                        "DICTIONARY" | "GROUP" | "SORTENTSTABLE" | "WIPEOUTVARIABLES"
+                        "DICTIONARY" | "GROUP" | "SORTENTSTABLE" | "WIPEOUTVARIABLES" | "XRECORD"
                     ));
             if keep_raw {
                 body.raw = Some(Vec::new());
@@ -902,6 +912,7 @@ impl<'a> Reader<'a> {
                 ("LAYOUT", Some(raw)) => self.layouts.push(raw.clone()),
                 ("GROUP", Some(raw)) => self.group_records.push(raw.clone()),
                 ("SORTENTSTABLE", Some(raw)) => self.sort_tables.push(raw.clone()),
+                ("XRECORD", Some(raw)) => self.xrecords.push(raw.clone()),
                 ("WIPEOUTVARIABLES", Some(raw)) => {
                     self.wipeout_frame = crate::spline::Groups(raw).int(70).map(|frame| frame != 0);
                 }
@@ -924,6 +935,13 @@ impl<'a> Reader<'a> {
                 _ => {}
             }
             return Ok(());
+        }
+        if matches!(context, RecordContext::Tables)
+            && matches!(record.value, "LAYER" | "LTYPE")
+            && let (Some(handle), Some(name)) = (&body.handle, &body.name)
+        {
+            self.row_names
+                .insert(handle.trim().to_uppercase(), name.clone());
         }
         if matches!(context, RecordContext::Tables)
             && record.value == "BLOCK_RECORD"
@@ -1886,6 +1904,95 @@ impl<'a> Reader<'a> {
     /// SORTENTSTABLE gives an entity, or by the entity's own handle, which
     /// is the order a reader without one paints in. A space with an entity
     /// that has no handle is painted in the order of its records.
+    /// The layer states the file keeps (#228): each XRECORD of the
+    /// `ACAD_LAYERSTATES` dictionary, named by its entry there. A state's
+    /// layers are named by handle (330) or by name (8), each followed by
+    /// its switches (90: 1 off, 2 frozen, 4 locked), colour (62),
+    /// lineweight (370), and linetype, by handle (331) or name (6); its
+    /// description is 301. A layer named by a handle the file has no row
+    /// for is passed over.
+    fn layer_states(&mut self) -> Vec<LayerState> {
+        let Some(dictionary) = self
+            .entry_names
+            .iter()
+            .find(|(_, name)| name.eq_ignore_ascii_case("ACAD_LAYERSTATES"))
+            .map(|(handle, _)| handle.clone())
+        else {
+            return Vec::new();
+        };
+        let mut states = Vec::new();
+        for raw in std::mem::take(&mut self.xrecords) {
+            let value = |code: i32| {
+                raw.iter()
+                    .find(|(c, _)| *c == code)
+                    .map(|(_, value)| value.trim().to_uppercase())
+            };
+            if value(330).as_deref() != Some(dictionary.as_str()) {
+                continue;
+            }
+            let Some(name) = value(5).and_then(|handle| self.entry_names.get(&handle)) else {
+                continue;
+            };
+            let start = raw
+                .iter()
+                .position(|(code, value)| *code == 100 && value.trim() == "AcDbXrecord")
+                .unwrap_or(raw.len());
+            let mut state = LayerState::new(name.clone(), Vec::new());
+            let mut layer: Option<SavedLayer> = None;
+            let number = |value: &str| value.trim().parse::<i64>().ok();
+            for (code, value) in &raw[start..] {
+                let named = match code {
+                    330 => Some(self.row_names.get(&value.trim().to_uppercase()).cloned()),
+                    8 => Some(Some(value.clone())),
+                    _ => None,
+                };
+                if let Some(named) = named {
+                    state.layers.extend(layer.take());
+                    layer = named.map(|name| SavedLayer {
+                        name,
+                        on: true,
+                        frozen: false,
+                        locked: false,
+                        color: Layer::DEFAULT_COLOR,
+                        linetype: LinetypeDef::CONTINUOUS.to_owned(),
+                        lineweight: Lineweight::Default,
+                    });
+                    continue;
+                }
+                let before_layers = state.layers.is_empty() && layer.is_none();
+                match (code, layer.as_mut()) {
+                    (301, _) if before_layers => state.description = value.clone(),
+                    (90, Some(saved)) => {
+                        let flags = number(value).unwrap_or(0);
+                        saved.on = flags & 1 == 0;
+                        saved.frozen = flags & 2 != 0;
+                        saved.locked = flags & 4 != 0;
+                    }
+                    (62, Some(saved)) => {
+                        if let Some(color) = number(value).and_then(color_from_dxf) {
+                            saved.color = color;
+                        }
+                    }
+                    (370, Some(saved)) => {
+                        if let Some(weight) = number(value).and_then(lineweight_from_dxf) {
+                            saved.lineweight = weight;
+                        }
+                    }
+                    (331, Some(saved)) => {
+                        if let Some(name) = self.row_names.get(&value.trim().to_uppercase()) {
+                            saved.linetype = name.clone();
+                        }
+                    }
+                    (6, Some(saved)) => saved.linetype = value.trim().to_owned(),
+                    _ => {}
+                }
+            }
+            state.layers.extend(layer);
+            states.push(state);
+        }
+        states
+    }
+
     fn draw_order(&mut self, drawing: &mut Drawing, ids_by_handle: &HashMap<String, EntityId>) {
         let hex = |handle: &str| u64::from_str_radix(handle.trim(), 16).ok();
         // The drawing's IDs are 1, 2, … in the order the file listed them.
@@ -2101,6 +2208,12 @@ impl<'a> Reader<'a> {
             }
         }
         self.draw_order(&mut drawing, &ids_by_handle);
+        for state in self.layer_states() {
+            match drawing.import_layer_state(state) {
+                Ok(_) => self.report.layer_states += 1,
+                Err(_) => self.report.count_unsupported(BAD_LAYER_STATE),
+            }
+        }
         self.report.layers = drawing.layers().len() - 1;
         self.report.linetypes = drawing.linetypes().len() - 1;
         self.report.text_styles = drawing.text_styles().len() - 1;
@@ -4250,7 +4363,7 @@ mod tests {
                         Just("LWPOLYLINE"), Just("POLYLINE"), Just("VERTEX"), Just("SEQEND"),
                         Just("TEXT"), Just("MTEXT"), Just("INSERT"), Just("ATTRIB"), Just("HATCH"),
                         Just("EOF"), Just("DICTIONARY"), Just("LAYOUT"), Just("WIPEOUT"),
-                        Just("SORTENTSTABLE"), Just("WIPEOUTVARIABLES"),
+                        Just("SORTENTSTABLE"), Just("WIPEOUTVARIABLES"), Just("XRECORD"),
                     ],
                     proptest::collection::vec(
                         (

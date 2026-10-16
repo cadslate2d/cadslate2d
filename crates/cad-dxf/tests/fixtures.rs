@@ -2437,3 +2437,69 @@ fn ordinate_dimensions_from_another_writer_round_trip() {
     assert!(!back.report.has_unsupported_content());
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }
+
+/// Layer states from another writer (#228): `Plan` and `Ceiling` in the
+/// LAYER table's `ACAD_LAYERSTATES` dictionary, their layers by handle —
+/// and one the drawing lacks, by name — with switches, colours,
+/// lineweights, and linetypes by handle. Restored, the layers are as the
+/// state keeps them; written and read back, the states are the same.
+#[test]
+fn layer_states_from_another_writer_restore_and_round_trip() {
+    let import = load("valid", "ezdxf-r2010-layer-states.dxf").unwrap();
+    assert_eq!(import.report.layer_states, 2);
+    assert!(
+        import
+            .report
+            .summary()
+            .iter()
+            .any(|line| line.contains("2 layer states"))
+    );
+    let mut drawing = import.drawing;
+    let states = drawing.layer_states();
+    let plan = states.get(states.find("Plan").unwrap()).unwrap().clone();
+    assert_eq!(plan.description, "Floor plan");
+    let walls = plan.layer("walls").unwrap();
+    assert_eq!(
+        (
+            walls.on,
+            walls.color,
+            walls.linetype.as_str(),
+            walls.lineweight
+        ),
+        (true, Color::Index(1), "DASHED", Lineweight::Hundredths(50))
+    );
+    assert!(!plan.layer("CEILING").unwrap().on);
+    let ceiling = states.get(states.find("Ceiling").unwrap()).unwrap().clone();
+    let furniture = ceiling.layer("FURNITURE").unwrap();
+    assert!(!furniture.on && furniture.frozen);
+    assert!(ceiling.layer("WALLS").unwrap().locked);
+    assert!(ceiling.layer("GONE").is_some(), "named by name, kept");
+
+    let id = drawing.layer_states().find("Ceiling").unwrap();
+    let mut tx = drawing.transaction();
+    assert_eq!(tx.restore_layer_state(id), Ok(3));
+    tx.commit();
+    let layer = |name: &str| {
+        let layers = drawing.layers();
+        layers.get(layers.find(name).unwrap()).unwrap().clone()
+    };
+    assert!(layer("CEILING").on);
+    assert!(layer("FURNITURE").frozen);
+    assert_eq!(layer("WALLS").color, Color::Index(8));
+    assert_eq!(layer("WALLS").linetype, Linetype::CONTINUOUS);
+    assert!(layer("WALLS").locked);
+
+    let text = export(&drawing);
+    assert!(text.contains("\n  3\nACAD_LAYERSTATES\n360\n"));
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert!(!back.report.has_unsupported_content());
+    let names = |drawing: &Drawing| -> Vec<cad_document::LayerState> {
+        drawing
+            .layer_states()
+            .iter()
+            .map(|(_, state)| state.clone())
+            .collect()
+    };
+    assert_eq!(names(&back.drawing), names(&drawing));
+    assert_eq!(export(&back.drawing), text, "export → import → export");
+}

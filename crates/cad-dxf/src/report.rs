@@ -27,6 +27,8 @@ pub struct ImportReport {
     pub construction_lines: usize,
     /// Wipeouts (#226).
     pub wipeouts: usize,
+    /// Saved layer states (#228).
+    pub layer_states: usize,
     /// Whether the file gave its points a size relative to the screen —
     /// `$PDSIZE` zero or negative — which the drawing does not hold: its
     /// points are drawn at the default size (#198).
@@ -187,6 +189,7 @@ impl ImportReport {
             + self.dim_styles
             + self.blocks
             + self.groups
+            + self.layer_states
             > 0
         {
             let tables: Vec<String> = [
@@ -196,6 +199,7 @@ impl ImportReport {
                 (self.dim_styles, "dimension style", "dimension styles"),
                 (self.blocks, "block", "blocks"),
                 (self.groups, "group", "groups"),
+                (self.layer_states, "layer state", "layer states"),
             ]
             .into_iter()
             .filter(|(count, ..)| *count > 0)

@@ -18,8 +18,8 @@ use cad_core::{Aabb, EntityId, LengthUnit, Point2, Vec2};
 use cad_document::{
     ArcEntity, AttributeDefinitionEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity,
     Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity,
-    EntityRecord, Group, HatchEntity, HatchStyle, Justification, Layer, Layout, LayoutArea,
-    LayoutId, LayoutPlot, LayoutTable, LeaderEntity, LineEntity, Linetype, LinetypeDef,
+    EntityRecord, Group, HatchEntity, HatchStyle, Justification, Layer, LayerState, Layout,
+    LayoutArea, LayoutId, LayoutPlot, LayoutTable, LeaderEntity, LineEntity, Linetype, LinetypeDef,
     LinetypeTable, Lineweight, MTextEntity, Measure, PointEntity, PolylineEntity, Properties,
     Revision, SplineEntity, TextEntity, TextStyle, TextStyleId, TextStyleTable, ViewportEntity,
     WipeoutEntity, draw_order,
@@ -188,6 +188,10 @@ impl Structure {
     }
 }
 
+/// What a layer state keeps, as the mask of its XRECORD (91): on,
+/// frozen, locked, colour, linetype, and lineweight.
+const LAYER_STATE_MASK: i64 = 1 | 2 | 4 | 32 | 64 | 128;
+
 /// Whether the drawing holds a wipeout, in any space.
 fn has_wipeouts(drawing: &Drawing) -> bool {
     drawing
@@ -295,6 +299,8 @@ impl Export {
             viewport_links: HashMap::new(),
             grouped: HashSet::new(),
             member_handles: HashMap::new(),
+            row_handles: HashMap::new(),
+            layer_states: None,
         };
         body.grouped = drawing
             .groups()
@@ -397,6 +403,8 @@ impl Export {
             viewport_links: HashMap::new(),
             grouped: HashSet::new(),
             member_handles: HashMap::new(),
+            row_handles: HashMap::new(),
+            layer_states: None,
         };
         header.section("HEADER", |w| w.header(drawing, self.body.handles.seed()));
         Ok(header.out + &self.body.out)
@@ -425,6 +433,12 @@ struct Writer {
     /// under, which their GROUP objects name (#214).
     grouped: HashSet<EntityId>,
     member_handles: HashMap<EntityId, Handle>,
+    /// The handles the LAYER and LTYPE rows were written under, by kind
+    /// and upper-case name, which a layer state names them by (#228).
+    row_handles: HashMap<(&'static str, String), Handle>,
+    /// The LAYER table's handle and its extension dictionary's, when the
+    /// drawing has layer states to keep there (#228).
+    layer_states: Option<(Handle, Handle)>,
 }
 
 /// Every dimension, with its properties, in the order their DIMENSION
@@ -666,13 +680,22 @@ impl Writer {
                 });
             }
             for (_, def) in linetypes.iter() {
-                w.row("LTYPE", table, "AcDbLinetypeTableRecord");
+                let handle = w.row("LTYPE", table, "AcDbLinetypeTableRecord");
+                w.row_handles
+                    .insert(("LTYPE", def.name.to_uppercase()), handle);
                 w.linetype(def);
             }
         });
-        self.table("LAYER", drawing.layers().len(), |w, table| {
+        // Layer states live in the LAYER table's extension dictionary.
+        let states = (!drawing.layer_states().is_empty()).then(|| self.handles.take());
+        self.table_with("LAYER", drawing.layers().len(), states, |w, table| {
+            if let Some(dictionary) = states {
+                w.layer_states = Some((table, dictionary));
+            }
             for (_, layer) in drawing.layers().iter() {
-                w.row("LAYER", table, "AcDbLayerTableRecord");
+                let handle = w.row("LAYER", table, "AcDbLayerTableRecord");
+                w.row_handles
+                    .insert(("LAYER", layer.name.to_uppercase()), handle);
                 w.layer(layer, linetypes, structure.plot_style);
             }
         });
@@ -735,10 +758,26 @@ impl Writer {
 
     /// One table: its handle, the number of rows, and the rows.
     fn table(&mut self, name: &str, rows: usize, body: impl FnOnce(&mut Self, Handle)) {
+        self.table_with(name, rows, None, body);
+    }
+
+    /// A table whose head names an extension dictionary, when it has one.
+    fn table_with(
+        &mut self,
+        name: &str,
+        rows: usize,
+        dictionary: Option<Handle>,
+        body: impl FnOnce(&mut Self, Handle),
+    ) {
         let table = self.handles.take();
         self.group(0, "TABLE");
         self.group(2, name);
         self.handle(5, table);
+        if let Some(dictionary) = dictionary {
+            self.group(102, "{ACAD_XDICTIONARY");
+            self.handle(360, dictionary);
+            self.group(102, "}");
+        }
         self.handle(330, Handle::NONE);
         self.group(100, "AcDbSymbolTable");
         self.int(70, rows as i64);
@@ -1783,12 +1822,71 @@ impl Writer {
             }
         }
 
+        self.layer_state_objects(drawing);
         if let Some(handle) = wipeout_variables {
             self.group(0, "WIPEOUTVARIABLES");
             self.handle(5, handle);
             self.handle(330, structure.root);
             self.group(100, "AcDbWipeoutVariables");
             self.int(70, i64::from(drawing.settings().wipeout_frame));
+        }
+    }
+
+    /// The drawing's layer states (#228): the LAYER table's extension
+    /// dictionary, holding `ACAD_LAYERSTATES`, which names an XRECORD per
+    /// state. A state's record has what it keeps (91: on, frozen,
+    /// locked, colour, linetype, lineweight), its description (301), and
+    /// per layer the layer — by handle (330), or by name (8) when the
+    /// drawing has no layer of that name — its switches (90: 1 off, 2
+    /// frozen, 4 locked), colour (62), lineweight (370), and linetype by
+    /// handle (331).
+    fn layer_state_objects(&mut self, drawing: &Drawing) {
+        let Some((table, extension)) = self.layer_states else {
+            return;
+        };
+        let states_dictionary = self.handles.take();
+        self.dictionary(extension, table);
+        self.group(3, "ACAD_LAYERSTATES");
+        self.handle(360, states_dictionary);
+        let records: Vec<(Handle, &LayerState)> = drawing
+            .layer_states()
+            .iter()
+            .map(|(_, state)| (self.handles.take(), state))
+            .collect();
+        self.dictionary(states_dictionary, extension);
+        for (handle, state) in &records {
+            self.group(3, &state.name);
+            self.handle(350, *handle);
+        }
+        for (handle, state) in records {
+            self.group(0, "XRECORD");
+            self.handle(5, handle);
+            self.handle(330, states_dictionary);
+            self.group(100, "AcDbXrecord");
+            self.int(280, 1);
+            self.int(91, LAYER_STATE_MASK);
+            self.group(301, &state.description);
+            self.int(290, 0);
+            self.group(302, "");
+            for saved in &state.layers {
+                match self.row_handles.get(&("LAYER", saved.name.to_uppercase())) {
+                    Some(layer) => self.handle(330, *layer),
+                    None => self.group(8, &saved.name),
+                }
+                let flags = i64::from(!saved.on)
+                    | if saved.frozen { 2 } else { 0 }
+                    | if saved.locked { 4 } else { 0 };
+                self.int(90, flags);
+                self.int(62, color_to_dxf(saved.color));
+                self.int(370, lineweight_to_dxf(saved.lineweight));
+                if let Some(linetype) = self
+                    .row_handles
+                    .get(&("LTYPE", saved.linetype.to_uppercase()))
+                    .copied()
+                {
+                    self.handle(331, linetype);
+                }
+            }
         }
     }
 

@@ -27,6 +27,7 @@ mod id_alloc;
 mod joining;
 pub mod kept;
 mod layer;
+mod layer_state;
 mod layout;
 mod leader;
 mod linetype;
@@ -73,6 +74,7 @@ pub use hatch_pattern::{
 pub use joining::{JoinError, Joined, close_into_circle, join};
 pub use kept::{RawEntity, RawGroup};
 pub use layer::{Layer, LayerChange, LayerId, LayerTable};
+pub use layer_state::{LayerState, LayerStateChange, LayerStateId, LayerStateTable, SavedLayer};
 pub use layout::{Layout, LayoutArea, LayoutChange, LayoutId, LayoutPlot, LayoutTable};
 pub use leader::{LeaderEntity, LeaderError, LeaderLayout};
 pub use linetype::{LinetypeChange, LinetypeDef, LinetypeError, LinetypeId, LinetypeTable};

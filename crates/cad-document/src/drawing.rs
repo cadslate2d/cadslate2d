@@ -15,6 +15,9 @@ use crate::group::{Group, GroupId, GroupTable, initial_groups};
 use crate::history::History;
 use crate::id_alloc::EntityIdAllocator;
 use crate::layer::{Layer, LayerId, LayerTable, initial_layers};
+use crate::layer_state::{
+    LayerState, LayerStateId, LayerStateTable, SavedLayer, initial_layer_states,
+};
 use crate::layout::{Layout, LayoutId, LayoutPlot, LayoutTable, initial_layouts};
 use crate::leader::LeaderError;
 use crate::linetype::{LinetypeDef, LinetypeError, LinetypeId, LinetypeTable, initial_linetypes};
@@ -77,6 +80,8 @@ pub struct Drawing {
     layouts: LayoutTable,
     /// Named sets of objects picked together (#214).
     groups: GroupTable,
+    /// Saved layer states (#228).
+    layer_states: LayerStateTable,
 }
 
 /// How many changes the journal remembers; a scene further behind than
@@ -102,6 +107,13 @@ pub struct ApplyReport {
 pub enum TransactionError {
     /// The entity does not exist in the drawing.
     UnknownEntity(EntityId),
+    /// The layer state does not exist, in the drawing or after this
+    /// transaction (#228).
+    UnknownLayerState(LayerStateId),
+    /// The name cannot be a layer state's name.
+    BadLayerStateName(NameError),
+    /// This layer state already has the name, give or take its case.
+    DuplicateLayerStateName(LayerStateId),
     /// The group does not exist, in the drawing or after this transaction.
     UnknownGroup(GroupId),
     /// The name cannot be a group's name.
@@ -226,6 +238,11 @@ impl fmt::Display for TransactionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnknownEntity(id) => write!(f, "entity {id} does not exist"),
+            Self::UnknownLayerState(id) => write!(f, "layer state {id} does not exist"),
+            Self::BadLayerStateName(error) => write!(f, "bad layer state name: {error:?}"),
+            Self::DuplicateLayerStateName(id) => {
+                write!(f, "layer state {id} already has that name")
+            }
             Self::UnknownGroup(id) => write!(f, "group {id} does not exist"),
             Self::BadGroupName(error) => write!(f, "bad group name: {error:?}"),
             Self::DuplicateGroupName(id) => write!(f, "group {id} already has that name"),
@@ -469,6 +486,7 @@ impl Drawing {
             journal: VecDeque::new(),
             layouts: initial_layouts(),
             groups: initial_groups(),
+            layer_states: initial_layer_states(),
         }
     }
 
@@ -893,6 +911,50 @@ impl Drawing {
         &self.groups
     }
 
+    /// The drawing's saved layer states (#228), in the order they were made.
+    pub fn layer_states(&self) -> &LayerStateTable {
+        &self.layer_states
+    }
+
+    /// The layers as they are now, as a state called `name` would keep
+    /// them (#228).
+    pub fn layer_state_now(&self, name: impl Into<String>) -> LayerState {
+        let layers = self
+            .layers
+            .iter()
+            .map(|(_, layer)| {
+                let linetype = match layer.linetype {
+                    Linetype::Named(id) => self
+                        .linetypes
+                        .get(id)
+                        .map_or(String::new(), |def| def.name.clone()),
+                    _ => String::new(),
+                };
+                SavedLayer::of(layer, &linetype)
+            })
+            .collect();
+        LayerState::new(name, layers)
+    }
+
+    /// Adds a layer state without history: the import path, as
+    /// [`import_group`](Self::import_group) is. A refused one leaves the
+    /// drawing as it was.
+    pub fn import_layer_state(
+        &mut self,
+        state: LayerState,
+    ) -> Result<LayerStateId, TransactionError> {
+        let mut tx = self.transaction();
+        let id = tx.add_layer_state(state)?;
+        let changes = std::mem::take(&mut tx.changes);
+        drop(tx);
+        for change in &changes {
+            if let Change::LayerState(change) = change {
+                self.layer_states.apply(change);
+            }
+        }
+        Ok(id)
+    }
+
     /// The groups `id` is a member of.
     pub fn groups_of(&self, id: EntityId) -> impl Iterator<Item = (GroupId, &Group)> {
         self.groups
@@ -1274,7 +1336,10 @@ impl Drawing {
                 | Change::Block(_)
                 | Change::Layout(_)
                 // A group draws nothing (#214).
-                | Change::Group(_) => false,
+                | Change::Group(_)
+                // Nor does a saved layer state (#228): restoring one
+                // changes layers, which say so for themselves.
+                | Change::LayerState(_) => false,
             };
             match change {
                 Change::Entity(EntityChange::Insert { id, record }) => {
@@ -1339,6 +1404,10 @@ impl Drawing {
                 }
                 Change::Group(change) => {
                     self.groups.apply(change);
+                    report.tables_changed = true;
+                }
+                Change::LayerState(change) => {
+                    self.layer_states.apply(change);
                     report.tables_changed = true;
                 }
                 Change::DimStyle(change) => {
@@ -1748,6 +1817,86 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
+    /// Saves a layer state (#228). Its name must be allowed and not taken.
+    pub fn add_layer_state(&mut self, state: LayerState) -> Result<LayerStateId, TransactionError> {
+        self.check_layer_state_name(&state.name, None)?;
+        let id = self.drawing.layer_states.allocate();
+        self.push_other(Change::LayerState(TableChange::Insert { id, row: state }));
+        Ok(id)
+    }
+
+    /// Replaces a layer state: renamed, described, or saved again.
+    pub fn replace_layer_state(
+        &mut self,
+        id: LayerStateId,
+        state: LayerState,
+    ) -> Result<(), TransactionError> {
+        let before = self.existing_layer_state(id)?;
+        if state.name != before.name {
+            self.check_layer_state_name(&state.name, Some(id))?;
+        }
+        self.push_other(Change::LayerState(TableChange::Replace {
+            id,
+            before,
+            after: state,
+        }));
+        Ok(())
+    }
+
+    /// Removes a layer state; the layers stay as they are.
+    pub fn remove_layer_state(&mut self, id: LayerStateId) -> Result<(), TransactionError> {
+        let row = self.existing_layer_state(id)?;
+        self.push_other(Change::LayerState(TableChange::Remove { id, row }));
+        Ok(())
+    }
+
+    /// Sets every layer the state `id` names, and the drawing has, as the
+    /// state keeps it; the rest stay as they are. A linetype the drawing
+    /// no longer has leaves the layer's own. The current layer is never
+    /// switched off or frozen: it keeps being shown. Returns how many
+    /// layers changed.
+    pub fn restore_layer_state(&mut self, id: LayerStateId) -> Result<usize, TransactionError> {
+        let state = self
+            .drawing
+            .layer_states
+            .get(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownLayerState(id))?;
+        let current = self.settings_now().current_layer;
+        let layers: Vec<(LayerId, Layer)> = self
+            .drawing
+            .layers
+            .iter()
+            .map(|(id, layer)| (id, layer.clone()))
+            .collect();
+        let mut changed = 0;
+        for (layer_id, layer) in layers {
+            let Some(saved) = state.layer(&layer.name) else {
+                continue;
+            };
+            let linetype = self
+                .drawing
+                .linetypes
+                .find(&saved.linetype)
+                .map_or(layer.linetype, Linetype::Named);
+            let shown = layer_id == current;
+            let after = Layer {
+                on: saved.on || shown,
+                frozen: saved.frozen && !shown,
+                locked: saved.locked,
+                color: saved.color,
+                linetype,
+                lineweight: saved.lineweight,
+                ..layer.clone()
+            };
+            if after != layer {
+                self.replace_layer(layer_id, after)?;
+                changed += 1;
+            }
+        }
+        Ok(changed)
+    }
+
     /// Removes a group; its members stay.
     pub fn remove_group(&mut self, id: GroupId) -> Result<(), TransactionError> {
         let row = self
@@ -2107,6 +2256,7 @@ impl TransactionBuilder<'_> {
             | Change::Block(_)
             | Change::Layout(_)
             | Change::Group(_)
+            | Change::LayerState(_)
             | Change::Settings(_) => false,
         });
         if pending
@@ -2805,6 +2955,45 @@ impl TransactionBuilder<'_> {
     }
 
     /// Refuses a name a group cannot have, or another group has.
+    fn existing_layer_state(&self, id: LayerStateId) -> Result<LayerState, TransactionError> {
+        let changed = self
+            .others()
+            .any(|change| matches!(change, Change::LayerState(change) if change.id() == id));
+        if changed {
+            return Err(TransactionError::UnknownLayerState(id));
+        }
+        self.drawing
+            .layer_states
+            .get(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownLayerState(id))
+    }
+
+    /// Refuses a name not allowed, or one another state has — in the
+    /// drawing or added by this transaction.
+    fn check_layer_state_name(
+        &self,
+        name: &str,
+        except: Option<LayerStateId>,
+    ) -> Result<(), TransactionError> {
+        check_name(name).map_err(TransactionError::BadLayerStateName)?;
+        let added = self.others().filter_map(|change| match change {
+            Change::LayerState(TableChange::Insert { id, row }) => Some((*id, row)),
+            Change::LayerState(TableChange::Replace { id, after, .. }) => Some((*id, after)),
+            _ => None,
+        });
+        let taken = self
+            .drawing
+            .layer_states
+            .iter()
+            .chain(added)
+            .find(|(id, state)| Some(*id) != except && same_name(&state.name, name));
+        match taken {
+            Some((id, _)) => Err(TransactionError::DuplicateLayerStateName(id)),
+            None => Ok(()),
+        }
+    }
+
     fn check_group_name(
         &self,
         name: &str,
@@ -5965,6 +6154,151 @@ mod tests {
     }
 
     #[test]
+    fn a_layer_state_restores_the_layers_it_names_as_one_undo() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let dashed = tx
+            .add_linetype(LinetypeDef::built_in_named("DASHED").unwrap())
+            .unwrap();
+        let walls = tx
+            .add_layer(Layer {
+                linetype: Linetype::Named(dashed),
+                ..Layer::named("walls")
+            })
+            .unwrap();
+        let notes = tx.add_layer(Layer::named("notes")).unwrap();
+        tx.commit();
+        let state = drawing.layer_state_now("Plan");
+        let mut tx = drawing.transaction();
+        let plan = tx.add_layer_state(state).unwrap();
+        tx.commit();
+
+        // The layers changed, and one made since.
+        let walls_now = drawing.layers().get(walls).unwrap().clone();
+        let mut tx = drawing.transaction();
+        tx.replace_layer(
+            walls,
+            Layer {
+                on: false,
+                color: Color::Index(1),
+                linetype: Linetype::CONTINUOUS,
+                ..walls_now
+            },
+        )
+        .unwrap();
+        tx.replace_layer(
+            notes,
+            Layer {
+                locked: true,
+                ..Layer::named("notes")
+            },
+        )
+        .unwrap();
+        let later = tx.add_layer(Layer::named("later")).unwrap();
+        tx.set_current_layer(later).unwrap();
+        tx.commit();
+        let changed = drawing.layers().clone();
+
+        let mut tx = drawing.transaction();
+        assert_eq!(tx.restore_layer_state(plan), Ok(2));
+        tx.commit();
+        let layer = |id| drawing.layers().get(id).unwrap().clone();
+        assert!(layer(walls).on);
+        assert_eq!(layer(walls).color, Layer::DEFAULT_COLOR);
+        assert_eq!(layer(walls).linetype, Linetype::Named(dashed));
+        assert!(!layer(notes).locked);
+        assert_eq!(
+            layer(later),
+            Layer::named("later"),
+            "not in the state: as it was"
+        );
+        assert!(drawing.undo().is_some());
+        assert_eq!(drawing.layers(), &changed, "one undo");
+    }
+
+    #[test]
+    fn a_restore_keeps_the_current_layer_shown_and_a_linetype_gone_leaves_its_own() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let dashed = tx
+            .add_linetype(LinetypeDef::built_in_named("DASHED").unwrap())
+            .unwrap();
+        let walls = tx
+            .add_layer(Layer {
+                on: false,
+                linetype: Linetype::Named(dashed),
+                ..Layer::named("walls")
+            })
+            .unwrap();
+        tx.commit();
+        let state = drawing.layer_state_now("Off");
+        let mut tx = drawing.transaction();
+        let off = tx.add_layer_state(state).unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.replace_layer(
+            walls,
+            Layer {
+                on: true,
+                linetype: Linetype::CONTINUOUS,
+                ..Layer::named("walls")
+            },
+        )
+        .unwrap();
+        tx.set_current_layer(walls).unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.remove_linetype(dashed).unwrap();
+        tx.commit();
+
+        let mut tx = drawing.transaction();
+        assert_eq!(tx.restore_layer_state(off), Ok(0), "nothing it may change");
+        tx.commit();
+        let walls = drawing.layers().get(walls).unwrap();
+        assert!(walls.on, "the current layer stays on");
+        assert_eq!(walls.linetype, Linetype::CONTINUOUS);
+    }
+
+    #[test]
+    fn layer_state_names_are_checked_and_unknown_states_refused() {
+        let mut drawing = Drawing::new();
+        let state = |name: &str| LayerState {
+            name: name.to_owned(),
+            ..Drawing::new().layer_state_now("")
+        };
+        let mut tx = drawing.transaction();
+        let plan = tx.add_layer_state(state("Plan")).unwrap();
+        assert_eq!(
+            tx.add_layer_state(state("PLAN")),
+            Err(TransactionError::DuplicateLayerStateName(plan))
+        );
+        assert!(matches!(
+            tx.add_layer_state(state("a<b")),
+            Err(TransactionError::BadLayerStateName(_))
+        ));
+        tx.commit();
+        let gone = LayerStateId::from_raw(99);
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.restore_layer_state(gone),
+            Err(TransactionError::UnknownLayerState(gone))
+        );
+        assert_eq!(
+            tx.remove_layer_state(gone),
+            Err(TransactionError::UnknownLayerState(gone))
+        );
+        tx.replace_layer_state(plan, state("Ceiling")).unwrap();
+        tx.commit();
+        assert_eq!(drawing.layer_states().find("ceiling"), Some(plan));
+        let mut tx = drawing.transaction();
+        tx.remove_layer_state(plan).unwrap();
+        tx.commit();
+        assert!(drawing.layer_states().is_empty());
+        assert!(drawing.undo().is_some());
+        assert_eq!(drawing.layer_states().find("Ceiling"), Some(plan));
+    }
+
+    #[test]
     fn moving_an_entity_between_spaces_is_one_change() {
         let mut drawing = Drawing::new();
         let mut tx = drawing.transaction();
@@ -6153,6 +6487,10 @@ mod tests {
         Reorder(usize, i16),
         CreateOnTop(f64),
         WipeoutFrame(bool),
+        /// A layer state saved by name, one restored, one removed (#228).
+        SaveState(u8),
+        RestoreState(usize),
+        DeleteState(usize),
         Undo,
         Redo,
     }
@@ -6256,6 +6594,9 @@ mod tests {
             1 => (any::<usize>(), -3..4i16).prop_map(|(i, order)| Op::Reorder(i, order)),
             1 => coordinate().prop_map(Op::CreateOnTop),
             1 => any::<bool>().prop_map(Op::WipeoutFrame),
+            1 => (0..4u8).prop_map(Op::SaveState),
+            2 => any::<usize>().prop_map(Op::RestoreState),
+            1 => any::<usize>().prop_map(Op::DeleteState),
             1 => (0..5u8).prop_map(Op::AddDimStyle),
             1 => (any::<usize>(), -1.0..5.0f64, 0..5u8).prop_map(|(i, h, n)| Op::RestyleDimStyle(i, h, n)),
             1 => any::<usize>().prop_map(Op::RemoveDimStyle),
@@ -6281,6 +6622,7 @@ mod tests {
         Vec<(BlockId, Block)>,
         Vec<(LayoutId, Layout)>,
         Vec<(GroupId, Group)>,
+        Vec<(LayerStateId, LayerState)>,
         DrawingSettings,
     );
 
@@ -6342,6 +6684,11 @@ mod tests {
             blocks,
             layouts,
             groups,
+            drawing
+                .layer_states()
+                .iter()
+                .map(|(id, state)| (id, state.clone()))
+                .collect(),
             drawing.settings(),
         )
     }
@@ -6670,6 +7017,51 @@ mod tests {
                             prop_assert_eq!(drawing.record(id).map(|r| r.order), Some(order));
                         }
                     }
+                    Op::SaveState(name) => {
+                        let name = format!("state{name}");
+                        let taken = drawing.layer_states().find(&name).is_some();
+                        let state = drawing.layer_state_now(name.clone());
+                        let mut tx = drawing.transaction();
+                        let made = tx.add_layer_state(state.clone());
+                        prop_assert_eq!(made.is_err(), taken, "a name is taken once");
+                        tx.commit();
+                        if !taken {
+                            let id = drawing.layer_states().find(&name).unwrap();
+                            prop_assert_eq!(drawing.layer_states().get(id), Some(&state));
+                        }
+                    }
+                    Op::RestoreState(pick) if !drawing.layer_states().is_empty() => {
+                        let states: Vec<LayerStateId> = drawing.layer_states().iter().map(|(id, _)| id).collect();
+                        let id = states[pick % states.len()];
+                        let state = drawing.layer_states().get(id).unwrap().clone();
+                        let current = drawing.current_layer();
+                        let mut tx = drawing.transaction();
+                        tx.restore_layer_state(id).unwrap();
+                        tx.commit();
+                        // Every layer it names is as it keeps it, but that the
+                        // current one stays shown.
+                        for (layer_id, layer) in drawing.layers().iter() {
+                            if let Some(saved) = state.layer(&layer.name) {
+                                prop_assert_eq!(layer.locked, saved.locked);
+                                prop_assert_eq!(layer.color, saved.color);
+                                prop_assert_eq!(layer.lineweight, saved.lineweight);
+                                if layer_id == current {
+                                    prop_assert!(layer.is_shown());
+                                } else {
+                                    prop_assert_eq!((layer.on, layer.frozen), (saved.on, saved.frozen));
+                                }
+                            }
+                        }
+                    }
+                    Op::DeleteState(pick) if !drawing.layer_states().is_empty() => {
+                        let states: Vec<LayerStateId> = drawing.layer_states().iter().map(|(id, _)| id).collect();
+                        let id = states[pick % states.len()];
+                        let mut tx = drawing.transaction();
+                        tx.remove_layer_state(id).unwrap();
+                        tx.commit();
+                        prop_assert!(!drawing.layer_states().contains(id));
+                    }
+                    Op::RestoreState(_) | Op::DeleteState(_) => {}
                     Op::WipeoutFrame(shown) => {
                         let mut tx = drawing.transaction();
                         tx.set_wipeout_frame(shown);
