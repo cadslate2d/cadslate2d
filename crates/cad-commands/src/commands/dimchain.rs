@@ -115,9 +115,14 @@ impl DimChainCommand {
         origin: Option<usize>,
     ) -> Result<(), String> {
         if dimension.nearer_origin(dimension.line_point).is_none() {
+            let kind = dimension.measure.kind();
+            let article = if kind.starts_with(['a', 'e', 'i', 'o', 'u']) {
+                "An"
+            } else {
+                "A"
+            };
             return Err(format!(
-                "A {} dimension cannot be chained: pick a linear, aligned, or angular one.",
-                dimension.measure.kind()
+                "{article} {kind} dimension cannot be chained: pick a linear, aligned, or angular one."
             ));
         }
         self.base = Some(Base {

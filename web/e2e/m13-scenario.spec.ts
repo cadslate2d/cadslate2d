@@ -24,10 +24,14 @@ import {
  * Moves the pointer to `(x, y)` and lets it rest there, as tracking needs.
  * The move must reach the engine first: the frame loop keeps only the
  * latest pointer move of a frame, so under load a move followed at once by
- * another is never delivered, and nothing rests where it went.
+ * another is never delivered, and nothing rests where it went. It comes
+ * from a little way off, so that a pointer already near — the click
+ * before — still makes a move the host times a rest from.
  */
 async function restAt(page: Page, canvas: Locator, x: number, y: number): Promise<void> {
   const center = await centerOf(canvas);
+  await page.mouse.move(center.x + x + 30, center.y - y + 30);
+  await settle(page);
   await page.mouse.move(center.x + x, center.y - y);
   await settle(page);
   await page.waitForTimeout(700);

@@ -216,7 +216,9 @@ pub fn entity_snap_points(entity: &Entity, mode: SnapMode, tables: Tables<'_>) -
             SnapMode::Center => match dimension.measure {
                 Measure::Angular { vertex, .. } => vec![vertex],
                 Measure::Radius { center, .. } | Measure::Diameter { center, .. } => vec![center],
-                Measure::Linear { .. } | Measure::Aligned { .. } => Vec::new(),
+                Measure::Linear { .. } | Measure::Aligned { .. } | Measure::Ordinate { .. } => {
+                    Vec::new()
+                }
             },
             SnapMode::Insertion => vec![
                 dimension

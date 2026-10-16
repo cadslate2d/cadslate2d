@@ -6,7 +6,7 @@
 //! Like the toggles, these are session state — not part of the drawing, not
 //! saved to DXF, and never undoable.
 
-use cad_core::Aabb;
+use cad_core::{Aabb, Point2};
 
 use crate::SnapModes;
 
@@ -46,6 +46,9 @@ pub struct DraftingSettings {
     pub snap_spacing: [f64; 2],
     /// The grid drawn at the snap spacing rather than its own (`GRID Snap`).
     pub grid_follows_snap: bool,
+    /// The datum ordinate dimensions measure from (#227): the origin until
+    /// `DIMORDINATE Datum` or `QDIM Datum point` moves it, for the session.
+    pub ordinate_datum: Point2,
 }
 
 /// A paper size PLOT offers, by name.
@@ -171,6 +174,7 @@ impl Default for DraftingSettings {
             cloud_arcs: [7.5, 15.0],
             snap_spacing: [DEFAULT_GRID_SPACING, DEFAULT_GRID_SPACING],
             grid_follows_snap: false,
+            ordinate_datum: Point2::ORIGIN,
         }
     }
 }

@@ -1,7 +1,6 @@
-imported dimensions 8
-unsupported "(ordinate DIMENSION)" 1
+imported dimensions 9
 tables dim_styles 1
-entities 8
+entities 9
 dimension 0 linear 100
 dimension 1 linear 50
 dimension 2 linear 40
@@ -10,3 +9,4 @@ dimension 4 angular 90
 dimension 5 radius 30
 dimension 6 diameter 60
 dimension 7 linear 60
+dimension 8 ordinate 400

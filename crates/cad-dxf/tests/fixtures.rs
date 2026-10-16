@@ -1950,7 +1950,7 @@ fn dimensions_from_another_writer() {
             _ => None,
         })
         .collect();
-    assert_eq!(dimensions.len(), 8);
+    assert_eq!(dimensions.len(), 9);
     let kinds: Vec<&str> = dimensions
         .iter()
         .map(|dimension| dimension.measure.kind())
@@ -1958,14 +1958,18 @@ fn dimensions_from_another_writer() {
     assert_eq!(
         kinds,
         [
-            "linear", "linear", "linear", "angular", "angular", "radius", "diameter", "linear"
+            "linear", "linear", "linear", "angular", "angular", "radius", "diameter", "linear",
+            "ordinate"
         ]
     );
     let values: Vec<f64> = dimensions
         .iter()
         .map(|d| (d.value() * 1e6).round() / 1e6)
         .collect();
-    assert_eq!(values, [100.0, 50.0, 40.0, 90.0, 90.0, 30.0, 60.0, 60.0]);
+    assert_eq!(
+        values,
+        [100.0, 50.0, 40.0, 90.0, 90.0, 30.0, 60.0, 60.0, 400.0]
+    );
 
     // The first is in ARCH, which the file defines; the rest in Standard.
     let arch = drawing.dim_styles().find("ARCH").unwrap();
@@ -2000,14 +2004,18 @@ fn dimensions_from_another_writer() {
         .collect();
     assert_eq!(block_names, ["*Model_Space", "_CLOSEDFILLED"]);
     let report = &import.report;
-    assert_eq!(report.dimensions, 8);
-    assert_eq!(report.unsupported.get("(ordinate DIMENSION)"), Some(&1));
-    assert_eq!(report.summary()[0], "Imported 8 dimensions.");
+    assert_eq!(report.dimensions, 9);
+    assert_eq!(
+        report.unsupported.get("(ordinate DIMENSION)"),
+        None,
+        "the ordinate is read since #227"
+    );
+    assert_eq!(report.summary()[0], "Imported 9 dimensions.");
 
     // Our file: a block record and an anonymous block per dimension, named
     // by each DIMENSION, holding what the style laid out.
     let text = export(drawing);
-    for n in 1..=8 {
+    for n in 1..=9 {
         assert!(
             text.contains(&format!("AcDbBlockTableRecord\n  2\n*D{n}\n")),
             "record *D{n}"
@@ -2029,7 +2037,7 @@ fn dimensions_from_another_writer() {
         .expect("the text's turn is written");
     assert!((turn_written - 30.0).abs() < 1e-9, "{turn_written}");
     let back = cad_dxf::import(text.as_bytes()).unwrap();
-    assert_eq!(back.report.dimensions, 8);
+    assert_eq!(back.report.dimensions, 9);
     assert!(!back.report.has_unsupported_content());
     assert_eq!(back.drawing.blocks().len(), 2);
     assert_eq!(export(&back.drawing), text, "export → import → export");
@@ -2375,4 +2383,57 @@ fn painted(drawing: &Drawing) -> Vec<&'static str> {
 
 fn import_back(text: &str) -> Drawing {
     import(text.as_bytes()).unwrap().drawing
+}
+
+/// Ordinate dimensions from another writer (#227): a plate dimensioned
+/// from its corner, four X ordinates and three Y, one leader jogged. Each
+/// is read with its datum (10), feature (13), leader end (14), and axis
+/// (70, 64), measures what the file says, and comes back the same.
+#[test]
+fn ordinate_dimensions_from_another_writer_round_trip() {
+    use cad_document::Measure;
+    let import = load("valid", "ezdxf-r2010-ordinate-dimensions.dxf").unwrap();
+    assert_eq!(import.report.dimensions, 7);
+    assert_eq!(import.report.unsupported.get("(ordinate DIMENSION)"), None);
+    let ordinates: Vec<(bool, f64, Point2)> = in_file_order(&import.drawing)
+        .into_iter()
+        .filter_map(|entity| match entity {
+            Entity::Dimension(dimension) => match dimension.measure {
+                Measure::Ordinate { origin, x, .. } => {
+                    Some((x, (dimension.value() * 1e6).round() / 1e6, origin))
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        ordinates
+            .iter()
+            .map(|(x, value, _)| (*x, *value))
+            .collect::<Vec<_>>(),
+        [
+            (true, 0.0),
+            (true, 30.0),
+            (true, 75.0),
+            (true, 100.0),
+            (false, 0.0),
+            (false, 30.0),
+            (false, 40.0)
+        ]
+    );
+    assert!(
+        ordinates
+            .iter()
+            .all(|(_, _, origin)| *origin == Point2::new(50.0, 20.0)),
+        "measured from the plate's corner"
+    );
+
+    let text = export(&import.drawing);
+    assert!(text.contains("\n100\nAcDbOrdinateDimension\n 13\n"));
+    assert!(text.contains("\n 70\n230\n"), "an X: 6, 32, 64, 128");
+    assert!(text.contains("\n 70\n166\n"), "a Y: 6, 32, 128");
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert!(!back.report.has_unsupported_content());
+    assert_eq!(export(&back.drawing), text, "export → import → export");
 }

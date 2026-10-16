@@ -3,6 +3,7 @@
 //! points; the layout that brings in a style and text metrics is in
 //! `cad-document`.
 
+use cad_core::tolerance::LinearTolerance;
 use cad_core::{Point2, Vec2};
 
 use crate::Segment;
@@ -99,6 +100,44 @@ pub fn readable_angle(angle: f64) -> f64 {
     }
 }
 
+/// The leader of an ordinate dimension (#227): from `offset` past the
+/// feature towards `end` along `along` — a unit vector up the X axis's
+/// leader or across the Y's — and to `end` itself. When `end` is not in
+/// line with the feature the leader jogs across in its middle, over at
+/// most `jog` of its length, so that it leaves the feature and reaches
+/// the text square to the axis. A leader shorter than its offset is one
+/// piece from the feature.
+pub fn ordinate_leader(
+    feature: Point2,
+    end: Point2,
+    along: Vec2,
+    offset: f64,
+    jog: f64,
+) -> Vec<Segment> {
+    let length = (end - feature).dot(along);
+    if length <= offset {
+        return vec![Segment::new(feature, end)];
+    }
+    let start = feature + along * offset;
+    let across = (end - feature) - along * length;
+    if LinearTolerance::DEFAULT
+        .around(&[feature, end])
+        .is_zero(across.length())
+    {
+        return vec![Segment::new(start, end)];
+    }
+    // The straight runs either side of the jog are the same length.
+    let jog = jog.min((length - offset) / 3.0);
+    let run = (length - offset - jog) / 2.0;
+    let bend = start + along * run;
+    let back = end - along * run;
+    vec![
+        Segment::new(start, bend),
+        Segment::new(bend, back),
+        Segment::new(back, end),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
@@ -145,7 +184,44 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn an_ordinate_leader_runs_straight_or_jogs_across_in_its_middle() {
+        let up = Vec2::new(0.0, 1.0);
+        let straight = ordinate_leader(p(10.0, 0.0), p(10.0, 30.0), up, 2.0, 5.0);
+        assert_eq!(straight, vec![Segment::new(p(10.0, 2.0), p(10.0, 30.0))]);
+        let jogged = ordinate_leader(p(10.0, 0.0), p(20.0, 30.0), up, 2.0, 5.0);
+        assert_eq!(
+            jogged,
+            vec![
+                Segment::new(p(10.0, 2.0), p(10.0, 13.5)),
+                Segment::new(p(10.0, 13.5), p(20.0, 18.5)),
+                Segment::new(p(20.0, 18.5), p(20.0, 30.0)),
+            ]
+        );
+        // Shorter than the offset: one piece from the feature.
+        let short = ordinate_leader(p(0.0, 0.0), p(1.0, 1.0), up, 2.0, 5.0);
+        assert_eq!(short, vec![Segment::new(p(0.0, 0.0), p(1.0, 1.0))]);
+    }
+
     proptest! {
+        #[test]
+        fn an_ordinate_leader_is_connected_from_its_offset_to_its_end(
+            x in -1000.0f64..1000.0, y in -1000.0f64..1000.0,
+            dx in -50.0f64..50.0, dy in 0.0f64..200.0, horizontal in any::<bool>(),
+        ) {
+            let along = if horizontal { Vec2::new(1.0, 0.0) } else { Vec2::new(0.0, 1.0) };
+            let feature = p(x, y);
+            let end = feature + along * dy + perpendicular(along) * dx;
+            let pieces = ordinate_leader(feature, end, along, 2.0, 5.0);
+            prop_assert!(close(pieces.last().unwrap().end, end));
+            for pair in pieces.windows(2) {
+                prop_assert!(close(pair[0].end, pair[1].start));
+            }
+            if dy > 2.0 {
+                prop_assert!(close(pieces[0].start, feature + along * 2.0));
+            }
+        }
+
         #[test]
         fn a_readable_angle_is_the_angle_or_its_opposite_within_a_right_angle(
             angle in -100.0f64..100.0,

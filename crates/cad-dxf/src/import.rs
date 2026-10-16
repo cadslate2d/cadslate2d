@@ -57,10 +57,9 @@ const BAD_DIM_STYLE_NAME: &str = "(dimension style name)";
 /// Report key for a dimension style with a value a dimension cannot be
 /// drawn by: the row is kept with the default for that value.
 const BAD_DIM_STYLE: &str = "(dimension style values)";
-/// Report keys for the DIMENSION kinds the drawing has no measure for.
-const ORDINATE: &str = "(ordinate DIMENSION)";
 /// Report key for a pattern too fine for its region at its scale: filled solid.
 const TOO_DENSE: &str = "(HATCH pattern too dense)";
+/// Report key for a DIMENSION of a kind the drawing has no measure for.
 const UNKNOWN_DIMENSION: &str = "(DIMENSION of an unknown kind)";
 const BAD_BLOCK_NAME: &str = "(block name)";
 /// A GROUP the drawing cannot have: a name taken or not allowed (#214).
@@ -1368,10 +1367,16 @@ impl<'a> Reader<'a> {
                     place,
                 ))
             })(),
-            6 => {
-                self.report.count_unsupported(ORDINATE);
-                return Ok(());
-            }
+            // An ordinate (#227): the datum (10), the feature (13), the
+            // leader's end (14), and whether it measures the X (70, 64).
+            6 => (|| {
+                let measure = Measure::Ordinate {
+                    origin: p10.unwrap_or(Point2::ORIGIN),
+                    feature: p13?,
+                    x: body.flags & 64 != 0,
+                };
+                Some(DimensionEntity::new(measure, p14?))
+            })(),
             _ => {
                 self.report.count_unsupported(UNKNOWN_DIMENSION);
                 return Ok(());

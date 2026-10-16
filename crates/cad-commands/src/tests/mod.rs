@@ -20,6 +20,7 @@ mod dimchain;
 mod dimcurve;
 mod dimension;
 mod dimlinear;
+mod dimordinate;
 mod dimstyle;
 mod draworder;
 mod edge;

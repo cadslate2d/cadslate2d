@@ -15,7 +15,8 @@ use std::f64::consts::TAU;
 use cad_core::{Aabb, Point2, Vec2};
 use cad_geometry::intersect::line_line;
 use cad_geometry::{
-    Arc, Arrowhead, Segment, Transform, foot_on_line, normalized, perpendicular, readable_angle,
+    Arc, Arrowhead, Segment, Transform, foot_on_line, normalized, ordinate_leader, perpendicular,
+    readable_angle,
 };
 use cad_text::Font;
 
@@ -43,6 +44,14 @@ pub enum Measure {
     Radius { center: Point2, radius: f64 },
     /// Its diameter.
     Diameter { center: Point2, radius: f64 },
+    /// The X of `feature` from `origin`, the datum, when `x`; else its Y
+    /// (#227). Its leader runs from the feature, square to the axis it
+    /// measures along, to where the dimension is placed.
+    Ordinate {
+        origin: Point2,
+        feature: Point2,
+        x: bool,
+    },
 }
 
 impl Measure {
@@ -54,16 +63,19 @@ impl Measure {
             Self::Angular { .. } => "angular",
             Self::Radius { .. } => "radius",
             Self::Diameter { .. } => "diameter",
+            Self::Ordinate { .. } => "ordinate",
         }
     }
 
     /// The points the dimension measures, in a fixed order: `a` and `b`;
-    /// the vertex, `a`, and `b`; the centre.
+    /// the vertex, `a`, and `b`; the centre; an ordinate's feature — its
+    /// datum is where it measures from, not what it measures.
     pub fn points(&self) -> Vec<Point2> {
         match *self {
             Self::Linear { a, b, .. } | Self::Aligned { a, b } => vec![a, b],
             Self::Angular { vertex, a, b } => vec![vertex, a, b],
             Self::Radius { center, .. } | Self::Diameter { center, .. } => vec![center],
+            Self::Ordinate { feature, .. } => vec![feature],
         }
     }
 
@@ -127,6 +139,11 @@ impl Measure {
             (Self::Angular { vertex, a, .. }, 2) => Self::Angular { vertex, a, b: to },
             (Self::Radius { radius, .. }, 0) => Self::Radius { center: to, radius },
             (Self::Diameter { radius, .. }, 0) => Self::Diameter { center: to, radius },
+            (Self::Ordinate { origin, x, .. }, 0) => Self::Ordinate {
+                origin,
+                feature: to,
+                x,
+            },
             _ => return None,
         })
     }
@@ -153,6 +170,16 @@ impl Measure {
                 center: at(center),
                 radius: radius * transform.scale_factor(),
             },
+            // Turned nearer a quarter turn than not, the X it measured is
+            // a Y.
+            Self::Ordinate { origin, feature, x } => {
+                let turned = transform.apply_angle(0.0);
+                Self::Ordinate {
+                    origin: at(origin),
+                    feature: at(feature),
+                    x: x != (turned.sin().abs() > turned.cos().abs()),
+                }
+            }
         }
     }
 }
@@ -329,6 +356,10 @@ impl DimensionEntity {
                     .then_some(())
                     .ok_or(DimensionError::NoRadius)
             }
+            Measure::Ordinate { origin, .. } => origin
+                .is_finite()
+                .then_some(())
+                .ok_or(DimensionError::NotFinite),
         }
     }
 
@@ -386,7 +417,9 @@ impl DimensionEntity {
                 let pick = angle(at);
                 (apart(pick, angle(a)), apart(pick, angle(b)))
             }
-            Measure::Radius { .. } | Measure::Diameter { .. } => return None,
+            Measure::Radius { .. } | Measure::Diameter { .. } | Measure::Ordinate { .. } => {
+                return None;
+            }
         };
         Some(usize::from(b_off < a_off))
     }
@@ -480,7 +513,9 @@ impl DimensionEntity {
                     vertex + Vec2::from_polar(radius, middle),
                 )
             }
-            Measure::Radius { .. } | Measure::Diameter { .. } => return None,
+            Measure::Radius { .. } | Measure::Diameter { .. } | Measure::Ordinate { .. } => {
+                return None;
+            }
         };
         Some(Self {
             measure,
@@ -517,6 +552,10 @@ impl DimensionEntity {
                 .map_or(0.0, |arc| arc.sweep.to_degrees()),
             Measure::Radius { radius, .. } => radius,
             Measure::Diameter { radius, .. } => 2.0 * radius,
+            Measure::Ordinate { origin, feature, x } => {
+                let from = feature - origin;
+                if x { from.x.abs() } else { from.y.abs() }
+            }
         }
     }
 
@@ -529,7 +568,7 @@ impl DimensionEntity {
         }
         let value = style.format(self.value());
         match self.measure {
-            Measure::Linear { .. } | Measure::Aligned { .. } => value,
+            Measure::Linear { .. } | Measure::Aligned { .. } | Measure::Ordinate { .. } => value,
             Measure::Angular { .. } => format!("{value}°"),
             Measure::Radius { .. } => format!("R{value}"),
             Measure::Diameter { .. } => format!("Ø{value}"),
@@ -571,7 +610,47 @@ impl DimensionEntity {
             Measure::Diameter { center, radius } => {
                 self.radial(center, radius, true, style, content)
             }
+            Measure::Ordinate { feature, x, .. } => self.ordinate(feature, x, style, content),
         }
+    }
+
+    /// An ordinate dimension (#227): a leader from the feature, square to
+    /// the axis measured along — up or down for an X, across for a Y —
+    /// jogging across to the placement point when that is not in line,
+    /// and the text beyond its end, reading along it.
+    fn ordinate(
+        &self,
+        feature: Point2,
+        x: bool,
+        style: &DimStyle,
+        content: String,
+    ) -> DimensionLayout {
+        let axis = if x {
+            Vec2::new(0.0, 1.0)
+        } else {
+            Vec2::new(1.0, 0.0)
+        };
+        let along = if (self.line_point - feature).dot(axis) < 0.0 {
+            -axis
+        } else {
+            axis
+        };
+        let mut text = self.text_along(content, style, along);
+        let width = text.width();
+        let mut layout = DimensionLayout::new(text.clone(), self.value());
+        layout.lines = ordinate_leader(
+            feature,
+            self.line_point,
+            along,
+            style.extension_offset,
+            2.0 * style.arrow_size,
+        );
+        place_on(
+            &mut text,
+            self.line_point + along * (style.text_gap + width / 2.0),
+        );
+        layout.text = text;
+        layout
     }
 
     /// A linear or aligned dimension: the dimension line through the
@@ -858,6 +937,82 @@ mod tests {
             panic!("a linear dimension");
         };
         perpendicular(Vec2::from_polar(1.0, rotation)).dot(dimension.line_point - a)
+    }
+
+    #[test]
+    fn an_ordinate_measures_one_coordinate_from_its_datum_with_a_leader_to_its_text() {
+        let style = DimStyle::named("O");
+        let x = DimensionEntity::new(
+            Measure::Ordinate {
+                origin: p(50.0, 20.0),
+                feature: p(80.0, 50.0),
+                x: true,
+            },
+            p(80.0, 5.0),
+        );
+        assert_eq!(x.value(), 30.0);
+        assert_eq!(x.content(&style), "30.00");
+        let layout = x.layout(&style);
+        // Down from the feature, square to the X axis, and straight.
+        assert_eq!(
+            layout.lines,
+            vec![Segment::new(
+                p(80.0, 50.0 - style.extension_offset),
+                p(80.0, 5.0)
+            )]
+        );
+        assert!(layout.arrowheads.is_empty());
+        // The text reads along the leader, past its end.
+        let text = &layout.text;
+        assert!((text.rotation - FRAC_PI_2).abs() < 1e-12);
+        assert!(text.frame().corners().iter().all(|corner| corner.y < 5.0));
+        assert!(
+            text.frame()
+                .corners()
+                .iter()
+                .all(|corner| (corner.x - 80.0).abs() < style.text_height)
+        );
+
+        // A Y, placed to the left and off line: across, with a jog.
+        let y = DimensionEntity::new(
+            Measure::Ordinate {
+                origin: p(50.0, 20.0),
+                feature: p(125.0, 60.0),
+                x: false,
+            },
+            p(45.0, 63.0),
+        );
+        assert_eq!(y.value(), 40.0);
+        let layout = y.layout(&style);
+        assert_eq!(layout.lines.len(), 3, "a jog");
+        assert_eq!(
+            layout.lines[0].start,
+            p(125.0 - style.extension_offset, 60.0)
+        );
+        assert_eq!(layout.lines[2].end, p(45.0, 63.0));
+        assert_eq!(layout.text.rotation, 0.0);
+        assert!(
+            layout
+                .text
+                .frame()
+                .corners()
+                .iter()
+                .all(|corner| corner.x < 45.0)
+        );
+
+        // Its feature is its grip, then where it is placed; the datum
+        // moves only with the whole.
+        assert_eq!(y.points(), vec![p(125.0, 60.0), p(45.0, 63.0)]);
+        let moved = y.with_point(0, p(130.0, 70.0)).unwrap();
+        assert_eq!(moved.value(), 50.0);
+        assert_eq!(y.nearer_origin(p(0.0, 0.0)), None, "no chaining");
+        // A quarter turn makes the Y an X.
+        let turned = y.transformed(&Transform::rotation(p(50.0, 20.0), 90.0));
+        let Measure::Ordinate { x, .. } = turned.measure else {
+            panic!("an ordinate");
+        };
+        assert!(x);
+        assert!((turned.value() - 40.0).abs() < 1e-9);
     }
 
     #[test]
@@ -1582,6 +1737,11 @@ mod tests {
                 .prop_map(|(center, radius)| Measure::Radius { center, radius }),
             (point(), 0.1f64..500.0)
                 .prop_map(|(center, radius)| Measure::Diameter { center, radius }),
+            (point(), point(), any::<bool>()).prop_map(|(origin, feature, x)| Measure::Ordinate {
+                origin,
+                feature,
+                x
+            }),
         ]
     }
 
@@ -1644,6 +1804,10 @@ mod tests {
                 }
                 Measure::Radius { radius, .. } => prop_assert_eq!(value, radius),
                 Measure::Diameter { radius, .. } => prop_assert_eq!(value, 2.0 * radius),
+                Measure::Ordinate { origin, feature, x } => {
+                    let along = if x { feature.x - origin.x } else { feature.y - origin.y };
+                    prop_assert_eq!(value, along.abs());
+                }
             }
             prop_assert!(layout.text.content.contains(&style.format(value)));
             prop_assert_eq!(layout.text.height, style.text_height);
@@ -1684,6 +1848,16 @@ mod tests {
                 Measure::Radius { center, radius } | Measure::Diameter { center, radius } => {
                     for arrow in &layout.arrowheads {
                         prop_assert!(on(arrow.tip, (arrow.tip.distance_to(center) - radius).abs()));
+                    }
+                }
+                // An ordinate's leader reaches where it is placed, in one
+                // connected run, and has no arrowheads.
+                Measure::Ordinate { .. } => {
+                    prop_assert!(layout.arrowheads.is_empty());
+                    let last = layout.lines.last().unwrap();
+                    prop_assert!(on(dim.line_point, last.end.distance_to(dim.line_point)));
+                    for pair in layout.lines.windows(2) {
+                        prop_assert!(on(pair[0].end, pair[0].end.distance_to(pair[1].start)));
                     }
                 }
             }

@@ -1309,6 +1309,10 @@ impl Writer {
                     .map_or(dimension.line_point, |(_, far)| far),
                 dimension.line_point,
             ),
+            // The datum; 64 marks an X, its absence a Y (#227).
+            Measure::Ordinate { origin, x, .. } => {
+                (if x { 6 | 64 } else { 6 }, origin, layout.text.insertion)
+            }
         };
         self.point(10, definition);
         self.point(11, text_point);
@@ -1362,6 +1366,12 @@ impl Writer {
                     self.point(15, near);
                 }
                 self.real(40, 0.0);
+            }
+            // The feature, then the leader's end.
+            Measure::Ordinate { feature, .. } => {
+                self.group(100, "AcDbOrdinateDimension");
+                self.point(13, feature);
+                self.point(14, dimension.line_point);
             }
         }
     }

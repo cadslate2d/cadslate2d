@@ -35,7 +35,9 @@ pub use arc::{Arc, Circle, normalize_angle};
 pub use cloud::{CLOUD_BULGE, MAX_CLOUD_ARCS};
 pub use corner::{Chamfer, Corner, CornerError, Fillet};
 pub use curve_fillet::{CurveFillet, fillet_curves};
-pub use dimension::{Arrowhead, foot_on_line, normalized, perpendicular, readable_angle};
+pub use dimension::{
+    Arrowhead, foot_on_line, normalized, ordinate_leader, perpendicular, readable_angle,
+};
 pub use ellipse::{CHORDS_PER_TURN, Ellipse};
 pub use extend::{extend_arc, extend_segment};
 pub use intersect::{Hits, Orientation, Primitive, orientation};
