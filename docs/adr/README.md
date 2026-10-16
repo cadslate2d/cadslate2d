@@ -43,6 +43,7 @@ There are two kinds:
 | [0030](0030-viewports.md) | A viewport is an entity of a layout's paper; its contents are the model's committed scene drawn again under its own transform | Accepted | Design |
 | [0031](0031-construction-lines.md) | A construction line is an entity without bounds: kept beside the index, out of the extents, read along a million-unit reach, and drawn clipped to the view in the overlay | Accepted | Design |
 | [0032](0032-draw-order.md) | The drawing order is a tier on each record, carried in the high half of each instance's style word and drawn as depth: fills write it, strokes test it | Accepted | Design |
+| [0033](0033-multileaders.md) | A multileader stores its leaders, its one landing, its content, and its style; the multileader style lays out the arrowheads, the dogleg, and the note | Accepted | Design |
 
 ## Expected evidence ADRs
 

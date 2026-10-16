@@ -181,6 +181,15 @@ pub fn entity_snap_points(entity: &Entity, mode: SnapMode, tables: Tables<'_>) -
         }
         _ => {}
     }
+    // A multileader offers its arrowheads' tips as endpoints and its
+    // landing as an insertion point (#240).
+    if let Entity::MLeader(mleader) = entity {
+        return match mode {
+            SnapMode::Endpoint => mleader.tips(),
+            SnapMode::Insertion => vec![mleader.landing],
+            _ => Vec::new(),
+        };
+    }
     // A leader offers its vertices as endpoints and its note's insertion
     // point (#205): annotation, like a dimension.
     if let Entity::Leader(leader) = entity {

@@ -1027,6 +1027,64 @@ fn a_dimension_is_drawn_by_its_style_and_redrawn_when_the_style_changes() {
     );
 }
 
+/// ADR-0033: a multileader is drawn from its style — its leaders, their
+/// arrowheads, the dogleg, the strokes of its note — and drawn afresh when
+/// the style changes, re-packing only the chunk that holds it.
+#[test]
+fn a_multileader_is_drawn_by_its_style_and_redrawn_when_the_style_changes() {
+    use cad_core::Point2;
+    use cad_document::{
+        Drawing, Entity, MLeaderContent, MLeaderEntity, MLeaderStyle, MLeaderStyleId,
+    };
+    let mut mleader = MLeaderEntity::new(
+        Point2::new(0.0, 0.0),
+        Point2::new(20.0, 10.0),
+        MLeaderContent::Text("Hole".to_owned()),
+    );
+    mleader
+        .leaders
+        .push(vec![Point2::new(5.0, -10.0), Point2::new(10.0, 0.0)]);
+    let mut drawing = Drawing::from_entities([Entity::from(mleader)]);
+    let mut cache = SceneCache::new();
+    let (revision, segments) = {
+        let scene = cache.scene(&drawing);
+        assert_frame_is_consistent(scene.frame(), "a multileader");
+        (scene.revision(), scene.frame().segments().to_vec())
+    };
+    // Three leader segments, the dogleg, two arrowheads of three sides,
+    // and the note's strokes.
+    assert!(segments.len() / PackedFrame::FLOATS_PER_SEGMENT > 10);
+    assert_eq!(cache.scene(&drawing).revision(), revision);
+
+    let mut tx = drawing.transaction();
+    tx.replace_mleader_style(
+        MLeaderStyleId::FIRST,
+        MLeaderStyle {
+            text_height: 5.0,
+            ..MLeaderStyle::named(MLeaderStyle::STANDARD)
+        },
+    )
+    .unwrap();
+    tx.commit();
+    let scene = cache.scene(&drawing);
+    assert_ne!(
+        scene.revision(),
+        revision,
+        "one row changed; the scene follows"
+    );
+    assert_frame_is_consistent(scene.frame(), "a multileader restyled");
+    assert_ne!(
+        scene.frame().segments(),
+        &segments[..],
+        "the note is drawn taller"
+    );
+    assert_eq!(
+        cache.partial_build_count(),
+        1,
+        "the style change re-packed the chunk holding its multileader, not the scene (ADR-0022)"
+    );
+}
+
 /// ADR-0021: a hatch is committed triangles — a style index each, batches
 /// #206 (ADR-0031): a construction line is no committed geometry; the
 /// overlay draws it clipped to the view, so panning far along it redraws

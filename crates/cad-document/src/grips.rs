@@ -13,6 +13,7 @@
 //! | Block reference | Insertion | moves the reference |
 //! | Viewport | Vertex at each corner, then Center | a corner resizes the frame about the opposite one; the centre moves it |
 //! | Wipeout | one Vertex per corner | moves that corner |
+//! | Multileader | a Vertex per leader point, then the landing | moves that point |
 //!
 //! Arc grips follow the familiar *stretch* behaviour (ADR-0010): an arc is
 //! always the arc through its start, its midpoint, and its end. Dragging
@@ -131,6 +132,12 @@ impl Entity {
             Entity::XLine(line) => vec![grip(GripKind::Midpoint, line.base)],
             Entity::Ray(ray) => vec![grip(GripKind::Endpoint, ray.start)],
             // A leader's every vertex (#205).
+            // A multileader's points, each leader's then the landing (#240).
+            Entity::MLeader(mleader) => mleader
+                .points()
+                .into_iter()
+                .map(|point| grip(GripKind::Vertex, point))
+                .collect(),
             Entity::Leader(leader) => leader
                 .vertices
                 .iter()
@@ -322,6 +329,7 @@ impl Entity {
             }
             Entity::Point(_) => (index == 0).then(|| PointEntity::new(to).into()),
             Entity::Leader(leader) => leader.with_vertex(index, to).map(Entity::from),
+            Entity::MLeader(mleader) => mleader.with_point(index, to).map(Entity::from),
             Entity::Wipeout(wipeout) => {
                 let mut vertices = wipeout.vertices.clone();
                 *vertices.get_mut(index)? = to;

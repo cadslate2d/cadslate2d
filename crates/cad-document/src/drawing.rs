@@ -21,6 +21,10 @@ use crate::layer_state::{
 use crate::layout::{Layout, LayoutId, LayoutPlot, LayoutTable, initial_layouts};
 use crate::leader::LeaderError;
 use crate::linetype::{LinetypeDef, LinetypeError, LinetypeId, LinetypeTable, initial_linetypes};
+use crate::mleader::{
+    MLeaderError, MLeaderStyle, MLeaderStyleError, MLeaderStyleId, MLeaderStyleTable,
+    initial_mleader_styles,
+};
 use crate::named_view::{NamedView, NamedViewId, NamedViewTable, initial_named_views};
 use crate::names::{NameError, check_name, same_name};
 use crate::point::{PointStyle, PointStyleError};
@@ -85,6 +89,8 @@ pub struct Drawing {
     layer_states: LayerStateTable,
     /// Named views (#235).
     views: NamedViewTable,
+    /// Multileader styles (#240).
+    mleader_styles: MLeaderStyleTable,
 }
 
 /// How many changes the journal remembers; a scene further behind than
@@ -105,11 +111,40 @@ pub struct ApplyReport {
     pub tables_changed: bool,
 }
 
+/// Everything a drawing read from a file is made of (#240): the tables'
+/// rows, the layouts, and the entities, each in the space it names. See
+/// [`Drawing::assemble`].
+#[derive(Clone, Debug, Default)]
+pub struct DrawingParts {
+    pub layers: Vec<Layer>,
+    pub linetypes: Vec<LinetypeDef>,
+    pub text_styles: Vec<TextStyle>,
+    pub dim_styles: Vec<DimStyle>,
+    pub mleader_styles: Vec<MLeaderStyle>,
+    pub blocks: Vec<Block>,
+    pub layouts: Vec<Layout>,
+    pub entities: Vec<(Entity, Properties, LayoutId)>,
+}
+
 /// Why a change could not be added to a transaction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransactionError {
     /// The entity does not exist in the drawing.
     UnknownEntity(EntityId),
+    /// The multileader style does not exist (#240).
+    UnknownMLeaderStyle(MLeaderStyleId),
+    /// A multileader no layout can be drawn from.
+    BadMLeader(MLeaderError),
+    /// The name cannot be a multileader style's name.
+    BadMLeaderStyleName(NameError),
+    /// This multileader style already has the name.
+    DuplicateMLeaderStyleName(MLeaderStyleId),
+    /// A multileader style's values no multileader can be drawn by.
+    BadMLeaderStyle(MLeaderStyleError),
+    /// `Standard` keeps its name and stays.
+    PermanentMLeaderStyle,
+    /// A multileader is drawn by the style, or it is the current one.
+    MLeaderStyleInUse(MLeaderStyleId),
     /// A layer cannot be merged into itself (#236).
     MergedIntoItself(LayerId),
     /// The layer state does not exist, in the drawing or after this
@@ -253,6 +288,15 @@ impl fmt::Display for TransactionError {
         match self {
             Self::UnknownEntity(id) => write!(f, "entity {id} does not exist"),
             Self::MergedIntoItself(id) => write!(f, "layer {id} cannot be merged into itself"),
+            Self::UnknownMLeaderStyle(id) => write!(f, "multileader style {id} does not exist"),
+            Self::BadMLeader(error) => write!(f, "{error}"),
+            Self::BadMLeaderStyleName(error) => write!(f, "bad multileader style name: {error:?}"),
+            Self::DuplicateMLeaderStyleName(id) => {
+                write!(f, "multileader style {id} already has that name")
+            }
+            Self::BadMLeaderStyle(error) => write!(f, "{}", error.explain()),
+            Self::PermanentMLeaderStyle => write!(f, "Standard keeps its name and stays"),
+            Self::MLeaderStyleInUse(id) => write!(f, "multileader style {id} is in use"),
             Self::UnknownLayerState(id) => write!(f, "layer state {id} does not exist"),
             Self::UnknownView(id) => write!(f, "view {id} does not exist"),
             Self::BadViewName(error) => write!(f, "bad view name: {error:?}"),
@@ -399,6 +443,7 @@ fn largest_radius(entity: &Entity, tables: Tables<'_>) -> Option<f64> {
         | Entity::Wipeout(_)
         | Entity::Point(_)
         | Entity::Leader(_)
+        | Entity::MLeader(_)
         | Entity::XLine(_)
         | Entity::Ray(_) => None,
     }
@@ -507,6 +552,7 @@ impl Drawing {
             groups: initial_groups(),
             layer_states: initial_layer_states(),
             views: initial_named_views(),
+            mleader_styles: initial_mleader_styles(),
         }
     }
 
@@ -553,8 +599,46 @@ impl Drawing {
         layouts: impl IntoIterator<Item = Layout>,
         entities: impl IntoIterator<Item = (Entity, Properties, LayoutId)>,
     ) -> Result<Self, TransactionError> {
-        let mut drawing =
-            Self::from_tables(layers, linetypes, text_styles, dim_styles, blocks, [])?;
+        let mut drawing = Self::with_rows(layers, linetypes, text_styles, dim_styles, [], blocks)?;
+        drawing.place(layouts, entities)?;
+        Ok(drawing)
+    }
+
+    /// [`from_spaces`](Self::from_spaces) with every part a file brings,
+    /// multileader styles too (#240): they take the IDs 1, 2, … after
+    /// `Standard` in the order given, and one called `Standard` replaces
+    /// its values.
+    pub fn assemble(parts: DrawingParts) -> Result<Self, TransactionError> {
+        let DrawingParts {
+            layers,
+            linetypes,
+            text_styles,
+            dim_styles,
+            mleader_styles,
+            blocks,
+            layouts,
+            entities,
+        } = parts;
+        let mut drawing = Self::with_rows(
+            layers,
+            linetypes,
+            text_styles,
+            dim_styles,
+            mleader_styles,
+            blocks,
+        )?;
+        drawing.place(layouts, entities)?;
+        Ok(drawing)
+    }
+
+    /// The layouts, then the entities of every space, of a drawing being
+    /// put together.
+    fn place(
+        &mut self,
+        layouts: impl IntoIterator<Item = Layout>,
+        entities: impl IntoIterator<Item = (Entity, Properties, LayoutId)>,
+    ) -> Result<(), TransactionError> {
+        let drawing = self;
         for layout in layouts {
             check_name(&layout.name).map_err(TransactionError::BadLayoutName)?;
             if let Some(taken) = drawing.layouts.find(&layout.name) {
@@ -569,7 +653,7 @@ impl Drawing {
             if !drawing.layouts.contains(space) {
                 return Err(TransactionError::UnknownLayout(space));
             }
-            Self::check_record(&drawing, &entity, &properties)?;
+            Self::check_record(drawing, &entity, &properties)?;
             viewport_placeable(&entity, space)?;
             let id = drawing.ids.allocate();
             drawing
@@ -578,7 +662,7 @@ impl Drawing {
                 .expect("freshly allocated IDs are unique");
         }
         drawing.rebuild_index();
-        Ok(drawing)
+        Ok(())
     }
 
     /// [`from_parts`](Self::from_parts) with text styles and blocks as
@@ -594,7 +678,50 @@ impl Drawing {
         blocks: impl IntoIterator<Item = Block>,
         entities: impl IntoIterator<Item = (Entity, Properties)>,
     ) -> Result<Self, TransactionError> {
+        let mut drawing = Self::with_rows(layers, linetypes, text_styles, dim_styles, [], blocks)?;
+        for (entity, properties) in entities {
+            Self::check_record(&drawing, &entity, &properties)?;
+            let id = drawing.ids.allocate();
+            drawing
+                .entities
+                .insert(id, EntityRecord::new(entity, properties))
+                .expect("freshly allocated IDs are unique");
+        }
+        drawing.rebuild_index();
+        Ok(drawing)
+    }
+
+    /// A drawing with the tables' rows and no entity, each row checked.
+    fn with_rows(
+        layers: impl IntoIterator<Item = Layer>,
+        linetypes: impl IntoIterator<Item = LinetypeDef>,
+        text_styles: impl IntoIterator<Item = TextStyle>,
+        dim_styles: impl IntoIterator<Item = DimStyle>,
+        mleader_styles: impl IntoIterator<Item = MLeaderStyle>,
+        blocks: impl IntoIterator<Item = Block>,
+    ) -> Result<Self, TransactionError> {
         let mut drawing = Self::new();
+        for style in mleader_styles {
+            check_name(&style.name).map_err(TransactionError::BadMLeaderStyleName)?;
+            style.check().map_err(TransactionError::BadMLeaderStyle)?;
+            match drawing.mleader_styles.find(&style.name) {
+                Some(id) if id == MLeaderStyleId::FIRST => {
+                    let before = drawing.mleader_styles.get(MLeaderStyleId::FIRST).cloned();
+                    drawing.mleader_styles.apply(&TableChange::Replace {
+                        id: MLeaderStyleId::FIRST,
+                        before: before.expect("Standard is always there"),
+                        after: style,
+                    });
+                    continue;
+                }
+                Some(taken) => return Err(TransactionError::DuplicateMLeaderStyleName(taken)),
+                None => {}
+            }
+            let id = drawing.mleader_styles.allocate();
+            drawing
+                .mleader_styles
+                .apply(&TableChange::Insert { id, row: style });
+        }
         for style in dim_styles {
             check_name(&style.name).map_err(TransactionError::BadDimStyleName)?;
             style.check().map_err(TransactionError::BadDimStyle)?;
@@ -708,15 +835,6 @@ impl Drawing {
                 }
             }
         }
-        for (entity, properties) in entities {
-            check_record(&drawing, &entity, &properties)?;
-            let id = drawing.ids.allocate();
-            drawing
-                .entities
-                .insert(id, EntityRecord::new(entity, properties))
-                .expect("freshly allocated IDs are unique");
-        }
-        drawing.rebuild_index();
         Ok(drawing)
     }
 
@@ -755,6 +873,10 @@ impl Drawing {
             Entity::Leader(leader) if leader.check().is_err() => {
                 Err(TransactionError::BadLeader(leader.check().unwrap_err()))
             }
+            Entity::MLeader(mleader) if !drawing.mleader_styles.contains(mleader.style) => {
+                Err(TransactionError::UnknownMLeaderStyle(mleader.style))
+            }
+            Entity::MLeader(mleader) => mleader.check().map_err(TransactionError::BadMLeader),
             Entity::BlockRef(reference)
                 if !(reference.scale.is_finite() && reference.scale > 0.0) =>
             {
@@ -771,6 +893,7 @@ impl Drawing {
         let tables = Tables {
             blocks: &self.blocks,
             dim_styles: &self.dim_styles,
+            mleader_styles: &self.mleader_styles,
             point_style: self.settings.point_style,
             wipeout_frame: self.settings.wipeout_frame,
         };
@@ -929,6 +1052,11 @@ impl Drawing {
     /// The drawing's groups (#214), in the order they were made.
     pub fn groups(&self) -> &GroupTable {
         &self.groups
+    }
+
+    /// The drawing's multileader styles (#240).
+    pub fn mleader_styles(&self) -> &MLeaderStyleTable {
+        &self.mleader_styles
     }
 
     /// The drawing's named views (#235), in the order they were saved.
@@ -1132,6 +1260,7 @@ impl Drawing {
         Tables {
             blocks: &self.blocks,
             dim_styles: &self.dim_styles,
+            mleader_styles: &self.mleader_styles,
             point_style: self.settings.point_style,
             wipeout_frame: self.settings.wipeout_frame,
         }
@@ -1207,6 +1336,7 @@ impl Drawing {
         tx.set_unit(settings.unit);
         tx.set_point_style(settings.point_style)?;
         tx.set_wipeout_frame(settings.wipeout_frame);
+        tx.set_current_mleader_style(settings.current_mleader_style)?;
         tx.commit();
         self.history = History::default();
         Ok(self)
@@ -1382,6 +1512,10 @@ impl Drawing {
                 | Change::LayerState(_)
                 // Nor does a named view (#235).
                 | Change::View(_) => false,
+                // A multileader style changed, every multileader drawn by
+                // it (#240).
+                Change::MLeaderStyle(TableChange::Replace { .. }) => true,
+                Change::MLeaderStyle(_) => false,
             };
             match change {
                 Change::Entity(EntityChange::Insert { id, record }) => {
@@ -1456,6 +1590,29 @@ impl Drawing {
                     self.views.apply(change);
                     report.tables_changed = true;
                 }
+                Change::MLeaderStyle(change) => {
+                    self.mleader_styles.apply(change);
+                    report.tables_changed = true;
+                    // One row changed; every multileader drawn by it is
+                    // laid out afresh, and its index entry with it.
+                    if let TableChange::Replace { id, .. } = change {
+                        let dependents: Vec<EntityId> = self
+                            .entities
+                            .iter()
+                            .filter_map(|(entity_id, entity)| match &**entity {
+                                Entity::MLeader(mleader) if mleader.style == *id => Some(entity_id),
+                                _ => None,
+                            })
+                            .collect();
+                        for entity_id in dependents {
+                            if let Some(entity) = self.entities.get(entity_id) {
+                                let bounds = entity.bounds(self.tables());
+                                self.index.update(entity_id, bounds);
+                            }
+                            report.replaced.push(entity_id);
+                        }
+                    }
+                }
                 Change::DimStyle(change) => {
                     self.dim_styles.apply(change);
                     report.tables_changed = true;
@@ -1478,6 +1635,7 @@ impl Drawing {
                                 let tables = Tables {
                                     blocks: &self.blocks,
                                     dim_styles: &self.dim_styles,
+                                    mleader_styles: &self.mleader_styles,
                                     point_style: self.settings.point_style,
                                     wipeout_frame: self.settings.wipeout_frame,
                                 };
@@ -1871,6 +2029,81 @@ impl TransactionBuilder<'_> {
             before,
             after: group,
         }));
+        Ok(())
+    }
+
+    /// Adds a multileader style (#240). Its name must be allowed and not
+    /// taken, and its values ones a multileader can be drawn by.
+    pub fn add_mleader_style(
+        &mut self,
+        style: MLeaderStyle,
+    ) -> Result<MLeaderStyleId, TransactionError> {
+        style.check().map_err(TransactionError::BadMLeaderStyle)?;
+        self.check_mleader_style_name(&style.name, None)?;
+        let id = self.drawing.mleader_styles.allocate();
+        self.push_other(Change::MLeaderStyle(TableChange::Insert { id, row: style }));
+        Ok(id)
+    }
+
+    /// Replaces a multileader style's values or name, keeping its ID and
+    /// so every multileader drawn by it. `Standard` keeps its name.
+    pub fn replace_mleader_style(
+        &mut self,
+        id: MLeaderStyleId,
+        style: MLeaderStyle,
+    ) -> Result<(), TransactionError> {
+        style.check().map_err(TransactionError::BadMLeaderStyle)?;
+        let before = self.existing_mleader_style(id)?;
+        if style.name != before.name {
+            if id == MLeaderStyleId::FIRST {
+                return Err(TransactionError::PermanentMLeaderStyle);
+            }
+            self.check_mleader_style_name(&style.name, Some(id))?;
+        }
+        self.push_other(Change::MLeaderStyle(TableChange::Replace {
+            id,
+            before,
+            after: style,
+        }));
+        Ok(())
+    }
+
+    /// Removes a multileader style nothing is drawn by and that is not the
+    /// current one. `Standard` stays.
+    pub fn remove_mleader_style(&mut self, id: MLeaderStyleId) -> Result<(), TransactionError> {
+        if id == MLeaderStyleId::FIRST {
+            return Err(TransactionError::PermanentMLeaderStyle);
+        }
+        let row = self.existing_mleader_style(id)?;
+        let uses =
+            |entity: &Entity| matches!(entity, Entity::MLeader(mleader) if mleader.style == id);
+        let pending = self.changes.iter().any(|change| match change {
+            Change::Entity(EntityChange::Insert { record, .. })
+            | Change::Entity(EntityChange::Replace { after: record, .. }) => uses(&record.entity),
+            _ => false,
+        });
+        if pending
+            || self.settings_now().current_mleader_style == id
+            || self.drawing.entities().any(|(_, entity)| uses(entity))
+            || self.blocks_use(|record| uses(&record.entity))
+        {
+            return Err(TransactionError::MLeaderStyleInUse(id));
+        }
+        self.push_other(Change::MLeaderStyle(TableChange::Remove { id, row }));
+        Ok(())
+    }
+
+    /// Makes `id` the style new multileaders are drawn by.
+    pub fn set_current_mleader_style(
+        &mut self,
+        id: MLeaderStyleId,
+    ) -> Result<(), TransactionError> {
+        self.mleader_style_now(id)
+            .ok_or(TransactionError::UnknownMLeaderStyle(id))?;
+        self.set_settings(DrawingSettings {
+            current_mleader_style: id,
+            ..self.settings_now()
+        });
         Ok(())
     }
 
@@ -2461,6 +2694,7 @@ impl TransactionBuilder<'_> {
             | Change::Group(_)
             | Change::LayerState(_)
             | Change::View(_)
+            | Change::MLeaderStyle(_)
             | Change::Settings(_) => false,
         });
         if pending
@@ -3159,6 +3393,58 @@ impl TransactionBuilder<'_> {
     }
 
     /// Refuses a name a group cannot have, or another group has.
+    /// The multileader style `id` as it will be once this transaction
+    /// commits.
+    fn mleader_style_now(&self, id: MLeaderStyleId) -> Option<&MLeaderStyle> {
+        let change = self.others().rev().find_map(|change| match change {
+            Change::MLeaderStyle(change) if change.id() == id => Some(change),
+            _ => None,
+        });
+        match change {
+            Some(TableChange::Remove { .. }) => None,
+            Some(TableChange::Insert { row, .. }) => Some(row),
+            Some(TableChange::Replace { after, .. }) => Some(after),
+            None => self.drawing.mleader_styles.get(id),
+        }
+    }
+
+    fn existing_mleader_style(&self, id: MLeaderStyleId) -> Result<MLeaderStyle, TransactionError> {
+        let changed = self
+            .others()
+            .any(|change| matches!(change, Change::MLeaderStyle(change) if change.id() == id));
+        if changed {
+            return Err(TransactionError::UnknownMLeaderStyle(id));
+        }
+        self.drawing
+            .mleader_styles
+            .get(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownMLeaderStyle(id))
+    }
+
+    fn check_mleader_style_name(
+        &self,
+        name: &str,
+        except: Option<MLeaderStyleId>,
+    ) -> Result<(), TransactionError> {
+        check_name(name).map_err(TransactionError::BadMLeaderStyleName)?;
+        let added = self.others().filter_map(|change| match change {
+            Change::MLeaderStyle(TableChange::Insert { id, row }) => Some((*id, row)),
+            Change::MLeaderStyle(TableChange::Replace { id, after, .. }) => Some((*id, after)),
+            _ => None,
+        });
+        let taken = self
+            .drawing
+            .mleader_styles
+            .iter()
+            .chain(added)
+            .find(|(id, other)| Some(*id) != except && same_name(&other.name, name));
+        match taken {
+            Some((id, _)) => Err(TransactionError::DuplicateMLeaderStyleName(id)),
+            None => Ok(()),
+        }
+    }
+
     fn existing_view(&self, id: NamedViewId) -> Result<NamedView, TransactionError> {
         let changed = self
             .others()
@@ -5224,6 +5510,7 @@ mod tests {
             current_lineweight: Lineweight::Hundredths(50),
             current_dim_style: DimStyleId::FIRST,
             current_text_style: TextStyleId::FIRST,
+            current_mleader_style: crate::mleader::MLeaderStyleId::FIRST,
             ltscale: 25.0,
             unit: Some(LengthUnit::Millimetres),
             point_style: PointStyle::new(3, 2.0),
@@ -6795,6 +7082,13 @@ mod tests {
         /// A layer merged into another, one deleted with what is on it
         /// (#236).
         MergeLayer(usize, usize),
+        /// A multileader style made, restyled (an arrow size, which may be
+        /// refused), removed, or set current; a multileader drawn (#240).
+        AddMLeaderStyle(u8),
+        RestyleMLeader(usize, f64),
+        RemoveMLeaderStyle(usize),
+        SetMLeaderStyle(usize),
+        CreateMLeader(f64, usize),
         DeleteLayer(usize),
         DeleteView(usize),
         Undo,
@@ -6907,6 +7201,11 @@ mod tests {
             1 => any::<usize>().prop_map(Op::DeleteView),
             1 => (any::<usize>(), any::<usize>()).prop_map(|(from, into)| Op::MergeLayer(from, into)),
             1 => any::<usize>().prop_map(Op::DeleteLayer),
+            1 => (0..4u8).prop_map(Op::AddMLeaderStyle),
+            1 => (any::<usize>(), -1.0..8.0f64).prop_map(|(i, size)| Op::RestyleMLeader(i, size)),
+            1 => any::<usize>().prop_map(Op::RemoveMLeaderStyle),
+            1 => any::<usize>().prop_map(Op::SetMLeaderStyle),
+            2 => (coordinate(), any::<usize>()).prop_map(|(x, style)| Op::CreateMLeader(x, style)),
             1 => (0..5u8).prop_map(Op::AddDimStyle),
             1 => (any::<usize>(), -1.0..5.0f64, 0..5u8).prop_map(|(i, h, n)| Op::RestyleDimStyle(i, h, n)),
             1 => any::<usize>().prop_map(Op::RemoveDimStyle),
@@ -6934,6 +7233,7 @@ mod tests {
         Vec<(GroupId, Group)>,
         Vec<(LayerStateId, LayerState)>,
         Vec<(NamedViewId, NamedView)>,
+        Vec<(MLeaderStyleId, MLeaderStyle)>,
         DrawingSettings,
     );
 
@@ -7004,6 +7304,11 @@ mod tests {
                 .views()
                 .iter()
                 .map(|(id, view)| (id, view.clone()))
+                .collect(),
+            drawing
+                .mleader_styles()
+                .iter()
+                .map(|(id, style)| (id, style.clone()))
                 .collect(),
             drawing.settings(),
         )
@@ -7118,6 +7423,54 @@ mod tests {
                             layer.locked = locked;
                         });
                         prop_assert_eq!(switched.is_ok(), (on && !frozen) || id != drawing.current_layer(), "{:?}", switched);
+                    }
+                    Op::AddMLeaderStyle(name) => {
+                        let name = format!("ml{name}");
+                        let taken = drawing.mleader_styles().find(&name).is_some();
+                        let mut tx = drawing.transaction();
+                        let made = tx.add_mleader_style(MLeaderStyle::named(name));
+                        prop_assert_eq!(made.is_err(), taken);
+                        tx.commit();
+                    }
+                    Op::RestyleMLeader(pick, size) => {
+                        let styles: Vec<MLeaderStyleId> = drawing.mleader_styles().iter().map(|(id, _)| id).collect();
+                        let id = styles[pick % styles.len()];
+                        let style = MLeaderStyle { arrow_size: size, ..drawing.mleader_styles().get(id).unwrap().clone() };
+                        let mut tx = drawing.transaction();
+                        let changed = tx.replace_mleader_style(id, style);
+                        prop_assert_eq!(changed.is_ok(), size > 0.0);
+                        tx.commit();
+                    }
+                    Op::RemoveMLeaderStyle(pick) => {
+                        let styles: Vec<MLeaderStyleId> = drawing.mleader_styles().iter().map(|(id, _)| id).collect();
+                        let id = styles[pick % styles.len()];
+                        let used = drawing.entities().any(|(_, entity)| matches!(entity, Entity::MLeader(m) if m.style == id))
+                            || drawing.settings().current_mleader_style == id;
+                        let mut tx = drawing.transaction();
+                        let removed = tx.remove_mleader_style(id);
+                        prop_assert_eq!(removed.is_ok(), id != MLeaderStyleId::FIRST && !used);
+                        tx.commit();
+                    }
+                    Op::SetMLeaderStyle(pick) => {
+                        let styles: Vec<MLeaderStyleId> = drawing.mleader_styles().iter().map(|(id, _)| id).collect();
+                        let id = styles[pick % styles.len()];
+                        let mut tx = drawing.transaction();
+                        tx.set_current_mleader_style(id).unwrap();
+                        tx.commit();
+                    }
+                    Op::CreateMLeader(x, pick) => {
+                        let styles: Vec<MLeaderStyleId> = drawing.mleader_styles().iter().map(|(id, _)| id).collect();
+                        let style = styles[pick % styles.len()];
+                        let mleader = crate::MLeaderEntity::new(
+                            Point2::new(x, 0.0),
+                            Point2::new(x + 10.0, 10.0),
+                            crate::MLeaderContent::Text("Note".to_owned()),
+                        )
+                        .in_style(style);
+                        let mut tx = drawing.transaction();
+                        let id = tx.insert(mleader).unwrap();
+                        tx.commit();
+                        allocated.push(id);
                     }
                     Op::MergeLayer(from, into) => {
                         let (from, into) = (layer(from), layer(into));
@@ -7746,6 +8099,13 @@ mod tests {
                 }
                 prop_assert!(drawing.next_entity_id() >= high_water);
                 high_water = drawing.next_entity_id();
+                // Every multileader is drawn by a style the drawing has (#240).
+                for (id, entity) in drawing.entities() {
+                    if let Entity::MLeader(mleader) = entity {
+                        prop_assert!(drawing.mleader_styles().contains(mleader.style), "multileader {} has no style", id);
+                    }
+                }
+                prop_assert!(drawing.mleader_styles().contains(drawing.settings().current_mleader_style));
                 // Every named view is of a space the drawing has (#235).
                 for (id, view) in drawing.views().iter() {
                     prop_assert!(drawing.layouts().contains(view.space), "view {} is of a space that is gone", id);

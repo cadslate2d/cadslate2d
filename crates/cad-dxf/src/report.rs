@@ -27,6 +27,11 @@ pub struct ImportReport {
     pub construction_lines: usize,
     /// Wipeouts (#226).
     pub wipeouts: usize,
+    /// Multileaders (#240).
+    pub mleaders: usize,
+    /// Multileader styles besides `Standard` in the drawing after the
+    /// import (#240).
+    pub mleader_styles: usize,
     /// Saved layer states (#228).
     pub layer_states: usize,
     /// Named views (#235).
@@ -158,6 +163,7 @@ impl ImportReport {
                 "construction lines",
             ),
             (self.wipeouts, "wipeout", "wipeouts"),
+            (self.mleaders, "multileader", "multileaders"),
         ];
         let imported: Vec<String> = kinds
             .into_iter()
@@ -189,6 +195,7 @@ impl ImportReport {
             + self.linetypes
             + self.text_styles
             + self.dim_styles
+            + self.mleader_styles
             + self.blocks
             + self.groups
             + self.layer_states
@@ -200,6 +207,11 @@ impl ImportReport {
                 (self.linetypes, "linetype", "linetypes"),
                 (self.text_styles, "text style", "text styles"),
                 (self.dim_styles, "dimension style", "dimension styles"),
+                (
+                    self.mleader_styles,
+                    "multileader style",
+                    "multileader styles",
+                ),
                 (self.blocks, "block", "blocks"),
                 (self.groups, "group", "groups"),
                 (self.layer_states, "layer state", "layer states"),

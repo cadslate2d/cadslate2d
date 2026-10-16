@@ -20,9 +20,9 @@ use cad_document::{
     Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity,
     EntityRecord, Group, HatchEntity, HatchStyle, Justification, Layer, LayerState, Layout,
     LayoutArea, LayoutId, LayoutPlot, LayoutTable, LeaderEntity, LineEntity, Linetype, LinetypeDef,
-    LinetypeTable, Lineweight, MTextEntity, Measure, PointEntity, PolylineEntity, Properties,
-    Revision, SplineEntity, TextEntity, TextStyle, TextStyleId, TextStyleTable, ViewportEntity,
-    WipeoutEntity, draw_order,
+    LinetypeTable, Lineweight, MLeaderContent, MLeaderEntity, MLeaderStyle, MLeaderStyleId,
+    MTextEntity, Measure, PointEntity, PolylineEntity, Properties, Revision, SplineEntity,
+    TextEntity, TextStyle, TextStyleId, TextStyleTable, ViewportEntity, WipeoutEntity, draw_order,
 };
 
 use crate::properties::{
@@ -192,6 +192,46 @@ impl Structure {
 /// frozen, locked, colour, linetype, and lineweight.
 const LAYER_STATE_MASK: i64 = 1 | 2 | 4 | 32 | 64 | 128;
 
+/// Whether the drawing needs its multileader styles written (#240): it
+/// has a multileader, or a style that is not a new drawing's.
+fn has_mleader_styles(drawing: &Drawing) -> bool {
+    let styles = drawing.mleader_styles();
+    styles.len() > 1
+        || styles
+            .get(MLeaderStyleId::FIRST)
+            .is_some_and(|standard| *standard != MLeaderStyle::named(MLeaderStyle::STANDARD))
+        || has_mleaders(drawing)
+}
+
+/// Whether the drawing holds a multileader, in a space or a block.
+fn has_mleaders(drawing: &Drawing) -> bool {
+    let is_mleader = |entity: &Entity| matches!(entity, Entity::MLeader(_));
+    drawing.entities().any(|(_, entity)| is_mleader(entity))
+        || drawing.blocks().iter().any(|(_, block)| {
+            block
+                .entities
+                .iter()
+                .any(|record| is_mleader(&record.entity))
+        })
+}
+
+/// The `ACAD_MLEADERSTYLE` dictionary's handle and each style's MLEADERSTYLE
+/// object's, in table order.
+struct MLeaderStyleHandles {
+    dictionary: Handle,
+    rows: Vec<(MLeaderStyleId, Handle)>,
+}
+
+impl MLeaderStyleHandles {
+    fn of(&self, id: MLeaderStyleId) -> Handle {
+        self.rows
+            .iter()
+            .find(|(row, _)| *row == id)
+            .or_else(|| self.rows.first())
+            .map_or(Handle::NONE, |(_, handle)| *handle)
+    }
+}
+
 /// Whether the drawing holds a wipeout, in any space.
 fn has_wipeouts(drawing: &Drawing) -> bool {
     drawing
@@ -289,6 +329,14 @@ impl Export {
         // layout draws it, for a reader that does not lay dimensions out.
         let dimensions = dimensions_in_write_order(drawing);
         let dimension_records: Vec<Handle> = dimensions.iter().map(|_| handles.take()).collect();
+        let mleader_styles = has_mleader_styles(drawing).then(|| MLeaderStyleHandles {
+            dictionary: handles.take(),
+            rows: drawing
+                .mleader_styles()
+                .iter()
+                .map(|(id, _)| (id, handles.take()))
+                .collect(),
+        });
         let mut body = Writer {
             out: String::new(),
             handles,
@@ -301,6 +349,7 @@ impl Export {
             member_handles: HashMap::new(),
             row_handles: HashMap::new(),
             layer_states: None,
+            mleader_styles,
         };
         body.grouped = drawing
             .groups()
@@ -405,6 +454,7 @@ impl Export {
             member_handles: HashMap::new(),
             row_handles: HashMap::new(),
             layer_states: None,
+            mleader_styles: self.body.mleader_styles.take(),
         };
         header.section("HEADER", |w| w.header(drawing, self.body.handles.seed()));
         Ok(header.out + &self.body.out)
@@ -439,6 +489,8 @@ struct Writer {
     /// The LAYER table's handle and its extension dictionary's, when the
     /// drawing has layer states to keep there (#228).
     layer_states: Option<(Handle, Handle)>,
+    /// Where the multileader styles go, when the drawing needs them (#240).
+    mleader_styles: Option<MLeaderStyleHandles>,
 }
 
 /// Every dimension, with its properties, in the order their DIMENSION
@@ -628,6 +680,14 @@ impl Writer {
             self.group(9, "$TEXTSTYLE");
             self.group(7, &style.name);
         }
+        // The multileader style new ones take, by its MLEADERSTYLE (#240).
+        if settings.current_mleader_style != MLeaderStyleId::FIRST
+            && let Some(styles) = &self.mleader_styles
+        {
+            let style = styles.of(settings.current_mleader_style);
+            self.group(9, "$CMLEADERSTYLE");
+            self.handle(340, style);
+        }
         // Exactly the default is left out; any other value is written as it is.
         #[allow(clippy::float_cmp)]
         if settings.ltscale != defaults.ltscale {
@@ -672,7 +732,8 @@ impl Writer {
         // then the drawing's own, Continuous first.
         self.table("LTYPE", linetypes.len() + 2, |w, table| {
             for name in ["ByBlock", "ByLayer"] {
-                w.row("LTYPE", table, "AcDbLinetypeTableRecord");
+                let handle = w.row("LTYPE", table, "AcDbLinetypeTableRecord");
+                w.row_handles.insert(("LTYPE", name.to_uppercase()), handle);
                 w.linetype(&LinetypeDef {
                     name: name.to_owned(),
                     description: String::new(),
@@ -701,7 +762,9 @@ impl Writer {
         });
         self.table("STYLE", drawing.text_styles().len(), |w, table| {
             for (_, style) in drawing.text_styles().iter() {
-                w.row("STYLE", table, "AcDbTextStyleTableRecord");
+                let handle = w.row("STYLE", table, "AcDbTextStyleTableRecord");
+                w.row_handles
+                    .insert(("STYLE", style.name.to_uppercase()), handle);
                 w.text_style(style);
             }
         });
@@ -1131,6 +1194,7 @@ impl Writer {
             Entity::XLine(_) => "XLINE",
             Entity::Ray(_) => "RAY",
             Entity::Wipeout(_) => "WIPEOUT",
+            Entity::MLeader(_) => "MULTILEADER",
         };
         self.entity(kind, owner, layer, &record.properties, drawing.linetypes());
         match &*record.entity {
@@ -1168,7 +1232,137 @@ impl Writer {
                 self.point(11, Point2::ORIGIN + ray.direction);
             }
             Entity::Wipeout(wipeout) => self.wipeout(wipeout),
+            Entity::MLeader(mleader) => self.mleader(mleader, drawing),
         }
+    }
+
+    /// A MULTILEADER (#240, ADR-0033), as a release 2000 reader expects
+    /// it. The context data holds the layout: the scale (40), the
+    /// dogleg's end (10), the text height (41), the arrowhead size (140),
+    /// the landing gap (145), and the note — an MTEXT's words (290, 304),
+    /// its style (340), and its top left corner (12). Its one root (302)
+    /// holds the landing (10), the dogleg's direction (11) and length
+    /// (40), and each leader line (304 to 305) from its tip (10). After
+    /// it come the style (340), the leaders' look — straight (170), by
+    /// block (91, 341, 171) — the landing and dogleg (290, 291, 41), the
+    /// arrowhead size (42), what the note is (172), and its text style
+    /// (343), which every multileader must name.
+    fn mleader(&mut self, mleader: &MLeaderEntity, drawing: &Drawing) {
+        /// A colour by block, as a multileader's 90-something groups give
+        /// one.
+        const BY_BLOCK: i64 = -1_056_964_608;
+        let style = drawing.tables().mleader_style(mleader.style);
+        let layout = mleader.layout(style);
+        let along = Vec2::new(layout.reads, 0.0);
+        let dogleg_end = mleader.landing + along * style.dogleg_length;
+        let text_style = self
+            .row_handles
+            .get(&("STYLE", TextStyle::STANDARD.to_uppercase()))
+            .copied()
+            .unwrap_or(Handle::NONE);
+        let style_handle = self
+            .mleader_styles
+            .as_ref()
+            .map_or(Handle::NONE, |handles| handles.of(mleader.style));
+        let words = match &mleader.content {
+            MLeaderContent::Text(words) if !words.trim().is_empty() => Some(words.as_str()),
+            _ => None,
+        };
+        self.group(100, "AcDbMLeader");
+        self.int(270, 2);
+        self.group(300, "CONTEXT_DATA{");
+        self.real(40, 1.0);
+        self.point(10, dogleg_end);
+        self.real(41, style.text_height);
+        self.real(140, style.arrow_size);
+        self.real(145, style.landing_gap);
+        for (code, value) in [(174, 1), (175, 1), (176, 0), (177, 0)] {
+            self.int(code, value);
+        }
+        self.int(290, i64::from(words.is_some()));
+        if let Some(words) = words {
+            // The text's top corner on the side the note reads from.
+            let corner = layout.note_at + Vec2::new(0.0, style.text_height / 2.0);
+            self.group(304, &mtext_codes(words));
+            // The normal: up the Z axis.
+            self.real(11, 0.0);
+            self.real(21, 0.0);
+            self.real(31, 1.0);
+            self.handle(340, text_style);
+            self.point(12, corner);
+            self.point(13, Point2::new(1.0, 0.0));
+            for code in [42, 43, 44] {
+                self.real(code, 0.0);
+            }
+            self.real(45, 1.0);
+            self.int(170, 1);
+            self.int(90, BY_BLOCK);
+            // Left (1) or right (3) aligned, as the note reads.
+            self.int(171, if layout.reads > 0.0 { 1 } else { 3 });
+            self.int(172, 1);
+            self.int(91, -939_524_096);
+            self.real(141, 1.5);
+            self.int(92, 0);
+            for code in [291, 292, 173, 293] {
+                self.int(code, 0);
+            }
+            self.real(142, 0.0);
+            self.real(143, 0.0);
+            self.int(294, 0);
+            self.int(295, 1);
+        }
+        self.int(296, 0);
+        self.point(110, Point2::ORIGIN);
+        self.point(111, Point2::new(1.0, 0.0));
+        self.point(112, Point2::new(0.0, 1.0));
+        self.int(297, 0);
+        self.group(302, "LEADER{");
+        self.int(290, 1);
+        self.int(291, 1);
+        self.point(10, mleader.landing);
+        self.point(11, Point2::ORIGIN + along);
+        self.int(90, 0);
+        self.real(40, style.dogleg_length);
+        for (index, leader) in mleader.leaders.iter().enumerate() {
+            self.group(304, "LEADER_LINE{");
+            for point in leader {
+                self.point(10, *point);
+            }
+            self.int(91, index as i64);
+            self.group(305, "}");
+        }
+        self.group(303, "}");
+        self.group(301, "}");
+        self.handle(340, style_handle);
+        self.int(90, 0);
+        self.int(170, 1);
+        self.int(91, BY_BLOCK);
+        let by_block = self
+            .row_handles
+            .get(&("LTYPE", "BYBLOCK".to_owned()))
+            .copied()
+            .unwrap_or(Handle::NONE);
+        self.handle(341, by_block);
+        self.int(171, -2);
+        self.int(290, 1);
+        self.int(291, i64::from(style.dogleg_length > 0.0));
+        self.real(41, style.dogleg_length);
+        self.real(42, style.arrow_size);
+        self.int(172, if words.is_some() { 2 } else { 0 });
+        self.handle(343, text_style);
+        for (code, value) in [(173, 1), (95, 1), (174, 1), (175, 0)] {
+            self.int(code, value);
+        }
+        self.int(92, BY_BLOCK);
+        self.int(292, 0);
+        self.int(93, BY_BLOCK);
+        // The block's scale, none.
+        for code in [10, 20, 30] {
+            self.real(code, 1.0);
+        }
+        self.real(43, 0.0);
+        self.int(176, 0);
+        self.int(293, 0);
     }
 
     /// A LEADER (#205): its style (3), whether it has a note (73: 0 for
@@ -1753,6 +1947,11 @@ impl Writer {
         self.handle(350, structure.groups);
         self.group(3, "ACAD_LAYOUT");
         self.handle(350, structure.layouts);
+        if let Some(styles) = &self.mleader_styles {
+            let dictionary = styles.dictionary;
+            self.group(3, "ACAD_MLEADERSTYLE");
+            self.handle(350, dictionary);
+        }
         self.group(3, "ACAD_PLOTSTYLENAME");
         self.handle(350, structure.plot_styles);
         if let Some(handle) = wipeout_variables {
@@ -1844,6 +2043,7 @@ impl Writer {
         }
 
         self.layer_state_objects(drawing);
+        self.mleader_style_objects(structure.root, drawing);
         if let Some(handle) = wipeout_variables {
             self.group(0, "WIPEOUTVARIABLES");
             self.handle(5, handle);
@@ -1911,6 +2111,76 @@ impl Writer {
         }
     }
 
+    /// The drawing's multileader styles (#240): the `ACAD_MLEADERSTYLE`
+    /// dictionary naming a MLEADERSTYLE object per style. An object holds
+    /// the leaders' look and the style's lengths: the landing gap (42),
+    /// whether there is a dogleg (291) and its length (43), the arrowhead
+    /// size (44), the text style (342), and the text height (45).
+    fn mleader_style_objects(&mut self, root: Handle, drawing: &Drawing) {
+        /// A colour by block.
+        const BY_BLOCK: i64 = -1_056_964_608;
+        let Some(styles) = self.mleader_styles.take() else {
+            return;
+        };
+        let text_style = self
+            .row_handles
+            .get(&("STYLE", TextStyle::STANDARD.to_uppercase()))
+            .copied()
+            .unwrap_or(Handle::NONE);
+        self.dictionary(styles.dictionary, root);
+        let rows: Vec<(Handle, &MLeaderStyle)> = styles
+            .rows
+            .iter()
+            .filter_map(|(id, handle)| Some((*handle, drawing.mleader_styles().get(*id)?)))
+            .collect();
+        for (handle, style) in &rows {
+            self.group(3, &style.name);
+            self.handle(350, *handle);
+        }
+        for (handle, style) in rows {
+            self.group(0, "MLEADERSTYLE");
+            self.handle(5, handle);
+            self.handle(330, styles.dictionary);
+            self.group(100, "AcDbMLeaderStyle");
+            for (code, value) in [(179, 2), (170, 2), (171, 1), (172, 0), (90, 2)] {
+                self.int(code, value);
+            }
+            self.real(40, 0.0);
+            self.real(41, 0.0);
+            self.int(173, 1);
+            self.int(91, BY_BLOCK);
+            self.int(92, -2);
+            self.int(290, 1);
+            self.real(42, style.landing_gap);
+            self.int(291, i64::from(style.dogleg_length > 0.0));
+            self.real(43, style.dogleg_length);
+            self.group(3, "");
+            self.real(44, style.arrow_size);
+            self.group(300, "");
+            self.handle(342, text_style);
+            for (code, value) in [(174, 1), (175, 1), (176, 0), (178, 1)] {
+                self.int(code, value);
+            }
+            self.int(93, BY_BLOCK);
+            self.real(45, style.text_height);
+            self.int(292, 0);
+            self.int(297, 0);
+            self.real(46, 4.0);
+            self.int(94, BY_BLOCK);
+            for code in [47, 49, 140] {
+                self.real(code, 1.0);
+            }
+            self.int(294, 1);
+            self.real(141, 0.0);
+            self.int(177, 0);
+            self.real(142, 1.0);
+            self.int(295, 0);
+            self.int(296, 0);
+            self.real(143, 3.75);
+        }
+        self.mleader_styles = Some(styles);
+    }
+
     /// The CLASSES a file needs for the records of later releases it
     /// holds (#226): a wipeout and its variables.
     fn classes(&mut self, drawing: &Drawing) {
@@ -1926,6 +2196,22 @@ impl Writer {
                 has_wipeouts(drawing),
                 ["WIPEOUT", "AcDbWipeout", "WipeOut"],
                 127,
+                true,
+            ),
+            (
+                has_mleader_styles(drawing),
+                [
+                    "MLEADERSTYLE",
+                    "AcDbMLeaderStyle",
+                    "ACDB_MLEADERSTYLE_CLASS",
+                ],
+                4095,
+                false,
+            ),
+            (
+                has_mleaders(drawing),
+                ["MULTILEADER", "AcDbMLeader", "ACDB_MLEADER_CLASS"],
+                3071,
                 true,
             ),
         ];
@@ -2581,6 +2867,7 @@ mod tests {
                 unit: None,
                 point_style: cad_document::PointStyle::new(35, 2.5),
                 wipeout_frame: true,
+                current_mleader_style: MLeaderStyleId::FIRST,
             })
             .unwrap()
     }

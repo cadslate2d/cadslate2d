@@ -114,6 +114,11 @@ pub(crate) fn replaced_in(
                 swap(&mut attribute.value);
             }
         }
+        Entity::MLeader(mleader) => {
+            if let cad_document::MLeaderContent::Text(words) = &mut mleader.content {
+                swap(words);
+            }
+        }
         Entity::Leader(leader) => {
             if let Some(note) = &mut leader.text {
                 swap(note);

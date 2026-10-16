@@ -32,6 +32,7 @@ mod layout;
 mod leader;
 mod linetype;
 mod lineweight;
+mod mleader;
 mod mtext;
 mod named_view;
 mod names;
@@ -58,7 +59,9 @@ pub use cad_geometry::{Path, Spline};
 pub use construction::{CONSTRUCTION_REACH, RayEntity, XLineEntity};
 pub use dim_style::{DimStyle, DimStyleChange, DimStyleError, DimStyleId, DimStyleTable};
 pub use dimension::{Chain, DimensionEntity, DimensionError, DimensionLayout, Measure};
-pub use drawing::{ApplyReport, Drawing, PurgeScope, Purged, TransactionBuilder, TransactionError};
+pub use drawing::{
+    ApplyReport, Drawing, DrawingParts, PurgeScope, Purged, TransactionBuilder, TransactionError,
+};
 pub use editing::{
     BreakError, CornerError, Cornered, ExtendError, LengthenError, Lengthening, OffsetError,
     StretchHold, TrimError, TrimParts,
@@ -82,6 +85,10 @@ pub use layout::{Layout, LayoutArea, LayoutChange, LayoutId, LayoutPlot, LayoutT
 pub use leader::{LeaderEntity, LeaderError, LeaderLayout};
 pub use linetype::{LinetypeChange, LinetypeDef, LinetypeError, LinetypeId, LinetypeTable};
 pub use lineweight::Weight;
+pub use mleader::{
+    MLeaderContent, MLeaderEntity, MLeaderError, MLeaderLayout, MLeaderStyle, MLeaderStyleChange,
+    MLeaderStyleError, MLeaderStyleId, MLeaderStyleTable,
+};
 pub use mtext::LINE_SPACING;
 pub use named_view::{NamedView, NamedViewChange, NamedViewId, NamedViewTable};
 pub use names::{FORBIDDEN, NameError, Named, check_name, same_name};

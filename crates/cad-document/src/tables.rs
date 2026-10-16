@@ -12,6 +12,7 @@ use cad_core::Aabb;
 
 use crate::block::{BlockReferenceEntity, BlockTable, empty_blocks};
 use crate::dim_style::{DimStyle, DimStyleId, DimStyleTable, initial_dim_styles};
+use crate::mleader::{MLeaderStyle, MLeaderStyleId, MLeaderStyleTable, initial_mleader_styles};
 use crate::point::PointStyle;
 use crate::properties::Properties;
 
@@ -20,6 +21,8 @@ use crate::properties::Properties;
 pub struct Tables<'a> {
     pub blocks: &'a BlockTable,
     pub dim_styles: &'a DimStyleTable,
+    /// The multileader styles (#240), which lay multileaders out.
+    pub mleader_styles: &'a MLeaderStyleTable,
     /// How points are drawn (#198): a setting, read here beside the
     /// tables because a point's marker depends on it as a dimension's
     /// layout depends on its style.
@@ -36,9 +39,11 @@ impl<'a> Tables<'a> {
     /// them is drawn by `Standard` as a new drawing has it.
     pub fn none() -> Tables<'static> {
         static STYLES: std::sync::OnceLock<DimStyleTable> = std::sync::OnceLock::new();
+        static MLEADER_STYLES: std::sync::OnceLock<MLeaderStyleTable> = std::sync::OnceLock::new();
         Tables {
             blocks: empty_blocks(),
             dim_styles: STYLES.get_or_init(initial_dim_styles),
+            mleader_styles: MLEADER_STYLES.get_or_init(initial_mleader_styles),
             point_style: PointStyle::default(),
             wipeout_frame: true,
         }
@@ -50,6 +55,7 @@ impl<'a> Tables<'a> {
         Tables {
             blocks,
             dim_styles: Tables::none().dim_styles,
+            mleader_styles: Tables::none().mleader_styles,
             point_style: PointStyle::default(),
             wipeout_frame: true,
         }
@@ -65,6 +71,17 @@ impl<'a> Tables<'a> {
             .unwrap_or_else(|| {
                 static STANDARD: std::sync::OnceLock<DimStyle> = std::sync::OnceLock::new();
                 STANDARD.get_or_init(|| DimStyle::named(DimStyle::STANDARD))
+            })
+    }
+
+    /// The style a multileader is drawn by: its row, or `Standard`.
+    pub fn mleader_style(&self, id: MLeaderStyleId) -> &'a MLeaderStyle {
+        self.mleader_styles
+            .get(id)
+            .or_else(|| self.mleader_styles.get(MLeaderStyleId::FIRST))
+            .unwrap_or_else(|| {
+                static STANDARD: std::sync::OnceLock<MLeaderStyle> = std::sync::OnceLock::new();
+                STANDARD.get_or_init(|| MLeaderStyle::named(MLeaderStyle::STANDARD))
             })
     }
 

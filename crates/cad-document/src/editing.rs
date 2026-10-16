@@ -19,8 +19,8 @@ use cad_geometry::{
 
 use crate::{
     ArcEntity, AttributeDefinitionEntity, BlockReferenceEntity, CircleEntity, EllipseEntity,
-    Entity, LeaderEntity, LineEntity, MTextEntity, PointEntity, PolylineEntity, RayEntity,
-    TextEntity, ViewportEntity, WipeoutEntity, XLineEntity,
+    Entity, LeaderEntity, LineEntity, MLeaderEntity, MTextEntity, PointEntity, PolylineEntity,
+    RayEntity, TextEntity, ViewportEntity, WipeoutEntity, XLineEntity,
 };
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
@@ -276,6 +276,7 @@ impl Entity {
             | Entity::Wipeout(_)
             | Entity::Point(_)
             | Entity::Leader(_)
+            | Entity::MLeader(_)
             | Entity::XLine(_)
             | Entity::Ray(_) => return Err(LengthenError::Unsupported(self.kind_name())),
         };
@@ -371,6 +372,7 @@ impl Entity {
             Entity::Viewport(viewport) => held(&[viewport.center]),
             Entity::Point(point) => held(&[point.position]),
             Entity::Leader(leader) => held(&leader.vertices),
+            Entity::MLeader(mleader) => held(&mleader.points()),
             Entity::Wipeout(wipeout) => held(&wipeout.vertices),
         }
     }
@@ -478,6 +480,18 @@ impl Entity {
                 LeaderEntity {
                     vertices: leader.vertices.iter().map(|v| moved(*v)).collect(),
                     ..leader.clone()
+                }
+                .into(),
+            ),
+            Entity::MLeader(mleader) => Some(
+                MLeaderEntity {
+                    leaders: mleader
+                        .leaders
+                        .iter()
+                        .map(|leader| leader.iter().map(|v| moved(*v)).collect())
+                        .collect(),
+                    landing: moved(mleader.landing),
+                    ..mleader.clone()
                 }
                 .into(),
             ),
@@ -624,7 +638,8 @@ impl Entity {
             | Entity::Viewport(_)
             | Entity::Wipeout(_)
             | Entity::Point(_)
-            | Entity::Leader(_) => Err(BreakError::Unsupported(self.kind_name())),
+            | Entity::Leader(_)
+            | Entity::MLeader(_) => Err(BreakError::Unsupported(self.kind_name())),
             Entity::Polyline(polyline) => {
                 let path = polyline.path();
                 path.broken(first, second, TOLERANCE)
@@ -690,7 +705,8 @@ impl Entity {
             | Entity::Viewport(_)
             | Entity::Wipeout(_)
             | Entity::Point(_)
-            | Entity::Leader(_) => Err(TrimError::Unsupported(self.kind_name())),
+            | Entity::Leader(_)
+            | Entity::MLeader(_) => Err(TrimError::Unsupported(self.kind_name())),
             Entity::XLine(line) => {
                 let ts: Vec<f64> = cuts.iter().map(|cut| line.parameter_of(*cut)).collect();
                 trim_construction(
@@ -795,6 +811,7 @@ impl Entity {
             | Entity::Wipeout(_)
             | Entity::Point(_)
             | Entity::Leader(_)
+            | Entity::MLeader(_)
             | Entity::XLine(_)
             | Entity::Ray(_) => Err(ExtendError::Unsupported(self.kind_name())),
             Entity::Polyline(polyline) => {
@@ -868,6 +885,7 @@ impl Entity {
             | Entity::Wipeout(_)
             | Entity::Point(_)
             | Entity::Leader(_)
+            | Entity::MLeader(_)
             | Entity::XLine(_)
             | Entity::Ray(_) => None,
         }
@@ -938,6 +956,7 @@ impl Entity {
             | Entity::Wipeout(_)
             | Entity::Point(_)
             | Entity::Leader(_)
+            | Entity::MLeader(_)
             | Entity::XLine(_)
             | Entity::Ray(_) => Err(CornerError::Unsupported(entity.kind_name())),
         };
@@ -1050,6 +1069,7 @@ impl Entity {
             Entity::Viewport(_) => "viewport",
             Entity::Point(_) => "point",
             Entity::Leader(_) => "leader",
+            Entity::MLeader(_) => "multileader",
             Entity::XLine(_) => "construction line",
             Entity::Ray(_) => "ray",
             Entity::Wipeout(_) => "wipeout",
@@ -1142,7 +1162,8 @@ impl Entity {
             | Entity::Viewport(_)
             | Entity::Wipeout(_)
             | Entity::Point(_)
-            | Entity::Leader(_) => Err(OffsetError::Unsupported(self.kind_name())),
+            | Entity::Leader(_)
+            | Entity::MLeader(_) => Err(OffsetError::Unsupported(self.kind_name())),
         }
     }
 
@@ -1173,7 +1194,8 @@ impl Entity {
             | Entity::Viewport(_)
             | Entity::Wipeout(_)
             | Entity::Point(_)
-            | Entity::Leader(_) => {
+            | Entity::Leader(_)
+            | Entity::MLeader(_) => {
                 return Err(OffsetError::Unsupported(self.kind_name()));
             }
         };

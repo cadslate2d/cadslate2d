@@ -17,12 +17,12 @@ use std::collections::HashMap;
 use cad_core::{EntityId, LengthUnit, Point2, Vec2};
 use cad_document::{
     ArcEntity, AttributeDefinitionEntity, Block, BlockId, BlockReferenceEntity, BlockTable,
-    CircleEntity, Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings,
-    EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Justification, Layer, LayerId,
-    LayerState, Layout, LayoutId, LeaderEntity, LineEntity, Linetype, LinetypeDef, LinetypeId,
-    Lineweight, MTextEntity, Measure, PointEntity, PointStyle, PolylineEntity, Properties,
-    RawEntity, RawGroup, RayEntity, SavedLayer, TextEntity, TextStyle, TextStyleId, ViewportEntity,
-    XLineEntity, check_name, nearest_index, same_name,
+    CircleEntity, Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingParts,
+    DrawingSettings, EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Justification,
+    Layer, LayerId, LayerState, Layout, LayoutId, LeaderEntity, LineEntity, Linetype, LinetypeDef,
+    LinetypeId, Lineweight, MLeaderStyle, MLeaderStyleId, MTextEntity, Measure, PointEntity,
+    PointStyle, PolylineEntity, Properties, RawEntity, RawGroup, RayEntity, SavedLayer, TextEntity,
+    TextStyle, TextStyleId, ViewportEntity, XLineEntity, check_name, nearest_index, same_name,
 };
 
 use crate::export::insunits_code;
@@ -63,6 +63,9 @@ const BAD_LAYER_STATE: &str = "(layer state)";
 /// Report key for a named view the drawing cannot hold: its name taken
 /// or not allowed, or no size (#235).
 const BAD_VIEW: &str = "(view)";
+/// A multileader style with no name, a name taken, or values no
+/// multileader can be drawn by (#240).
+const BAD_MLEADER_STYLE: &str = "(multileader style)";
 /// Report key for a pattern too fine for its region at its scale: filled solid.
 const TOO_DENSE: &str = "(HATCH pattern too dense)";
 /// Report key for a DIMENSION of a kind the drawing has no measure for.
@@ -174,6 +177,8 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
         xrecords: Vec::new(),
         row_names: HashMap::new(),
         views: Vec::new(),
+        mleader_style_records: Vec::new(),
+        mleader_style_ids: HashMap::new(),
     };
     reader.read_file()?;
     reader.finish()
@@ -284,6 +289,8 @@ struct Pending {
     dim_style: Option<String>,
     /// A reference's block, by name.
     block: Option<String>,
+    /// A multileader's style, by the handle of its MLEADERSTYLE (#240).
+    mleader_style: Option<String>,
     /// It carried something the drawing cannot hold.
     dropped: bool,
     /// Group 67: the entity is in paper space (#191).
@@ -305,6 +312,7 @@ impl Default for Pending {
             style: None,
             dim_style: None,
             block: None,
+            mleader_style: None,
             dropped: false,
             paper: false,
             handle: None,
@@ -327,6 +335,9 @@ struct Header {
     /// The point style (#198): `$PDMODE` and `$PDSIZE`.
     point_mode: Option<i64>,
     point_size: Option<f64>,
+    /// `$CMLEADERSTYLE`: the style new multileaders take, by the handle of
+    /// its MLEADERSTYLE (#240).
+    current_mleader_style: Option<String>,
 }
 
 /// The tables as they are built up: the file's rows, then the rows made
@@ -629,6 +640,10 @@ struct Reader<'a> {
     row_names: HashMap<String, String>,
     /// VIEW rows as the file held them (#235).
     views: Vec<Vec<RawGroup>>,
+    /// MLEADERSTYLE objects as the file held them (#240).
+    mleader_style_records: Vec<Vec<RawGroup>>,
+    /// Each multileader style's handle, upper case, to the ID it takes.
+    mleader_style_ids: HashMap<String, MLeaderStyleId>,
 }
 
 /// An angle in degrees brought into (−180, 180]: a slant of 345° is one of
@@ -792,6 +807,9 @@ impl<'a> Reader<'a> {
                 ("$LTSCALE", 40) => self.header.ltscale = group.value.parse::<f64>().ok(),
                 ("$PDMODE", 70) => self.header.point_mode = number,
                 ("$PDSIZE", 40) => self.header.point_size = group.value.parse::<f64>().ok(),
+                ("$CMLEADERSTYLE", 340) => {
+                    self.header.current_mleader_style = Some(group.value.to_uppercase());
+                }
                 _ => continue,
             }
             variable = "";
@@ -855,17 +873,26 @@ impl<'a> Reader<'a> {
             // rows, whose handles name the layouts' blocks.
             let keep_raw = matches!(
                 record.value,
-                "HATCH" | "SPLINE" | "WIPEOUT" | "LAYOUT" | "BLOCK_RECORD" | "VIEW"
+                "HATCH" | "SPLINE" | "WIPEOUT" | "LAYOUT" | "BLOCK_RECORD" | "VIEW" | "MULTILEADER"
             ) || matches!(self.open_block, Some(OpenBlock::Paper(_)))
                 || (matches!(context, RecordContext::Objects)
                     && matches!(
                         record.value,
-                        "DICTIONARY" | "GROUP" | "SORTENTSTABLE" | "WIPEOUTVARIABLES" | "XRECORD"
+                        "DICTIONARY"
+                            | "GROUP"
+                            | "SORTENTSTABLE"
+                            | "WIPEOUTVARIABLES"
+                            | "XRECORD"
+                            | "MLEADERSTYLE"
                     ));
             if keep_raw {
                 body.raw = Some(Vec::new());
             }
             let mut groups = 0;
+            // A MULTILEADER's own groups (#240) carry normals and Z
+            // coordinates of their own, which are not the entity's
+            // elevation: they are read from the raw groups alone.
+            let mut own = false;
             let next = loop {
                 let group = self.groups.expect()?;
                 if group.code == 0 {
@@ -879,9 +906,19 @@ impl<'a> Reader<'a> {
                     });
                 }
                 if let Some(raw) = &mut body.raw {
-                    raw.push((group.code, group.value.to_owned()));
+                    // A multileader's words (304) keep the spaces at their
+                    // ends, as a text's do (#177).
+                    let value = if own && group.code == 304 {
+                        group.raw
+                    } else {
+                        group.value
+                    };
+                    raw.push((group.code, value.to_owned()));
                 }
-                body.absorb(group)?;
+                own |= record.value == "MULTILEADER" && group.is(100, "AcDbMLeader");
+                if !own {
+                    body.absorb(group)?;
+                }
             };
             self.finish_record(context, record, &body)?;
             record = next;
@@ -919,6 +956,7 @@ impl<'a> Reader<'a> {
                 ("GROUP", Some(raw)) => self.group_records.push(raw.clone()),
                 ("SORTENTSTABLE", Some(raw)) => self.sort_tables.push(raw.clone()),
                 ("XRECORD", Some(raw)) => self.xrecords.push(raw.clone()),
+                ("MLEADERSTYLE", Some(raw)) => self.mleader_style_records.push(raw.clone()),
                 ("WIPEOUTVARIABLES", Some(raw)) => {
                     self.wipeout_frame = crate::spline::Groups(raw).int(70).map(|frame| frame != 0);
                 }
@@ -1051,6 +1089,7 @@ impl<'a> Reader<'a> {
                     self.push(Entity::Leader(LeaderEntity::new(vertices)), pending)?;
                 }
             }
+            (_, "MULTILEADER") if entities => self.mleader(body)?,
             (_, "HATCH") if entities => self.hatch(body)?,
             (_, "WIPEOUT") if entities => match body.raw.as_deref().map(crate::wipeout::read) {
                 Some(Ok(wipeout)) => self.import(Entity::Wipeout(wipeout), body)?,
@@ -1600,6 +1639,72 @@ impl<'a> Reader<'a> {
             .map_err(|TableFull| self.too_many_rows("STYLE"))
     }
 
+    /// A MULTILEADER (#240, ADR-0033), from its raw groups: its style
+    /// by handle, resolved once the MLEADERSTYLE objects are read. What it
+    /// holds that the drawing does not is reported.
+    fn mleader(&mut self, body: &RecordBody) -> Result<(), DxfError> {
+        let Some(read) = body.raw.as_deref().and_then(crate::mleader::read) else {
+            self.report.count_unsupported(INVALID);
+            return Ok(());
+        };
+        for key in read.dropped {
+            self.report.count_unsupported(key);
+        }
+        let mut pending = body.pending();
+        pending.mleader_style = read.style;
+        self.push(Entity::MLeader(read.mleader), pending)
+    }
+
+    /// The file's multileader styles, in the order read, each named by its
+    /// entry in `ACAD_MLEADERSTYLE`; and each one's handle to the ID it
+    /// will take — `Standard`'s is the first, the others 1, 2, … in that
+    /// order. One with no name, values no multileader can be drawn by, or
+    /// a name taken already is reported and its multileaders drawn by
+    /// `Standard`.
+    fn mleader_styles(&mut self) -> Result<Vec<MLeaderStyle>, DxfError> {
+        let mut styles: Vec<MLeaderStyle> = Vec::new();
+        for raw in std::mem::take(&mut self.mleader_style_records) {
+            if styles.len() >= self.limits.max_table_rows {
+                return Err(self.too_many_rows("MLEADERSTYLE"));
+            }
+            let Some(handle) = raw
+                .iter()
+                .find(|(code, _)| *code == 5)
+                .map(|(_, handle)| handle.trim().to_uppercase())
+            else {
+                continue;
+            };
+            let style = self
+                .entry_names
+                .get(&handle)
+                .filter(|name| check_name(name).is_ok())
+                .and_then(|name| crate::mleader::read_style(&raw, name));
+            let Some(style) = style else {
+                self.report.count_unsupported(BAD_MLEADER_STYLE);
+                continue;
+            };
+            if same_name(&style.name, MLeaderStyle::STANDARD) {
+                self.mleader_style_ids.insert(handle, MLeaderStyleId::FIRST);
+                if !styles.iter().any(|kept| same_name(&kept.name, &style.name)) {
+                    styles.push(style);
+                }
+                continue;
+            }
+            if styles.iter().any(|kept| same_name(&kept.name, &style.name)) {
+                self.report.count_unsupported(BAD_MLEADER_STYLE);
+                continue;
+            }
+            let after_standard = styles
+                .iter()
+                .filter(|kept| !same_name(&kept.name, MLeaderStyle::STANDARD))
+                .count();
+            self.mleader_style_ids
+                .insert(handle, MLeaderStyleId::from_raw(after_standard as u32 + 1));
+            styles.push(style);
+        }
+        Ok(styles)
+    }
+
     fn import(&mut self, entity: Entity, body: &RecordBody) -> Result<(), DxfError> {
         self.push(entity, body.pending())
     }
@@ -1652,6 +1757,7 @@ impl<'a> Reader<'a> {
                     Entity::Leader(_) => self.report.leaders += 1,
                     Entity::XLine(_) | Entity::Ray(_) => self.report.construction_lines += 1,
                     Entity::Wipeout(_) => self.report.wipeouts += 1,
+                    Entity::MLeader(_) => self.report.mleaders += 1,
                 }
                 match &mut self.open_block {
                     Some(OpenBlock::Paper(paper)) => paper.entities.push((entity, properties)),
@@ -1734,6 +1840,15 @@ impl<'a> Reader<'a> {
                     .as_deref()
                     .and_then(|name| self.tables.dim_style(name))
                     .unwrap_or(DimStyleId::FIRST);
+            }
+            // A multileader's: the file's, or Standard (#240).
+            Entity::MLeader(mleader) => {
+                mleader.style = pending
+                    .mleader_style
+                    .as_ref()
+                    .and_then(|handle| self.mleader_style_ids.get(handle))
+                    .copied()
+                    .unwrap_or(MLeaderStyleId::FIRST);
             }
             Entity::BlockRef(reference) => {
                 let block = pending
@@ -2113,6 +2228,8 @@ impl<'a> Reader<'a> {
     }
 
     fn finish(mut self) -> Result<Import, DxfError> {
+        // The multileader styles first: the multileaders name them.
+        let mleader_styles = self.mleader_styles()?;
         // The file's layers first: their linetypes may make rows that
         // entities then use.
         let mut layers: Vec<Layer> = Vec::with_capacity(self.tables.layers.len());
@@ -2201,15 +2318,16 @@ impl<'a> Reader<'a> {
         let text_styles = std::mem::take(&mut self.tables.text_styles);
         let dim_styles = std::mem::take(&mut self.tables.dim_styles);
 
-        let mut drawing = Drawing::from_spaces(
+        let mut drawing = Drawing::assemble(DrawingParts {
             layers,
             linetypes,
             text_styles,
             dim_styles,
+            mleader_styles,
             blocks,
             layouts,
             entities,
-        )
+        })
         .map_err(|error| DxfError::Tables(error.to_string()))?;
         for raw in std::mem::take(&mut self.group_records) {
             let group = self.group_of(&raw, &ids_by_handle);
@@ -2267,6 +2385,7 @@ impl<'a> Reader<'a> {
         self.report.linetypes = drawing.linetypes().len() - 1;
         self.report.text_styles = drawing.text_styles().len() - 1;
         self.report.dim_styles = drawing.dim_styles().len() - 1;
+        self.report.mleader_styles = drawing.mleader_styles().len() - 1;
         self.report.blocks = drawing.blocks().len() - 1;
         let deepest = drawing
             .blocks()
@@ -2327,6 +2446,13 @@ impl<'a> Reader<'a> {
             unit: self.report.unit,
             point_style: self.point_style(),
             wipeout_frame: self.wipeout_frame.unwrap_or(true),
+            current_mleader_style: self
+                .header
+                .current_mleader_style
+                .as_ref()
+                .and_then(|handle| self.mleader_style_ids.get(handle))
+                .copied()
+                .unwrap_or(MLeaderStyleId::FIRST),
         };
         let drawing = drawing
             .with_settings(settings)
@@ -2598,6 +2724,7 @@ impl RecordBody {
             style: self.style.clone(),
             dim_style: None,
             block: None,
+            mleader_style: None,
             dropped: self.has_dropped_properties || true_colour_dropped,
             paper: self.paper,
         }
@@ -4413,6 +4540,7 @@ mod tests {
                         Just("TEXT"), Just("MTEXT"), Just("INSERT"), Just("ATTRIB"), Just("HATCH"),
                         Just("EOF"), Just("DICTIONARY"), Just("LAYOUT"), Just("WIPEOUT"),
                         Just("SORTENTSTABLE"), Just("WIPEOUTVARIABLES"), Just("XRECORD"),
+                        Just("MULTILEADER"), Just("MLEADERSTYLE"),
                     ],
                     proptest::collection::vec(
                         (
@@ -4423,7 +4551,8 @@ mod tests {
                                 Just(66), Just(70), Just(71), Just(72), Just(73), Just(74), Just(90),
                                 Just(100), Just(330), Just(370), Just(420), Just(1001), Just(12),
                                 Just(22), Just(13), Just(23), Just(14), Just(24), Just(331),
-                                Just(290), 0..2000i32,
+                                Just(290), Just(300), Just(301), Just(302), Just(303), Just(304),
+                                Just(305), Just(340), Just(296), Just(170), 0..2000i32,
                             ],
                             prop_oneof![
                                 (-1000i64..1000).prop_map(|n| n.to_string()),
@@ -4437,6 +4566,9 @@ mod tests {
                                 Just("ENTITIES".to_owned()), Just("TABLES".to_owned()),
                                 Just("BLOCKS".to_owned()), Just("HEADER".to_owned()),
                                 Just("\\P{a\\}".to_owned()),
+                                Just("CONTEXT_DATA{".to_owned()), Just("LEADER{".to_owned()),
+                                Just("LEADER_LINE{".to_owned()), Just("}".to_owned()),
+                                Just("ACAD_MLEADERSTYLE".to_owned()),
                             ],
                         ),
                         0..10,

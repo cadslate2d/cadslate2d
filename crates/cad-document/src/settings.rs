@@ -8,6 +8,7 @@ use cad_core::LengthUnit;
 
 use crate::dim_style::DimStyleId;
 use crate::layer::LayerId;
+use crate::mleader::MLeaderStyleId;
 use crate::point::PointStyle;
 use crate::text_style::TextStyleId;
 use crate::{Color, Linetype, Lineweight};
@@ -27,6 +28,8 @@ pub struct DrawingSettings {
     pub current_dim_style: DimStyleId,
     /// The style new texts take (`STYLE`, `$TEXTSTYLE`; #221).
     pub current_text_style: TextStyleId,
+    /// The style new multileaders are drawn by (#240).
+    pub current_mleader_style: MLeaderStyleId,
     /// What every linetype pattern is multiplied by (`LTSCALE`): the one
     /// knob that fits dashes to the size of what is drawn. Positive.
     pub ltscale: f64,
@@ -59,6 +62,7 @@ impl Default for DrawingSettings {
             current_lineweight: Lineweight::ByLayer,
             current_dim_style: DimStyleId::FIRST,
             current_text_style: TextStyleId::FIRST,
+            current_mleader_style: MLeaderStyleId::FIRST,
             ltscale: Self::DEFAULT_LTSCALE,
             unit: None,
             point_style: PointStyle::default(),
@@ -112,6 +116,7 @@ mod tests {
                 current_lineweight: Lineweight::Hundredths(25),
                 current_dim_style: DimStyleId::from_raw(2),
                 current_text_style: TextStyleId::from_raw(1),
+                current_mleader_style: crate::mleader::MLeaderStyleId::FIRST,
                 ltscale: 2.5,
                 unit: Some(LengthUnit::Metres),
                 point_style: PointStyle::new(35, 4.0),

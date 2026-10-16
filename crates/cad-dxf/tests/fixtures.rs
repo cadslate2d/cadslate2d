@@ -7,8 +7,9 @@ use cad_core::{Aabb, Point2, Vec2};
 use cad_document::{
     BlockReferenceEntity, Chain, Color, DimStyleId, DimensionEntity, Drawing, Entity, Group,
     Justification, Layer, LayerId, Layout, LayoutId, LeaderEntity, LineEntity, Linetype,
-    LinetypeDef, LinetypeId, Lineweight, MTextEntity, PointStyle, Properties, PurgeScope,
-    TextEntity, TextStyleId, ViewportEntity,
+    LinetypeDef, LinetypeId, Lineweight, MLeaderContent, MLeaderEntity, MLeaderStyle,
+    MLeaderStyleId, MTextEntity, PointStyle, Properties, PurgeScope, TextEntity, TextStyleId,
+    ViewportEntity,
 };
 use cad_dxf::{DxfError, Import, export, import};
 
@@ -2537,5 +2538,85 @@ fn named_views_from_another_writer_round_trip() {
     let back = cad_dxf::import(text.as_bytes()).unwrap();
     assert_eq!(back.report.views, 3);
     assert!(!back.report.has_unsupported_content());
+    assert_eq!(export(&back.drawing), text, "export → import → export");
+}
+
+#[test]
+fn multileaders_from_another_writer_round_trip() {
+    let import = load("valid", "ezdxf-r2010-multileaders.dxf").unwrap();
+    let report = &import.report;
+    assert_eq!((report.mleaders, report.mleader_styles), (3, 1));
+    assert_eq!(
+        report.unsupported.get("(MULTILEADER block content)"),
+        Some(&1),
+        "the balloon's block is reported until #241"
+    );
+    let summary = report.summary();
+    assert!(summary.iter().any(|line| line.contains("3 multileaders")));
+    assert!(
+        summary
+            .iter()
+            .any(|line| line.contains("1 multileader style"))
+    );
+    let drawing = &import.drawing;
+    let styles = drawing.mleader_styles();
+    let callout = styles.find("Callout").unwrap();
+    assert_eq!(
+        styles.get(callout),
+        Some(&MLeaderStyle {
+            arrow_size: 3.0,
+            landing_gap: 1.5,
+            dogleg_length: 6.0,
+            text_height: 3.5,
+            ..MLeaderStyle::named("Callout")
+        })
+    );
+    let standard = styles.get(MLeaderStyleId::FIRST).unwrap();
+    assert_eq!(
+        (standard.arrow_size, standard.dogleg_length),
+        (4.0, 8.0),
+        "the file's Standard replaces the drawing's"
+    );
+    assert_eq!(drawing.settings().current_mleader_style, callout);
+    let mleaders: Vec<(MLeaderEntity, String)> = drawing
+        .records()
+        .filter_map(|(id, record)| match &*record.entity {
+            Entity::MLeader(mleader) => {
+                Some((mleader.clone(), drawing.layer_of(id).unwrap().name.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let (hole, layer) = &mleaders[0];
+    assert_eq!(layer, "NOTES");
+    assert_eq!(
+        hole.leaders,
+        vec![
+            vec![Point2::new(0.0, 0.0)],
+            vec![Point2::new(5.0, -10.0), Point2::new(10.0, 0.0)],
+        ]
+    );
+    assert_eq!(hole.landing, Point2::new(10.0, 8.0));
+    assert_eq!(hole.content, MLeaderContent::Text("Hole".to_owned()));
+    assert_eq!(hole.style, MLeaderStyleId::FIRST);
+    // The note sits where the other writer put it: past the dogleg and
+    // the gap, its middle on the dogleg's line.
+    let laid_out = hole.layout(standard);
+    assert_eq!(laid_out.note_at, Point2::new(20.0, 8.0));
+    let (valve, _) = &mleaders[1];
+    assert_eq!(valve.style, callout);
+    assert_eq!(valve.content, MLeaderContent::Text("VALVE".to_owned()));
+    assert!(valve.reads() < 0.0, "a leader from the right reads left");
+    let (balloon, _) = &mleaders[2];
+    assert_eq!(balloon.content, MLeaderContent::None);
+
+    let text = export(drawing);
+    assert!(text.contains("  0\nCLASS\n  1\nMULTILEADER\n"));
+    assert!(text.contains("  3\nACAD_MLEADERSTYLE\n"));
+    assert!(text.contains("  9\n$CMLEADERSTYLE\n340\n"));
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!((back.report.mleaders, back.report.mleader_styles), (3, 1));
+    assert!(!back.report.has_unsupported_content());
+    assert_eq!(back.drawing.settings().current_mleader_style, callout);
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }

@@ -12,7 +12,7 @@ use cad_document::{Drawing, Entity, Properties};
 use crate::Selection;
 
 /// The kinds an entity can be, in the order they are listed.
-const KINDS: [(&str, &str); 18] = [
+const KINDS: [(&str, &str); 19] = [
     ("line", "lines"),
     ("circle", "circles"),
     ("arc", "arcs"),
@@ -31,6 +31,7 @@ const KINDS: [(&str, &str); 18] = [
     ("construction line", "construction lines"),
     ("ray", "rays"),
     ("wipeout", "wipeouts"),
+    ("multileader", "multileaders"),
 ];
 
 /// The kind named by `name` — singular or plural, any case — if any.
@@ -66,6 +67,7 @@ pub(crate) fn kind_index(entity: &Entity) -> usize {
         Entity::XLine(_) => 15,
         Entity::Ray(_) => 16,
         Entity::Wipeout(_) => 17,
+        Entity::MLeader(_) => 18,
     }
 }
 
@@ -348,6 +350,25 @@ pub(crate) fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, St
                 degrees(ray.direction.y.atan2(ray.direction.x).rem_euclid(TAU)),
             ),
         ],
+        Entity::MLeader(mleader) => {
+            let style = drawing.tables().mleader_style(mleader.style);
+            vec![
+                row("Leaders", mleader.leaders.len().to_string()),
+                row("Landing", point(mleader.landing)),
+                row(
+                    "Note",
+                    match &mleader.content {
+                        cad_document::MLeaderContent::Text(text) => text.clone(),
+                        cad_document::MLeaderContent::Block { block, .. } => drawing
+                            .blocks()
+                            .get(*block)
+                            .map_or_else(|| "(block)".to_owned(), |b| format!("block {}", b.name)),
+                        cad_document::MLeaderContent::None => "(none)".to_owned(),
+                    },
+                ),
+                row("Style", style.name.clone()),
+            ]
+        }
         Entity::Leader(leader) => {
             let style = drawing.tables().dim_style(leader.style);
             vec![

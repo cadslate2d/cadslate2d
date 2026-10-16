@@ -695,6 +695,7 @@ impl RenderScene {
                 | Entity::Viewport(_)
                 | Entity::Point(_)
                 | Entity::Leader(_)
+                | Entity::MLeader(_)
         ) {
             properties.linetype = Linetype::CONTINUOUS;
         }

@@ -635,6 +635,16 @@ pub fn walk_entity(entity: &Entity, tables: Tables<'_>, sink: &mut impl Geometry
         // draws it clipped to the view, the page clipped to the sheet
         // (ADR-0031). The committed scene holds none of it.
         Entity::XLine(_) | Entity::Ray(_) => {}
+        // A multileader likewise, by its own style (#240, ADR-0033).
+        Entity::MLeader(mleader) => {
+            let layout = mleader.layout(tables.mleader_style(mleader.style));
+            for segment in layout.segments() {
+                sink.segment(segment.start, segment.end, 0.0);
+            }
+            if let Some(text) = &layout.text {
+                walk_strokes(sink, text.strokes());
+            }
+        }
         // A leader is laid out by its style like a dimension (#205).
         Entity::Leader(leader) => {
             let layout = leader.layout(tables.dim_style(leader.style));

@@ -22,7 +22,19 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M13 — Drafting Aids and Reuse | Complete and closed ([review](reviews/m13-exit-review.md)). |
 | M14 — Production Annotation | Complete and closed ([review](reviews/m14-exit-review.md)). The product is complete for its purpose. |
 | M15 — v1 Verification (needs a person) | Open: verification on real GPUs, WebKit, AutoCAD, and a desktop PDF viewer, which needs a person. No work for an agent on its own. |
-| M16 — Occasional Conveniences | Complete and closed ([review](reviews/m16-exit-review.md)): `OVERKILL`, named views, `LAYMRG` and `LAYDEL`, `SPLINEDIT`. Nothing else is planned. |
+| M16 — Occasional Conveniences | Complete and closed ([review](reviews/m16-exit-review.md)): `OVERKILL`, named views, `LAYMRG` and `LAYDEL`, `SPLINEDIT`. |
+| M17 — Multileaders | In progress: the entity, its style, `MLEADER`, and DXF with text notes are done (#240); block notes, `MLEADEREDIT`, and `MLEADERSTYLE` next. |
+
+## M17, multileaders
+
+After M16 the user chose the first long-term idea, `MLEADER`. The epic is #239; [ADR-0033](adr/0033-multileaders.md) decides how a multileader is kept: its leaders, one landing, its content, and its style are stored, and the style lays the rest out, as dimensions are (ADR-0020).
+
+### Order of work
+
+1. **The entity, its style table, and `MLEADER`** (#240), with DXF `MULTILEADER` and `MLEADERSTYLE` for text notes, so that saving keeps them.
+2. **Block notes, `MLEADEREDIT`, and `MLEADERSTYLE`** (#241).
+3. **DXF block notes** (#242): the rest of the file side, once a note can be a block.
+4. **Exit** (#243).
 
 ## M16, the occasional conveniences
 

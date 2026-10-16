@@ -12,6 +12,7 @@ use crate::construction::{RayEntity, XLineEntity};
 use crate::dimension::DimensionEntity;
 use crate::hatch::HatchEntity;
 use crate::leader::LeaderEntity;
+use crate::mleader::MLeaderEntity;
 pub use crate::mtext::MTextEntity;
 use crate::point::PointEntity;
 use crate::tables::Tables;
@@ -457,6 +458,9 @@ pub enum Entity {
     Ray(RayEntity),
     /// A polygon that masks what is beneath it (#226; ADR-0032).
     Wipeout(WipeoutEntity),
+    /// Leaders from several places to one note, laid out by a multileader
+    /// style (#240; ADR-0033).
+    MLeader(MLeaderEntity),
 }
 
 impl Entity {
@@ -494,6 +498,9 @@ impl Entity {
             Entity::XLine(line) => line.segment().bounds(),
             Entity::Ray(ray) => ray.segment().bounds(),
             Entity::Wipeout(wipeout) => wipeout.bounds(),
+            Entity::MLeader(mleader) => {
+                mleader.layout(tables.mleader_style(mleader.style)).bounds()
+            }
         }
     }
 
@@ -550,6 +557,10 @@ impl Entity {
             Entity::Ray(ray) => ray.distance_to(point),
             // A wipeout by its frame, as a closed polyline is.
             Entity::Wipeout(wipeout) => wipeout.distance_to(point),
+            // By its lines, arrowheads, and note, as a leader is.
+            Entity::MLeader(mleader) => mleader
+                .layout(tables.mleader_style(mleader.style))
+                .distance_to(point),
         }
     }
 
@@ -590,8 +601,9 @@ impl Entity {
             Entity::Viewport(_) => Vec::new(),
             // A point is a place: it snaps as a node and cuts nothing.
             Entity::Point(_) => Vec::new(),
-            // A leader is annotation, like a dimension (ADR-0020).
-            Entity::Leader(_) => Vec::new(),
+            // A leader is annotation, like a dimension (ADR-0020), and so
+            // is a multileader (ADR-0033).
+            Entity::Leader(_) | Entity::MLeader(_) => Vec::new(),
             // A construction line is its reach (ADR-0031): it cuts, is
             // cut, and snaps as a segment that long.
             Entity::XLine(line) => vec![Primitive::Segment(line.segment())],
@@ -733,6 +745,19 @@ impl Entity {
             }
             Entity::XLine(line) => vec![Primitive::Segment(line.segment())],
             Entity::Ray(ray) => vec![Primitive::Segment(ray.segment())],
+            Entity::MLeader(mleader) => {
+                let layout = mleader.layout(tables.mleader_style(mleader.style));
+                layout
+                    .segments()
+                    .map(Primitive::Segment)
+                    .chain(
+                        layout
+                            .text
+                            .iter()
+                            .flat_map(|text| frame_edges(&text.frame())),
+                    )
+                    .collect()
+            }
         }
     }
 
@@ -769,6 +794,10 @@ impl Entity {
                 .is_some_and(|text| text.frame().contains(point)),
             Entity::XLine(_) | Entity::Ray(_) => false,
             Entity::Wipeout(wipeout) => wipeout.contains(point),
+            Entity::MLeader(mleader) => mleader
+                .layout(tables.mleader_style(mleader.style))
+                .text
+                .is_some_and(|text| text.frame().contains(point)),
         }
     }
 
@@ -857,6 +886,7 @@ impl Entity {
             Entity::Point(point) => point.transformed(transform).into(),
             Entity::Leader(leader) => leader.transformed(transform).into(),
             Entity::Wipeout(wipeout) => wipeout.transformed(transform).into(),
+            Entity::MLeader(mleader) => mleader.transformed(transform).into(),
             Entity::XLine(line) => line.transformed(transform).into(),
             Entity::Ray(ray) => ray.transformed(transform).into(),
         }
@@ -941,6 +971,12 @@ impl Entity {
     /// clipped to the view.
     pub fn is_unbounded(&self) -> bool {
         matches!(self, Entity::XLine(_) | Entity::Ray(_))
+    }
+}
+
+impl From<MLeaderEntity> for Entity {
+    fn from(mleader: MLeaderEntity) -> Self {
+        Entity::MLeader(mleader)
     }
 }
 
@@ -1163,6 +1199,7 @@ mod tests {
             Entity::XLine(line) => vec![line.base, line.base + line.direction * 10.0],
             Entity::Ray(ray) => vec![ray.start, ray.start + ray.direction * 10.0],
             Entity::Wipeout(wipeout) => wipeout.vertices.clone(),
+            Entity::MLeader(mleader) => mleader.points(),
         }
     }
 

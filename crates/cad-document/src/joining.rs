@@ -111,6 +111,7 @@ fn open_path(entity: &Entity) -> Option<Path> {
         | Entity::Wipeout(_)
         | Entity::Point(_)
         | Entity::Leader(_)
+        | Entity::MLeader(_)
         | Entity::XLine(_)
         | Entity::Ray(_) => None,
     }

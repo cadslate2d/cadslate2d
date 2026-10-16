@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use super::{TransactionBuilder, TransactionError};
 use crate::{
     Block, BlockId, DimStyleId, Drawing, Entity, EntityRecord, LayerId, Linetype, LinetypeId,
-    Properties, TextStyleId,
+    MLeaderContent, MLeaderStyleId, Properties, TextStyleId,
 };
 
 /// Which of this drawing's rows each of the other drawing's rows became.
@@ -23,6 +23,7 @@ struct Rows {
     linetypes: HashMap<LinetypeId, LinetypeId>,
     text_styles: HashMap<TextStyleId, TextStyleId>,
     dim_styles: HashMap<DimStyleId, DimStyleId>,
+    mleader_styles: HashMap<MLeaderStyleId, MLeaderStyleId>,
     blocks: HashMap<BlockId, BlockId>,
 }
 
@@ -77,6 +78,12 @@ impl TransactionBuilder<'_> {
             }
             Entity::Leader(leader) => {
                 leader.style = self.bring_dim_style(source, leader.style, rows)?;
+            }
+            Entity::MLeader(mleader) => {
+                mleader.style = self.bring_mleader_style(source, mleader.style, rows)?;
+                if let MLeaderContent::Block { block, .. } = &mut mleader.content {
+                    *block = self.bring_block(source, *block, rows)?;
+                }
             }
             Entity::BlockRef(reference) => {
                 reference.block = self.bring_block(source, reference.block, rows)?;
@@ -200,6 +207,32 @@ impl TransactionBuilder<'_> {
             },
         };
         rows.dim_styles.insert(id, mine);
+        Ok(mine)
+    }
+
+    /// A multileader style by name: this drawing's, or the other's added.
+    fn bring_mleader_style(
+        &mut self,
+        source: &Drawing,
+        id: MLeaderStyleId,
+        rows: &mut Rows,
+    ) -> Result<MLeaderStyleId, TransactionError> {
+        if let Some(mine) = rows.mleader_styles.get(&id) {
+            return Ok(*mine);
+        }
+        let row = source
+            .mleader_styles()
+            .get(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownMLeaderStyle(id))?;
+        let mine = match self.drawing.mleader_styles.find(&row.name) {
+            Some(mine) => mine,
+            None => match self.add_mleader_style(row) {
+                Ok(mine) | Err(TransactionError::DuplicateMLeaderStyleName(mine)) => mine,
+                Err(error) => return Err(error),
+            },
+        };
+        rows.mleader_styles.insert(id, mine);
         Ok(mine)
     }
 
