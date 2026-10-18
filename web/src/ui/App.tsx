@@ -9,6 +9,7 @@ import { Header } from "./Header";
 import { ImportReport } from "./ImportReport";
 import { Recovery } from "./Recovery";
 import { LayersPanel } from "./LayersPanel";
+import { About } from "./About";
 import { MenuBar } from "./MenuBar";
 import type { MenuAction, Panel } from "./menu-model";
 import { MENUS } from "./menus";
@@ -42,6 +43,7 @@ function useVisibilityPreference(key: string): Visibility {
 
 export function App() {
   const [core, setCore] = useState<CoreState>({ status: "loading" });
+  const [about, setAbout] = useState(false);
   const toolbar = useVisibilityPreference("cadslate2d.toolbar");
   const layers = useVisibilityPreference("cadslate2d.layers");
   const properties = useVisibilityPreference("cadslate2d.properties");
@@ -111,6 +113,7 @@ export function App() {
   const act = (action: MenuAction) => {
     if ("macro" in action) core.app.runMacro(action.macro);
     else if ("panel" in action) visibility[action.panel].toggle();
+    else if (action.dialog === "about") setAbout(true);
   };
   const panels = layers.visible || properties.visible;
   const shell = ["shell", toolbar.visible && "shell--with-toolbar", panels && "shell--with-panels"]
@@ -135,6 +138,7 @@ export function App() {
       <ExportWarning app={core.app} />
       <Recovery app={core.app} />
       <Failure app={core.app} />
+      {about && <About version={core.version} onClose={() => setAbout(false)} />}
       <TextEditor app={core.app} />
       <SettingsPanel app={core.app} />
       <CommandLine app={core.app} />

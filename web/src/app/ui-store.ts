@@ -31,6 +31,7 @@ export interface UiSnapshot {
   readonly spaceAccepts: boolean;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
+  readonly canPaste: boolean;
   /** Drafting toggles that are on; test with `ToggleBit`. */
   readonly toggles: number;
   /** The drawing's unit as its suffix, or empty for unitless. */
@@ -91,6 +92,7 @@ const INITIAL: UiSnapshot = {
   spaceAccepts: true,
   canUndo: false,
   canRedo: false,
+  canPaste: false,
   toggles: 0,
   unit: "",
   userAliases: "",
@@ -172,6 +174,7 @@ export class UiStore {
       spaceAccepts: state.spaceAccepts,
       canUndo: state.canUndo,
       canRedo: state.canRedo,
+      canPaste: state.canPaste,
       toggles: state.toggles,
       unit: state.unit,
       userAliases: state.userAliases,

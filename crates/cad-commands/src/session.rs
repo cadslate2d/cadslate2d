@@ -498,6 +498,7 @@ impl Session {
             space_accepts: self.expected().space_accepts(),
             can_undo: self.drawing.can_undo(),
             can_redo: self.drawing.can_redo(),
+            can_paste: self.clipboard.is_some(),
             toggles: self.toggles.bits(),
             unit: self.drawing.unit().map(LengthUnit::suffix),
             user_aliases: self.registry.aliases().user_aliases(),

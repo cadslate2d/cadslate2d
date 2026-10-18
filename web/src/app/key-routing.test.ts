@@ -35,6 +35,23 @@ describe("classifyKey", () => {
     expect(kind(key("y", { ctrlKey: true }))).toBe("redo");
   });
 
+  test("the menus' keys (#247): Ctrl+P plots, Ctrl+Shift+S saves as, Ctrl+A selects all with nothing typed", () => {
+    expect(classifyKey(key("p", { ctrlKey: true }), true)).toEqual({
+      kind: "command",
+      command: "PLOT",
+    });
+    expect(classifyKey(key("S", { ctrlKey: true, shiftKey: true }), true)).toEqual({
+      kind: "command",
+      command: "SAVEAS",
+    });
+    expect(kind(key("s", { ctrlKey: true }))).toBe("save");
+    expect(classifyKey(key("a", { ctrlKey: true }), true, true).kind).toBe("select-all");
+    expect(classifyKey(key("a", { ctrlKey: true }), true, false).kind).toBe("ignore");
+    expect(classifyKey(key("A", { ctrlKey: true, shiftKey: true }), true, true).kind).toBe(
+      "group-selection",
+    );
+  });
+
   test("open and save chords replace the browser's own dialogs", () => {
     expect(kind(key("o", { ctrlKey: true }))).toBe("open");
     expect(kind(key("s", { metaKey: true }))).toBe("save");

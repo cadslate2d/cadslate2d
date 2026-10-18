@@ -98,6 +98,8 @@ export interface UiState {
   readonly spaceAccepts: boolean;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
+  /** Whether the clipboard holds something to paste (#247). */
+  readonly canPaste: boolean;
   /** Drafting toggles that are on; test with `ToggleBit`. */
   readonly toggles: number;
   /** The drawing's unit as its suffix, or empty for unitless (#186). */

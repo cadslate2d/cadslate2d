@@ -11,6 +11,10 @@ export type KeyIntent =
   | { kind: "save" }
   /** Ctrl+Shift+A: group selection on or off (#214). */
   | { kind: "group-selection" }
+  /** A key that starts a command, as its menu item does (#247): Ctrl+P, Ctrl+Shift+S. */
+  | { kind: "command"; command: string }
+  /** Ctrl+A with nothing typed: everything, at the idle prompt (#247). */
+  | { kind: "select-all" }
   /** Ctrl+C, Ctrl+X, Ctrl+V with nothing typed: the drawing's clipboard (#223). */
   | { kind: "copy" }
   | { kind: "cut" }
@@ -59,8 +63,12 @@ export function classifyKey(event: KeyLike, spaceAccepts: boolean, inputEmpty = 
     if (key === "z") return { kind: event.shiftKey ? "redo" : "undo" };
     if (key === "y") return { kind: "redo" };
     if (key === "o") return { kind: "open" };
-    if (key === "s") return { kind: "save" };
+    if (key === "s" && !event.shiftKey) return { kind: "save" };
     if (key === "a" && event.shiftKey) return { kind: "group-selection" };
+    if (key === "p" && !event.shiftKey) return { kind: "command", command: "PLOT" };
+    if (key === "s" && event.shiftKey) return { kind: "command", command: "SAVEAS" };
+    // With text typed, Ctrl+A selects the text, as in any field.
+    if (key === "a" && inputEmpty) return { kind: "select-all" };
     // With text typed, copying and pasting are the browser's, on the text.
     if (inputEmpty && !event.shiftKey) {
       if (key === "c") return { kind: "copy" };

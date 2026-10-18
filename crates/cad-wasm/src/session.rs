@@ -82,6 +82,7 @@ struct UiStateDto {
     space_accepts: bool,
     can_undo: bool,
     can_redo: bool,
+    can_paste: bool,
     toggles: u32,
     /// The drawing's unit suffix, or empty for unitless (#186).
     unit: String,
@@ -198,6 +199,7 @@ impl From<UiState> for UiStateDto {
             space_accepts: state.space_accepts,
             can_undo: state.can_undo,
             can_redo: state.can_redo,
+            can_paste: state.can_paste,
             toggles: state.toggles,
             document_name: state.document_name,
             unsaved_changes: state.unsaved_changes,

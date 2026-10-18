@@ -36,6 +36,9 @@ pub struct UiState {
     pub space_accepts: bool,
     pub can_undo: bool,
     pub can_redo: bool,
+    /// Whether the session's clipboard holds something to paste (#247):
+    /// Edit › Paste is greyed out otherwise.
+    pub can_paste: bool,
     /// Drafting toggles that are on, one bit each (`Toggle::bit`).
     pub toggles: u32,
     /// The drawing's unit as its suffix — `mm`, `in` — or none (#186).

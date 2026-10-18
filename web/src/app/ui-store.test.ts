@@ -11,6 +11,7 @@ class FakeSource implements UiSource {
     spaceAccepts: true,
     canUndo: false,
     canRedo: false,
+    canPaste: false,
     toggles: 0,
     unit: "",
     userAliases: "",

@@ -50,6 +50,15 @@ export function CommandLine({ app }: { app: CadApp }) {
         case "group-selection":
           app.key(KeyAction.GroupSelection);
           break;
+        case "command":
+          setText("");
+          app.invoke(intent.command);
+          break;
+        case "select-all":
+          // At the idle prompt only: in a command, everything is the
+          // command's `ALL` keyword to type.
+          if (app.ui.getSnapshot().command === undefined) app.invoke("ALL");
+          break;
         case "copy":
           app.key(KeyAction.Copy);
           break;
