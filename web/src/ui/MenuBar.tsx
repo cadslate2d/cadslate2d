@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { CadApp } from "../app/cad-app";
+import { classifyMenuKey, menuShortcut } from "../app/key-routing";
 import { macroText } from "../app/macro";
 import {
   mnemonic,
@@ -10,15 +11,7 @@ import {
   type MenuEntry,
   type Panel,
 } from "./menu-model";
-
-/** Which menu is open, and how deep: the highlighted entry at each level, and how many levels show. */
-interface OpenState {
-  readonly menu: number;
-  /** The highlighted entry of each open list, outermost first; the last may be none. */
-  readonly path: readonly (number | undefined)[];
-  /** Lists shown: 1 for the menu alone, 2 with a cascade beside it, … */
-  readonly depth: number;
-}
+import { entriesAt, openedByKeyboard, stepMenu, type OpenState } from "./menu-nav";
 
 export interface MenuBarProps {
   readonly app: CadApp;
@@ -174,8 +167,14 @@ export function MenuBar({ app, menus, panels, onAction }: MenuBarProps) {
   const bar = useRef<HTMLElement>(null);
   const context: MenuContext = { ui, panels };
 
+  // The keyboard listener is installed once; it reads the latest of these.
+  const latest = useRef({ open, context, onAction });
+  useEffect(() => {
+    latest.current = { open, context, onAction };
+  });
+
   const close = () => setOpen(undefined);
-  const openMenu = (menu: number) => setOpen({ menu, path: [], depth: 1 });
+  const openMenu = (menu: number) => setOpen({ menu, path: [], depth: 1, keyboard: false });
 
   const choose = (entry: MenuEntry) => {
     if (entry.kind !== "item") return;
@@ -191,47 +190,83 @@ export function MenuBar({ app, menus, panels, onAction }: MenuBarProps) {
       const path = [...state.path.slice(0, level), index];
       // Hovering a cascade opens it, as a Windows menu does.
       const depth = entry?.kind === "cascade" ? level + 2 : level + 1;
-      return { ...state, path, depth };
+      return { ...state, path, depth, keyboard: false };
     });
 
-  // While a menu is open, a click outside it closes it, and Esc closes one level.
+  // While a menu is open, a click outside it closes it.
   useEffect(() => {
     if (!open) return;
     // `pointerdown`: the canvas cancels it, which keeps `mousedown` from following.
     const onPointer = (event: PointerEvent) => {
       if (!bar.current?.contains(event.target as Node)) close();
     };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      // The menu's, not the command line's: nothing is cancelled.
+    window.addEventListener("pointerdown", onPointer, true);
+    return () => window.removeEventListener("pointerdown", onPointer, true);
+  }, [open]);
+
+  // The keyboard (#248), as in AutoCAD's classic menus: Alt alone puts the
+  // bar in reach with its letters underlined, Alt and a letter opens that
+  // menu, and while the menus have the keyboard every key is theirs — the
+  // command line hears none of it.
+  useEffect(() => {
+    /** Alt went down and nothing else has since: its release reaches the bar. */
+    let altAlone = false;
+    const take = (event: KeyboardEvent) => {
       event.preventDefault();
       event.stopImmediatePropagation();
-      setOpen((state) =>
-        state && state.depth > 1
-          ? { ...state, depth: state.depth - 1, path: state.path.slice(0, state.depth - 1) }
-          : undefined,
-      );
     };
-    window.addEventListener("pointerdown", onPointer, true);
-    window.addEventListener("keydown", onKey, true);
+    const onKeyDown = (event: KeyboardEvent) => {
+      const { open: state, context: now, onAction: act } = latest.current;
+      if (event.key === "Alt") {
+        altAlone = !event.ctrlKey && !event.metaKey && !event.shiftKey;
+        if (state) take(event);
+        return;
+      }
+      altAlone = false;
+      const letter = menuShortcut(event);
+      if (letter !== undefined) {
+        const menu = menus.findIndex((each) => mnemonic(each.label).key === letter);
+        if (menu < 0) return;
+        take(event);
+        setOpen(openedByKeyboard(menu, menus, now));
+        return;
+      }
+      if (!state) return;
+      const key = classifyMenuKey(event);
+      if (key.kind === "pass") return;
+      take(event);
+      const { next, chosen } = stepMenu(state, key, menus, now);
+      setOpen(next);
+      if (chosen) act(chosen.action);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key !== "Alt" || !altAlone) return;
+      altAlone = false;
+      // The browser's own menu bar answers Alt too; this page's comes first.
+      event.preventDefault();
+      setOpen((state) => (state ? undefined : { menu: 0, path: [], depth: 0, keyboard: true }));
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
     return () => {
-      window.removeEventListener("pointerdown", onPointer, true);
-      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
     };
-  }, [open]);
+  }, [menus]);
 
   return (
     <nav className="menubar" aria-label="Menu bar" ref={bar}>
       <div className="menubar__menus" role="menubar" aria-label="Menus">
         {menus.map((menu, index) => {
           const id = `menubar-${index}`;
-          const expanded = open?.menu === index;
+          const highlighted = open?.menu === index;
+          const expanded = highlighted && open.depth > 0;
           return (
             <div key={menu.label} className="menubar__menu">
               <button
                 id={id}
                 type="button"
-                className={`menubar__title${expanded ? " menubar__title--open" : ""}`}
+                className={`menubar__title${highlighted ? " menubar__title--open" : ""}`}
                 role="menuitem"
                 aria-haspopup="menu"
                 aria-expanded={expanded}
@@ -243,7 +278,7 @@ export function MenuBar({ app, menus, panels, onAction }: MenuBarProps) {
                 }}
                 onMouseEnter={() => open && !expanded && openMenu(index)}
               >
-                <Label label={menu.label} underline={false} />
+                <Label label={menu.label} underline={open?.keyboard ?? false} />
               </button>
               {expanded && open && (
                 <MenuList
@@ -251,7 +286,7 @@ export function MenuBar({ app, menus, panels, onAction }: MenuBarProps) {
                   level={0}
                   state={open}
                   context={context}
-                  underline={false}
+                  underline={open.keyboard}
                   onHover={hover}
                   onChoose={choose}
                   labelledBy={id}
@@ -279,20 +314,4 @@ export function MenuBar({ app, menus, panels, onAction }: MenuBarProps) {
       </div>
     </nav>
   );
-}
-
-/** The entries of the list open at `level`: the menu's own, or a cascade's along `path`. */
-export function entriesAt(
-  items: readonly MenuEntry[],
-  path: readonly (number | undefined)[],
-  level: number,
-): readonly MenuEntry[] {
-  let entries = items;
-  for (let at = 0; at < level; at += 1) {
-    const index = path[at];
-    const entry = index === undefined ? undefined : entries[index];
-    if (entry?.kind !== "cascade") return [];
-    entries = entry.items;
-  }
-  return entries;
 }

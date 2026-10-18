@@ -103,3 +103,51 @@ export function classifyKey(event: KeyLike, spaceAccepts: boolean, inputEmpty = 
         : { kind: "ignore" };
   }
 }
+
+/** What a key does while the menu bar has the keyboard (#248), as in a Windows menu. */
+export type MenuKey =
+  | { kind: "up" }
+  | { kind: "down" }
+  | { kind: "left" }
+  | { kind: "right" }
+  | { kind: "home" }
+  | { kind: "end" }
+  /** Enter or Space: run the highlighted item, or open its cascade. */
+  | { kind: "choose" }
+  /** Esc: close one level. */
+  | { kind: "close" }
+  /** Tab: leave the menus. */
+  | { kind: "leave" }
+  /** A letter or digit: the entry it underlines. */
+  | { kind: "mnemonic"; key: string }
+  /** A browser chord: not the menu's. */
+  | { kind: "pass" }
+  /** Anything else: swallowed, so it does not reach the command line. */
+  | { kind: "none" };
+
+const MENU_KEYS: Readonly<Record<string, MenuKey>> = {
+  ArrowUp: { kind: "up" },
+  ArrowDown: { kind: "down" },
+  ArrowLeft: { kind: "left" },
+  ArrowRight: { kind: "right" },
+  Home: { kind: "home" },
+  End: { kind: "end" },
+  Enter: { kind: "choose" },
+  " ": { kind: "choose" },
+  Escape: { kind: "close" },
+  Tab: { kind: "leave" },
+};
+
+export function classifyMenuKey(event: KeyLike): MenuKey {
+  if (event.ctrlKey || event.metaKey) return { kind: "pass" };
+  const known = MENU_KEYS[event.key];
+  if (known) return known;
+  if (/^[a-z0-9]$/i.test(event.key)) return { kind: "mnemonic", key: event.key.toLowerCase() };
+  return { kind: "none" };
+}
+
+/** Alt and a letter, from anywhere: the menu that letter underlines (#248). */
+export function menuShortcut(event: KeyLike): string | undefined {
+  if (!event.altKey || event.ctrlKey || event.metaKey) return undefined;
+  return /^[a-z]$/i.test(event.key) ? event.key.toLowerCase() : undefined;
+}

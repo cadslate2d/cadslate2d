@@ -23,7 +23,13 @@ AutoCAD 2007/2008's menus are macros of the same kind. `^C^C_zoom _w` cancels wh
    - `SELECTION` waits while the command asks for objects. With a selection already made, the command does not ask, and the macro goes straight on.
 
    A paused macro is checked each time the UI state is refreshed. It is dropped when its command ends or another starts, so a cancelled or replaced command never receives stray answers (`pauseState`).
-4. **Focus stays on the command line.** The menu bar takes no focus from the pointer. Keyboard access (#248) gives it focus while a menu is open, and gives it back.
+4. **Focus stays on the command line.** The menu bar never takes the browser's focus. While its menus have the keyboard — opened by Alt and a letter, by Alt alone, or by the pointer — they take every key ahead of the command line, except the browser's chords. Once they close, keys reach the command line again (#248). The moves are AutoCAD's and Windows':
+   - the arrows, Home, and End move, passing over separators and greyed items;
+   - a letter runs what it underlines;
+   - Esc closes one level;
+   - Tab leaves.
+
+   They are a pure function of the menus (`stepMenu`).
 
 ## Alternatives considered
 

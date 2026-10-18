@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { UiSnapshot } from "../app/ui-store";
-import { entriesAt } from "./MenuBar";
+import { entriesAt } from "./menu-nav";
 import {
   SEPARATOR,
   allItems,

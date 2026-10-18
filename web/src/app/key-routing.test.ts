@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { classifyKey, type KeyLike } from "./key-routing";
+import { classifyKey, classifyMenuKey, menuShortcut, type KeyLike } from "./key-routing";
 
 const key = (name: string, modifiers: Partial<Omit<KeyLike, "key">> = {}): KeyLike => ({
   key: name,
@@ -116,5 +116,31 @@ describe("classifyKey", () => {
     for (const name of ["F5", "F12", "F1", "Tab", "Shift", "Control", "PageDown"]) {
       expect(kind(key(name)), name).toBe("ignore");
     }
+  });
+});
+
+describe("keys in the menus (#248)", () => {
+  test("arrows, Home, End, Enter, Space, Esc, and Tab move, choose, close, and leave", () => {
+    expect(classifyMenuKey(key("ArrowDown"))).toEqual({ kind: "down" });
+    expect(classifyMenuKey(key("ArrowLeft"))).toEqual({ kind: "left" });
+    expect(classifyMenuKey(key("Home"))).toEqual({ kind: "home" });
+    expect(classifyMenuKey(key("Enter"))).toEqual({ kind: "choose" });
+    expect(classifyMenuKey(key(" "))).toEqual({ kind: "choose" });
+    expect(classifyMenuKey(key("Escape"))).toEqual({ kind: "close" });
+    expect(classifyMenuKey(key("Tab"))).toEqual({ kind: "leave" });
+  });
+
+  test("a letter or digit is a mnemonic; browser chords pass; the rest is swallowed", () => {
+    expect(classifyMenuKey(key("L"))).toEqual({ kind: "mnemonic", key: "l" });
+    expect(classifyMenuKey(key("2"))).toEqual({ kind: "mnemonic", key: "2" });
+    expect(classifyMenuKey(key("r", { ctrlKey: true }))).toEqual({ kind: "pass" });
+    expect(classifyMenuKey(key("F5"))).toEqual({ kind: "none" });
+  });
+
+  test("Alt and a letter names a menu; Alt with Ctrl does not", () => {
+    expect(menuShortcut(key("f", { altKey: true }))).toBe("f");
+    expect(menuShortcut(key("O", { altKey: true }))).toBe("o");
+    expect(menuShortcut(key("f"))).toBeUndefined();
+    expect(menuShortcut(key("f", { altKey: true, ctrlKey: true }))).toBeUndefined();
   });
 });

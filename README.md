@@ -32,7 +32,11 @@ Type anywhere on the page; you never need to click the command line first. The m
 - a Layers panel action is `LAYER` with its answers, a change in the Properties panel is `CHPROP`, and the log shows each step;
 - View shows and hides the toolbar and the panels.
 
-The menu bar has the menus of AutoCAD 2007/2008's classic workspace, in its order: **File, Edit, View, Insert, Format, Tools, Draw, Dimension, Modify, Help**. Each command sits where that program puts it, for example Draw › Arc › Start, Center, End, or Format › Layer Tools › Layer Off. Items AutoCAD has and this program does not are left out rather than shown dead. Items that cannot apply now are greyed: Undo with nothing to undo, Paste with nothing to paste, the viewport items off a layout. The keys the menus show work: Ctrl+O, Ctrl+S, Ctrl+Shift+S (save as), Ctrl+P (plot), Ctrl+Z, Ctrl+Y, Ctrl+X, Ctrl+C, Ctrl+V, Del, and Ctrl+A (everything, at the idle prompt).
+The menu bar has the menus of AutoCAD 2007/2008's classic workspace, in its order: **File, Edit, View, Insert, Format, Tools, Draw, Dimension, Modify, Help**. Each command sits where that program puts it, for example Draw › Arc › Start, Center, End, or Format › Layer Tools › Layer Off. Items AutoCAD has and this program does not are left out rather than shown dead. Items that cannot apply now are greyed: Undo with nothing to undo, Paste with nothing to paste, the viewport items off a layout. From the keyboard, as in AutoCAD:
+- Alt and a letter opens a menu (Alt+F File, Alt+O Format, Alt+D Draw, Alt+N Dimension, …), and Alt alone underlines the letters;
+- the arrows walk the menus and their cascades, a letter runs what it underlines, and Esc closes one level.
+
+The keys the menus show work: Ctrl+O, Ctrl+S, Ctrl+Shift+S (save as), Ctrl+P (plot), Ctrl+Z, Ctrl+Y, Ctrl+X, Ctrl+C, Ctrl+V, Del, and Ctrl+A (everything, at the idle prompt).
 
 | Command | Aliases | What it does |
 | --- | --- | --- |
