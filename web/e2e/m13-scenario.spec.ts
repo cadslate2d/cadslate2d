@@ -72,6 +72,10 @@ test("the M13 scenario: snap and tracking, a style, a title block as a file, the
   await clickAt(page, canvas, 98.6, 1.9);
   await clickAt(page, canvas, 101.4, 62.2);
   await enter(page, "");
+  // The pointer rests away from the walls first. Left by the last click
+  // beside a wall's end, it would rest there once OTRACK is on and acquire
+  // the end, and the deliberate rest on it below would let it go again.
+  await restAt(page, canvas, 50, 120);
 
   // 2. Tracking: the corner level with one wall's end and above the
   // other's, found by resting on both ends.
