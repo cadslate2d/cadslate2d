@@ -388,6 +388,7 @@ impl CadSession {
             Some(HostRequest::Plot) => 5,
             Some(HostRequest::InsertFile) => 6,
             Some(HostRequest::WriteBlock) => 7,
+            Some(HostRequest::NewDrawing) => 8,
         }
     }
 
@@ -411,6 +412,13 @@ impl CadSession {
         let dirty = self
             .session
             .restore_settings(Toggles::from_bits(toggles), unit, aliases);
+        self.report(dirty)
+    }
+
+    /// Replaces the drawing with an empty one (#245): what `NEW` asked
+    /// for, once the host has asked about unsaved work.
+    pub fn new_drawing(&mut self) -> u32 {
+        let dirty = self.session.new_drawing();
         self.report(dirty)
     }
 

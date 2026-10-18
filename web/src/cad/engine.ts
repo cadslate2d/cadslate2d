@@ -72,6 +72,7 @@ export const HostRequest = {
   Plot: 5,
   InsertFile: 6,
   WriteBlock: 7,
+  NewDrawing: 8,
 } as const;
 export type HostRequest = (typeof HostRequest)[keyof typeof HostRequest];
 
@@ -510,6 +511,11 @@ export class CadEngine {
    */
   loadDxf(bytes: Uint8Array, name: string): number {
     return this.#session.load_dxf(bytes, name);
+  }
+
+  /** File › New (#245): an empty, untitled drawing in place of this one. */
+  newDrawing(): number {
+    return this.#session.new_drawing();
   }
 
   /** The file INSERT asked for (#222), read and handed to the waiting command. */

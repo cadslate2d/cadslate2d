@@ -1,4 +1,4 @@
-//! OPEN, SAVE, and DXFOUT: file commands that need the host.
+//! NEW, OPEN, SAVE, and DXFOUT: file commands that need the host.
 //!
 //! A browser file picker or download cannot be driven from Rust, and Rust
 //! never calls into JavaScript (ADR-0002). These commands therefore only
@@ -6,6 +6,20 @@
 //! `Session::open_drawing` or `Session::mark_exported`.
 
 use crate::{Command, CommandContext, HostRequest, Step};
+
+/// NEW (#245): an empty drawing. Whether unsaved work may go is the
+/// host's question to ask, as it is for OPEN.
+#[derive(Debug)]
+pub(crate) struct NewCommand;
+
+impl Command for NewCommand {
+    fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
+        ctx.request_host(HostRequest::NewDrawing);
+        Step::Finished
+    }
+
+    immediate_command!();
+}
 
 #[derive(Debug)]
 pub(crate) struct OpenCommand;
@@ -70,6 +84,8 @@ mod tests {
     #[test]
     fn file_commands_raise_a_host_request_instead_of_acting() {
         let cases = [
+            ("NEW", HostRequest::NewDrawing),
+            ("qnew", HostRequest::NewDrawing),
             ("OPEN", HostRequest::OpenFile),
             ("dxfin", HostRequest::OpenFile),
             ("DXFOUT", HostRequest::ExportFile),
@@ -90,6 +106,32 @@ mod tests {
             );
             assert_eq!(h.prompt(), "Command:");
         }
+    }
+
+    /// #245: a new drawing is empty, untitled, saved, and without history,
+    /// in the old one's unit, seen at one pixel per unit about the origin;
+    /// nothing tied to the old one survives.
+    #[test]
+    fn a_new_drawing_is_empty_untitled_and_keeps_the_unit() {
+        let drawing = imported().with_unit(Some(cad_core::LengthUnit::Millimetres));
+        let mut h = Harness::with_drawing(drawing);
+        h.session.mark_exported(Some("plan.dxf"));
+        h.enter_all(&["L", "0,0", "10,0", ""]);
+        h.enter("ALL");
+        h.enter("MOVE");
+        let dirty = h.session.new_drawing();
+        assert!(dirty.contains(Dirty::SCENE | Dirty::VIEW | Dirty::UI));
+        let drawing = h.session.drawing();
+        assert!(drawing.is_empty());
+        assert!(!drawing.can_undo());
+        assert_eq!(drawing.unit(), Some(cad_core::LengthUnit::Millimetres));
+        let state = h.session.ui_state();
+        assert_eq!(state.document_name, None);
+        assert!(!state.unsaved_changes);
+        assert_eq!(state.selection_count, 0);
+        assert_eq!(h.prompt(), "Command:", "the command in progress is gone");
+        assert_eq!(h.session.view().center(), Point2::ORIGIN);
+        assert_eq!(h.session.view().scale(), 1.0);
     }
 
     #[test]

@@ -462,6 +462,8 @@ export class CadApp {
         return this.#insertFile();
       case HostRequest.WriteBlock:
         return this.#writeBlock();
+      case HostRequest.NewDrawing:
+        return this.#newDrawing();
       case HostRequest.None:
         return;
     }
@@ -480,6 +482,22 @@ export class CadApp {
   async #writeBlock(): Promise<void> {
     const file = this.engine.takeBlockFile();
     if (file) await this.#host.files.saveAs(file.name, file.text, DXF_MIME_TYPE);
+  }
+
+  /**
+   * File › New (#245): an empty drawing, once unsaved work may go. Nothing
+   * is left to recover, so the kept drawing goes too, and there is no file
+   * to save back to.
+   */
+  async #newDrawing(): Promise<void> {
+    if (this.engine.uiState().unsavedChanges && !this.#host.confirm(DISCARD_CHANGES_MESSAGE))
+      return;
+    this.loop.invalidate(this.engine.newDrawing());
+    this.ui.refresh(this.engine);
+    this.#target = undefined;
+    this.#cancelAutosave?.();
+    this.#keptRevision = undefined;
+    await this.#host.autosave.clear().catch(() => undefined);
   }
 
   async #openFile(): Promise<void> {

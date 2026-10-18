@@ -35,6 +35,8 @@ describe("WASM API surface", () => {
       "load_dxf",
       "log_since",
       "mark_exported",
+      // #245: File › New, the whole drawing replaced in one call.
+      "new_drawing",
       "overlay_arc_batches",
       "overlay_arcs",
       "overlay_batches",

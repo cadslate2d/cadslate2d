@@ -21,14 +21,14 @@ use crate::commands::{
     LayoutCommand, LeaderCommand, LengthenCommand, LineCommand, LinetypeCommand, ListCommand,
     LtscaleCommand, LweightCommand, MLeaderCommand, MLeaderEditCommand, MLeaderStyleCommand,
     MTextCommand, MatchpropCommand, MeasureCommand, MirrorCommand, ModelCommand, MspaceCommand,
-    MviewCommand, OffsetCommand, OpenCommand, OsnapCommand, OverkillCommand, PanCommand,
-    PasteClipCommand, PeditCommand, PickStyleCommand, PlineCommand, PlotCommand, PointCommand,
-    PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand, QdimCommand,
-    QselectCommand, RayCommand, RectangCommand, RedoCommand, RenameCommand, RevCloudCommand,
-    SaveCommand, SelectCommand, SettingsCommand, SnapCommand, SplineCommand, SplineEditCommand,
-    StretchCommand, StyleCommand, TextCommand, TextEditCommand, TextToFrontCommand,
-    TransformCommand, UndoCommand, UngroupCommand, UnitsCommand, ViewCommand, WBlockCommand,
-    WipeoutCommand, XLineCommand, ZoomCommand,
+    MviewCommand, NewCommand, OffsetCommand, OpenCommand, OsnapCommand, OverkillCommand,
+    PanCommand, PasteClipCommand, PeditCommand, PickStyleCommand, PlineCommand, PlotCommand,
+    PointCommand, PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand,
+    QdimCommand, QselectCommand, RayCommand, RectangCommand, RedoCommand, RenameCommand,
+    RevCloudCommand, SaveCommand, SelectCommand, SettingsCommand, SnapCommand, SplineCommand,
+    SplineEditCommand, StretchCommand, StyleCommand, TextCommand, TextEditCommand,
+    TextToFrontCommand, TransformCommand, UndoCommand, UngroupCommand, UnitsCommand, ViewCommand,
+    WBlockCommand, WipeoutCommand, XLineCommand, ZoomCommand,
 };
 use crate::session::select_keywords;
 
@@ -65,7 +65,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 129] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 130] = [
             ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
             ("RAY", &[], || Box::new(RayCommand::new())),
             ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
@@ -193,6 +193,7 @@ impl CommandRegistry {
             ("OSNAP", &["OS"], || Box::new(OsnapCommand)),
             ("GRID", &[], || Box::new(GridCommand::default())),
             ("POLARANG", &[], || Box::new(PolarAngleCommand::default())),
+            ("NEW", &["QNEW"], || Box::new(NewCommand)),
             ("OPEN", &["DXFIN"], || Box::new(OpenCommand)),
             ("DXFOUT", &["SAVEAS", "EXPORT"], || Box::new(ExportCommand)),
             ("SAVE", &["QSAVE"], || Box::new(SaveCommand)),

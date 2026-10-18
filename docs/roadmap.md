@@ -23,7 +23,26 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M14 — Production Annotation | Complete and closed ([review](reviews/m14-exit-review.md)). The product is complete for its purpose. |
 | M15 — v1 Verification (needs a person) | Open: verification on real GPUs, WebKit, AutoCAD, and a desktop PDF viewer, which needs a person. No work for an agent on its own. |
 | M16 — Occasional Conveniences | Complete and closed ([review](reviews/m16-exit-review.md)): `OVERKILL`, named views, `LAYMRG` and `LAYDEL`, `SPLINEDIT`. |
-| M17 — Multileaders | Complete and closed ([review](reviews/m17-exit-review.md)): `MLEADER` with text or block notes, `MLEADEREDIT`, `MLEADERSTYLE`, and DXF `MULTILEADER` and `MLEADERSTYLE` both ways. Nothing else is planned. |
+| M17 — Multileaders | Complete and closed ([review](reviews/m17-exit-review.md)): `MLEADER` with text or block notes, `MLEADEREDIT`, `MLEADERSTYLE`, and DXF `MULTILEADER` and `MLEADERSTYLE` both ways. |
+| M18 — Classic Menu Bar | In progress (epic #244): the menu bar of DESIGN §5, after AutoCAD 2007/2008's classic workspace. |
+
+## M18, the classic menu bar
+
+DESIGN §5 draws a menu bar — `File Edit View Insert Format Tools Draw Dimension Modify` — and the visual identity shows it with `Help` and quick New, Open, Save, and Export buttons. No issue ever planned it. After M17 the user asked for it, after AutoCAD 2007/2008's classic workspace. The epic is #244.
+
+### Order of work
+
+1. **File › New** (#245): `NEW`, an empty drawing, asking first about unsaved work.
+2. **The menu bar** (#246):
+   - the row and the model;
+   - every item a macro over the command line, with AutoCAD's pause for the user's answer (ADR-0034);
+   - the header's switches moving into View and Tools.
+3. **The menus' contents** (#247):
+   - AutoCAD 2007/2008's ten classic menus, each item a command that exists here;
+   - Ctrl+P, Ctrl+Shift+S, and Ctrl+A;
+   - Help › About.
+4. **Keyboard access** (#248): Alt and the mnemonics, the arrows, and Esc.
+5. **Exit** (#249): a scenario through the menus alone, and a review listing what AutoCAD's menus have that ours do not.
 
 ## M17, multileaders
 

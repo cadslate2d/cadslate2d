@@ -1224,9 +1224,33 @@ impl Session {
         messages: Vec<String>,
         losses: Vec<String>,
     ) -> Dirty {
+        self.replace_drawing(drawing, Some(name.to_owned()), messages, losses)
+    }
+
+    /// File › New (#245): an empty, untitled drawing in the unit of the one
+    /// it replaces, with no history, shown at one pixel per unit about the
+    /// origin. Like opening a file, it is not an edit: everything tied to
+    /// the old drawing goes, and the session's settings and aliases stay.
+    pub fn new_drawing(&mut self) -> Dirty {
+        let unit = self.drawing.unit();
+        let dirty =
+            self.replace_drawing(Drawing::new().with_unit(unit), None, Vec::new(), Vec::new());
+        self.view = View::new(self.view.width(), self.view.height());
+        dirty
+    }
+
+    /// Puts `drawing` in the old one's place, dropping all interaction
+    /// state tied to the old one.
+    fn replace_drawing(
+        &mut self,
+        drawing: Drawing,
+        name: Option<String>,
+        messages: Vec<String>,
+        losses: Vec<String>,
+    ) -> Dirty {
         self.saved_revision = drawing.revision();
         self.drawing = drawing;
-        self.document_name = Some(name.to_owned());
+        self.document_name = name;
         self.export_losses = losses;
         self.imports += 1;
         self.import_report = (!messages.is_empty()).then(|| ImportReport {

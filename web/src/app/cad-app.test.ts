@@ -495,6 +495,38 @@ describe("open", () => {
     expect(segmentCount()).toBe(1);
   });
 
+  test("NEW asks before discarding, then empties the drawing and forgets its file (#245)", async () => {
+    const { app, host, tick, enter, segmentCount } = harness();
+    host.files.writesBack = true;
+    host.files.fileToPick = { name: "plan.dxf", bytes: encode(cleanFile) };
+    enter("OPEN");
+    await tick();
+    enter("L", "0,5", "10,5", "");
+
+    host.confirmAnswer = false;
+    enter("NEW");
+    await tick();
+    expect(host.confirmations).toEqual([DISCARD_CHANGES_MESSAGE]);
+    expect(segmentCount()).toBe(2);
+
+    host.confirmAnswer = true;
+    enter("NEW");
+    await tick();
+    expect(segmentCount()).toBe(0);
+    expect(app.ui.getSnapshot()).toMatchObject({
+      documentName: undefined,
+      unsavedChanges: false,
+      canUndo: false,
+    });
+    expect(host.autosave.record).toBeUndefined();
+
+    // No file to write back to: saving asks where.
+    enter("L", "0,0", "5,0", "", "SAVE");
+    await tick();
+    expect(host.files.written).toHaveLength(0);
+    expect(host.files.saved.map((save) => save.name)).toEqual(["drawing.dxf"]);
+  });
+
   test("a file that cannot be read keeps the drawing and explains why", async () => {
     const { app, host, tick, enter, segmentCount } = harness();
     enter("L", "0,0", "10,0", "");
