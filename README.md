@@ -10,7 +10,7 @@ CadSlate2D is a free, browser-native, local-first 2D CAD application inspired by
 
 ## Status
 
-Milestones **M0 to M14**, **M16**, and **M17** (multileaders) are complete. The [M14 review](docs/reviews/m14-exit-review.md) finds the product complete for its purpose: the classic daily drafting commands and every item of a successful v1 (DESIGN §47). **M2** is implemented but waits for a hands-on assessment by someone with classic CAD experience ([review](docs/reviews/m2-exit-review.md)).
+Milestones **M0 to M14**, **M16**, **M17** (multileaders), and **M18** (the classic menu bar) are complete. The [M14 review](docs/reviews/m14-exit-review.md) finds the product complete for its purpose: the classic daily drafting commands and every item of a successful v1 (DESIGN §47). **M2** is implemented but waits for a hands-on assessment by someone with classic CAD experience ([review](docs/reviews/m2-exit-review.md)).
 
 You can do all of this in a static page with no backend:
 - draw by command or pointer, with object snaps, tracking, ORTHO, POLAR, grid snap, and grips;

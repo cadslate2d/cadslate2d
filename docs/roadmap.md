@@ -24,7 +24,7 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M15 — v1 Verification (needs a person) | Open: verification on real GPUs, WebKit, AutoCAD, and a desktop PDF viewer, which needs a person. No work for an agent on its own. |
 | M16 — Occasional Conveniences | Complete and closed ([review](reviews/m16-exit-review.md)): `OVERKILL`, named views, `LAYMRG` and `LAYDEL`, `SPLINEDIT`. |
 | M17 — Multileaders | Complete and closed ([review](reviews/m17-exit-review.md)): `MLEADER` with text or block notes, `MLEADEREDIT`, `MLEADERSTYLE`, and DXF `MULTILEADER` and `MLEADERSTYLE` both ways. |
-| M18 — Classic Menu Bar | In progress (epic #244): the menu bar of DESIGN §5, after AutoCAD 2007/2008's classic workspace. |
+| M18 — Classic Menu Bar | Complete and closed ([review](reviews/m18-exit-review.md)): the menu bar of DESIGN §5, after AutoCAD 2007/2008's classic workspace, with File › New, menu macros that pause (ADR-0034), and keyboard access. |
 
 ## M18, the classic menu bar
 
