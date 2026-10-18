@@ -9,6 +9,9 @@ import { Header } from "./Header";
 import { ImportReport } from "./ImportReport";
 import { Recovery } from "./Recovery";
 import { LayersPanel } from "./LayersPanel";
+import { MenuBar } from "./MenuBar";
+import type { MenuAction, Panel } from "./menu-model";
+import { MENUS } from "./menus";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { StatusBar } from "./StatusBar";
 import { TextEditor } from "./TextEditor";
@@ -102,18 +105,29 @@ export function App() {
     );
   }
 
+  const visibility: Record<Panel, Visibility> = { toolbar, layers, properties };
+  // What a menu item names, carried out (ADR-0034): a macro typed into the
+  // command line, or a part of the shell shown or hidden.
+  const act = (action: MenuAction) => {
+    if ("macro" in action) core.app.runMacro(action.macro);
+    else if ("panel" in action) visibility[action.panel].toggle();
+  };
   const panels = layers.visible || properties.visible;
   const shell = ["shell", toolbar.visible && "shell--with-toolbar", panels && "shell--with-panels"]
     .filter(Boolean)
     .join(" ");
   return (
     <div className={shell}>
-      <Header
-        coreVersion={core.version}
-        toolbar={toolbar}
-        layers={layers}
-        properties={properties}
-        settings={() => core.app.run("SETTINGS")}
+      <Header coreVersion={core.version} />
+      <MenuBar
+        app={core.app}
+        menus={MENUS}
+        panels={{
+          toolbar: toolbar.visible,
+          layers: layers.visible,
+          properties: properties.visible,
+        }}
+        onAction={act}
       />
       {toolbar.visible && <Toolbar app={core.app} />}
       <CanvasView app={core.app} />

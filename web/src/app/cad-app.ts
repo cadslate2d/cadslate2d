@@ -2,6 +2,7 @@
 // React components and the canvas binding talk to the engine only through it.
 import { Dirty, HostRequest, KeyAction, SnapshotStatus, type CadEngine } from "../cad/engine";
 import { FrameLoop, type ScheduleFrame } from "./frame-loop";
+import { pauseState, type Macro, type MacroStep, type PausedMacro } from "./macro";
 import {
   browserHost,
   type AutosaveRecord,
@@ -115,6 +116,8 @@ export class CadApp {
   #failed = false;
   /** Cancels the pending pointer rest, while the pointer is moving. */
   #cancelRest: (() => void) | undefined;
+  /** A menu macro waiting for the user's answer (ADR-0034). */
+  #paused: PausedMacro | undefined;
   /** Pointer rests told to the engine so far, and where the last was: what a test waits for. */
   #rests: PointerRests = { count: 0, at: undefined };
   /** Where the pointer was last moved to, in canvas pixels. */
@@ -215,8 +218,56 @@ export class CadApp {
    * into the drawing (DESIGN §5, §15). The log shows every step.
    */
   run(name: string, ...answers: readonly string[]): void {
-    this.invoke(name);
-    for (const answer of answers) this.submitText(answer);
+    this.runMacro({ command: name, steps: answers });
+  }
+
+  /**
+   * Runs a menu's macro (ADR-0034): the command, then each step typed. At a
+   * pause the rest waits for the user's own answer, and goes on once the
+   * command asks something else; it is dropped if the command ends or
+   * another starts.
+   */
+  runMacro(macro: Macro): void {
+    this.#paused = undefined;
+    this.invoke(macro.command);
+    this.#type(macro.steps ?? []);
+  }
+
+  /** Types `steps` until the next pause, which is then remembered. */
+  #type(steps: readonly MacroStep[]): void {
+    for (const [index, step] of steps.entries()) {
+      if (typeof step === "string") {
+        this.submitText(step);
+        continue;
+      }
+      const { command, prompt } = this.ui.getSnapshot();
+      const paused: PausedMacro = {
+        command,
+        prompt,
+        kind: step.pause,
+        rest: steps.slice(index + 1),
+      };
+      // A selection already made: the command does not ask, and the macro goes on.
+      if (pauseState(paused, { command, prompt }) === "resume") continue;
+      this.#paused = paused;
+      return;
+    }
+  }
+
+  /** A paused macro, after the UI state was refreshed: on, waiting, or dropped. */
+  #resumeMacro(): void {
+    const paused = this.#paused;
+    if (!paused) return;
+    switch (pauseState(paused, this.ui.getSnapshot())) {
+      case "wait":
+        return;
+      case "drop":
+        this.#paused = undefined;
+        return;
+      case "resume":
+        this.#paused = undefined;
+        this.#type(paused.rest);
+    }
   }
 
   key(action: KeyAction): void {
@@ -358,6 +409,7 @@ export class CadApp {
     if (dirty & Dirty.Ui) {
       this.ui.refresh(this.engine);
       this.#keepSettings();
+      this.#resumeMacro();
     }
     if (dirty & RENDER_FLAGS) this.#render?.();
     if (dirty & Dirty.Scene) this.#scheduleAutosave();
@@ -438,7 +490,10 @@ export class CadApp {
   #afterInput(dirty: number): void {
     // The next keystroke may arrive before the next frame: what it means —
     // whether Space submits — must follow this input, not the frame before.
-    if (dirty & Dirty.Ui) this.ui.refresh(this.engine);
+    if (dirty & Dirty.Ui) {
+      this.ui.refresh(this.engine);
+      this.#resumeMacro();
+    }
     this.loop.invalidate(dirty);
     // Handled now rather than on the next frame: opening a file picker must
     // happen while the browser still counts the key press as a user gesture.

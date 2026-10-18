@@ -1,5 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { circles, commandInput, downloadFrom, enter, logLines, openApp, prompt } from "./support";
+import {
+  chooseMenu,
+  circles,
+  commandInput,
+  downloadFrom,
+  enter,
+  logLines,
+  openApp,
+  prompt,
+} from "./support";
 
 test.describe("toolbar", () => {
   // DESIGN §5: toolbar actions invoke the same command machinery as typed commands.
@@ -62,7 +71,7 @@ test.describe("toolbar", () => {
     const toolbar = page.getByRole("navigation", { name: "Tools" });
     await expect(toolbar).toBeVisible();
 
-    await page.getByRole("button", { name: "Toolbar" }).click();
+    await chooseMenu(page, "View", "Toolbar");
     await expect(toolbar).toHaveCount(0);
 
     await page.reload();

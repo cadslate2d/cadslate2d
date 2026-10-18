@@ -44,6 +44,7 @@ There are two kinds:
 | [0031](0031-construction-lines.md) | A construction line is an entity without bounds: kept beside the index, out of the extents, read along a million-unit reach, and drawn clipped to the view in the overlay | Accepted | Design |
 | [0032](0032-draw-order.md) | The drawing order is a tier on each record, carried in the high half of each instance's style word and drawn as depth: fills write it, strokes test it | Accepted | Design |
 | [0033](0033-multileaders.md) | A multileader stores its leaders, its one landing, its content, and its style; the multileader style lays out the arrowheads, the dogleg, and the note | Accepted | Design |
+| [0034](0034-menu-macros.md) | A menu item is a macro over the command line — a command and its answers, typed — and may pause for the user's answer, as AutoCAD's `\` does | Accepted | Design |
 
 ## Expected evidence ADRs
 

@@ -10,6 +10,7 @@ import {
 } from "./cad-app";
 import type { AutosaveRecord, AutosaveStore, FileAccess, FileTarget } from "./host-services";
 import { parseSettings } from "./host-services";
+import { PAUSE, SELECTION } from "./macro";
 import type { HostServices, PickedFile, Settings, SettingsStore, Theme } from "./host-services";
 
 beforeAll(loadEngineForTests);
@@ -437,6 +438,38 @@ describe("saving to a file", () => {
     expect(host.files.saved.map((save) => save.name)).toEqual(["plan.dxf", "plan.dxf"]);
     expect(host.files.written).toHaveLength(0);
     expect(app.ui.getSnapshot().unsavedChanges).toBe(false);
+  });
+});
+
+describe("menu macros (ADR-0034)", () => {
+  test("a pause waits for the user's answer, then the rest is typed", () => {
+    const { app, enter } = harness();
+    app.runMacro({ command: "ARC", steps: [PAUSE, "C"] });
+    expect(app.ui.getSnapshot().prompt).toBe("Specify start point of arc:");
+    enter("0,0");
+    expect(app.ui.getSnapshot().prompt).toBe("Specify center point of arc:");
+  });
+
+  test("a paused macro is dropped when its command ends", () => {
+    const { app, enter } = harness();
+    app.runMacro({ command: "ARC", steps: [PAUSE, "C"] });
+    app.key(KeyAction.Escape);
+    enter("ARC", "0,0");
+    expect(app.ui.getSnapshot().prompt).toBe("Specify second point of arc or [Center]:");
+  });
+
+  test("a selection pause waits until the objects are chosen, or not at all when they are", () => {
+    const { app, enter } = harness();
+    enter("L", "0,0", "10,0", "", "L", "0,5", "10,5", "");
+    app.runMacro({ command: "DRAWORDER", steps: [SELECTION, "B"] });
+    expect(app.ui.getSnapshot().prompt).toMatch(/^Select objects/);
+    enter("L", "");
+    expect(app.ui.getSnapshot().log.at(-1)).toBe("1 object sent to the back.");
+
+    // Chosen beforehand: the command does not ask, and the macro goes straight on.
+    enter("LAST");
+    app.runMacro({ command: "DRAWORDER", steps: [SELECTION, "F"] });
+    expect(app.ui.getSnapshot().log.at(-1)).toBe("1 object brought to the front.");
   });
 });
 

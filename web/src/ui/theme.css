@@ -82,6 +82,7 @@
 
   /* Fixed region sizes */
   --size-header: 44px;
+  --size-menubar: 32px;
   --size-toolbar: 68px;
   --size-status: 34px;
   --size-panel: 440px;

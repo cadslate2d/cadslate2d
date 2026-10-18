@@ -2,7 +2,7 @@
 // kept across a reload and used; a conflict is refused by name; the toggles
 // come up as last left; the theme chosen in the settings panel stays.
 import { expect, test, type Page } from "@playwright/test";
-import { enter, logLines, openApp, pixelsAround, prompt } from "./support";
+import { chooseMenu, enter, logLines, openApp, pixelsAround, prompt } from "./support";
 
 const editor = (page: Page) => page.getByRole("dialog", { name: "Text editor" });
 const field = (page: Page) => page.getByRole("textbox", { name: "Paragraph" });
@@ -106,7 +106,7 @@ test("the settings panel sets the theme, the unit, and the autosave delay, and t
   await page.reload();
   await openApp(page);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  await page.getByRole("button", { name: "Settings" }).click();
+  await chooseMenu(page, "Tools", "Options...");
   await expect(panel.getByLabel("Drawing unit")).toHaveValue("mm");
   await expect(panel.getByLabel("Autosave after (seconds)")).toHaveValue("3");
   // The restored unit is the drawing's: a typed length converts.

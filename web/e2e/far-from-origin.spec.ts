@@ -97,12 +97,14 @@ test("a drawing that spans ten million units draws its far end to a pixel at a h
   page,
 }) => {
   // #188 (ADR-0028): the far plot's chunk is packed against an origin of
-  // its own, so its offsets are tens of units and exact. The near lines
-  // fill the first chunk, so the plot is in the second.
+  // its own, so its offsets are tens of units and exact. The 511 near
+  // lines fill the first chunk of 512 IDs exactly, so the plot is alone in
+  // the second. A chunk holding both ends is the case ADR-0028 leaves to
+  // chunking by locality.
   const canvas = await openApp(page);
   await page.keyboard.press("F7");
   const near: number[][] = [];
-  for (let index = 0; index < 600; index += 1) near.push([0, index, 10, index]);
+  for (let index = 0; index < 511; index += 1) near.push([0, index, 10, index]);
   const dxf = dxfOfLines([
     ...near,
     [FAR, FAR, FAR + 10, FAR],
@@ -113,7 +115,7 @@ test("a drawing that spans ten million units draws its far end to a pixel at a h
     mimeType: "application/dxf",
     buffer: Buffer.from(dxf),
   });
-  await expect(logLines(page).filter({ hasText: "Imported 602 lines." })).toHaveCount(1);
+  await expect(logLines(page).filter({ hasText: "Imported 513 lines." })).toHaveCount(1);
   await page.getByRole("button", { name: "Dismiss the import report" }).click();
   // ZOOM Center on the far plot at a height of six units: a hundred
   // pixels per unit on the 600-pixel canvas.

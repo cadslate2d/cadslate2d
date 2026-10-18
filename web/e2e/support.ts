@@ -111,6 +111,35 @@ export async function pointerRests(
   });
 }
 
+/**
+ * Chooses an item of the menu bar with the pointer, as a drafter would:
+ * `chooseMenu(page, "View", "Zoom", "Extents")` opens View, hovers the Zoom
+ * cascade, and clicks Extents.
+ */
+export async function chooseMenu(page: Page, title: string, ...path: string[]): Promise<void> {
+  await page
+    .getByRole("menubar", { name: "Menus" })
+    .getByRole("menuitem", { name: title, exact: true })
+    .click();
+  for (const [level, label] of path.entries()) {
+    const entry = menuEntry(page, level, label);
+    if (level < path.length - 1) await entry.hover();
+    else await entry.click();
+  }
+}
+
+/** The entry called `label` of the open list at `level`: 0 the menu, 1 a cascade beside it, … */
+export function menuEntry(page: Page, level: number, label: string): Locator {
+  const quoted = JSON.stringify(label);
+  return page
+    .getByRole("menu")
+    .nth(level)
+    .locator(
+      `[role="menuitem"][aria-label=${quoted}], [role="menuitemcheckbox"][aria-label=${quoted}]`,
+    )
+    .first();
+}
+
 /** Lets queued animation frames run. */
 export async function settle(page: Page): Promise<void> {
   await page.evaluate(

@@ -105,6 +105,7 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 | A snap mode | `SnapMode` and its points in `crates/cad-commands/src/snap.rs`; its marker glyph in `cad-render` | Headless tests per entity type; a marker baseline in `test-data/screenshots/` |
 | A drafting aid or its setting | Pure functions in `crates/cad-commands/src/aids.rs`; state in `Toggles` or `DraftingSettings`; applied in `Session::aim` | Unit tests for the function; headless precedence tests |
 | A browser capability | `web/src/app/host-services.ts`, behind the `HostServices` interface | A `CadApp` test with a fake host |
+| A menu item | `web/src/ui/menus.ts`, data in the model of `menu-model.ts`: a macro over the command line (`app/macro.ts`, ADR-0034), a panel, or a dialog; greyed or checked by a pure function of the UI snapshot | A Vitest test that its command is registered and its macro runs; an e2e flow for a new kind of item |
 | UI | `web/src/ui/`, styled only through tokens in `theme.css` | No drawing data in React state |
 
 ## Commands

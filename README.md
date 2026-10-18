@@ -27,7 +27,10 @@ What remains, **M15**, is verification that needs a person: real GPUs, WebKit, a
 
 ## What works today
 
-Type anywhere on the page; you never need to click the command line first. The toolbar and the panels are optional: every button runs the same command you could type — a Layers panel action is `LAYER` with its answers, a change in the Properties panel is `CHPROP`, and the log shows each step — and the `Toolbar`, `Layers`, and `Properties` buttons in the header hide them.
+Type anywhere on the page; you never need to click the command line first. The menu bar, the toolbar, and the panels are optional ways to type:
+- every menu item and button runs the same command you could type ([ADR-0034](docs/adr/0034-menu-macros.md)). A menu item may wait for your answer before typing the rest, as AutoCAD's menus do;
+- a Layers panel action is `LAYER` with its answers, a change in the Properties panel is `CHPROP`, and the log shows each step;
+- View shows and hides the toolbar and the panels.
 
 | Command | Aliases | What it does |
 | --- | --- | --- |
@@ -98,7 +101,7 @@ Type anywhere on the page; you never need to click the command line first. The t
 | `PURGE` | `PU` | Removes every unused row of the tables — blocks, dimension styles, layers, linetypes, text styles, or `All` — as one change, naming what went: never layer `0`, `Continuous`, `Standard`, a current row, or one an object, a layer, a block's object, or another block refers to. A block nothing places goes, and then what only it placed. `?` says what would go without removing it. |
 | `RENAME` | `REN` | Renames a block, dimension style, layer, linetype, text style, or layout by its old and new names. Every reference holds, since objects refer to rows by ID; a taken or bad name and the permanent rows are refused. |
 | `ALIASEDIT` | — | Opens the editor on your own command aliases, one per line as `alias, command` (`LL, LAYER`; `;` starts a comment). A line that takes a built-in name or names no command is refused by its number, and the rest stand. The aliases are kept in this browser and are back after a reload ([ADR-0026](docs/adr/0026-user-aliases-and-settings.md)). |
-| `SETTINGS` | Header button | Opens the settings panel: the theme (dark or light), the autosave delay, the drawing unit, the drafting toggles, and the aliases. The toggles come back as you left them; the unit you set starts the next new drawing. All of it stays in this browser; nothing leaves it. |
+| `SETTINGS` | Tools › Options | Opens the settings panel: the theme (dark or light), the autosave delay, the drawing unit, the drafting toggles, and the aliases. The toggles come back as you left them; the unit you set starts the next new drawing. All of it stays in this browser; nothing leaves it. |
 | `SELECT` | — | Builds a selection at the idle prompt, with the pointer or with the methods below, and keeps it for the next command. At the idle prompt the methods start by their full names too — `FENCE`, `WPOLYGON` (`WP`), `CPOLYGON` (`CPOLY`), `PREVIOUS`, `LAST`, `ALL`, `REMOVE` — each `SELECT` with that method begun; the short `F`, `CP`, `P`, and `L` there are still FILLET, COPY, PAN, and LINE. |
 | `QSELECT` | `QS` | Selects by what objects are: a kind (or all), then any number of tests, each narrowing — `Layer`, `Color`, `LType`, `LWeight`, a text `Style`, a `DIMstyle`, a `Block`, with `=`, `<>`, and for colours and lineweights `<` and `>` — until `Done` or Enter. `Append` adds what is found to the selection, `Remove` takes it away; otherwise it is the selection. Only objects that have a property are tested by it: a line has no text style. Shown, unlocked objects of the current space only. |
 | `DIST` | `DI` | Two points: the distance between them, the delta in X and Y, and the angle from the first to the second, in the log. Lengths carry the drawing's unit suffix when it has one. Changes nothing. |

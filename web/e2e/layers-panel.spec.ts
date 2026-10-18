@@ -1,7 +1,17 @@
 // The Layers panel (#140): a second way to do what LAYER does. Every action
 // goes through the command line, so the log shows it and the export has it.
 import { expect, test, type Page } from "@playwright/test";
-import { downloadFrom, enter, group, logLines, openApp, prompt, tableRow } from "./support";
+import {
+  chooseMenu,
+  downloadFrom,
+  enter,
+  group,
+  menuEntry,
+  logLines,
+  openApp,
+  prompt,
+  tableRow,
+} from "./support";
 
 const panel = (page: Page) => page.getByRole("complementary", { name: "Layers" });
 const row = (page: Page, name: string) =>
@@ -87,14 +97,18 @@ test.describe("Layers panel", () => {
     await expect(page.getByRole("textbox", { name: "Name of the new layer" })).toHaveCount(0);
     await expect(logLines(page).filter({ hasText: "created" })).toHaveCount(0);
 
-    const toggle = page.getByRole("button", { name: "Layers", exact: true });
-    await expect(toggle).toHaveAttribute("aria-pressed", "true");
-    await toggle.click();
+    // View › Layers Panel, checked while the panel shows.
+    await page
+      .getByRole("menubar", { name: "Menus" })
+      .getByRole("menuitem", { name: "View" })
+      .click();
+    await expect(menuEntry(page, 0, "Layers Panel")).toHaveAttribute("aria-checked", "true");
+    await menuEntry(page, 0, "Layers Panel").click();
     await expect(panel(page)).toHaveCount(0);
     await page.reload();
     await openApp(page);
     await expect(panel(page)).toHaveCount(0);
-    await toggle.click();
+    await chooseMenu(page, "View", "Layers Panel");
     await expect(panel(page)).toBeVisible();
   });
 });

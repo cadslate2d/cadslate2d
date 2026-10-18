@@ -28,9 +28,12 @@ body {
   /* One column exactly as wide as the window: no row may widen the shell,
      or the canvas would change size with the number of toolbar buttons. */
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: var(--size-header) minmax(0, 1fr) auto var(--size-status);
+  grid-template-rows:
+    var(--size-header) var(--size-menubar) minmax(0, 1fr) auto
+    var(--size-status);
   grid-template-areas:
     "header"
+    "menubar"
     "canvas"
     "command"
     "status";
@@ -38,9 +41,12 @@ body {
 }
 
 .shell--with-toolbar {
-  grid-template-rows: var(--size-header) var(--size-toolbar) minmax(0, 1fr) auto var(--size-status);
+  grid-template-rows:
+    var(--size-header) var(--size-menubar) var(--size-toolbar) minmax(0, 1fr)
+    auto var(--size-status);
   grid-template-areas:
     "header"
+    "menubar"
     "toolbar"
     "canvas"
     "command"
@@ -51,6 +57,7 @@ body {
   grid-template-columns: minmax(0, 1fr) var(--size-panel);
   grid-template-areas:
     "header header"
+    "menubar menubar"
     "canvas panels"
     "command panels"
     "status status";
@@ -59,6 +66,7 @@ body {
 .shell--with-toolbar.shell--with-panels {
   grid-template-areas:
     "header header"
+    "menubar menubar"
     "toolbar toolbar"
     "canvas panels"
     "command panels"
@@ -81,6 +89,10 @@ body {
 
 .toolbar {
   grid-area: toolbar;
+}
+
+.menubar {
+  grid-area: menubar;
 }
 
 .canvas-region {
@@ -621,26 +633,6 @@ body {
   background: var(--color-surface-raised);
 }
 
-.header__spacer {
-  flex: 1;
-}
-
-.header__button {
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-panel);
-  color: var(--color-text-muted);
-  font: inherit;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-}
-
-.header__button[aria-pressed="true"] {
-  border-color: var(--color-accent);
-  color: var(--color-text);
-}
-
 .header {
   display: flex;
   align-items: center;
@@ -833,4 +825,141 @@ body {
   min-width: 22ch;
   font-family: var(--font-mono);
   text-align: center;
+}
+
+/* ── The menu bar (DESIGN §5, ADR-0034) ── */
+
+.menubar {
+  /* Above the canvas and the panels, which an open menu lies over. */
+  position: relative;
+  z-index: 20;
+  display: flex;
+  align-items: stretch;
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-app);
+  font-size: var(--font-size-md);
+  user-select: none;
+}
+
+.menubar__menus {
+  display: flex;
+  align-items: stretch;
+}
+
+.menubar__menu {
+  position: relative;
+  display: flex;
+}
+
+.menubar__title {
+  padding: 0 var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  cursor: default;
+}
+
+.menubar__title:hover,
+.menubar__title--open {
+  background: var(--color-surface-raised);
+}
+
+.menubar__title--open {
+  color: var(--color-text);
+  box-shadow: inset 0 -2px 0 var(--color-accent);
+}
+
+.menubar__mnemonic {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.menubar__list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 220px;
+  padding: var(--space-1) 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-panel);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+}
+
+.menubar__list--cascade {
+  top: calc(-1 * var(--space-1) - 1px);
+  left: 100%;
+}
+
+.menubar__entry {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px var(--space-3) 3px var(--space-2);
+  color: var(--color-text);
+  white-space: nowrap;
+  cursor: default;
+}
+
+.menubar__entry--active {
+  background: var(--color-accent-soft);
+}
+
+.menubar__entry--disabled {
+  color: var(--color-text-faint);
+}
+
+.menubar__check {
+  color: var(--color-accent);
+  text-align: center;
+}
+
+.menubar__shortcut {
+  padding-left: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.menubar__entry--disabled .menubar__shortcut {
+  color: var(--color-text-faint);
+}
+
+.menubar__separator {
+  height: 1px;
+  margin: var(--space-1) var(--space-2);
+  background: var(--color-border);
+}
+
+.menubar__spacer {
+  flex: 1;
+}
+
+.menubar__quick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.menubar__quick-button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.menubar__quick-button:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
 }
