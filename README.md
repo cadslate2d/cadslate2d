@@ -275,6 +275,8 @@ pnpm --dir web dev
 
 ### Everyday commands
 
+A `Makefile` at the root wraps the common ones: `make` lists its targets, for example `make dev`, `make check`, `make test`, `make lint`, `make fmt`, `make e2e` (which builds the bundle first), `make baselines`, and `make fuzz FUZZ_SECONDS=60`. Each target runs one of the commands below and adds nothing of its own.
+
 | Task | Command |
 | --- | --- |
 | Full check (run before pushing) | `scripts/check.sh` |
@@ -326,7 +328,8 @@ web/
   src/ui/         React shell and theme tokens
   e2e/            Playwright tests and the plain static server they run against
   bench/          Browser measurements, run on demand
-scripts/          build-wasm.sh, check.sh, check-boundaries.sh, stress.sh
+scripts/          build-wasm.sh, check.sh, check-boundaries.sh, stress.sh, fuzz.sh
+Makefile          shortcuts for the everyday commands; `make` lists them
 test-data/        DXF fixtures, geometry regression cases, screenshots
 benches/          cad-benchmarks crate: drawing generator and criterion benchmarks
 docs/             DESIGN.md, ADRs, milestone reviews, roadmap

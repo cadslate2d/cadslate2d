@@ -110,16 +110,16 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 
 ## Commands
 
-Build, test, and lint commands are listed in [`README.md`](README.md#development). Run the full check before every push:
+Build, test, and lint commands are listed in [`README.md`](README.md#development); the root `Makefile` wraps them (`make` lists the targets). A target only calls a script or a pnpm script — put new logic in `scripts/`, not in the Makefile. Run the full check before every push:
 
 ```bash
-scripts/check.sh
+make check
 ```
 
-End-to-end tests run against the production bundle:
+End-to-end tests run against the production bundle, which `make e2e` builds first:
 
 ```bash
-pnpm --dir web build && pnpm --dir web e2e
+make e2e
 ```
 
 ## Workflow
