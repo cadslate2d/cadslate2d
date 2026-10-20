@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # rust-toolchain.toml pins the toolchain, components, and wasm target.
       - name: Install Rust toolchain
