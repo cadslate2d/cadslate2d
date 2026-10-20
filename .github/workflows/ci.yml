@@ -35,7 +35,7 @@ jobs:
         with:
           tool: wasm-bindgen-cli@${{ steps.wbg.outputs.version }},cargo-deny,cargo-about
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           package_json_file: web/package.json
 
