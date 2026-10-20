@@ -7,7 +7,7 @@
 //! ```
 
 use cad_dwg::objects::{fixed_type_is_entity, types};
-use cad_dwg::{File, entities, tables};
+use cad_dwg::{File, entities, records, tables};
 
 fn main() {
     let path = std::env::args().nth(1).expect("a .dwg path");
@@ -107,25 +107,60 @@ fn main() {
             }
         };
         let handle = object.handle;
-        let result =
-            match object.type_code {
-                types::LAYER => {
-                    tables::layer(&file, &mut streams, &common, handle).map(|r| format!("{r:?}"))
-                }
-                types::LTYPE => {
-                    tables::linetype(&file, &mut streams, &common, handle).map(|r| format!("{r:?}"))
-                }
-                types::STYLE => tables::text_style(&file, &mut streams, &common, handle)
-                    .map(|r| format!("{r:?}")),
-                types::DIMSTYLE => tables::dim_style(&file, &mut streams, &common, handle)
-                    .map(|r| format!("{r:?}")),
-                types::BLOCK_HEADER => tables::block_header(&file, &mut streams, &common, handle)
-                    .map(|r| format!("{r:?}")),
-                other => Ok(format!(
-                    "object type {other:#x} ({:?})",
-                    class.map(|c| &c.dxf_name)
-                )),
-            };
+        let class_name = class.map(|c| c.dxf_name.as_str());
+        let result = match (object.type_code, class_name) {
+            (types::DICTIONARY, _) => {
+                records::dictionary(&file, &mut streams, &common, handle, false)
+                    .map(|r| format!("{r:?}"))
+            }
+            (_, Some("ACDBDICTIONARYWDFLT")) => {
+                records::dictionary(&file, &mut streams, &common, handle, true)
+                    .map(|r| format!("{r:?}"))
+            }
+            (types::LAYOUT, _) => {
+                records::layout(&file, &mut streams, &common, handle).map(|r| format!("{r:?}"))
+            }
+            (types::GROUP, _) => {
+                records::group(&file, &mut streams, &common, handle).map(|r| format!("{r:?}"))
+            }
+            (_, Some("SORTENTSTABLE")) => {
+                records::sortents_table(&file, &mut streams, &common, handle)
+                    .map(|r| format!("{r:?}"))
+            }
+            (types::XRECORD, _) => {
+                records::xrecord(&file, &mut streams, &common, handle).map(|r| format!("{r:?}"))
+            }
+            (_, Some("MLEADERSTYLE")) => {
+                records::mleader_style(&file, &mut streams, &common, handle)
+                    .map(|r| format!("{r:?}"))
+            }
+            (_, Some("WIPEOUTVARIABLES")) => {
+                records::wipeout_variables(&file, &mut streams, &common, handle)
+                    .map(|r| format!("{r:?}"))
+            }
+            (types::VIEW, _) => {
+                records::view(&file, &mut streams, &common, handle).map(|r| format!("{r:?}"))
+            }
+            (types::LAYER, _) => {
+                tables::layer(&file, &mut streams, &common, handle).map(|r| format!("{r:?}"))
+            }
+            (types::LTYPE, _) => {
+                tables::linetype(&file, &mut streams, &common, handle).map(|r| format!("{r:?}"))
+            }
+            (types::STYLE, _) => {
+                tables::text_style(&file, &mut streams, &common, handle).map(|r| format!("{r:?}"))
+            }
+            (types::DIMSTYLE, _) => {
+                tables::dim_style(&file, &mut streams, &common, handle).map(|r| format!("{r:?}"))
+            }
+            (types::BLOCK_HEADER, _) => {
+                tables::block_header(&file, &mut streams, &common, handle).map(|r| format!("{r:?}"))
+            }
+            (other, _) => Ok(format!(
+                "object type {other:#x} ({:?})",
+                class.map(|c| &c.dxf_name)
+            )),
+        };
         match result {
             Ok(text) if only.is_none() || text.contains(only.as_deref().unwrap_or("")) => {
                 println!("{handle:x} {text}")

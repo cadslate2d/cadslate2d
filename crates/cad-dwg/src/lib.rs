@@ -30,6 +30,7 @@ pub mod objects;
 mod r2000;
 mod r2004;
 mod r2007;
+pub mod records;
 mod sections;
 pub mod tables;
 mod version;

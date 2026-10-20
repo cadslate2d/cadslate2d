@@ -57,7 +57,22 @@ Every row's name, flags, and handles; the handles a row names — a layer's line
 | `STYLE` (§20.4.56) | Name, the shape and vertical bits (in that order), fixed height, width factor, oblique angle, generation, fonts | `ezdxf-r2010-text-styles.AC1015.dwg`, `ezdxf-r12-text.AC1021.dwg` |
 | `DIMSTYLE` (§20.4.68) | Name and every variable of R2000 to R2007 under its DXF code, the text style by handle | `ezdxf-r2010-dimstyles.AC1015.dwg`, `ezdxf-r2010-dimstyles.AC1021.dwg` |
 | `BLOCK_HEADER` (§20.4.52) | Name, flags, base point; the entities it owns, in order: the first and last of a chain in R2000, the owned list in R2004 and later; the layout handle | `ezdxf-r12-blocks.AC1015.dwg`, `ezdxf-r12-blocks.AC1018.dwg`, `ezdxf-r2010-block-attributes.AC1021.dwg` |
-| `APPID`, `VPORT`, `VIEW`, `UCS`, the control objects, dictionaries, `LAYOUT`, `GROUP`, `SORTENTSTABLE`, `XRECORD`, `MLEADERSTYLE` | Found, not read: #314 reads what the drawing holds of them | — |
+| `VIEW` (§20.4.60) | Name, height, width, centre, the paper-space bit (70); the view's direction, target, lens, and UCS read past | `ezdxf-r2010-named-views.AC1015.dwg`, `ezdxf-r2010-named-views.AC1021.dwg` |
+| `APPID`, `VPORT`, `UCS`, the control objects | Found, not read: the drawing holds nothing of them, as it holds nothing of a DXF's | — |
+
+## Objects
+
+The objects the DXF reader keeps raw and reads itself (#184, #214, #226, #228, #240) are decoded into the groups it reads, with the subclass markers it looks for (`100 AcDbLayout`, `100 AcDbXrecord`, `100 AcDbSortentsTable`); `crates/cad-dwg/src/records.rs`. Every other object — `DICTIONARYVAR`, `PLACEHOLDER`, `MLINESTYLE`, `MATERIAL`, `VISUALSTYLE`, `SCALE`, `DIMASSOC`, … — is found and passed over, as the DXF reader passes it over.
+
+| Object | Read (spec §) | Fixtures |
+| --- | --- | --- |
+| `DICTIONARY`, `ACDBDICTIONARYWDFLT` (§20.4.44–20.4.45) | Each entry's name and the handle it names (350, or 360 when the dictionary owns its entries); the default's handle (340). The root dictionary's entries name the drawing's tables of objects: `ACAD_GROUP`, `ACAD_LAYOUT`, `ACAD_LAYERSTATES`, `ACAD_MLEADERSTYLE` | every fixture |
+| `LAYOUT` (§20.4.84; a class in R2000, fixed type 0x52 later) | The plot settings under `AcDbPlotSettings` — paper, margins, window, scale, every value under its DXF code — then under `AcDbLayout` the name, tab order, limits, UCS, extents, and the block record it is the paper of (330) | `layouts.AC1015.dwg`, `layouts.AC1018.dwg`, `layouts.AC1021.dwg`, `two_layouts_and_a_viewport_open_to_the_same_spaces_in_every_version()` |
+| `GROUP` (§20.4.72) | Description, the unnamed and selectable flags, each member by handle; named by its `ACAD_GROUP` entry | `ezdxf-r2010-groups.AC1015.dwg`, `ezdxf-r2010-groups.AC1018.dwg`, `ezdxf-r2010-groups.AC1021.dwg` |
+| `SORTENTSTABLE` (§20.4.93) | The block record it orders (330) and each entity's sort handle (331, 5): the sort handles from the data stream, the entities from the handle stream | `ezdxf-r2010-draw-order.AC1015.dwg`, `ezdxf-r2010-draw-order.AC1018.dwg`, `ezdxf-r2010-draw-order.AC1021.dwg`, `the_draw_order_of_a_sortentstable_fixture_matches_its_source()` |
+| `XRECORD` (§20.4.104) | Its data as the groups it is a sequence of — each value typed by its code as DXF types them (`xrecord_kind()`), strings by byte count and code page before R2007, by UTF-16 unit count from it — and its cloning flag (280); the `ACAD_LAYERSTATES` ones become layer states | `ezdxf-r2010-layer-states.AC1015.dwg`, `ezdxf-r2010-layer-states.AC1018.dwg`, `ezdxf-r2010-layer-states.AC1021.dwg` |
+| `MLEADERSTYLE` (§20.4.87; a class) | Every value under its DXF code, in LibreDWG's order (`dwg2.spec`): the arrowhead size (44), landing gap (42), dogleg (291, 43), text height (45), the block (343) and its scale (47, 49, 140). Absent from `AC1015`, which predates multileaders | `ezdxf-r2010-multileaders.AC1018.dwg`, `ezdxf-r2010-multileaders.AC1021.dwg` |
+| `WIPEOUTVARIABLES` (a class; undocumented, LibreDWG's `dwg2.spec`) | The frame switch (70) | `ezdxf-r2010-draw-order.AC1018.dwg` |
 
 ## Entities
 
@@ -78,8 +93,11 @@ Each decoded by its prescription into the groups a DXF carries, with the common 
 | `SPLINE` | §20.4.40: both scenarios, knots, control points with weights, fit points | `ezdxf-r2010-mixed-content.AC1021.dwg` (through #182's reader) |
 | `HATCH` | §20.4.75: gradient data (R2004 and later), every path kind and edge kind, the pattern lines, the seed points, in the order a file carries them | `ezdxf-r2010-hatches.AC1015.dwg`, `ezdxf-r2010-hatches.AC1018.dwg` |
 | `WIPEOUT` | §20.4.80, an image with no picture | `ezdxf-r2010-draw-order.AC1015.dwg` |
-| `DIMENSION`, `LEADER`, `MULTILEADER`, `VIEWPORT` | Read in #314; until then counted as `DWG:DIMENSION` and the like | `crafted-proxy-entity.AC1015.dwg` |
-| `ACAD_PROXY_ENTITY`, `MLINE`, `TOLERANCE`, `REGION`, `3DSOLID`, `BODY`, `SHAPE`, `OLEFRAME`, `OLE2FRAME`, meshes, images, and every class entity this crate does not decode | Counted by kind, never guessed at | `crafted-proxy-entity.AC1015.dwg` |
+| `DIMENSION`, every kind (§20.4.22–20.4.29) | The common data — text midpoint, elevation, flags, user text, text rotation, horizontal direction, block scale and rotation, attachment, line spacing, the measurement — then each kind's points: ordinate (and its X bit into 70's 64), linear (with its rotation, 50) and aligned (52), angular by three points and by two lines (16), radius and diameter (the leader length, 40). The kind is 70's low bits, 32 for the block, 128 when the text was placed by hand; the style by handle (3); the anonymous block it owns, by the DXF reader | `ezdxf-r2010-dimension-chains.AC1015.dwg`, `ezdxf-r2010-dimension-chains.AC1021.dwg`, `ezdxf-r2010-ordinate-dimensions.AC1018.dwg` |
+| `LEADER` (§20.4.47) | Annotation type (73), path type (72), the points (76, 10), the directions and offsets (210–213), the box (40, 41), the hookline and arrowhead bits; the annotation (340) and style (3) by handle | `ezdxf-r2010-leaders.AC1015.dwg`, `ezdxf-r2010-leaders.AC1018.dwg`, `ezdxf-r2010-leaders.AC1021.dwg` |
+| `MULTILEADER` (§20.4.48 with its context data, §20.4.86 — sparse in the specification; LibreDWG's `dwg2.spec` is the prescription followed) | The context data as a file carries it — `300 CONTEXT_DATA{` … `301 }`, each leader root `302 LEADER{` … `303 }`, each line `304 LEADER_LINE{` … `305 }`, the text (290, 304) or the block (296, 341, 16) — then the style (340), the leader type (170), and the overrides, under their DXF codes | `ezdxf-r2010-multileaders.AC1018.dwg`, `ezdxf-r2010-multileaders.AC1021.dwg` (`AC1015` holds the entities, but no style) |
+| `VIEWPORT` (§20.4.38) | Centre, width, height (10, 40, 41); the view: centre (12), height (45), target and direction, twist, lens, snap and grid; the status (90), and 68 from its off bit; the frozen layers, clip, and the viewport entity header read past | `layouts.AC1015.dwg`, `layouts.AC1018.dwg`, `layouts.AC1021.dwg` |
+| `ACAD_PROXY_ENTITY`, `MLINE`, `TOLERANCE`, `REGION`, `3DSOLID`, `BODY`, `SHAPE`, `OLEFRAME`, `OLE2FRAME`, meshes, images, tables, and every class entity this crate does not decode | Counted by kind, never guessed at, whatever block held it | `crafted-proxy-entity.AC1015.dwg`, `crafted-mline-entity.AC1015.dwg` |
 | An object of a class the drawing does not define | Counted as `(unknown-class-N)` | `crafted-unknown-class.AC1015.dwg` |
 | An object that cannot be decoded | Counted as `(unreadable-dwg-object)` or by its kind; an object map entry past the file as `(dwg-object-missing-from-file)` | `every_malformed_fixture_is_refused_with_the_error_its_name_says()` |
 
@@ -99,3 +117,6 @@ Found by the spike behind ADR-0036 and confirmed in LibreDWG's source; the code 
 | §20.4.54 and every table row, the flag bits around the xref index | "64-flag B, xrefindex+1 BS, Xdep B" | In R2007 only the bit short is stored |
 | §20.4.56, the text style's flag bits | "Vertical B, shape file B" | The shape bit comes first |
 | §20.4.9, the insert's owned-object count | Listed for R2004 and later | Stored only when the insert has attributes |
+| §20.4.84, the layout's viewport count (R2004 and later) | RL | A BL |
+| §20.4.104, a string in an xrecord's data before R2007 | "the string length (RC), the dwgcodepage (RC)" | The length is an RS |
+| §20.4.84, the layout's points | Listed as in the DXF record | The insertion base comes first, then the limits, then the UCS origin and axes, the elevation, the orthographic view, the extents |

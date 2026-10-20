@@ -41,6 +41,8 @@ pub struct Decoded {
     pub linetype: LinetypeRef,
     pub text_style: Option<u64>,
     pub block: Option<u64>,
+    /// A dimension's or a leader's style, by handle.
+    pub dim_style: Option<u64>,
     /// A VERTEX, an ATTRIB, a SEQEND, a BLOCK, an ENDBLK: read with the
     /// entity that owns it, never on its own.
     pub subordinate: bool,
@@ -51,6 +53,8 @@ pub struct Decoded {
     pub last: Option<u64>,
     /// Whether a SEQEND closes the owned entities.
     pub has_seqend: bool,
+    /// Not decoded: the kind alone, for the report.
+    pub undecoded: bool,
 }
 
 impl Decoded {
@@ -66,11 +70,13 @@ impl Decoded {
             linetype: LinetypeRef::ByLayer,
             text_style: None,
             block: None,
+            dim_style: None,
             subordinate: false,
             owned: Vec::new(),
             first: None,
             last: None,
             has_seqend: false,
+            undecoded: false,
         }
     }
 }
@@ -320,14 +326,54 @@ pub fn decode(
             limits,
         )?,
         "WIPEOUT" => wipeout(&mut out.groups, d, limits)?,
+        "DIMENSION" => {
+            dimension(
+                &mut out.groups,
+                d,
+                streams.strings.as_mut(),
+                version,
+                object.type_code,
+                limits,
+            )?;
+            out.dim_style = Some(streams.handles.handle()?.resolve(object.handle));
+        }
+        "LEADER" => {
+            leader(
+                &mut out.groups,
+                d,
+                streams.strings.as_mut(),
+                version,
+                limits,
+            )?;
+            let h = &mut streams.handles;
+            let annotation = h.handle()?.resolve(object.handle);
+            if annotation != 0 {
+                out.groups.handle(340, annotation);
+            }
+            out.dim_style = Some(h.handle()?.resolve(object.handle));
+        }
+        "VIEWPORT" => viewport(
+            &mut out.groups,
+            d,
+            streams.strings.as_mut(),
+            version,
+            limits,
+        )?,
+        "MULTILEADER" => mleader(
+            &mut out.groups,
+            d,
+            streams.strings.as_mut(),
+            &mut streams.handles,
+            version,
+            limits,
+            object.handle,
+        )?,
         _ => {
             // Not decoded: the kind alone, for the report. A kind the DXF
             // reader would try to read from groups is marked, so that it
             // is counted and not refused.
             out.groups = Groups::default();
-            if matches!(kind, "DIMENSION" | "VIEWPORT" | "LEADER" | "MULTILEADER") {
-                out.kind = format!("DWG:{kind}");
-            }
+            out.undecoded = true;
         }
     }
     Ok(out)
@@ -1055,5 +1101,539 @@ fn wipeout(
             groups.point(14, d.rd2()?);
         }
     }
+    Ok(())
+}
+
+/// The common dimension data (§20.4.22) and each kind's own points
+/// (§20.4.23–20.4.29), as the DXF groups of a DIMENSION: the kind in the
+/// low bits of 70, 32 for the block, 128 when the text was placed by hand.
+fn dimension(
+    groups: &mut Groups,
+    d: &mut BitReader<'_>,
+    strings: Option<&mut BitReader<'_>>,
+    version: Version,
+    type_code: u16,
+    limits: &crate::ImportLimits,
+) -> Result<(), DwgError> {
+    let (extrusion, ez) = d.bd3()?;
+    let text_midpoint = d.rd2()?;
+    let elevation = d.bd()?;
+    let flags = d.rc()?;
+    let user_text = text_field(d, strings, limits)?;
+    let text_rotation = d.bd()?;
+    let horizontal_direction = d.bd()?;
+    let (scale, sz) = d.bd3()?;
+    let insert_rotation = d.bd()?;
+    let attachment = d.bs()?;
+    let spacing_style = d.bs()?;
+    let spacing_factor = d.bd()?;
+    let measurement = d.bd()?;
+    if version >= Version::R2007 {
+        d.bit()?;
+        d.bit()?; // flip arrow 1
+        d.bit()?; // flip arrow 2
+    }
+    let insertion = d.rd2()?;
+    let kind = match type_code {
+        types::DIMENSION_ORDINATE => 6,
+        types::DIMENSION_LINEAR => 0,
+        types::DIMENSION_ALIGNED => 1,
+        types::DIMENSION_ANGULAR_3PT => 5,
+        types::DIMENSION_ANGULAR_2LN => 2,
+        types::DIMENSION_RADIUS => 4,
+        _ => 3,
+    };
+    let mut dxf_flags = kind | 32;
+    if flags & 1 == 0 {
+        dxf_flags |= 128;
+    }
+    let mut points = Groups::default();
+    match type_code {
+        types::DIMENSION_ORDINATE => {
+            let (p10, z10) = d.bd3()?;
+            let (p13, z13) = d.bd3()?;
+            let (p14, z14) = d.bd3()?;
+            let flags2 = d.rc()?;
+            if flags2 & 1 != 0 {
+                dxf_flags |= 64;
+            }
+            points.point3(10, p10, z10);
+            points.point3(13, p13, z13);
+            points.point3(14, p14, z14);
+        }
+        types::DIMENSION_LINEAR | types::DIMENSION_ALIGNED => {
+            let (p13, z13) = d.bd3()?;
+            let (p14, z14) = d.bd3()?;
+            let (p10, z10) = d.bd3()?;
+            let extension_rotation = d.bd()?;
+            points.point3(10, p10, z10);
+            points.point3(13, p13, z13);
+            points.point3(14, p14, z14);
+            points.degrees(52, extension_rotation);
+            if type_code == types::DIMENSION_LINEAR {
+                let rotation = d.bd()?;
+                points.degrees(50, rotation);
+            }
+        }
+        types::DIMENSION_ANGULAR_3PT => {
+            let (p10, z10) = d.bd3()?;
+            let (p13, z13) = d.bd3()?;
+            let (p14, z14) = d.bd3()?;
+            let (p15, z15) = d.bd3()?;
+            points.point3(10, p10, z10);
+            points.point3(13, p13, z13);
+            points.point3(14, p14, z14);
+            points.point3(15, p15, z15);
+        }
+        types::DIMENSION_ANGULAR_2LN => {
+            let p16 = d.rd2()?;
+            let (p13, z13) = d.bd3()?;
+            let (p14, z14) = d.bd3()?;
+            let (p15, z15) = d.bd3()?;
+            let (p10, z10) = d.bd3()?;
+            points.point3(10, p10, z10);
+            points.point3(13, p13, z13);
+            points.point3(14, p14, z14);
+            points.point3(15, p15, z15);
+            points.point3(16, p16, elevation);
+        }
+        types::DIMENSION_RADIUS => {
+            let (p10, z10) = d.bd3()?;
+            let (p15, z15) = d.bd3()?;
+            let leader_length = d.bd()?;
+            points.point3(10, p10, z10);
+            points.point3(15, p15, z15);
+            points.real(40, leader_length);
+        }
+        _ => {
+            let (p15, z15) = d.bd3()?;
+            let (p10, z10) = d.bd3()?;
+            let leader_length = d.bd()?;
+            points.point3(10, p10, z10);
+            points.point3(15, p15, z15);
+            points.real(40, leader_length);
+        }
+    }
+    groups.int(70, dxf_flags);
+    groups.0.extend(points.0);
+    groups.point3(11, text_midpoint, elevation);
+    groups.point(12, insertion);
+    extrusion_groups(groups, [extrusion.x, extrusion.y, ez]);
+    groups.text(1, &user_text);
+    if text_rotation != 0.0 {
+        groups.degrees(53, text_rotation);
+    }
+    if horizontal_direction != 0.0 {
+        groups.degrees(51, horizontal_direction);
+    }
+    // The block's scale and rotation have no DXF group: a reader lays the
+    // dimension out again.
+    let _ = (scale, sz, insert_rotation);
+    groups.int(71, attachment);
+    groups.int(72, spacing_style);
+    groups.real(41, spacing_factor);
+    groups.real(42, measurement);
+    Ok(())
+}
+
+/// A LEADER (§20.4.47): its points, and the annotation and style it
+/// names in its handles.
+fn leader(
+    groups: &mut Groups,
+    d: &mut BitReader<'_>,
+    strings: Option<&mut BitReader<'_>>,
+    version: Version,
+    limits: &crate::ImportLimits,
+) -> Result<(), DwgError> {
+    let _ = (strings, version);
+    d.bit()?;
+    let annotation_type = d.bs()?;
+    let path_type = d.bs()?;
+    let count = count_within(d.bl()?, d, 6, limits)?;
+    groups.int(73, annotation_type);
+    groups.int(72, path_type);
+    groups.int(76, count as i64);
+    for _ in 0..count {
+        let (point, z) = d.bd3()?;
+        groups.point3(10, point, z);
+    }
+    d.bd3()?; // the origin
+    let (extrusion, ez) = d.bd3()?;
+    let (x_direction, xz) = d.bd3()?;
+    let (offset, oz) = d.bd3()?;
+    let (projection, pz) = d.bd3()?;
+    let box_height = d.bd()?;
+    let box_width = d.bd()?;
+    let hookline_on_x = d.bit()?;
+    let arrowhead = d.bit()?;
+    d.bs()?;
+    d.bit()?;
+    d.bit()?;
+    extrusion_groups(groups, [extrusion.x, extrusion.y, ez]);
+    groups.point3(211, x_direction, xz);
+    groups.point3(212, offset, oz);
+    groups.point3(213, projection, pz);
+    groups.real(40, box_height);
+    groups.real(41, box_width);
+    groups.int(74, i64::from(hookline_on_x));
+    groups.int(71, i64::from(arrowhead));
+    Ok(())
+}
+
+/// A VIEWPORT entity (§20.4.38): its frame, its view, and its switches;
+/// the handles it names are read past.
+fn viewport(
+    groups: &mut Groups,
+    d: &mut BitReader<'_>,
+    strings: Option<&mut BitReader<'_>>,
+    version: Version,
+    limits: &crate::ImportLimits,
+) -> Result<(), DwgError> {
+    let (center, z) = d.bd3()?;
+    let width = d.bd()?;
+    let height = d.bd()?;
+    let (target, tz) = d.bd3()?;
+    let (direction, dz) = d.bd3()?;
+    let twist = d.bd()?;
+    let view_height = d.bd()?;
+    let lens = d.bd()?;
+    let front = d.bd()?;
+    let back = d.bd()?;
+    let snap_angle = d.bd()?;
+    let view_center = d.rd2()?;
+    let snap_base = d.rd2()?;
+    let snap_spacing = d.rd2()?;
+    let grid_spacing = d.rd2()?;
+    let circle_zoom = d.bs()?;
+    let mut grid_major = None;
+    if version >= Version::R2007 {
+        grid_major = Some(d.bs()?);
+    }
+    let frozen = count_within(d.bl()?, d, 0, limits)?;
+    let status = d.bl()?;
+    let style_sheet = text_field(d, strings, limits)?;
+    let render_mode = d.rc()?;
+    let ucs_at_origin = d.bit()?;
+    let ucs_per_viewport = d.bit()?;
+    let (ucs_origin, uz) = d.bd3()?;
+    let (ucs_x, uxz) = d.bd3()?;
+    let (ucs_y, uyz) = d.bd3()?;
+    let ucs_elevation = d.bd()?;
+    let ortho = d.bs()?;
+    let mut shade_plot = None;
+    if version >= Version::R2004 {
+        shade_plot = Some(d.bs()?);
+    }
+    if version >= Version::R2007 {
+        d.bit()?;
+        d.rc()?;
+        d.bd()?;
+        d.bd()?;
+        d.cmc(version, limits)?;
+    }
+    let _ = frozen;
+    groups.point3(10, center, z);
+    groups.real(40, width);
+    groups.real(41, height);
+    // 68: on when the status does not say off (bit 17).
+    groups.int(68, if status & 0x20000 != 0 { 0 } else { 1 });
+    groups.point(12, view_center);
+    groups.point(13, snap_base);
+    groups.point(14, snap_spacing);
+    groups.point(15, grid_spacing);
+    groups.point3(16, direction, dz);
+    groups.point3(17, target, tz);
+    groups.real(42, lens);
+    groups.real(43, front);
+    groups.real(44, back);
+    groups.real(45, view_height);
+    groups.degrees(50, snap_angle);
+    groups.degrees(51, twist);
+    groups.int(72, circle_zoom);
+    groups.int(90, status);
+    groups.text(1, &style_sheet);
+    groups.int(281, i64::from(render_mode));
+    groups.int(71, i64::from(ucs_per_viewport));
+    groups.int(74, i64::from(ucs_at_origin));
+    groups.point3(110, ucs_origin, uz);
+    groups.point3(111, ucs_x, uxz);
+    groups.point3(112, ucs_y, uyz);
+    groups.real(146, ucs_elevation);
+    groups.int(79, ortho);
+    if let Some(mode) = shade_plot {
+        groups.int(170, mode);
+    }
+    if let Some(major) = grid_major {
+        groups.int(61, major);
+    }
+    Ok(())
+}
+
+/// A MULTILEADER (§20.4.48 with its context of §20.4.86), as the groups
+/// a file carries: the context between `300 CONTEXT_DATA{` and `301 }`,
+/// each leader root between `302 LEADER{` and `303 }`, each line between
+/// `304 LEADER_LINE{` and `305 }`; then the style and the overrides.
+fn mleader(
+    groups: &mut Groups,
+    d: &mut BitReader<'_>,
+    mut strings: Option<&mut BitReader<'_>>,
+    handles: &mut BitReader<'_>,
+    version: Version,
+    limits: &crate::ImportLimits,
+    own: u64,
+) -> Result<(), DwgError> {
+    let _ = version;
+    groups.text(300, "CONTEXT_DATA{");
+    let roots = count_within(d.bl()?, d, 4, limits)?;
+    let mut text_fields: Vec<String> = Vec::new();
+    for _ in 0..roots {
+        groups.text(302, "LEADER{");
+        let has_last = d.bit()? == 1;
+        let has_dogleg = d.bit()? == 1;
+        groups.int(290, i64::from(has_last));
+        groups.int(291, i64::from(has_dogleg));
+        if has_last {
+            let (p, z) = d.bd3()?;
+            groups.point3(10, p, z);
+        }
+        if has_dogleg {
+            let (p, z) = d.bd3()?;
+            groups.point3(11, p, z);
+        }
+        let breaks = count_within(d.bl()?, d, 12, limits)?;
+        for _ in 0..breaks {
+            let (a, az) = d.bd3()?;
+            let (b, bz) = d.bd3()?;
+            groups.point3(12, a, az);
+            groups.point3(13, b, bz);
+        }
+        let index = d.bl()?;
+        let dogleg_length = d.bd()?;
+        groups.int(90, index);
+        groups.real(40, dogleg_length);
+        let lines = count_within(d.bl()?, d, 4, limits)?;
+        for _ in 0..lines {
+            groups.text(304, "LEADER_LINE{");
+            let points = count_within(d.bl()?, d, 6, limits)?;
+            for _ in 0..points {
+                let (p, z) = d.bd3()?;
+                groups.point3(10, p, z);
+            }
+            let breaks = count_within(d.bl()?, d, 12, limits)?;
+            for _ in 0..breaks {
+                let (a, az) = d.bd3()?;
+                let (b, bz) = d.bd3()?;
+                groups.point3(11, a, az);
+                groups.point3(12, b, bz);
+            }
+            let line_index = d.bl()?;
+            groups.int(91, line_index);
+            groups.text(305, "}");
+        }
+        groups.text(303, "}");
+    }
+    let scale = d.bd()?;
+    let (base, bz) = d.bd3()?;
+    let text_height = d.bd()?;
+    let arrow_size = d.bd()?;
+    let landing_gap = d.bd()?;
+    let text_left = d.bs()?;
+    let text_right = d.bs()?;
+    let angle_type = d.bs()?;
+    let alignment = d.bs()?;
+    groups.real(40, scale);
+    groups.point3(10, base, bz);
+    groups.real(41, text_height);
+    groups.real(140, arrow_size);
+    groups.real(145, landing_gap);
+    groups.int(174, text_left);
+    groups.int(175, text_right);
+    groups.int(176, angle_type);
+    groups.int(177, alignment);
+    let has_text = d.bit()? == 1;
+    groups.int(290, i64::from(has_text));
+    if has_text {
+        let text = match strings.as_mut() {
+            Some(s) => s.text_unicode(limits)?,
+            None => String::from_utf8_lossy(&d.text(limits)?).into_owned(),
+        };
+        text_fields.push(text.clone());
+        groups.text(304, &text);
+        let (normal, nz) = d.bd3()?;
+        groups.point3(11, normal, nz);
+        let style = handles.handle()?.resolve(own);
+        groups.handle(340, style);
+        let (location, lz) = d.bd3()?;
+        let (direction, dz) = d.bd3()?;
+        groups.point3(12, location, lz);
+        groups.point3(13, direction, dz);
+        let rotation = d.bd()?;
+        let width = d.bd()?;
+        let height = d.bd()?;
+        let spacing_factor = d.bd()?;
+        let spacing_style = d.bs()?;
+        let color = d.cmc(version, limits)?;
+        let text_alignment = d.bs()?;
+        let flow = d.bs()?;
+        let background = d.cmc(version, limits)?;
+        let background_scale = d.bd()?;
+        let transparency = d.bl()?;
+        let fill = d.bit()?;
+        let mask = d.bit()?;
+        let column_type = d.bs()?;
+        let auto_height = d.bit()?;
+        let column_width = d.bd()?;
+        let gutter = d.bd()?;
+        let reversed = d.bit()?;
+        let columns = count_within(d.bl()?, d, 2, limits)?;
+        let mut sizes = Vec::with_capacity(columns);
+        for _ in 0..columns {
+            sizes.push(d.bd()?);
+        }
+        let word_break = d.bit()?;
+        d.bit()?;
+        groups.degrees(42, rotation);
+        groups.real(43, width);
+        groups.real(44, height);
+        groups.real(45, spacing_factor);
+        groups.int(170, spacing_style);
+        groups.int(90, i64::from(color.index));
+        groups.int(171, text_alignment);
+        groups.int(172, flow);
+        groups.int(91, i64::from(background.index));
+        groups.real(141, background_scale);
+        groups.int(92, transparency);
+        groups.int(291, i64::from(fill));
+        groups.int(292, i64::from(mask));
+        groups.int(173, column_type);
+        groups.int(293, i64::from(auto_height));
+        groups.real(142, column_width);
+        groups.real(143, gutter);
+        groups.int(294, i64::from(reversed));
+        for size in sizes {
+            groups.real(144, size);
+        }
+        groups.int(295, i64::from(word_break));
+        groups.int(296, 0);
+    } else {
+        let has_block = d.bit()? == 1;
+        groups.int(296, i64::from(has_block));
+        if has_block {
+            let block = handles.handle()?.resolve(own);
+            groups.handle(341, block);
+            let (normal, nz) = d.bd3()?;
+            let (location, lz) = d.bd3()?;
+            let (scale, sz) = d.bd3()?;
+            let rotation = d.bd()?;
+            let color = d.cmc(version, limits)?;
+            groups.point3(14, normal, nz);
+            groups.point3(15, location, lz);
+            groups.point3(16, scale, sz);
+            groups.degrees(46, rotation);
+            groups.int(93, i64::from(color.index));
+            for _ in 0..16 {
+                let value = d.bd()?;
+                groups.real(47, value);
+            }
+        }
+    }
+    let (base_point, bpz) = d.bd3()?;
+    let (base_direction, bdz) = d.bd3()?;
+    let (base_vertical, bvz) = d.bd3()?;
+    let reversed = d.bit()?;
+    groups.point3(110, base_point, bpz);
+    groups.point3(111, base_direction, bdz);
+    groups.point3(112, base_vertical, bvz);
+    groups.int(297, i64::from(reversed));
+    groups.text(301, "}");
+    // The entity's own fields after the context.
+    let style = handles.handle()?.resolve(own);
+    groups.handle(340, style);
+    let overrides = d.bl()?;
+    let leader_type = d.bs()?;
+    let line_color = d.cmc(version, limits)?;
+    let linetype = handles.handle()?.resolve(own);
+    let lineweight = d.bl()?;
+    let landing = d.bit()?;
+    let dogleg = d.bit()?;
+    let landing_distance = d.bd()?;
+    let arrow = handles.handle()?.resolve(own);
+    let arrow_size = d.bd()?;
+    let content_type = d.bs()?;
+    let text_style = handles.handle()?.resolve(own);
+    let left = d.bs()?;
+    let right = d.bs()?;
+    let angle_type = d.bs()?;
+    let text_alignment = d.bs()?;
+    let text_color = d.cmc(version, limits)?;
+    let frame = d.bit()?;
+    let block_style = handles.handle()?.resolve(own);
+    let block_color = d.cmc(version, limits)?;
+    let (block_scale, bsz) = d.bd3()?;
+    let block_rotation = d.bd()?;
+    let attachment = d.bs()?;
+    let annotative = d.bit()?;
+    groups.int(90, overrides);
+    groups.int(170, leader_type);
+    groups.int(91, i64::from(line_color.index));
+    if linetype != 0 {
+        groups.handle(341, linetype);
+    }
+    groups.int(171, lineweight);
+    groups.int(290, i64::from(landing));
+    groups.int(291, i64::from(dogleg));
+    groups.real(41, landing_distance);
+    if arrow != 0 {
+        groups.handle(342, arrow);
+    }
+    groups.real(42, arrow_size);
+    groups.int(172, content_type);
+    if text_style != 0 {
+        groups.handle(343, text_style);
+    }
+    groups.int(173, left);
+    groups.int(95, right);
+    groups.int(174, angle_type);
+    groups.int(175, text_alignment);
+    groups.int(92, i64::from(text_color.index));
+    groups.int(292, i64::from(frame));
+    if block_style != 0 {
+        groups.handle(344, block_style);
+    }
+    groups.int(93, i64::from(block_color.index));
+    groups.point3(10, block_scale, bsz);
+    groups.degrees(43, block_rotation);
+    groups.int(176, attachment);
+    groups.int(293, i64::from(annotative));
+    let arrowheads = count_within(d.bl()?, d, 1, limits)?;
+    for _ in 0..arrowheads {
+        let is_default = d.bit()?;
+        let handle = handles.handle()?.resolve(own);
+        groups.int(94, i64::from(is_default));
+        groups.handle(345, handle);
+    }
+    let labels = count_within(d.bl()?, d, 4, limits)?;
+    for _ in 0..labels {
+        let attdef = handles.handle()?.resolve(own);
+        let label = match strings.as_mut() {
+            Some(s) => s.text_unicode(limits)?,
+            None => String::from_utf8_lossy(&d.text(limits)?).into_owned(),
+        };
+        let ui_index = d.bs()?;
+        let width = d.bd()?;
+        groups.handle(330, attdef);
+        groups.text(302, &label);
+        groups.int(177, ui_index);
+        groups.real(44, width);
+    }
+    let negative = d.bit()?;
+    let ipe = d.bs()?;
+    let justification = d.bs()?;
+    let scale_factor = d.bd()?;
+    groups.int(294, i64::from(negative));
+    groups.int(178, ipe);
+    groups.int(179, justification);
+    groups.real(45, scale_factor);
+    let _ = text_fields;
     Ok(())
 }

@@ -469,6 +469,7 @@ fn the_matrix_names_only_tests_and_fixtures_that_exist() {
         "src/objects.rs",
         "src/classes.rs",
         "src/header.rs",
+        "src/records.rs",
         "tests/fixtures.rs",
         "tests/drawing.rs",
     ]

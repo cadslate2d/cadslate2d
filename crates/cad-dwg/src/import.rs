@@ -11,6 +11,7 @@ use cad_dxf::{Record, Section};
 use crate::entities::{self, Decoded, LinetypeRef};
 use crate::groups::Groups;
 use crate::objects::{fixed_type_is_entity, types};
+use crate::records::{self, ObjectRecord};
 use crate::tables::{self, BlockHeader, Row};
 use crate::{DwgError, File, ImportLimits};
 
@@ -52,6 +53,7 @@ pub fn records(file: &File<'_>) -> Result<Vec<Record>, DwgError> {
     let mut blocks: Vec<BlockHeader> = Vec::new();
     let mut entities: HashMap<u64, Decoded> = HashMap::new();
     let mut order: Vec<u64> = Vec::new();
+    let mut objects: Vec<ObjectRecord> = Vec::new();
     let mut unreadable: Vec<String> = Vec::new();
 
     for object in file.objects() {
@@ -104,12 +106,57 @@ pub fn records(file: &File<'_>) -> Result<Vec<Record>, DwgError> {
             }
         };
         let handle = object.handle;
-        let decoded = match object.type_code {
-            types::LAYER => tables::layer(file, &mut streams, &common, handle).map(Some),
-            types::LTYPE => tables::linetype(file, &mut streams, &common, handle).map(Some),
-            types::STYLE => tables::text_style(file, &mut streams, &common, handle).map(Some),
-            types::DIMSTYLE => tables::dim_style(file, &mut streams, &common, handle).map(Some),
-            types::BLOCK_HEADER => {
+        let class_name = class.map(|c| c.dxf_name.as_str());
+        let mut keep = |decoded: Result<ObjectRecord, DwgError>| {
+            decoded.map(|record| {
+                objects.push(record);
+                None
+            })
+        };
+        let decoded = match (object.type_code, class_name) {
+            (types::DICTIONARY, _) | (_, Some("DICTIONARY")) => keep(records::dictionary(
+                file,
+                &mut streams,
+                &common,
+                handle,
+                false,
+            )),
+            (_, Some("ACDBDICTIONARYWDFLT")) => keep(records::dictionary(
+                file,
+                &mut streams,
+                &common,
+                handle,
+                true,
+            )),
+            (types::LAYOUT, _) | (_, Some("LAYOUT")) => {
+                keep(records::layout(file, &mut streams, &common, handle))
+            }
+            (types::GROUP, _) | (_, Some("GROUP")) => {
+                keep(records::group(file, &mut streams, &common, handle))
+            }
+            (_, Some("SORTENTSTABLE")) => {
+                keep(records::sortents_table(file, &mut streams, &common, handle))
+            }
+            (types::XRECORD, _) | (_, Some("XRECORD")) => {
+                keep(records::xrecord(file, &mut streams, &common, handle))
+            }
+            (_, Some("MLEADERSTYLE")) => {
+                keep(records::mleader_style(file, &mut streams, &common, handle))
+            }
+            (_, Some("WIPEOUTVARIABLES")) => keep(records::wipeout_variables(
+                file,
+                &mut streams,
+                &common,
+                handle,
+            )),
+            (types::VIEW, _) => keep(records::view(file, &mut streams, &common, handle)),
+            (types::LAYER, _) => tables::layer(file, &mut streams, &common, handle).map(Some),
+            (types::LTYPE, _) => tables::linetype(file, &mut streams, &common, handle).map(Some),
+            (types::STYLE, _) => tables::text_style(file, &mut streams, &common, handle).map(Some),
+            (types::DIMSTYLE, _) => {
+                tables::dim_style(file, &mut streams, &common, handle).map(Some)
+            }
+            (types::BLOCK_HEADER, _) => {
                 match tables::block_header(file, &mut streams, &common, handle) {
                     Ok(block) => {
                         blocks.push(block);
@@ -125,6 +172,23 @@ pub fn records(file: &File<'_>) -> Result<Vec<Record>, DwgError> {
             Ok(None) => {}
             Err(_) => unreadable.push(UNREADABLE.to_owned()),
         }
+    }
+
+    // A block's name is one of a kind. A second paper-space block under a
+    // name taken — a writer that names every layout's block `*Paper_Space`
+    // — is named as the next one is named: `*Paper_Space0`, `*Paper_Space1`.
+    let mut taken: HashSet<String> = HashSet::new();
+    for block in &mut blocks {
+        let key = block.name.to_uppercase();
+        if taken.insert(key) || !block.name.eq_ignore_ascii_case("*Paper_Space") {
+            continue;
+        }
+        let next = (0..)
+            .map(|n| format!("*Paper_Space{n}"))
+            .find(|name| !taken.contains(&name.to_uppercase()))
+            .expect("some number is free");
+        taken.insert(next.to_uppercase());
+        block.name = next;
     }
 
     // Names by handle, for what entities and rows name that way.
@@ -222,8 +286,20 @@ pub fn records(file: &File<'_>) -> Result<Vec<Record>, DwgError> {
     let emit =
         |out: &mut Vec<Record>, section: Section, decoded: &Decoded, placed: &mut HashSet<u64>| {
             placed.insert(decoded.handle);
+            if decoded.undecoded {
+                // Nothing to say of it but its kind: reported, whatever
+                // block held it.
+                out.push(Record {
+                    section: Section::Entities,
+                    kind: decoded.kind.clone(),
+                    groups: Vec::new(),
+                });
+                return;
+            }
+            // The properties before the entity's own groups, as a file
+            // writes them: a multileader's own begin at its subclass marker
+            // and are read on their own.
             let mut groups = Groups::default();
-            groups.0.extend(decoded.groups.0.iter().cloned());
             groups.text(8, name_of(decoded.layer).unwrap_or("0"));
             match decoded.linetype {
                 LinetypeRef::ByLayer => {}
@@ -241,6 +317,13 @@ pub fn records(file: &File<'_>) -> Result<Vec<Record>, DwgError> {
             if let Some(name) = decoded.block.and_then(name_of) {
                 groups.text(2, name);
             }
+            if let Some(name) = decoded.dim_style.and_then(name_of) {
+                groups.text(3, name);
+            }
+            if decoded.kind == "MULTILEADER" {
+                groups.text(100, "AcDbMLeader");
+            }
+            groups.0.extend(decoded.groups.0.iter().cloned());
             out.push(Record {
                 section,
                 kind: decoded.kind.clone(),
@@ -352,6 +435,19 @@ pub fn records(file: &File<'_>) -> Result<Vec<Record>, DwgError> {
         {
             with_owned(&mut out, Section::Entities, *handle, &mut placed);
         }
+    }
+    // The objects, the views among the tables.
+    for object in objects {
+        let section = if object.kind == "VIEW" {
+            Section::Tables
+        } else {
+            Section::Objects
+        };
+        out.push(Record {
+            section,
+            kind: object.kind.to_owned(),
+            groups: object.groups.0,
+        });
     }
     for kind in unreadable {
         out.push(Record {

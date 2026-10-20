@@ -15,7 +15,7 @@ Every valid fixture is written by an independent writer, acadrust 0.6.5, from a 
 cargo run -p cad-dwg --example fixtures -- minimal-line ezdxf-r2010-mixed-content
 ```
 
-The source goes through this project's own DXF reader and writer first, so that every row an entity names is defined: a DWG holds rows by handle and cannot say a name the file never defines, which the writer would drop. `crates/cad-dwg/tests/drawing.rs` compares the drawing each fixture makes with the drawing that normalised source makes, in all three versions (`every_fixture_makes_the_drawing_its_dxf_source_makes()`); the one thing the writer cannot carry — a true colour into `AC1015`, which holds none — is listed in that test. Run the generator deliberately, like the screenshot baselines, and look at what the tests make of the result. A file is named `<dxf fixture>.<version>.dwg`.
+The source goes through this project's own DXF reader and writer first, so that every row an entity names is defined: a DWG holds rows by handle and cannot say a name the file never defines, which the writer would drop. `crates/cad-dwg/tests/drawing.rs` compares the drawing each fixture makes with the drawing that normalised source makes, in all three versions (`every_fixture_makes_the_drawing_its_dxf_source_makes()`); what the writer cannot carry — a true colour or a multileader style into `AC1015`, a style's block scale — is listed in that test (`WRITER_LOSSES`), each checked against LibreDWG's reading of the same file. Run the generator deliberately, like the screenshot baselines, and look at what the tests make of the result. A file is named `<dxf fixture>.<version>.dwg`.
 
 | Source | What it covers |
 | --- | --- |
@@ -28,15 +28,20 @@ The source goes through this project's own DXF reader and writer first, so that 
 | `ezdxf-r12-blocks.dxf`, `ezdxf-r2010-block-attributes.dxf` | Blocks nested two deep, placed as they are and scaled, turned, mirrored, arrayed; a block with an `ATTDEF`, placed with an `ATTRIB`. |
 | `ezdxf-r12-polylines.dxf`, `ezdxf-r12-bulged-polylines.dxf`, `ezdxf-r12-wide-polylines.dxf`, `ezdxf-r2010-polylines.dxf`, `ezdxf-r2010-bulged-lwpolylines.dxf`, `ezdxf-r2010-wide-polylines.dxf` | `POLYLINE` with its `VERTEX` chain and `SEQEND`, 2D and 3D, open and closed, with bulges and widths; `LWPOLYLINE` likewise. |
 | `ezdxf-r2010-points.dxf`, `ezdxf-r2010-construction-lines.dxf` | `POINT`s and the point style; `XLINE`s and `RAY`s. |
-| `ezdxf-r2010-hatches.dxf`, `ezdxf-r2010-draw-order.dxf` | `HATCH` solid, patterned, with polyline paths, edge paths of lines and arcs, a spline edge; a `WIPEOUT`, with the drawing order (`SORTENTSTABLE`, read in #314). |
+| `ezdxf-r2010-hatches.dxf`, `ezdxf-r2010-draw-order.dxf` | `HATCH` solid, patterned, with polyline paths, edge paths of lines and arcs, a spline edge; a `WIPEOUT`, with the drawing order (`SORTENTSTABLE`). |
 | `ezdxf-r2010-dimstyles.dxf` | `DIMSTYLE` rows with every variable the drawing holds and a `DIMPOST` suffix. |
+| `ezdxf-r2010-dimension-chains.dxf`, `ezdxf-r2010-ordinate-dimensions.dxf` | `DIMENSION` of every kind: linear, aligned, angular, radius, diameter, ordinate; with text overrides and the blocks they own. |
+| `ezdxf-r2010-leaders.dxf`, `ezdxf-r2010-multileaders.dxf` | `LEADER`s; `MULTILEADER`s with text and with a block, and their `MLEADERSTYLE`s (`AC1018` and `AC1021` hold the styles; `AC1015` predates them, and the writer leaves a style's block scale at 1). |
+| `layouts.dxf` | Two layouts, each with a line on its paper, and a `VIEWPORT` on the first. The writer names both paper blocks `*Paper_Space`; the reader names the second `*Paper_Space0`, as AutoCAD does. |
+| `ezdxf-r2010-named-views.dxf`, `ezdxf-r2010-groups.dxf`, `ezdxf-r2010-layer-states.dxf` | `VIEW` rows; `GROUP`s named and unnamed; `ACAD_LAYERSTATES` `XRECORD`s. |
 
-Two fixtures are crafted from `ezdxf-r2010-draw-order.AC1015.dwg` by rewriting one entity's type and its CRC (the `craft` tool of #313's working notes; the result is checked by the tests, not by hand):
+Three fixtures are crafted from `ezdxf-r2010-draw-order.AC1015.dwg` by rewriting one entity's type and its CRC (the `craft` tool of #313's working notes; the result is checked by the tests, not by hand):
 
 | File | What it covers |
 | --- | --- |
 | `crafted-proxy-entity.AC1015.dwg` | The `WIPEOUT` entity's type rewritten to `0x1F2`, a proxy entity: reported by its kind, never guessed at. |
 | `crafted-unknown-class.AC1015.dwg` | The same entity's type rewritten to 999, a class the drawing does not define: reported, never guessed at. |
+| `crafted-mline-entity.AC1015.dwg` | The same entity's type rewritten to `0x2F`, an `MLINE`, a fixed type this crate does not decode: reported as `MLINE` (#314). |
 
 ## malformed/
 
