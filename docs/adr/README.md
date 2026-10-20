@@ -45,6 +45,7 @@ There are two kinds:
 | [0032](0032-draw-order.md) | The drawing order is a tier on each record, carried in the high half of each instance's style word and drawn as depth: fills write it, strokes test it | Accepted | Design |
 | [0033](0033-multileaders.md) | A multileader stores its leaders, its one landing, its content, and its style; the multileader style lays out the arrowheads, the dogleg, and the note | Accepted | Design |
 | [0034](0034-menu-macros.md) | A menu item is a macro over the command line — a command and its answers, typed — and may pause for the user's answer, as AutoCAD's `\` does | Accepted | Design |
+| [0035](0035-licence.md) | The repository is licensed AGPL-3.0-or-later: a hosted fork must offer its source; the private AI service relies on the maintainer's copyright and the contributor agreement | Accepted, legal review owed | Governance |
 
 ## Expected evidence ADRs
 

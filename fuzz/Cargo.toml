@@ -3,6 +3,7 @@
 # and sanitizer flags the rest of the build does not take.
 [package]
 name = "cad-fuzz"
+license = "AGPL-3.0-or-later"
 version = "0.0.0"
 edition = "2024"
 publish = false

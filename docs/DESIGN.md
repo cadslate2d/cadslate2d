@@ -2308,6 +2308,8 @@ Open-source licensing remains a separate governance decision.
 
 Do not let a future DWG dependency accidentally determine the whole project model.
 
+> **Decided (2026-10-20, [ADR-0035](adr/0035-licence.md)):** the repository is licensed **AGPL-3.0-or-later**. The application is free to use, study, change, and share; a modified version served to users must offer them its source. The hosted AI service is a separate work in a private repository, which the maintainer's copyright and the contributor agreement allow. Legal review is still owed (#292), and the repository stays private until the Open Source Release (#291) is done.
+
 ---
 
 # 45. Product Constraints to Protect

@@ -341,4 +341,6 @@ Read [`AGENTS.md`](AGENTS.md) first. It holds the architecture rules, engineerin
 
 ## License
 
-Not yet decided. CadSlate2D is free to use; open-source licensing is a separate governance decision (DESIGN §44).
+CadSlate2D is free software under the **GNU Affero General Public License, version 3 or later** ([`LICENSE`](LICENSE); [ADR-0035](docs/adr/0035-licence.md)). You may use, study, change, and share it. If you serve a modified version to others over a network, you must offer them its source (AGPL §13). The name is not part of the licence: see the trademark policy once it exists (#293).
+
+The hosted AI service planned for the application is a separate work, kept in a private repository.

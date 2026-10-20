@@ -9,6 +9,8 @@ version = "0.0.1"
 edition = "2024"
 rust-version = "1.90"
 publish = false
+# ADR-0035: the whole repository is AGPL-3.0-or-later.
+license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 cad-core = { path = "crates/cad-core" }
