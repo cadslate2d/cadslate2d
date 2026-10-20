@@ -304,6 +304,10 @@ A `Makefile` at the root wraps the common ones: `make` lists its targets, for ex
 
 First-time Playwright setup: `pnpm --dir web exec playwright install chromium firefox`. The suite runs in Chromium and Firefox by default; choose browsers with `E2E_BROWSERS=chromium,firefox,webkit` (WebKit needs `playwright install --with-deps webkit`). CI runs Chromium only, because headless Firefox on the hosted runner provides no WebGL2.
 
+### Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md): start from an issue, run `make check`, ship tests with the change, and sign the [CLA](CLA.md) on your first pull request.
+
 ### Deployment
 
 `web/dist/` is fully static. Serve it from any file server or static host, under any base path. There is no server-side component.

@@ -125,11 +125,13 @@ make e2e
 ## Workflow
 
 - Work through issues in number order within the current milestone; respect "Blocked by".
-- Commit directly to `main` and push. No pull requests, no feature branches (maintainer preference).
+- The maintainer commits directly to `main` and pushes; no feature branches for the maintainer's own work. Contributions from outside come by pull request from a fork, with the CI check and the CLA check passing; the maintainer reviews and merges (`CONTRIBUTING.md`, #294).
 - One issue per commit where practical. Reference the issue in the commit message and close it with `Closes #N` once every acceptance criterion is met.
 - Never push with failing checks.
 - Keep `README.md`, `AGENTS.md`, and `CLAUDE.md` accurate in the same commit as the change that affects them.
 - Decisions that resolve a PROVISIONAL or EXPERIMENT item, or change the baseline, get an ADR with evidence.
+
+- Contributors sign the Contributor License Agreement (`CLA.md`) once, on their first pull request; the `CLA` workflow asks and records it. It is what lets the maintainer license the code under other terms as well (ADR-0035).
 
 ## Scope discipline
 
