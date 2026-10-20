@@ -26,6 +26,19 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M17 — Multileaders | Complete and closed ([review](reviews/m17-exit-review.md)): `MLEADER` with text or block notes, `MLEADEREDIT`, `MLEADERSTYLE`, and DXF `MULTILEADER` and `MLEADERSTYLE` both ways. |
 | M18 — Classic Menu Bar | Complete and closed ([review](reviews/m18-exit-review.md)): the menu bar of DESIGN §5, after AutoCAD 2007/2008's classic workspace, with File › New, menu macros that pause (ADR-0034), and keyboard access. |
 
+## What is planned next
+
+Filed on 2026-10-18 and 2026-10-19, none started. The order is the user's.
+
+| Milestone | What | Epic |
+| --- | --- | --- |
+| M19 — DWG | Reading and writing DWG in the AutoCAD 2000, 2004, and 2007/2008 formats, after an ADR on how (§40). | #250 |
+| M20 — AI Foundations | Natural language as one more input method, optional and off by default: an ADR amending DESIGN §4, §43–§45; a validated intent IR compiled to commands (ADR-0034's rule, for a model); proposals previewed and committed on Accept; the AI panel; AI commands on the drawing and the selection; recorded-replay evaluation. The hosted service itself lives in a private repository, `cadslate2d/cadslate2d-ai-service`; the app works without it. | #251 |
+| M21 — Constraints and Constrained Generation | Persistent geometric and dimensional constraints with a 2D solver (`GEOMCONSTRAINT`, `DIMCONSTRAINT`, constraint bars, re-solving on edit, DXF round trip); part generators — plates and hole patterns, bolt circles and flanges, arrays and grids, tangent and concentric placement — as commands and through the AI. | #264 |
+| M22 — Floor-Plan Generator | A deterministic layout solver from a terrain and room constraints to walls, doors, and labels; `FLOORPLAN` as a command with alternatives; briefs and revisions through the AI. | #276 |
+| M23 — AI Plans and Billing | In the service repository. The app's side is its account view (#289). | — |
+| Open Source Release | The main repository public under a licence decided by ADR (§44), with a trademark, a contributor agreement, audited history, dependencies, and assets, and the service kept private. Done before the repository goes public; independent of the milestones above. | #291 |
+
 ## M18, the classic menu bar
 
 DESIGN §5 draws a menu bar — `File Edit View Insert Format Tools Draw Dimension Modify` — and the visual identity shows it with `Help` and quick New, Open, Save, and Export buttons. No issue ever planned it. After M17 the user asked for it, after AutoCAD 2007/2008's classic workspace. The epic is #244.
