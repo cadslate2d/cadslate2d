@@ -335,6 +335,7 @@ crates/
   cad-document/   drawing, entities, storage, spatial index, transactions
   cad-commands/   Session, command state machines, selection
   cad-dxf/        DXF import/export
+  cad-dwg/        DWG import/export (AutoCAD 2000, 2004, 2007/2008)
   cad-render/     RenderScene and OverlayFrame preparation
   cad-wasm/       the JS/WASM boundary (marshalling only)
 web/

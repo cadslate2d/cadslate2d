@@ -16,11 +16,19 @@ libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 cad-core = { path = "../crates/cad-core" }
 cad-dxf = { path = "../crates/cad-dxf" }
+cad-dwg = { path = "../crates/cad-dwg" }
 cad-input = { path = "../crates/cad-input" }
 
 [[bin]]
 name = "dxf_import"
 path = "fuzz_targets/dxf_import.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dwg_read"
+path = "fuzz_targets/dwg_read.rs"
 test = false
 doc = false
 bench = false

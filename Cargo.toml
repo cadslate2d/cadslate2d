@@ -20,6 +20,7 @@ cad-text = { path = "crates/cad-text" }
 cad-document = { path = "crates/cad-document" }
 cad-commands = { path = "crates/cad-commands" }
 cad-dxf = { path = "crates/cad-dxf" }
+cad-dwg = { path = "crates/cad-dwg" }
 cad-render = { path = "crates/cad-render" }
 cad-plot = { path = "crates/cad-plot" }
 

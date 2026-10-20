@@ -38,6 +38,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cad-dwg"
+version = "0.0.1"
+dependencies = [
+ "cad-core",
+ "cad-document",
+ "cad-dxf",
+]
+
+[[package]]
 name = "cad-dxf"
 version = "0.0.1"
 dependencies = [
@@ -51,6 +60,7 @@ version = "0.0.0"
 dependencies = [
  "arbitrary",
  "cad-core",
+ "cad-dwg",
  "cad-dxf",
  "cad-input",
  "libfuzzer-sys",

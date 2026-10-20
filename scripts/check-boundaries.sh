@@ -13,6 +13,7 @@ declare -A ALLOWED=(
   [cad-document]="cad-core cad-geometry cad-text"
   [cad-commands]="cad-core cad-geometry cad-input cad-document"
   [cad-dxf]="cad-core cad-document"
+  [cad-dwg]="cad-core cad-document cad-dxf"
   [cad-render]="cad-core cad-geometry cad-document cad-commands"
   [cad-plot]="cad-core cad-geometry cad-document cad-commands cad-render"
   [cad-wasm]="cad-core cad-geometry cad-document cad-commands cad-render cad-dxf cad-plot"
