@@ -2114,7 +2114,12 @@ impl<'a> Reader<'a> {
                         frozen: false,
                         locked: false,
                         color: Layer::DEFAULT_COLOR,
-                        linetype: LinetypeDef::CONTINUOUS.to_owned(),
+                        // No linetype until the record names one (331, or 6):
+                        // a restore then leaves the layer's own. `Continuous`
+                        // here would turn an unknown linetype into one after
+                        // a round trip, since the writer leaves 331 out for
+                        // a name no row has (a fuzzer finding, 2026-10-19).
+                        linetype: String::new(),
                         lineweight: Lineweight::Default,
                     });
                     continue;

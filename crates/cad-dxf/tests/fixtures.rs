@@ -2631,3 +2631,47 @@ fn multileaders_from_another_writer_round_trip() {
     assert_eq!(back.drawing.settings().current_mleader_style, callout);
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }
+
+/// A fuzzer finding (2026-10-19): a saved layer with no linetype record, or
+/// one naming a handle no row has, has no linetype — a restore leaves the
+/// layer's own — and stays that way through a round trip. Defaulting it to
+/// `Continuous` made the second export differ from the first.
+#[test]
+fn a_saved_layer_without_a_linetype_keeps_none_and_round_trips() {
+    let import = load("valid", "layer-state-without-linetype.dxf").unwrap();
+    let mut drawing = import.drawing;
+    let states = drawing.layer_states();
+    let plan = states.get(states.find("Plan").unwrap()).unwrap().clone();
+    assert_eq!(plan.layer("WALLS").unwrap().linetype, "DASHED");
+    assert_eq!(plan.layer("CEILING").unwrap().linetype, "", "no 331 at all");
+    assert_eq!(
+        plan.layer("FURNITURE").unwrap().linetype,
+        "",
+        "331 names no row"
+    );
+
+    let linetype_of = |drawing: &Drawing, name: &str| {
+        let layers = drawing.layers();
+        layers.get(layers.find(name).unwrap()).unwrap().linetype
+    };
+    let before = (
+        linetype_of(&drawing, "CEILING"),
+        linetype_of(&drawing, "FURNITURE"),
+    );
+    let id = drawing.layer_states().find("Plan").unwrap();
+    let mut tx = drawing.transaction();
+    tx.restore_layer_state(id).unwrap();
+    tx.commit();
+    assert_eq!(
+        (
+            linetype_of(&drawing, "CEILING"),
+            linetype_of(&drawing, "FURNITURE")
+        ),
+        before,
+        "a restore leaves the layer's own linetype"
+    );
+
+    let text = export(&drawing);
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(export(&back.drawing), text, "export → import → export");
+}
