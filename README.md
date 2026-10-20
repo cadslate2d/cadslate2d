@@ -1,12 +1,20 @@
+<p align="center"><img src="cadslate2d_logo.png" alt="CadSlate2D" width="180"></p>
+
 # CadSlate2D
 
 **Classic 2D CAD. In your browser.**
 
-CadSlate2D is a free, browser-native, local-first 2D CAD application inspired by classic command-driven drafting: a command line, keyboard aliases, precise coordinate entry, object snaps, grips, and local files. No installation, no account, no cloud workspace.
+CadSlate2D is a free, browser-native, local-first 2D CAD program in the spirit of classic command-driven drafting: a command line with the classic commands and aliases, precise coordinate entry, object snaps and tracking, grips, layers, blocks, dimensions, hatches, layouts, and DXF files. No installation, no account, no cloud: the page is static, and your drawings never leave your browser and the files you choose.
 
-![CadSlate2D visual identity](visual_identity.png)
+![CadSlate2D, drafting a plate](docs/images/screenshot.png)
 
-> The image above is the visual target, not a screenshot of the current build.
+- **Free software:** [AGPL-3.0-or-later](LICENSE). Use it, study it, change it, share it.
+- **Try it:** `make install && make dev` and open the page Vite prints (see [Development](#development)). There is no hosted instance yet.
+- **Contribute:** start from an issue; see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- **Security:** report vulnerabilities privately; see [`SECURITY.md`](SECURITY.md).
+- **The AI assistant** planned for the program (natural language as one more way to type commands) is optional and will run against a separately licensed hosted service kept in its own repository; the program itself never needs it.
+
+The visual target the look follows is [`visual_identity.png`](visual_identity.png).
 
 ## Status
 
@@ -351,4 +359,8 @@ Read [`AGENTS.md`](AGENTS.md) first. It holds the architecture rules, engineerin
 
 CadSlate2D is free software under the **GNU Affero General Public License, version 3 or later** ([`LICENSE`](LICENSE); [ADR-0035](docs/adr/0035-licence.md)). You may use, study, change, and share it. If you serve a modified version to others over a network, you must offer them its source (AGPL §13). The name is not part of the licence: see the trademark policy once it exists (#293).
 
-The hosted AI service planned for the application is a separate work, kept in a private repository.
+What the build contains from others, and under what terms, is in [`docs/provenance.md`](docs/provenance.md) and the third-party notices the build ships. The hosted AI service planned for the application is a separate work, kept in a private repository.
+
+## Conduct
+
+The project keeps a short [code of conduct](CODE_OF_CONDUCT.md).
