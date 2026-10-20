@@ -27,9 +27,13 @@ pub struct CollinearRun {
 /// Every run of two or more of `segments` that lie on one line and
 /// overlap or touch. A segment of no length is in none.
 pub fn collinear_runs(segments: &[Segment]) -> Vec<CollinearRun> {
-    // Each segment's line: its direction as an angle in [0, π), and its
-    // distance from the origin along that direction's normal.
-    let mut lines: Vec<(f64, usize)> = segments
+    // Each segment's line: its direction as an angle in [0, π), and the
+    // slack in that angle — how far a nudge of one end by the linear
+    // tolerance turns a segment of its length. A short piece far from the
+    // origin cannot know its direction to the angular tolerance, so it is
+    // grouped by its slack; whether it really lies on the line is settled
+    // by its ends in `runs_in_direction`.
+    let mut lines: Vec<(f64, usize, f64)> = segments
         .iter()
         .enumerate()
         .filter_map(|(index, segment)| {
@@ -37,26 +41,31 @@ pub fn collinear_runs(segments: &[Segment]) -> Vec<CollinearRun> {
             if segment.is_degenerate(tolerance) {
                 return None;
             }
-            let direction = normalized(segment.end - segment.start)?;
-            Some((direction.y.atan2(direction.x).rem_euclid(PI), index))
+            let span = segment.end - segment.start;
+            let direction = normalized(span)?;
+            let slack = tolerance.value() / span.length();
+            Some((direction.y.atan2(direction.x).rem_euclid(PI), index, slack))
         })
         .collect();
     lines.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-    // Directions within the angular tolerance, the last wrapping round to
-    // the first at π.
+    // Directions within the angular tolerance or either one's slack, the
+    // last wrapping round to the first at π.
     let angular = AngularTolerance::DEFAULT;
+    let near = |a: f64, b: f64, slack_a: f64, slack_b: f64| {
+        (a - b).abs() <= angular.value().max(slack_a).max(slack_b)
+    };
     let mut directions: Vec<Vec<usize>> = Vec::new();
-    let mut last = f64::NEG_INFINITY;
-    for (angle, index) in &lines {
+    let mut last = (f64::NEG_INFINITY, 0.0);
+    for (angle, index, slack) in &lines {
         match directions.last_mut() {
-            Some(group) if angular.eq(*angle, last) => group.push(*index),
+            Some(group) if near(*angle, last.0, *slack, last.1) => group.push(*index),
             _ => directions.push(vec![*index]),
         }
-        last = *angle;
+        last = (*angle, *slack);
     }
     if directions.len() > 1
         && let (Some(first), Some(end)) = (lines.first(), lines.last())
-        && angular.eq(first.0 + PI, end.0)
+        && near(first.0 + PI, end.0, first.2, end.2)
     {
         let wrapped = directions.pop().expect("more than one");
         directions[0].extend(wrapped);
@@ -221,6 +230,46 @@ mod tests {
         let runs = collinear_runs(&segments);
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].members, vec![0, 1]);
+    }
+
+    /// Regression (2026-10-20, found by the property test below): a piece
+    /// 1.8e-5 long, 5,000 units from the origin, knows its direction only
+    /// to about 1e-7 radians, and was grouped apart from the pieces beside
+    /// it, which then had a gap between them and made no run.
+    #[test]
+    fn a_tiny_piece_far_from_the_origin_merges_with_its_neighbours() {
+        let segments = [
+            s(
+                -5286.406978865821,
+                0.0,
+                -5286.886756073869,
+                -0.7772213723838626,
+            ),
+            s(
+                -5286.886756073869,
+                -0.7772213723838626,
+                -5286.886765687695,
+                -0.7772369464259914,
+            ),
+            s(
+                -5286.886765687695,
+                -0.7772369464259914,
+                -5286.932256733534,
+                -0.85093076198387,
+            ),
+        ];
+        let runs = collinear_runs(&segments);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].members, vec![0, 1, 2]);
+        assert_eq!(
+            runs[0].segment,
+            s(
+                segments[0].start.x,
+                0.0,
+                -5286.932256733534,
+                -0.85093076198387
+            )
+        );
     }
 
     #[test]
