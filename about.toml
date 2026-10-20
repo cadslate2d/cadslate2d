@@ -1,0 +1,10 @@
+# cargo-about (#296): the third-party notices of what the WASM bundle
+# ships, written by scripts/third-party-notices.sh. Our own crates are
+# `publish = false` and are left out: they are the work, not third parties.
+accepted = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Unicode-3.0"]
+targets = ["wasm32-unknown-unknown"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+[private]
+ignore = true

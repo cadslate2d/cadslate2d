@@ -69,6 +69,10 @@ test("Edit › Undo is greyed with nothing to undo; Help › About names the cor
   await chooseMenu(page, "Help", "About CadSlate2D...");
   const about = page.getByRole("dialog", { name: "About CadSlate2D" });
   await expect(about).toContainText("Core version");
+  await expect(about.getByRole("link", { name: "Third-party notices" })).toHaveAttribute(
+    "href",
+    "third-party-notices.txt",
+  );
   await about.getByRole("button", { name: "Close" }).click();
   await expect(about).toHaveCount(0);
 });

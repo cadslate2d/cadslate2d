@@ -256,6 +256,8 @@ Details: [`docs/DESIGN.md`](docs/DESIGN.md) (implementation baseline), [`docs/ad
 | --- | --- | --- |
 | Rust | pinned in `rust-toolchain.toml` (installed automatically by rustup) | <https://rustup.rs> |
 | `wasm-bindgen-cli` | exactly the `wasm-bindgen` version pinned in `Cargo.toml` | `cargo install wasm-bindgen-cli --version 0.2.129 --locked` |
+| `cargo-deny` | any recent | `cargo install cargo-deny --locked` (the check audits dependency licences and advisories, #296) |
+| `cargo-about` | any recent | `cargo install cargo-about --locked --features cli` (the check verifies the third-party notices, #296) |
 | Node.js | 22 or newer | <https://nodejs.org> |
 | pnpm | 10 or newer | `corepack enable pnpm` |
 
@@ -286,6 +288,8 @@ A `Makefile` at the root wraps the common ones: `make` lists its targets, for ex
 | Rust lints | `cargo clippy --workspace --all-targets -- -D warnings` |
 | Rust format | `cargo fmt --all` |
 | Crate-boundary check | `scripts/check-boundaries.sh` |
+| Dependency licences and advisories (part of the check) | `cargo deny check` / `scripts/check-licenses.sh` |
+| Regenerate the third-party notices after a dependency changes ([`docs/provenance.md`](docs/provenance.md)) | `scripts/third-party-notices.sh` (`make notices`) |
 | Build WASM (debug / release) | `pnpm --dir web wasm` / `pnpm --dir web wasm:release` |
 | Web typecheck, lint, unit tests | `pnpm --dir web typecheck` / `lint` / `test` |
 | Production bundle | `pnpm --dir web build` → `web/dist/` |

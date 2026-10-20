@@ -16,7 +16,7 @@ FUZZ_TARGETS ?=
 
 .PHONY: help install dev wasm wasm-release build preview \
 	check test test-rust test-web regression lint lint-rust lint-web \
-	fmt fmt-check typecheck boundaries e2e e2e-only baselines \
+	fmt fmt-check typecheck boundaries licences notices e2e e2e-only baselines \
 	bench stress fuzz clean
 
 help: ## List the targets
@@ -79,6 +79,14 @@ fmt-check: ## Check formatting without changing anything
 
 boundaries: ## The crate-layering check (ADR-0001)
 	scripts/check-boundaries.sh
+
+licences: ## Dependency licences and advisories (cargo-deny, the web allow list, the notices)
+	cargo deny check
+	scripts/check-licenses.sh
+	scripts/third-party-notices.sh --check
+
+notices: ## Regenerate web/public/third-party-notices.txt after a dependency changes
+	scripts/third-party-notices.sh
 
 e2e: build ## End-to-end tests against a fresh production bundle (E2E_BROWSERS=…)
 	$(WEB) e2e

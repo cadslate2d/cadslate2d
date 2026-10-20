@@ -33,7 +33,7 @@ jobs:
 
       - uses: taiki-e/install-action@v2
         with:
-          tool: wasm-bindgen-cli@${{ steps.wbg.outputs.version }}
+          tool: wasm-bindgen-cli@${{ steps.wbg.outputs.version }},cargo-deny,cargo-about
 
       - uses: pnpm/action-setup@v4
         with:

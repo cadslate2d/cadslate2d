@@ -11,6 +11,9 @@ step "rust: format";      cargo fmt --all --check
 step "rust: clippy";      cargo clippy --workspace --all-targets -- -D warnings
 step "rust: tests";       cargo test --workspace --quiet
 step "crate boundaries";  scripts/check-boundaries.sh
+step "licences: rust";    cargo deny check
+step "licences: web";     scripts/check-licenses.sh
+step "licences: notices"; scripts/third-party-notices.sh --check
 step "wasm: build";       scripts/build-wasm.sh
 step "web: typecheck";    pnpm --dir web typecheck
 step "web: lint";         pnpm --dir web lint

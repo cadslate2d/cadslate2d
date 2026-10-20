@@ -23,8 +23,13 @@ export function About({ version, onClose }: { version: string; onClose: () => vo
         Core version {version}
       </p>
       <p className="about__line about__line--muted">
-        Free to use; the licence is not yet decided. Drawings stay in this browser and the files you
-        choose: nothing is sent anywhere.
+        Free software under the GNU Affero General Public License, version 3 or later. Drawings stay
+        in this browser and the files you choose: nothing is sent anywhere.
+      </p>
+      <p className="about__line about__line--muted">
+        <a href="third-party-notices.txt" target="_blank" rel="noreferrer">
+          Third-party notices
+        </a>
       </p>
       <div className="warning__actions">
         <button
