@@ -1,12 +1,25 @@
 //! The DWG reader on bytes from strangers (ADR-0036): whatever comes in,
 //! the containers, the object map, every object's header, common data,
-//! and common handles, the classes, and the header variables must answer
-//! with values or a structured error, never a panic.
+//! and common handles, the classes, the header variables, and the whole
+//! import into a drawing must answer with values or a structured error,
+//! never a panic.
 #![no_main]
 
 use cad_dwg::objects::fixed_type_is_entity;
 use cad_dwg::{File, ImportLimits};
 use libfuzzer_sys::fuzz_target;
+
+/// Smaller than the DXF reader's defaults, for the same reason.
+fn dxf_limits() -> cad_dxf::ImportLimits {
+    cad_dxf::ImportLimits {
+        max_bytes: 1 << 20,
+        max_entities: 10_000,
+        max_table_rows: 1_000,
+        max_record_groups: 200_000,
+        max_value_bytes: 4 * 1024,
+        ..cad_dxf::ImportLimits::default()
+    }
+}
 
 /// Smaller than the defaults, so a run spends its time on structure
 /// rather than on allocating what a header claims.
@@ -23,6 +36,7 @@ fn limits() -> ImportLimits {
 }
 
 fuzz_target!(|data: &[u8]| {
+    let _ = cad_dwg::import_with_limits(data, &limits(), &dxf_limits());
     let Ok(file) = File::open_with_limits(data, &limits()) else {
         return;
     };

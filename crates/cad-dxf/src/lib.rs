@@ -26,5 +26,7 @@ mod wipeout;
 
 pub use error::DxfError;
 pub use export::{DrawingChanged, Export, export};
-pub use import::{Import, ImportLimits, import, import_with_limits};
+pub use import::{
+    Import, ImportLimits, Record, Section, import, import_records, import_with_limits,
+};
 pub use report::ImportReport;

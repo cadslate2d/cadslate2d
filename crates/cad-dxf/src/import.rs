@@ -142,6 +142,82 @@ pub fn import(bytes: &[u8]) -> Result<Import, DxfError> {
     import_with_limits(bytes, &ImportLimits::default())
 }
 
+/// The section a record of another front end belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Section {
+    /// A header variable: the record's kind is its name (`$INSUNITS`).
+    Header,
+    Tables,
+    Blocks,
+    Entities,
+    Objects,
+}
+
+/// A record as another front end hands it over (ADR-0036): the DWG reader
+/// decodes an object and gives its fields here under the DXF group codes
+/// the specification lists beside them, so what a record means is written
+/// once, in this reader. Values are text, as a file would carry them: a
+/// number in the shortest form that reads back exactly.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Record {
+    pub section: Section,
+    /// The record's kind (`LINE`, `LAYER`, `BLOCK`), or a header
+    /// variable's name.
+    pub kind: String,
+    pub groups: Vec<(i32, String)>,
+}
+
+/// Imports records from another front end into a fresh drawing, as
+/// `import_with_limits` reads a file: the header variables first, then
+/// the tables, the blocks, the entities, and the objects, in the order
+/// given. A record of a kind this reader does not know is counted and
+/// reported, as it is in a file.
+pub fn import_records(
+    records: impl IntoIterator<Item = Record>,
+    limits: &ImportLimits,
+) -> Result<Import, DxfError> {
+    let mut reader = Reader::new(Groups::new("", limits.max_value_bytes), limits);
+    for record in records {
+        match record.section {
+            Section::Header => {
+                for (code, value) in &record.groups {
+                    reader.header_variable(
+                        &record.kind,
+                        Group {
+                            code: *code,
+                            value: value.trim(),
+                            raw: value,
+                            line: 0,
+                        },
+                    );
+                }
+            }
+            section => {
+                let context = match section {
+                    Section::Tables => RecordContext::Tables,
+                    Section::Blocks => RecordContext::Blocks,
+                    Section::Entities => RecordContext::Entities,
+                    _ => RecordContext::Objects,
+                };
+                let kind = Group {
+                    code: 0,
+                    value: &record.kind,
+                    raw: &record.kind,
+                    line: 0,
+                };
+                let mut groups = record.groups.iter().map(|(code, value)| Group {
+                    code: *code,
+                    value: value.trim(),
+                    raw: value,
+                    line: 0,
+                });
+                reader.take_record(context, kind, || Ok(groups.next()))?;
+            }
+        }
+    }
+    reader.finish()
+}
+
 /// Imports an ASCII DXF file into a fresh drawing with an empty history.
 pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import, DxfError> {
     if bytes.len() > limits.max_bytes {
@@ -158,29 +234,7 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
     // a name, so lossy decoding is safe here.
     let text = String::from_utf8_lossy(bytes);
 
-    let mut reader = Reader {
-        groups: Groups::new(&text, limits.max_value_bytes),
-        limits,
-        entities: Vec::new(),
-        tables: Tables::new(limits.max_table_rows),
-        header: Header::default(),
-        report: ImportReport::default(),
-        open_polyline: None,
-        open_block: None,
-        total: 0,
-        paper_blocks: Vec::new(),
-        layouts: Vec::new(),
-        block_record_names: HashMap::new(),
-        group_records: Vec::new(),
-        entry_names: HashMap::new(),
-        sort_tables: Vec::new(),
-        wipeout_frame: None,
-        xrecords: Vec::new(),
-        row_names: HashMap::new(),
-        views: Vec::new(),
-        mleader_style_records: Vec::new(),
-        mleader_style_ids: HashMap::new(),
-    };
+    let mut reader = Reader::new(Groups::new(&text, limits.max_value_bytes), limits);
     reader.read_file()?;
     reader.finish()
 }
@@ -750,6 +804,32 @@ struct PolylineBuilder {
 }
 
 impl<'a> Reader<'a> {
+    fn new(groups: Groups<'a>, limits: &'a ImportLimits) -> Self {
+        Self {
+            groups,
+            limits,
+            entities: Vec::new(),
+            tables: Tables::new(limits.max_table_rows),
+            header: Header::default(),
+            report: ImportReport::default(),
+            open_polyline: None,
+            open_block: None,
+            total: 0,
+            paper_blocks: Vec::new(),
+            layouts: Vec::new(),
+            block_record_names: HashMap::new(),
+            group_records: Vec::new(),
+            entry_names: HashMap::new(),
+            sort_tables: Vec::new(),
+            wipeout_frame: None,
+            xrecords: Vec::new(),
+            row_names: HashMap::new(),
+            views: Vec::new(),
+            mleader_style_records: Vec::new(),
+            mleader_style_ids: HashMap::new(),
+        }
+    }
+
     fn read_file(&mut self) -> Result<(), DxfError> {
         loop {
             let group = self.groups.expect()?;
@@ -775,16 +855,26 @@ impl<'a> Reader<'a> {
     /// `$INSUNITS`; the current layer, colour, linetype, and lineweight;
     /// and `$LTSCALE`. Every other variable is skipped.
     fn read_header(&mut self) -> Result<(), DxfError> {
-        let mut variable = "";
+        let mut variable = String::new();
         loop {
             let group = self.groups.expect()?;
             if group.is(0, "ENDSEC") {
                 return Ok(());
             }
             if group.code == 9 {
-                variable = group.value;
+                variable = group.value.to_owned();
                 continue;
             }
+            if self.header_variable(&variable, group) {
+                variable.clear();
+            }
+        }
+    }
+
+    /// One group of a header variable: true when it was one the drawing
+    /// has a setting for, and the variable is complete.
+    fn header_variable(&mut self, variable: &str, group: Group<'_>) -> bool {
+        {
             let number = group.value.trim().parse::<i64>().ok();
             match (variable, group.code) {
                 // Not a whole number: no unit is declared, as if absent.
@@ -811,10 +901,10 @@ impl<'a> Reader<'a> {
                 ("$CMLEADERSTYLE", 340) => {
                     self.header.current_mleader_style = Some(group.value.to_uppercase());
                 }
-                _ => continue,
+                _ => return false,
             }
-            variable = "";
         }
+        true
     }
 
     /// Takes the file's `$INSUNITS` code: a unit the drawing can be in, no
@@ -857,16 +947,47 @@ impl<'a> Reader<'a> {
 
     /// Reads the `0`-delimited records of a section up to its `ENDSEC`.
     fn read_records(&mut self, context: RecordContext) -> Result<(), DxfError> {
-        let mut record = self.groups.expect()?;
-        loop {
-            if record.code != 0 {
-                // Groups before the first record of the section: ignore.
-                record = self.groups.expect()?;
-                continue;
+        // The file's groups, taken so that a record can pull from them
+        // while the reader is borrowed.
+        let mut source = std::mem::replace(&mut self.groups, Groups::new("", 0));
+        let result = (|| {
+            let mut record = source.expect()?;
+            loop {
+                if record.code != 0 {
+                    // Groups before the first record of the section: ignore.
+                    record = source.expect()?;
+                    continue;
+                }
+                if record.value == "ENDSEC" {
+                    return Ok(());
+                }
+                let mut next = None;
+                self.take_record(context, record, || {
+                    let group = source.expect()?;
+                    if group.code == 0 {
+                        next = Some(group);
+                        return Ok(None);
+                    }
+                    Ok(Some(group))
+                })?;
+                record = next.ok_or(DxfError::UnexpectedEnd {
+                    line: source.line + 1,
+                })?;
             }
-            if record.value == "ENDSEC" {
-                return Ok(());
-            }
+        })();
+        self.groups = source;
+        result
+    }
+
+    /// One record: its groups, pulled from `next` until it gives none,
+    /// absorbed and finished.
+    fn take_record<'g>(
+        &mut self,
+        context: RecordContext,
+        record: Group<'g>,
+        mut next: impl FnMut() -> Result<Option<Group<'g>>, DxfError>,
+    ) -> Result<(), DxfError> {
+        {
             let mut body = RecordBody::default();
             // Records read by walking their groups, and everything a
             // layout keeps (#184, #191): a paper-space block's records the
@@ -894,11 +1015,7 @@ impl<'a> Reader<'a> {
             // coordinates of their own, which are not the entity's
             // elevation: they are read from the raw groups alone.
             let mut own = false;
-            let next = loop {
-                let group = self.groups.expect()?;
-                if group.code == 0 {
-                    break group;
-                }
+            while let Some(group) = next()? {
                 groups += 1;
                 if groups > self.limits.max_record_groups {
                     return Err(DxfError::RecordTooLarge {
@@ -920,10 +1037,10 @@ impl<'a> Reader<'a> {
                 if !own {
                     body.absorb(group)?;
                 }
-            };
+            }
             self.finish_record(context, record, &body)?;
-            record = next;
         }
+        Ok(())
     }
 
     fn finish_record(

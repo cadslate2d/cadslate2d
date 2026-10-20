@@ -19,8 +19,11 @@
 pub mod bits;
 mod classes;
 mod crc;
+pub mod entities;
 mod error;
+mod groups;
 pub mod header;
+mod import;
 mod limits;
 mod lz77;
 pub mod objects;
@@ -28,10 +31,12 @@ mod r2000;
 mod r2004;
 mod r2007;
 mod sections;
+pub mod tables;
 mod version;
 
 pub use classes::Class;
 pub use error::DwgError;
+pub use import::{Import, import, import_with_limits, records};
 pub use limits::ImportLimits;
 pub use sections::{File, MapEntry, Section, SectionName};
 pub use version::Version;

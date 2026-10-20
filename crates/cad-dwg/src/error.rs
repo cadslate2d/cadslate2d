@@ -22,6 +22,9 @@ pub enum DwgError {
     TooMany { what: &'static str, limit: usize },
     /// A section the specification requires is missing.
     MissingSection { name: &'static str },
+    /// The records could not be held as a drawing: the DXF reader's
+    /// refusal, with its reason.
+    Drawing(cad_dxf::DxfError),
 }
 
 impl fmt::Display for DwgError {
@@ -46,6 +49,7 @@ impl fmt::Display for DwgError {
                 write!(f, "the file claims more than {limit} {what}")
             }
             Self::MissingSection { name } => write!(f, "the file has no {name} section"),
+            Self::Drawing(error) => write!(f, "{error}"),
         }
     }
 }

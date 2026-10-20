@@ -417,7 +417,11 @@ impl<'a> BitReader<'a> {
         Ok(String::from_utf16_lossy(&units))
     }
 
-    /// CMC: a colour as a table row or the header stores it (§2.11).
+    /// CMC: a colour as a table row or the header stores it (§2.11). From
+    /// R2004 the long carries the colour with a method in its high byte:
+    /// 0xC0 by layer, 0xC1 by block, 0xC2 a true colour in the low three
+    /// bytes, 0xC3 an index in the low byte; the specification does not
+    /// say so (ADR-0036 errata).
     pub fn cmc(&mut self, version: Version, limits: &ImportLimits) -> Result<Color, DwgError> {
         let index = self.bs()?;
         let mut color = Color {
@@ -425,10 +429,14 @@ impl<'a> BitReader<'a> {
             ..Color::default()
         };
         if version >= Version::R2004 {
-            let rgb = self.bl()? as u32;
+            let value = self.bl()? as u32;
             let byte = self.rc()?;
-            if rgb & 0xff00_0000 != 0 || byte != 0 {
-                color.rgb = Some(rgb & 0x00ff_ffff);
+            match value >> 24 {
+                0xC0 => color.index = 256,
+                0xC1 => color.index = 0,
+                0xC2 => color.rgb = Some(value & 0x00ff_ffff),
+                0xC3 => color.index = (value & 0xff) as i16,
+                _ => {}
             }
             // Colour and book names, read and dropped.
             if byte & 1 != 0 {
@@ -681,11 +689,18 @@ mod tests {
         assert_eq!(c.rgb, Some(0x20_3040));
         assert_eq!(c.transparency, Some(0x0300_007f));
         assert!(!c.has_book_handle);
-        // CMC in R2004: index, RGB, a byte, no names.
-        let data = bytes(&then("01 00000101 00", &[0x01, 0x02, 0x03, 0xc2, 0x00]));
+        // CMC in R2004: an index of 0, then the long with its method byte:
+        // a true colour, then an index, then by layer.
+        let data = bytes(&then("10 00", &[0x01, 0x02, 0x03, 0xc2, 0x00]));
         let c = BitReader::new(&data).cmc(Version::R2004, &limits).unwrap();
-        assert_eq!(c.index, 5);
+        assert_eq!(c.index, 0);
         assert_eq!(c.rgb, Some(0x030201));
+        let data = bytes(&then("10 00", &[0x07, 0x00, 0x00, 0xc3, 0x00]));
+        let c = BitReader::new(&data).cmc(Version::R2004, &limits).unwrap();
+        assert_eq!((c.index, c.rgb), (7, None));
+        let data = bytes(&then("10 00", &[0x00, 0x00, 0x00, 0xc0, 0x00]));
+        let c = BitReader::new(&data).cmc(Version::R2004, &limits).unwrap();
+        assert_eq!((c.index, c.rgb), (256, None));
         let data = bytes("01 00000101");
         let c = BitReader::new(&data).cmc(Version::R2000, &limits).unwrap();
         assert_eq!(c.index, 5);
