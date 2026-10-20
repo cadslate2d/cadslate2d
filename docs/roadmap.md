@@ -28,16 +28,32 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 
 ## What is planned next
 
-Filed on 2026-10-18 and 2026-10-19, none started. The order is the user's.
+Filed on 2026-10-18 and 2026-10-19; M19 started on 2026-10-20. The order is the user's.
 
 | Milestone | What | Epic |
 | --- | --- | --- |
-| M19 — DWG | Reading and writing DWG in the AutoCAD 2000, 2004, and 2007/2008 formats, after an ADR on how (§40). | #250 |
+| M19 — DWG | Reading and writing DWG in the AutoCAD 2000, 2004, and 2007/2008 formats. [ADR-0036](adr/0036-dwg.md) decided how (§40): a crate of our own from the Open Design Specification; the issues are below. | #250 |
 | M20 — AI Foundations | Natural language as one more input method, optional and off by default: an ADR amending DESIGN §4, §43–§45; a validated intent IR compiled to commands (ADR-0034's rule, for a model); proposals previewed and committed on Accept; the AI panel; AI commands on the drawing and the selection; recorded-replay evaluation. The hosted service itself lives in a private repository, `cadslate2d/cadslate2d-ai-service`; the app works without it. | #251 |
 | M21 — Constraints and Constrained Generation | Persistent geometric and dimensional constraints with a 2D solver (`GEOMCONSTRAINT`, `DIMCONSTRAINT`, constraint bars, re-solving on edit, DXF round trip); part generators — plates and hole patterns, bolt circles and flanges, arrays and grids, tangent and concentric placement — as commands and through the AI. | #264 |
 | M22 — Floor-Plan Generator | A deterministic layout solver from a terrain and room constraints to walls, doors, and labels; `FLOORPLAN` as a command with alternatives; briefs and revisions through the AI. | #276 |
 | M23 — AI Plans and Billing | In the service repository. The app's side is its account view (#289). | — |
 | Open Source Release | The main repository public under a licence decided by ADR (§44), with a trademark, a contributor agreement, audited history, dependencies, and assets, and the service kept private. Done before the repository goes public; independent of the milestones above. | #291 |
+
+## M19, DWG
+
+The user asked for DWG both ways in the AutoCAD 2000, 2004, and 2007/2008 formats (`AC1015`, `AC1018`, `AC1021`). A one-day spike read all three containers from the Open Design Specification, and [ADR-0036](adr/0036-dwg.md) chose a crate of our own, `cad-dwg`, feeding the records the DXF reader finishes, with LibreDWG and acadrust as independent test oracles rather than dependencies (acadrust would have added 1.22 MB gzipped to a 0.81 MB download). The epic is #250.
+
+### Order of work
+
+1. **The bit codec and the three containers** (#312): `cad-dwg`, the sections of each version opened, the object map, limits, a fuzz target, the first fixtures written through acadrust.
+2. **Tables, blocks, and the plain entities** (#313): every common kind decoded into the same `Drawing` its DXF makes, through `RecordBody` and `finish_record`.
+3. **Dimensions, multileaders, layouts, groups, layer states, views, and the draw order** (#314): the rest of what DXF import holds; everything else reported.
+4. **Writing `AC1015`** (#315): objects by prescription, the header variables, the object map, the second header, CRCs; read back by both oracles.
+5. **Writing `AC1018`** (#316): the page and section maps, masked page headers, an LZ77 compressor of ours.
+6. **Writing `AC1021`** (#317): Reed–Solomon pages, 64-bit CRCs, the random encoder, string streams; the ADR's fallback if it cannot be validated.
+7. **`OPEN` reads DWG** (#318): by signature, whatever the extension; shipped as soon as reading is complete.
+8. **`SAVEAS` and `SAVE`** (#319): the format chosen in the dialog or at the prompt; `SAVE` keeps the one the file came in.
+9. **Exit** (#320): the scenario, the review, the measurements against the ADR's budget, and the person's check in AutoCAD.
 
 ## M18, the classic menu bar
 

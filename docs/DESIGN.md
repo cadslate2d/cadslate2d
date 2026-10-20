@@ -1541,6 +1541,8 @@ DWG is explicitly deferred.
 
 It must not influence M0–M2 architecture.
 
+> **Taken up in M19 (2026-10-20, [ADR-0036](adr/0036-dwg.md)):** a crate of our own, `cad-dwg`, reads and writes `AC1015`, `AC1018`, and `AC1021` through the same records, report, and limits as DXF; `OPEN` recognises a DWG by its first six bytes, `SAVEAS` offers the format, `SAVE` keeps the one the file came in. §40 has the decision.
+
 ---
 
 # 25. Local-First Persistence
@@ -2169,6 +2171,8 @@ No native format is required for M0–M2.
 **Status:** FUTURE
 
 No decision is required now.
+
+> **Resolved (2026-10-20, [ADR-0036](adr/0036-dwg.md)):** DWG is read and written by a crate of our own, `cad-dwg`, from the Open Design Alliance's published specification, in the AutoCAD 2000, 2004, and 2007/2008 formats (`AC1015`, `AC1018`, `AC1021`). It is a second encoding of the same records the DXF reader finishes (`cad-dwg → cad-dxf`), never a second model. LibreDWG and acadrust are its independent test oracles, not dependencies: a spike measured that acadrust would add 1.22 MB gzipped to a 0.81 MB download, while a reader of our own costs tens of kilobytes. M19 (#250).
 
 ---
 
