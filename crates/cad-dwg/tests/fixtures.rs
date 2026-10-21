@@ -470,8 +470,10 @@ fn the_matrix_names_only_tests_and_fixtures_that_exist() {
         "src/classes.rs",
         "src/header.rs",
         "src/records.rs",
+        "src/write/objects.rs",
         "tests/fixtures.rs",
         "tests/drawing.rs",
+        "tests/writer.rs",
     ]
     .iter()
     .map(|file| fs::read_to_string(root.join("crates/cad-dwg").join(file)).unwrap())

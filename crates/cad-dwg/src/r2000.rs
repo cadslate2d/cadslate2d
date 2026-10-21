@@ -6,7 +6,7 @@ use crate::sections::{Section, SectionName};
 use crate::{DwgError, ImportLimits};
 
 /// The sentinel after the file header's CRC (§3.2.6).
-const HEADER_SENTINEL: [u8; 16] = [
+pub(crate) const HEADER_SENTINEL: [u8; 16] = [
     0x95, 0xA0, 0x4E, 0x28, 0x99, 0x82, 0x1A, 0xE5, 0x5E, 0x41, 0xE0, 0x5F, 0x9D, 0x3A, 0x4D, 0x00,
 ];
 

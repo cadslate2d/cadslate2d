@@ -176,7 +176,7 @@ impl<'a> File<'a> {
 /// chars, each pair the offset of a handle from the last and of a location
 /// from the last, ending with a section of size 2. Entries past the
 /// objects are left out and counted.
-fn object_map(
+pub(crate) fn object_map(
     d: &[u8],
     objects_len: usize,
     limits: &ImportLimits,
@@ -184,9 +184,11 @@ fn object_map(
     let mut out = Vec::new();
     let mut unreachable = 0;
     let mut pos = 0usize;
-    let mut handle: u64 = 0;
-    let mut loc: i64 = 0;
     loop {
+        // Each section's offsets start again from zero (ADR-0036 errata:
+        // §23.1 reads as if they ran on; LibreDWG and the files reset).
+        let mut handle: u64 = 0;
+        let mut loc: i64 = 0;
         let size = d
             .get(pos..pos + 2)
             .map(|b| (usize::from(b[0]) << 8) | usize::from(b[1]))

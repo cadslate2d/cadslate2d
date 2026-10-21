@@ -876,14 +876,17 @@ fn spline(
         let knot = d.bd()?;
         groups.real(40, knot);
     }
+    // The weights before the control points, as a DXF lists them.
+    let mut controls = Groups::default();
     for _ in 0..control_count {
         let (point, z) = d.bd3()?;
-        groups.point3(10, point, z);
+        controls.point3(10, point, z);
         if weighted {
             let weight = d.bd()?;
             groups.real(41, weight);
         }
     }
+    groups.0.extend(controls.0);
     for _ in 0..fit_count {
         let (point, z) = d.bd3()?;
         groups.point3(11, point, z);

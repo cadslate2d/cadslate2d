@@ -34,6 +34,14 @@ done
 for file in test-data/dwg/valid/*.dwg test-data/dwg/malformed/*.dwg; do
   cp -n "$file" "fuzz/corpus/dwg_read/$(basename "$file")" 2>/dev/null || true
 done
+# And this crate's own output of every DXF fixture (#315): the reader fed
+# what the writer makes.
+if cargo build -q --release -p cad-dwg --example write 2>/dev/null; then
+  for dxf in test-data/dxf/valid/*.dxf; do
+    name=$(basename "$dxf" .dxf)
+    target/release/examples/write "$dxf" "fuzz/corpus/dwg_read/ours-$name.AC1015.dwg" >/dev/null 2>&1 || true
+  done
+fi
 
 # The host triple, named: a cargo-fuzz built for musl would otherwise pick
 # the musl target, where sanitizers do not link.

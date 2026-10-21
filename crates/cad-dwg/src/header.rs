@@ -9,7 +9,7 @@ use crate::objects::string_stream;
 use crate::sections::{File, SectionName};
 use crate::{DwgError, Version};
 
-const SENTINEL_BEGIN: [u8; 16] = [
+pub(crate) const SENTINEL_BEGIN: [u8; 16] = [
     0xCF, 0x7B, 0x1F, 0x23, 0xFD, 0xDE, 0x38, 0xA9, 0x5F, 0x7C, 0x68, 0xB8, 0x4E, 0x6D, 0x33, 0x5F,
 ];
 
@@ -26,7 +26,7 @@ pub enum Value {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Kind {
+pub(crate) enum Kind {
     B,
     Rc,
     Bs,
@@ -45,14 +45,14 @@ enum Kind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum In {
+pub(crate) enum In {
     All,
     From(Version),
     Until(Version),
 }
 
 impl In {
-    fn holds(self, v: Version) -> bool {
+    pub(crate) fn holds(self, v: Version) -> bool {
         match self {
             Self::All => true,
             Self::From(from) => v >= from,
@@ -67,7 +67,7 @@ use Version::{R2004, R2007};
 
 /// The sequence of §9 for R2000 through R2007. Fields the specification
 /// leaves unnamed are named by their kind and position.
-const LAYOUT: &[(&str, Kind, In)] = &[
+pub(crate) const LAYOUT: &[(&str, Kind, In)] = &[
     ("unknown_bd_1", Bd, All),
     ("unknown_bd_2", Bd, All),
     ("unknown_bd_3", Bd, All),

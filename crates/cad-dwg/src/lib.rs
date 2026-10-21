@@ -34,6 +34,7 @@ pub mod records;
 mod sections;
 pub mod tables;
 mod version;
+pub mod write;
 
 pub use classes::Class;
 pub use error::DwgError;
@@ -41,3 +42,4 @@ pub use import::{Import, import, import_with_limits, records};
 pub use limits::ImportLimits;
 pub use sections::{File, MapEntry, Section, SectionName};
 pub use version::Version;
+pub use write::{WriteError, export, write_records};

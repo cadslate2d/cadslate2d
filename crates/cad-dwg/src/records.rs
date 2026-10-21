@@ -77,6 +77,9 @@ pub fn layout(
     let limits = file.limits();
     let mut groups = Groups::default();
     groups.handle(5, handle);
+    // The owner comes before the subclasses, as in a DXF record: a reader
+    // that keeps the record whole takes the first 330 as the owner.
+    let owner_at = groups.0.len();
     groups.text(100, "AcDbPlotSettings");
     let page_setup = streams.text(limits)?;
     let printer = streams.text(limits)?;
@@ -166,7 +169,11 @@ pub fn layout(
             });
         }
     }
-    file.object_handles(streams, common)?;
+    let handles = file.object_handles(streams, common)?;
+    groups.0.insert(
+        owner_at,
+        (330, format!("{:X}", handles.owner.resolve(handle))),
+    );
     let h = &mut streams.handles;
     if version >= Version::R2004 {
         h.handle()?; // the plot view

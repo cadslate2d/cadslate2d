@@ -147,6 +147,7 @@ pub fn import(bytes: &[u8]) -> Result<Import, DxfError> {
 pub enum Section {
     /// A header variable: the record's kind is its name (`$INSUNITS`).
     Header,
+    Classes,
     Tables,
     Blocks,
     Entities,
@@ -192,6 +193,8 @@ pub fn import_records(
                     );
                 }
             }
+            // A class definition says nothing a drawing holds.
+            Section::Classes => {}
             section => {
                 let context = match section {
                     Section::Tables => RecordContext::Tables,

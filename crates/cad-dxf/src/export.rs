@@ -25,6 +25,7 @@ use cad_document::{
     TextEntity, TextStyle, TextStyleId, TextStyleTable, ViewportEntity, WipeoutEntity, draw_order,
 };
 
+use crate::import::{Record, Section};
 use crate::properties::{
     LAYER_FROZEN, LAYER_LOCKED, LINETYPE_ALIGNMENT_A, LINETYPE_BY_BLOCK, LINETYPE_BY_LAYER,
     color_to_dxf, lineweight_to_dxf, pattern_to_dxf,
@@ -315,6 +316,10 @@ impl Export {
     /// Writes everything before the first record: the classes, the tables,
     /// and the block definitions.
     pub fn begin(drawing: &Drawing) -> Self {
+        Self::begin_with(drawing, false)
+    }
+
+    fn begin_with(drawing: &Drawing, collect: bool) -> Self {
         let mut handles = Handles(1);
         let structure = Structure::allocate(&mut handles, drawing.layouts());
         // One block record per definition, in table order; the record is
@@ -339,6 +344,7 @@ impl Export {
         });
         let mut body = Writer {
             out: String::new(),
+            groups: collect.then(Vec::new),
             handles,
             dimensions_named: 0,
             paper: false,
@@ -447,10 +453,20 @@ impl Export {
 
     /// Writes whatever is left and returns the file: the header, which
     /// names the first free handle, in front of the body.
-    pub fn finish(mut self, drawing: &Drawing) -> Result<String, DrawingChanged> {
+    pub fn finish(self, drawing: &Drawing) -> Result<String, DrawingChanged> {
+        Ok(self.finish_both(drawing)?.0)
+    }
+
+    /// The text and, when they were collected, the groups: the header's
+    /// then the body's.
+    fn finish_both(
+        mut self,
+        drawing: &Drawing,
+    ) -> Result<(String, Vec<(i32, String)>), DrawingChanged> {
         self.step(drawing, usize::MAX)?;
         let mut header = Writer {
             out: String::new(),
+            groups: self.body.groups.is_some().then(Vec::new),
             handles: Handles(0),
             dimensions_named: 0,
             paper: false,
@@ -465,12 +481,77 @@ impl Export {
             block_record_handles: HashMap::new(),
         };
         header.section("HEADER", |w| w.header(drawing, self.body.handles.seed()));
-        Ok(header.out + &self.body.out)
+        let mut groups = header.groups.take().unwrap_or_default();
+        groups.extend(self.body.groups.take().unwrap_or_default());
+        Ok((header.out + &self.body.out, groups))
     }
+}
+
+/// The export as records (ADR-0036): the very groups `export` writes,
+/// cut at each record's start — a `0` group, or a `9` in the HEADER —
+/// and placed in their sections, for another writer to encode. The
+/// section markers themselves (`SECTION`, `ENDSEC`, `EOF`) are not
+/// records; `TABLE`, `ENDTAB`, `BLOCK`, `ENDBLK`, and `CLASS` are.
+pub fn export_records(drawing: &Drawing) -> Vec<Record> {
+    let (_, groups) = Export::begin_with(drawing, true)
+        .finish_both(drawing)
+        .expect("a borrowed drawing cannot change");
+    records_of(groups)
+}
+
+fn records_of(groups: Vec<(i32, String)>) -> Vec<Record> {
+    let mut out: Vec<Record> = Vec::new();
+    let mut section: Option<Section> = None;
+    let mut naming_section = false;
+    let mut current: Option<Record> = None;
+    for (code, value) in groups {
+        if naming_section {
+            naming_section = false;
+            if code == 2 {
+                section = match value.as_str() {
+                    "HEADER" => Some(Section::Header),
+                    "CLASSES" => Some(Section::Classes),
+                    "TABLES" => Some(Section::Tables),
+                    "BLOCKS" => Some(Section::Blocks),
+                    "ENTITIES" => Some(Section::Entities),
+                    "OBJECTS" => Some(Section::Objects),
+                    _ => None,
+                };
+                continue;
+            }
+        }
+        let starts_record = code == 0 || (code == 9 && section == Some(Section::Header));
+        if !starts_record {
+            if let Some(record) = &mut current {
+                record.groups.push((code, value));
+            }
+            continue;
+        }
+        out.extend(current.take());
+        match (code, value.as_str()) {
+            (0, "SECTION") => naming_section = true,
+            (0, "ENDSEC") => section = None,
+            (0, "EOF") => break,
+            _ => {
+                if let Some(section) = section {
+                    current = Some(Record {
+                        section,
+                        kind: value,
+                        groups: Vec::new(),
+                    });
+                }
+            }
+        }
+    }
+    out.extend(current);
+    out
 }
 
 struct Writer {
     out: String,
+    /// The groups written, kept when the export is wanted as records
+    /// (`export_records`) rather than as text.
+    groups: Option<Vec<(i32, String)>>,
     handles: Handles,
     /// DIMENSION records written so far: the next one's block is `*D` and
     /// this number plus one, which is the order `dimension_blocks` writes
@@ -613,6 +694,9 @@ impl Writer {
     /// One group: the code right-aligned in three columns, then the value.
     fn group(&mut self, code: i32, value: &str) {
         writeln!(self.out, "{code:>3}\n{value}").expect("writing to a String cannot fail");
+        if let Some(groups) = &mut self.groups {
+            groups.push((code, value.to_owned()));
+        }
     }
 
     fn real(&mut self, code: i32, value: f64) {
@@ -3456,5 +3540,57 @@ mod tests {
         fn formatted_reals_parse_back_exactly(value in proptest::num::f64::NORMAL | proptest::num::f64::ZERO) {
             prop_assert_eq!(format_real(value).parse::<f64>().unwrap(), value);
         }
+    }
+}
+
+#[cfg(test)]
+mod record_tests {
+    use cad_core::Point2;
+    use cad_document::{Drawing, LineEntity};
+
+    use super::*;
+    use crate::import;
+
+    /// The records are the text's groups, cut at every record and placed
+    /// in their sections, and read back they make the same drawing.
+    #[test]
+    fn export_records_are_the_text_cut_into_records() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.insert(LineEntity::new(Point2::ORIGIN, Point2::new(3.0, 4.0)))
+            .unwrap();
+        tx.commit();
+        let records = export_records(&drawing);
+        let text = export(&drawing);
+        let kinds: Vec<&str> = records.iter().map(|r| r.kind.as_str()).collect();
+        assert!(kinds.contains(&"$ACADVER"), "{kinds:?}");
+        assert!(kinds.contains(&"CLASS") || !text.contains("\nCLASS\n"));
+        assert!(kinds.contains(&"TABLE"), "{kinds:?}");
+        assert!(kinds.contains(&"LAYER"), "{kinds:?}");
+        assert!(kinds.contains(&"BLOCK"), "{kinds:?}");
+        assert!(kinds.contains(&"ENDBLK"), "{kinds:?}");
+        assert!(kinds.contains(&"LINE"), "{kinds:?}");
+        assert!(kinds.contains(&"LAYOUT"), "{kinds:?}");
+        assert!(!kinds.contains(&"SECTION"));
+        assert!(!kinds.contains(&"EOF"));
+        let line = records.iter().find(|r| r.kind == "LINE").unwrap();
+        assert_eq!(line.section, Section::Entities);
+        assert!(
+            line.groups.contains(&(11, "3.0".to_owned())),
+            "{:?}",
+            line.groups
+        );
+        // Every group of the text is in some record, in order, but the
+        // section markers.
+        let total: usize = records.iter().map(|r| r.groups.len() + 1).sum();
+        let lines = text.lines().count() / 2;
+        // SECTION + 2 name per section (6 sections), ENDSEC ×6, EOF.
+        assert_eq!(total, lines - 6 * 2 - 6 - 1, "{text}");
+        let again = crate::import_records(records, &crate::ImportLimits::default()).unwrap();
+        assert_eq!(again.drawing.records().count(), 1);
+        assert_eq!(
+            again.report.summary(),
+            import(text.as_bytes()).unwrap().report.summary()
+        );
     }
 }

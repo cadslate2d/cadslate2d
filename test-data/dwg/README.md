@@ -7,6 +7,8 @@ Fixtures are exercised by directory, so **adding a regression case is a one-file
 - `valid/` — every file must open: its sections found, its object map increasing, every object's common data and handles decoded, its classes and header variables read.
 - `malformed/` — every file must be refused with the structured error its name says: `truncated-*`, `version-*`, `bad-page-checksum-*`, `bad-header-crc-*`; a `fuzz-*` file, a fuzzer's finding, with any structured error. None may panic.
 
+The writer's output is not a fixture: `crates/cad-dwg/tests/writer.rs` writes every DXF fixture under [`test-data/dxf/valid/`](../dxf/README.md) as an `AC1015` DWG at test time and reads it back, through this crate and through acadrust; `scripts/fuzz.sh` seeds the `dwg_read` corpus with the same output, and `scripts/dwg-check.sh` hands it to LibreDWG's `dwgread`.
+
 ## valid/
 
 Every valid fixture is written by an independent writer, acadrust 0.6.5, from a DXF fixture under [`test-data/dxf/valid/`](../dxf/README.md), in the three versions, by `crates/cad-dwg/examples/fixtures.rs`:
