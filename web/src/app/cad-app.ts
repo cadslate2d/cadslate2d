@@ -14,11 +14,19 @@ import {
 import { UiStore } from "./ui-store";
 
 const RENDER_FLAGS = Dirty.Scene | Dirty.Overlay | Dirty.View;
+/** What OPEN offers to pick (#318): the format is read from the bytes. */
+const DRAWING_ACCEPT = ".dxf,.dwg";
+/** What INSERT offers to pick (#222). */
 const DXF_ACCEPT = ".dxf";
 const DXF_MIME_TYPE = "application/dxf";
 const PDF_MIME_TYPE = "application/pdf";
 const DEFAULT_FILE_NAME = "drawing.dxf";
 const RECOVERED_FILE_NAME = "recovered.dxf";
+/** The name a DXF of the drawing is saved under: its file's, with the DXF extension. */
+function dxfName(documentName: string | undefined): string {
+  return documentName === undefined ? DEFAULT_FILE_NAME : documentName.replace(/\.dwg$/i, ".dxf");
+}
+
 /** How long after the last change the drawing is kept (ADR-0019). */
 export const AUTOSAVE_DELAY_MS = 1000;
 
@@ -388,7 +396,7 @@ export class CadApp {
     this.#recoverable = undefined;
     this.ui.setRecovery(undefined);
     if (!record || this.#failed) return;
-    const dirty = this.engine.loadDxf(record.bytes, record.name ?? RECOVERED_FILE_NAME);
+    const dirty = this.engine.loadDrawing(record.bytes, record.name ?? RECOVERED_FILE_NAME);
     this.loop.invalidate(dirty);
     this.#target =
       record.handle && record.name ? { name: record.name, handle: record.handle } : undefined;
@@ -558,10 +566,12 @@ export class CadApp {
   async #openFile(): Promise<void> {
     if (this.engine.uiState().unsavedChanges && !this.#host.confirm(DISCARD_CHANGES_MESSAGE))
       return;
-    const file = await this.#host.files.open(DXF_ACCEPT);
+    const file = await this.#host.files.open(DRAWING_ACCEPT);
     if (!file) return;
-    this.loop.invalidate(this.engine.loadDxf(file.bytes, file.name));
-    this.#target = file.target;
+    this.loop.invalidate(this.engine.loadDrawing(file.bytes, file.name));
+    // Until SAVE writes DWG (#319), a DWG's file is not written back to:
+    // the DXF a save makes goes to a file of its own.
+    this.#target = this.engine.uiState().documentFormat === "dxf" ? file.target : undefined;
     // The opened file holds the drawing: whatever was kept before is replaced.
     this.#cancelAutosave?.();
     await this.#keep(true);
@@ -609,7 +619,7 @@ export class CadApp {
   async #plot(): Promise<void> {
     const pdf = this.engine.plotPdf();
     const state = this.engine.uiState();
-    const name = (state.documentName ?? DEFAULT_FILE_NAME).replace(/\.dxf$/i, "");
+    const name = (state.documentName ?? DEFAULT_FILE_NAME).replace(/\.(dxf|dwg)$/i, "");
     const file = state.paper ? `${name}-${state.space}.pdf` : `${name}.pdf`;
     await this.#host.files.saveAs(file, pdf, PDF_MIME_TYPE);
   }
@@ -623,7 +633,7 @@ export class CadApp {
       !ask && known !== undefined && files.writesBack && (await files.write(known, text));
     const target = writtenBack
       ? known
-      : await files.saveAs(state.documentName ?? DEFAULT_FILE_NAME, text, DXF_MIME_TYPE);
+      : await files.saveAs(dxfName(state.documentName), text, DXF_MIME_TYPE);
     if (!target) return;
     this.#target = files.writesBack ? target : undefined;
     this.loop.invalidate(this.engine.markExported(target.name));

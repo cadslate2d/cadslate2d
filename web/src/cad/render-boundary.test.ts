@@ -32,7 +32,8 @@ describe("WASM API surface", () => {
       "insert_dxf",
       "invoke",
       "key",
-      "load_dxf",
+      // #318: a drawing file read whole, DWG or DXF by its bytes, in one call.
+      "load_drawing",
       "log_since",
       "mark_exported",
       // #245: File › New, the whole drawing replaced in one call.

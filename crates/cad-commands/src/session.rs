@@ -22,9 +22,9 @@ use crate::log::CommandLog;
 use crate::snap::find_snap_from;
 use crate::{
     Command, CommandContext, CommandInput, CommandRegistry, Dirty, DraftingSettings, FileDrawing,
-    Grip, HostRequest, HoveredObject, ImportReport, KeyAction, LayerRow, Modifiers, OverlayItem,
-    PointerButton, Prompt, Selection, SelectionMethod, SelectionSummary, SnapModes, SnapPoint,
-    SpaceRequest, Step, Toggle, Toggles, UiState,
+    FileFormat, Grip, HostRequest, HoveredObject, ImportReport, KeyAction, LayerRow, Modifiers,
+    OverlayItem, PointerButton, Prompt, Selection, SelectionMethod, SelectionSummary, SnapModes,
+    SnapPoint, SpaceRequest, Step, Toggle, Toggles, UiState,
 };
 
 /// The model worked through a viewport of a layout (`MSPACE`, #193).
@@ -216,6 +216,8 @@ pub struct Session {
     host_request: Option<HostRequest>,
     /// Name of the file this drawing was opened from, if any.
     document_name: Option<String>,
+    /// The format that file came in (#318).
+    document_format: FileFormat,
     /// The drawing's revision when it was opened or last exported.
     saved_revision: Revision,
     /// The drawing came from a file with content that could not be imported.
@@ -286,6 +288,7 @@ impl Session {
             history: InputHistory::default(),
             host_request: None,
             document_name: None,
+            document_format: FileFormat::Dxf,
             export_losses: Vec::new(),
             import_report: None,
             imports: 0,
@@ -503,6 +506,7 @@ impl Session {
             unit: self.drawing.unit().map(LengthUnit::suffix),
             user_aliases: self.registry.aliases().user_aliases(),
             document_name: self.document_name.clone(),
+            document_format: self.document_format,
             unsaved_changes: self.drawing.revision() != self.saved_revision,
             revision: self.drawing.revision().as_u64(),
             export_losses: self.export_losses.clone(),
@@ -1217,15 +1221,22 @@ impl Session {
     /// and all interaction state tied to the old one is dropped. `messages`
     /// are the import's account, written to the log and kept as the import
     /// report; `losses` name what the file held and the drawing could not,
-    /// which an export will not include (§24.2).
+    /// which an export will not include (§24.2). `format` is what the
+    /// file came in (#318), kept for `SAVE`.
     pub fn open_drawing(
         &mut self,
         drawing: Drawing,
         name: &str,
+        format: FileFormat,
         messages: Vec<String>,
         losses: Vec<String>,
     ) -> Dirty {
-        self.replace_drawing(drawing, Some(name.to_owned()), messages, losses)
+        self.replace_drawing(drawing, Some(name.to_owned()), format, messages, losses)
+    }
+
+    /// The format of the file the drawing came in (#318).
+    pub fn document_format(&self) -> FileFormat {
+        self.document_format
     }
 
     /// File › New (#245): an empty, untitled drawing in the unit of the one
@@ -1234,8 +1245,13 @@ impl Session {
     /// the old drawing goes, and the session's settings and aliases stay.
     pub fn new_drawing(&mut self) -> Dirty {
         let unit = self.drawing.unit();
-        let dirty =
-            self.replace_drawing(Drawing::new().with_unit(unit), None, Vec::new(), Vec::new());
+        let dirty = self.replace_drawing(
+            Drawing::new().with_unit(unit),
+            None,
+            FileFormat::Dxf,
+            Vec::new(),
+            Vec::new(),
+        );
         self.view = View::new(self.view.width(), self.view.height());
         dirty
     }
@@ -1246,12 +1262,14 @@ impl Session {
         &mut self,
         drawing: Drawing,
         name: Option<String>,
+        format: FileFormat,
         messages: Vec<String>,
         losses: Vec<String>,
     ) -> Dirty {
         self.saved_revision = drawing.revision();
         self.drawing = drawing;
         self.document_name = name;
+        self.document_format = format;
         self.export_losses = losses;
         self.imports += 1;
         self.import_report = (!messages.is_empty()).then(|| ImportReport {
@@ -1794,6 +1812,7 @@ impl Session {
             isolation: &mut self.isolation,
             block_file: &mut self.block_file,
             clipboard: &mut self.clipboard,
+            document_format: self.document_format,
             log: &mut self.log,
             host_request: &mut self.host_request,
             space_request: &mut self.space_request,
@@ -2074,8 +2093,13 @@ mod tests {
             h.session.toggles().is_on(Toggle::Grid),
             "undo reverts the drawing, not the drafting aids"
         );
-        h.session
-            .open_drawing(Drawing::new(), "other.dxf", Vec::new(), Vec::new());
+        h.session.open_drawing(
+            Drawing::new(),
+            "other.dxf",
+            FileFormat::Dxf,
+            Vec::new(),
+            Vec::new(),
+        );
         assert!(h.session.toggles().is_on(Toggle::Grid));
     }
 

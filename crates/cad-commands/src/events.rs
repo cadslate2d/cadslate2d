@@ -51,6 +51,33 @@ pub enum KeyAction {
     Paste,
 }
 
+/// The format of the file a drawing came in (#318): what `SAVE` writes
+/// it back as (#319). A new drawing is DXF.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FileFormat {
+    /// ASCII DXF, release 2000.
+    #[default]
+    Dxf,
+    /// DWG `AC1015`, AutoCAD 2000.
+    Dwg2000,
+    /// DWG `AC1018`, AutoCAD 2004.
+    Dwg2004,
+    /// DWG `AC1021`, AutoCAD 2007.
+    Dwg2007,
+}
+
+impl FileFormat {
+    /// The format's name as a user reads it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Dxf => "DXF",
+            Self::Dwg2000 => "DWG 2000",
+            Self::Dwg2004 => "DWG 2004",
+            Self::Dwg2007 => "DWG 2007",
+        }
+    }
+}
+
 /// Something only the host can do, requested by a command. Rust never calls
 /// into the host; the host asks for the pending request after an input
 /// reports `Dirty::HOST` (ADR-0002).

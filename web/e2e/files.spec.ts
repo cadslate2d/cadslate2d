@@ -3,6 +3,7 @@ import {
   blocks,
   chooseFile,
   downloadFrom,
+  dwgFixturePath,
   enter,
   entities,
   entitiesSection,
@@ -95,6 +96,40 @@ test.describe("open", () => {
     await expect(logLines(page).filter({ hasText: "Imported 3 lines." })).toHaveCount(1);
     // ezdxf's Defpoints layer came with the file.
     await expect(logLines(page).last()).toHaveText("With 1 layer.");
+  });
+
+  // #318: a DWG of each version opens like its DXF, told by its bytes.
+  for (const version of ["AC1015", "AC1018", "AC1021"]) {
+    test(`a ${version} DWG opens with the entities and layers of its DXF`, async ({ page }) => {
+      const canvas = await openApp(page);
+      await chooseFile(
+        page,
+        () => enter(page, "OPEN"),
+        dwgFixturePath(`valid/ezdxf-r12-three-lines.${version}.dwg`),
+      );
+      await expect(logLines(page).filter({ hasText: "Imported 3 lines." })).toHaveCount(1);
+      await expect(logLines(page).last()).toHaveText("With 1 layer.");
+      await expect(page.getByTestId("document")).toContainText(
+        `ezdxf-r12-three-lines.${version}.dwg`,
+      );
+      expect(await litPixels(canvas)).toBeGreaterThan(300);
+      // What the drawing holds is what the DXF holds: the same three lines.
+      const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+      expect(file.name).toBe(`ezdxf-r12-three-lines.${version}.dxf`);
+      expect(file.text.match(/^LINE$/gm)).toHaveLength(3);
+    });
+  }
+
+  test("a DWG with content the drawing cannot hold is LOSSY, like a DXF", async ({ page }) => {
+    await openApp(page);
+    await chooseFile(
+      page,
+      () => enter(page, "OPEN"),
+      dwgFixturePath("valid/crafted-mline-entity.AC1015.dwg"),
+    );
+    const report = page.getByTestId("import-report");
+    await expect(report).toContainText("MLINE");
+    await expect(page.getByTestId("lossy")).toHaveText("LOSSY");
   });
 
   test("a file that is not DXF is refused with a reason", async ({ page }) => {

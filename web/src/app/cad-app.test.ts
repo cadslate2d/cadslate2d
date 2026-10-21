@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { CadEngine, Dirty, EngineFailure, KeyAction, ToggleBit } from "../cad/engine";
 import { loadEngineForTests } from "../cad/test-support";
@@ -558,6 +559,46 @@ describe("open", () => {
     await tick();
     expect(host.files.written).toHaveLength(0);
     expect(host.files.saved.map((save) => save.name)).toEqual(["drawing.dxf"]);
+  });
+
+  // #318: the format is read from the bytes, not the name.
+  test("a DWG opens by its bytes, whatever its extension, and SAVE makes a DXF of it", async () => {
+    const dwg = new Uint8Array(
+      await readFile(
+        new URL("../../../test-data/dwg/valid/ezdxf-r12-three-lines.AC1015.dwg", import.meta.url),
+      ),
+    );
+    const { app, host, tick, enter, segmentCount } = harness();
+    host.files.writesBack = true;
+    host.files.fileToPick = { name: "plan.dwg", bytes: dwg, target: { name: "plan.dwg" } };
+    enter("OPEN");
+    await tick();
+    expect(segmentCount()).toBe(3);
+    expect(app.ui.getSnapshot()).toMatchObject({
+      documentName: "plan.dwg",
+      documentFormat: "dwg2000",
+    });
+    expect(app.ui.getSnapshot().log).toContain("Imported 3 lines.");
+
+    // SAVE says what it writes, and asks where: the DWG is not written over.
+    enter("SAVE");
+    await tick();
+    expect(app.ui.getSnapshot().log).toContain(
+      "The drawing came in as DWG 2000; it is saved as DXF.",
+    );
+    expect(host.files.written).toHaveLength(0);
+    expect(host.files.saved.map((save) => save.name)).toEqual(["plan.dxf"]);
+    expect(host.files.saved[0]?.text).toContain("AcDbLine");
+
+    // The same bytes under a misleading name are still the DWG.
+    host.files.fileToPick = { name: "plan.dxf", bytes: dwg };
+    enter("OPEN");
+    await tick();
+    expect(segmentCount()).toBe(3);
+    expect(app.ui.getSnapshot()).toMatchObject({
+      documentName: "plan.dxf",
+      documentFormat: "dwg2000",
+    });
   });
 
   test("a file that cannot be read keeps the drawing and explains why", async () => {

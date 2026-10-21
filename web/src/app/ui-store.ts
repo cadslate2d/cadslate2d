@@ -1,7 +1,13 @@
 // The single external store React subscribes to (Observer pattern).
 // It mirrors presentation state pulled from the engine: prompt, log,
 // cursor readout, counters. It never holds drawing geometry.
-import type { ImportReport, LayerRow, SelectionSummary, UiState } from "../cad/engine";
+import type {
+  DocumentFormat,
+  ImportReport,
+  LayerRow,
+  SelectionSummary,
+  UiState,
+} from "../cad/engine";
 
 /** What the recovery dialog says about the kept drawing: its name and when it was kept. */
 export interface Recovery {
@@ -39,6 +45,8 @@ export interface UiSnapshot {
   /** The user's command aliases, one per line, as the engine holds them. */
   readonly userAliases: string;
   readonly documentName: string | undefined;
+  /** The format the file came in (#318). */
+  readonly documentFormat: DocumentFormat;
   readonly unsavedChanges: boolean;
   /** What an export will not include; empty when nothing (DESIGN §24.2). */
   readonly exportLosses: readonly string[];
@@ -97,6 +105,7 @@ const INITIAL: UiSnapshot = {
   unit: "",
   userAliases: "",
   documentName: undefined,
+  documentFormat: "dxf",
   unsavedChanges: false,
   exportLosses: [],
   layouts: [],
@@ -179,6 +188,7 @@ export class UiStore {
       unit: state.unit,
       userAliases: state.userAliases,
       documentName: state.documentName,
+      documentFormat: state.documentFormat,
       unsavedChanges: state.unsavedChanges,
       exportLosses: state.exportLosses,
       layouts: state.layouts,

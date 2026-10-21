@@ -305,6 +305,11 @@ export function fixturePath(relative: string): string {
   return fileURLToPath(new URL(`../../test-data/dxf/${relative}`, import.meta.url));
 }
 
+/** Absolute path of a DWG fixture under `test-data/dwg/`. */
+export function dwgFixturePath(relative: string): string {
+  return fileURLToPath(new URL(`../../test-data/dwg/${relative}`, import.meta.url));
+}
+
 /** Runs `action`, which must trigger a download, and returns the downloaded text and file name. */
 export async function downloadFrom(
   page: Page,

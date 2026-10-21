@@ -120,7 +120,8 @@ fn a_paste_after_open_brings_its_rows_in_by_name() {
         })
         .unwrap();
     tx.commit();
-    h.session.open_drawing(other, "other.dxf", vec![], vec![]);
+    h.session
+        .open_drawing(other, "other.dxf", crate::FileFormat::Dxf, vec![], vec![]);
     h.session.key(KeyAction::Paste);
     assert_eq!(h.prompt(), "Specify insertion point:");
     h.enter("100,0");

@@ -5,7 +5,7 @@
 //! record a request; the host carries it out and reports back through
 //! `Session::open_drawing` or `Session::mark_exported`.
 
-use crate::{Command, CommandContext, HostRequest, Step};
+use crate::{Command, CommandContext, FileFormat, HostRequest, Step};
 
 /// NEW (#245): an empty drawing. Whether unsaved work may go is the
 /// host's question to ask, as it is for OPEN.
@@ -40,6 +40,14 @@ pub(crate) struct SaveCommand;
 
 impl Command for SaveCommand {
     fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
+        // Until #319 writes DWG from the commands, a drawing that came in
+        // as DWG is saved as DXF, and says so before the host asks where.
+        if ctx.document_format != FileFormat::Dxf {
+            ctx.message(format!(
+                "The drawing came in as {}; it is saved as DXF.",
+                ctx.document_format.label()
+            ));
+        }
         ctx.request_host(HostRequest::SaveFile);
         Step::Finished
     }
@@ -66,7 +74,7 @@ mod tests {
     use cad_document::{Drawing, Entity, LineEntity};
 
     use crate::testing::Harness;
-    use crate::{Dirty, HostRequest, KeyAction};
+    use crate::{Dirty, FileFormat, HostRequest, KeyAction};
 
     fn imported() -> Drawing {
         Drawing::from_entities([
@@ -162,6 +170,7 @@ mod tests {
         let dirty = h.session.open_drawing(
             imported(),
             "plan.dxf",
+            FileFormat::Dxf,
             vec!["Imported 2 lines.".to_owned()],
             Vec::new(),
         );
@@ -185,8 +194,13 @@ mod tests {
     fn relative_input_starts_from_the_origin_again_after_opening() {
         let mut h = Harness::new();
         h.enter_all(&["L", "500,500", ""]);
-        h.session
-            .open_drawing(Drawing::new(), "empty.dxf", Vec::new(), Vec::new());
+        h.session.open_drawing(
+            Drawing::new(),
+            "empty.dxf",
+            FileFormat::Dxf,
+            Vec::new(),
+            Vec::new(),
+        );
         h.enter_all(&["L", "@1,1", "@1,0", ""]);
         assert_eq!(h.lines()[0].start, Point2::new(1.0, 1.0));
     }
@@ -220,8 +234,13 @@ mod tests {
         let mut h = Harness::new();
         let losses = vec!["Not imported (unsupported): 1 HATCH.".to_owned()];
         let report = vec!["Imported 1 line.".to_owned(), losses[0].clone()];
-        h.session
-            .open_drawing(imported(), "mixed.dxf", report.clone(), losses.clone());
+        h.session.open_drawing(
+            imported(),
+            "mixed.dxf",
+            FileFormat::Dxf,
+            report.clone(),
+            losses.clone(),
+        );
         let state = h.session.ui_state();
         assert_eq!(state.export_losses, losses);
         assert_eq!(
@@ -249,6 +268,7 @@ mod tests {
         h.session.open_drawing(
             imported(),
             "clean.dxf",
+            FileFormat::Dxf,
             vec!["Imported 1 line.".to_owned()],
             Vec::new(),
         );

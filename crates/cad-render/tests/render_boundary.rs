@@ -353,6 +353,7 @@ fn regions_tile_the_buffers_and_an_ordinary_drawing_is_one() {
     h.session.open_drawing(
         cad_document::Drawing::from_entities(lines),
         "span.dxf",
+        cad_commands::FileFormat::Dxf,
         vec![],
         vec![],
     );

@@ -51,7 +51,7 @@ The user asked for DWG both ways in the AutoCAD 2000, 2004, and 2007/2008 format
 4. **Writing `AC1015`** (#315): objects by prescription, the header variables, the object map, the second header, CRCs; read back by both oracles.
 5. **Writing `AC1018`** (#316): the page and section maps, masked page headers, an LZ77 compressor of ours.
 6. **Writing `AC1021`** (#317): Reed–Solomon pages, 64-bit CRCs, the random encoder, string streams; the ADR's fallback if it cannot be validated.
-7. **`OPEN` reads DWG** (#318): by signature, whatever the extension; shipped as soon as reading is complete.
+7. **`OPEN` reads DWG** (#318): by signature, whatever the extension; shipped as soon as reading is complete. Done 2026-10-21: `load_drawing` tells the format from the first six bytes, the format is session state (`FileFormat`), and the pickers offer `.dwg`.
 8. **`SAVEAS` and `SAVE`** (#319): the format chosen in the dialog or at the prompt; `SAVE` keeps the one the file came in.
 9. **Exit** (#320): the scenario, the review, the measurements against the ADR's budget, and the person's check in AutoCAD.
 

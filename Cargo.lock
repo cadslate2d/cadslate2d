@@ -223,6 +223,7 @@ dependencies = [
  "cad-commands",
  "cad-core",
  "cad-document",
+ "cad-dwg",
  "cad-dxf",
  "cad-plot",
  "cad-render",

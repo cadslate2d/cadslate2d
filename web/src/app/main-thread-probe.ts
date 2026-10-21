@@ -41,7 +41,7 @@ export async function probeMainThread(text: string): Promise<MainThreadReport> {
   try {
     const bytes = new TextEncoder().encode(text);
     const openStart = performance.now();
-    engine.loadDxf(bytes, "probe.dxf");
+    engine.loadDrawing(bytes, "probe.dxf");
     const openMs = performance.now() - openStart;
     const imported = engine.uiState().importReport?.lines[0] ?? "";
 

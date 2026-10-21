@@ -26,6 +26,7 @@ fn at(offset: f64) -> (Harness, Point2) {
     h.session.open_drawing(
         Drawing::from_entities([post]),
         "far.dxf",
+        crate::FileFormat::Dxf,
         Vec::new(),
         Vec::new(),
     );

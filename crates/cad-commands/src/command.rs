@@ -13,7 +13,7 @@ use cad_input::{CommandAliases, ExpectedInput, Keyword};
 
 use crate::commands::{Clipboard, Isolation};
 use crate::log::CommandLog;
-use crate::{DraftingSettings, Grip, HostRequest, OverlayItem, Selection, Toggles};
+use crate::{DraftingSettings, FileFormat, Grip, HostRequest, OverlayItem, Selection, Toggles};
 
 /// One resolved input handed to the active command.
 #[derive(Clone, Debug, PartialEq)]
@@ -144,6 +144,8 @@ pub struct CommandContext<'a> {
     /// What COPYCLIP and CUTCLIP took (#223): the session's, kept across
     /// OPEN.
     pub(crate) clipboard: &'a mut Option<Clipboard>,
+    /// The format the drawing's file came in (#318): what `SAVE` keeps.
+    pub(crate) document_format: FileFormat,
     pub(crate) log: &'a mut CommandLog,
     pub(crate) host_request: &'a mut Option<HostRequest>,
     pub(crate) space_request: &'a mut Option<SpaceRequest>,

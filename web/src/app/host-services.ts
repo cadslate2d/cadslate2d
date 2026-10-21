@@ -141,6 +141,13 @@ export const downloadFiles: FileAccess = {
 
 /** The picker's description of the files it shows. */
 const DXF_TYPES = [{ description: "DXF drawing", accept: { "application/dxf": [".dxf"] } }];
+/** What OPEN shows (#318): DXF and DWG; the format is read from the bytes. */
+const DRAWING_TYPES = [
+  {
+    description: "Drawings",
+    accept: { "application/dxf": [".dxf"], "application/acad": [".dwg"] },
+  },
+];
 const PDF_TYPES = [{ description: "PDF plot", accept: { "application/pdf": [".pdf"] } }];
 
 /** What the save picker offers for a file of this type (#187: plots are PDFs). */
@@ -177,7 +184,7 @@ export const fileSystemAccessFiles: FileAccess = {
     const picker = window.showOpenFilePicker;
     if (!picker) return undefined;
     try {
-      const [handle] = await picker.call(window, { types: DXF_TYPES, multiple: false });
+      const [handle] = await picker.call(window, { types: DRAWING_TYPES, multiple: false });
       if (!handle) return undefined;
       const file = await handle.getFile();
       return {

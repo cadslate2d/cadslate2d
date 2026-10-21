@@ -80,6 +80,9 @@ export type HostRequest = (typeof HostRequest)[keyof typeof HostRequest];
  * Presentation state for the shell. It holds nothing from which drawing
  * geometry could be reconstructed (ADR-0002 §5).
  */
+/** The format a drawing's file came in (#318). */
+export type DocumentFormat = "dxf" | "dwg2000" | "dwg2004" | "dwg2007";
+
 export interface UiState {
   /** The current prompt, e.g. `Command:` or `Specify next point:`. */
   readonly prompt: string;
@@ -108,6 +111,8 @@ export interface UiState {
   readonly userAliases: string;
   /** Name of the file the drawing was opened from, if any. */
   readonly documentName?: string;
+  /** The format that file came in (#318); `dxf` for a new drawing. */
+  readonly documentFormat: DocumentFormat;
   /** The drawing changed since it was opened or last exported. */
   readonly unsavedChanges: boolean;
   /** Changes on every commit, undo, and redo: when there is something new to autosave. */
@@ -508,11 +513,12 @@ export class CadEngine {
   }
 
   /**
-   * Replaces the drawing with the contents of a DXF file. A file that cannot
-   * be read leaves the drawing untouched and explains why in the command log.
+   * Replaces the drawing with the contents of a drawing file — a DWG by its
+   * first six bytes, a DXF otherwise (#318). A file that cannot be read
+   * leaves the drawing untouched and explains why in the command log.
    */
-  loadDxf(bytes: Uint8Array, name: string): number {
-    return this.#session.load_dxf(bytes, name);
+  loadDrawing(bytes: Uint8Array, name: string): number {
+    return this.#session.load_drawing(bytes, name);
   }
 
   /** File › New (#245): an empty, untitled drawing in place of this one. */

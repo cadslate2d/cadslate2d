@@ -1,6 +1,6 @@
 //! What the UI shell needs to present the session (ADR-0002 §5).
 
-use crate::SelectionSummary;
+use crate::{FileFormat, SelectionSummary};
 
 /// What an import did and did not bring in, as lines for the host.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,6 +47,8 @@ pub struct UiState {
     pub user_aliases: String,
     /// Name of the file the drawing was opened from, if any.
     pub document_name: Option<String>,
+    /// The format that file came in (#318); DXF for a new drawing.
+    pub document_format: FileFormat,
     /// The drawing changed since it was opened or last exported.
     pub unsaved_changes: bool,
     /// The drawing's revision: changes on every commit, undo, and redo, so

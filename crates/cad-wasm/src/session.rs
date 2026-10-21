@@ -1,8 +1,8 @@
 //! The one exported handle (ADR-0002 §1).
 
 use cad_commands::{
-    Dirty, HostRequest, KeyAction, LayerRow, Modifiers, PointerButton, SelectionSummary, Session,
-    Toggle, Toggles, UiState,
+    Dirty, FileFormat, HostRequest, KeyAction, LayerRow, Modifiers, PointerButton,
+    SelectionSummary, Session, Toggle, Toggles, UiState,
 };
 use cad_core::{ClipTransform, LengthUnit, Point2, ScreenPoint};
 use cad_document::{Entity, LayoutId, ViewportEntity};
@@ -68,6 +68,26 @@ fn transform_words(transform: ClipTransform) -> Vec<f32> {
     ]
 }
 
+/// Reads a drawing file by its signature (#318): a DWG of a version the
+/// crate reads, a DWG of another version refused by name, a DXF otherwise.
+fn open_drawing_file(bytes: &[u8]) -> Result<(cad_dxf::Import, FileFormat), String> {
+    match cad_dwg::Version::detect(bytes) {
+        Ok(version) => {
+            let import = cad_dwg::import(bytes).map_err(|e| e.to_string())?;
+            let format = match version {
+                cad_dwg::Version::R2000 => FileFormat::Dwg2000,
+                cad_dwg::Version::R2004 => FileFormat::Dwg2004,
+                cad_dwg::Version::R2007 => FileFormat::Dwg2007,
+            };
+            Ok((import, format))
+        }
+        Err(cad_dwg::DwgError::NotDwg) => cad_dxf::import(bytes)
+            .map(|import| (import, FileFormat::Dxf))
+            .map_err(|e| e.to_string()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 /// `UiState` as the plain object JavaScript receives.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,6 +109,9 @@ struct UiStateDto {
     /// The user's command aliases, one per line (#186).
     user_aliases: String,
     document_name: Option<String>,
+    /// The format the file came in (#318): `dxf`, `dwg2000`, `dwg2004`,
+    /// or `dwg2007`.
+    document_format: &'static str,
     unsaved_changes: bool,
     revision: f64,
     export_losses: Vec<String>,
@@ -202,6 +225,12 @@ impl From<UiState> for UiStateDto {
             can_paste: state.can_paste,
             toggles: state.toggles,
             document_name: state.document_name,
+            document_format: match state.document_format {
+                FileFormat::Dxf => "dxf",
+                FileFormat::Dwg2000 => "dwg2000",
+                FileFormat::Dwg2004 => "dwg2004",
+                FileFormat::Dwg2007 => "dwg2007",
+            },
             unsaved_changes: state.unsaved_changes,
             revision: state.revision as f64,
             export_losses: state.export_losses,
@@ -424,13 +453,15 @@ impl CadSession {
         self.report(dirty)
     }
 
-    /// Replaces the drawing with the contents of a DXF file. On failure the
-    /// current drawing is kept and the reason is written to the command log.
-    pub fn load_dxf(&mut self, bytes: &[u8], name: &str) -> u32 {
-        let dirty = match cad_dxf::import(bytes) {
-            Ok(import) => self.session.open_drawing(
+    /// Replaces the drawing with the contents of a drawing file: a DWG by
+    /// its first six bytes (#318), a DXF otherwise. On failure the current
+    /// drawing is kept and the reason is written to the command log.
+    pub fn load_drawing(&mut self, bytes: &[u8], name: &str) -> u32 {
+        let dirty = match open_drawing_file(bytes) {
+            Ok((import, format)) => self.session.open_drawing(
                 import.drawing,
                 name,
+                format,
                 import.report.summary(),
                 import.report.losses(),
             ),
@@ -785,5 +816,88 @@ impl CadSession {
                 .view()
                 .clip_transform(self.overlay.frame().origin()),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Headless, through the same methods the host calls: what OPEN does
+    //! with a file is decided by its bytes (#318).
+
+    use super::*;
+
+    fn fixture(name: &str) -> Vec<u8> {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../test-data/");
+        std::fs::read(format!("{path}{name}")).unwrap_or_else(|e| panic!("{name}: {e}"))
+    }
+
+    #[test]
+    fn a_dwg_of_each_version_opens_by_its_bytes_whatever_its_name() {
+        for (version, format) in [
+            ("AC1015", FileFormat::Dwg2000),
+            ("AC1018", FileFormat::Dwg2004),
+            ("AC1021", FileFormat::Dwg2007),
+        ] {
+            let bytes = fixture(&format!("dwg/valid/ezdxf-r12-three-lines.{version}.dwg"));
+            let mut cad = CadSession::new();
+            // The name is the host's: a misleading extension changes nothing.
+            cad.load_drawing(&bytes, "plan.dxf");
+            let drawing = cad.session.drawing();
+            assert_eq!(drawing.len(), 3, "{version}");
+            assert!(
+                drawing
+                    .layers()
+                    .iter()
+                    .any(|(_, layer)| layer.name == "Defpoints"),
+                "{version}"
+            );
+            let state = cad.session.ui_state();
+            assert_eq!(state.document_name.as_deref(), Some("plan.dxf"));
+            assert_eq!(state.document_format, format, "{version}");
+            assert_eq!(
+                state.import_report.map(|r| r.lines[0].clone()),
+                Some("Imported 3 lines.".into())
+            );
+        }
+    }
+
+    #[test]
+    fn a_dxf_still_opens_and_a_later_dwg_is_refused_by_name() {
+        let mut cad = CadSession::new();
+        cad.load_drawing(&fixture("dxf/valid/ezdxf-r12-three-lines.dxf"), "plan.dwg");
+        assert_eq!(cad.session.drawing().len(), 3);
+        assert_eq!(cad.session.ui_state().document_format, FileFormat::Dxf);
+
+        cad.load_drawing(b"AC1024 is a later release", "new.dwg");
+        assert_eq!(cad.session.drawing().len(), 3, "the drawing is kept");
+        let log = cad.session.log_since(0);
+        assert!(
+            log.last().is_some_and(|line| {
+                line.starts_with("Cannot open new.dwg: DWG version AC1024 is not supported")
+            }),
+            "{log:?}"
+        );
+    }
+
+    /// A DWG with content the drawing cannot hold reports it like a DXF
+    /// does: the report, and the losses an export will not include.
+    #[test]
+    fn a_dwg_with_unsupported_content_is_lossy_like_a_dxf() {
+        let mut cad = CadSession::new();
+        cad.load_drawing(
+            &fixture("dwg/valid/crafted-mline-entity.AC1015.dwg"),
+            "mline.dwg",
+        );
+        let state = cad.session.ui_state();
+        assert!(
+            state
+                .import_report
+                .is_some_and(|r| r.lines.iter().any(|l| l.contains("MLINE")))
+        );
+        assert!(
+            state.export_losses.iter().any(|l| l.contains("MLINE")),
+            "{:?}",
+            state.export_losses
+        );
     }
 }

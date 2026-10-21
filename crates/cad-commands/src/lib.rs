@@ -35,7 +35,7 @@ pub use command::{
     Command, CommandContext, CommandInput, FileDrawing, HoveredObject, Prompt, SpaceRequest, Step,
 };
 pub use dirty::Dirty;
-pub use events::{HostRequest, KeyAction, Modifiers, PointerButton};
+pub use events::{FileFormat, HostRequest, KeyAction, Modifiers, PointerButton};
 pub use grips::{Grip, GripId};
 pub use overlay::OverlayItem;
 pub use registry::CommandRegistry;

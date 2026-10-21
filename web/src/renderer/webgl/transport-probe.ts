@@ -162,7 +162,7 @@ export function probeOpen(createEngine: () => CadEngine, text: string): number {
   const engine = createEngine();
   engine.resize(800, 600);
   const start = performance.now();
-  engine.loadDxf(bytes, "probe.dxf");
+  engine.loadDrawing(bytes, "probe.dxf");
   const elapsed = performance.now() - start;
   engine.dispose();
   return elapsed;

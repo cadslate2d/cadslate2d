@@ -80,7 +80,7 @@ export function probeFrames(
 ): FramesReport {
   const bytes = new TextEncoder().encode(text);
   const openStart = performance.now();
-  engine.loadDxf(bytes, "mixed.dxf");
+  engine.loadDrawing(bytes, "mixed.dxf");
   const openMs = performance.now() - openStart;
   const imported = engine.uiState().importReport?.lines[0] ?? "";
   const instances = engine.readScene((frame) => ({
