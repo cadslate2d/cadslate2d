@@ -95,6 +95,8 @@ than:
 
 > a SaaS design platform with CAD features.
 
+> **Amended (2026-10-21, [ADR-0037](adr/0037-ai-input-method.md), proposed):** natural language is one more input method, optional, through a hosted service in its own repository. It is the one thing in the product that takes an account, and the account is for it alone: the wedge above — free, no mandatory account, local-first — is untouched for everything else.
+
 ## 3.2 Product principle
 
 > **CAD should be boring.**
@@ -129,6 +131,8 @@ CadSlate2D v1 does **not** include:
 - ribbon-first UI;
 - full DWG compatibility;
 - user-defined coordinate systems.
+
+> **Amended (2026-10-21, [ADR-0037](adr/0037-ai-input-method.md), proposed):** AI-first interaction stays ruled out. AI as an input method — natural language compiled into a validated intent IR, run through the same commands as typing, previewed, and committed on Accept — is not that: the program is the same drafting workstation, and a user who never opens the AI panel never meets it. "Full DWG compatibility" stays ruled out too; M19 reads and writes three versions through the DXF reader's records ([ADR-0036](adr/0036-dwg.md)).
 
 ## 4.1 Coordinate-system decision
 
@@ -211,6 +215,8 @@ TypeScript owns browser graphics resources and decides **how prepared GPU buffer
 Committed drawing geometry and transient interaction geometry have separate render lifetimes.
 
 The browser/WASM boundary must remain coarse.
+
+> **Amended (2026-10-21, [ADR-0037](adr/0037-ai-input-method.md), proposed):** static hosting and no required backend stay the deployment rule. One optional hosted service is admitted, for the AI input method alone, in its own private repository; a build with no service configured has no AI and nothing else changes.
 
 ---
 
@@ -2286,6 +2292,8 @@ Default:
 - local persistence;
 - no drawing-content telemetry.
 
+> **Amended (2026-10-21, [ADR-0037](adr/0037-ai-input-method.md), proposed):** the default stays. A request to the AI service sends the prompt; it sends drawing context — the selection summary, the layers, what the request names — only when the request needs it and only after the user has confirmed that request, shown what would go. Nothing is sent in the background. What the service keeps of a request is bounded and documented in its repository, and drawing geometry is never stored there.
+
 ## Security
 
 Imported files are untrusted.
@@ -2314,6 +2322,8 @@ Do not let a future DWG dependency accidentally determine the whole project mode
 
 > **Decided (2026-10-20, [ADR-0035](adr/0035-licence.md)):** the repository is licensed **AGPL-3.0-or-later**. The application is free to use, study, change, and share; a modified version served to users must offer them its source. The hosted AI service is a separate work in a private repository, which the maintainer's copyright and the contributor agreement allow. Legal review is still owed (#292), and the repository stays private until the Open Source Release (#291) is done.
 
+> **Amended (2026-10-21, [ADR-0037](adr/0037-ai-input-method.md), proposed):** the product stays free to use. Paying is for the AI service alone, in its plans, in its repository.
+
 ---
 
 # 45. Product Constraints to Protect
@@ -2334,6 +2344,8 @@ CadSlate2D should resist drifting toward:
 A recurring product question should be:
 
 > **Does this make general-purpose 2D drafting better, or are we becoming a suite?**
+
+> **Amended (2026-10-21, [ADR-0037](adr/0037-ai-input-method.md), proposed):** the AI panel is the one sanctioned "AI chat sidebar": a docked panel beside Layers and Properties, off until opened and signed in, whose every result is a previewed proposal committed on Accept as one undo. Mandatory accounts stay resisted; the account is for that panel alone.
 
 ---
 
@@ -2373,6 +2385,8 @@ ADR-0004 Curve rendering strategy
 M0 is expected to resolve PROVISIONAL and EXPERIMENT items through code.
 
 It is not expected to reopen LOCKED product constraints without strong evidence.
+
+> **Reopened once (2026-10-21, [ADR-0037](adr/0037-ai-input-method.md), proposed):** the user's product decision of 2026-10-19 admits natural language as an optional input method. The ADR draws the line it leaves untouched and the rule that keeps a model outside the document.
 
 ---
 

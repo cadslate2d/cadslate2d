@@ -39,6 +39,18 @@ Filed on 2026-10-18 and 2026-10-19; M19 started on 2026-10-20. The order is the 
 | M23 — AI Plans and Billing | In the service repository. The app's side is its account view (#289). | — |
 | Open Source Release | The main repository public under a licence decided by ADR (§44), with a trademark, a contributor agreement, audited history, dependencies, and assets, and the service kept private. Done before the repository goes public; independent of the milestones above. | #291 |
 
+## M20, AI Foundations
+
+The user asked for natural language as a way to drive the program (2026-10-19) and decided its shape in the same discussion: an input method, not a design mode; a hosted service in its own private repository; accounts for AI only; the prompt sent, drawing context only on the user's confirmation of that request; one panel; the program whole without the service. [ADR-0037](adr/0037-ai-input-method.md) records it and amends DESIGN; it is proposed, and the maintainer's acceptance is #252. The epic is #251.
+
+### Order of work
+
+1. **The ADR** (#252): proposed 2026-10-21; nothing is built before it is accepted.
+2. **The intent IR** (#253): `cad-intent`, a versioned, validated operation language compiled to registered commands.
+3. **Proposals** (#254): an IR run against a scratch copy, drawn by the overlay, committed on Accept as one undo.
+4. **The service** (`cadslate2d/cadslate2d-ai-service` #1–#5): accounts, the model adapter, metering, what it keeps.
+5. **The AI panel** (#260), **AI commands** (#261), **evaluation** (#262), and **the exit** (#263).
+
 ## M19, DWG
 
 The user asked for DWG both ways in the AutoCAD 2000, 2004, and 2007/2008 formats (`AC1015`, `AC1018`, `AC1021`). A one-day spike read all three containers from the Open Design Specification, and [ADR-0036](adr/0036-dwg.md) chose a crate of our own, `cad-dwg`, feeding the records the DXF reader finishes, with LibreDWG and acadrust as independent test oracles rather than dependencies (acadrust would have added 1.22 MB gzipped to a 0.81 MB download). The epic is #250.

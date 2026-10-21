@@ -48,6 +48,7 @@ If code and these documents disagree, fix the code or write an ADR. Do not silen
 - **Only `web/src/renderer/` touches WebGL; only `web/src/cad/` imports the generated WASM package.** ESLint enforces both.
 - **Rust never calls into JavaScript.** When a command needs the browser (a file picker, a download), it raises a `HostRequest`; the host serves it and reports back with an ordinary call.
 - **The WASM API surface is snapshot-tested** (`web/src/cad/render-boundary.test.ts`). Adding an export fails that test on purpose: justify the new call as coarse, then update the list.
+- **A model's output reaches the document only as a validated intent IR compiled to registered commands, previewed, and committed on Accept as one undo** (ADR-0037). The same single entry point as typing and the menus' macros (ADR-0034); never a direct edit, never a file command. The AI service is optional and elsewhere: a build with no service configured has no AI, and nothing else changes.
 
 ## Engineering principles
 
@@ -137,5 +138,5 @@ make e2e
 ## Scope discipline
 
 - The open milestone's issues are the scope. Do not pull work forward from a later milestone (layers, text, dimensions, workers, …) because it would be convenient; DESIGN Part IV says what belongs where.
-- Product constraints in DESIGN §4 and §45 apply always: no accounts, no cloud documents, no telemetry on drawing content, no 3D.
+- Product constraints in DESIGN §4 and §45 apply always: no accounts except for the AI input method, no cloud documents, no telemetry on drawing content, no drawing context sent without the user's consent to that request, no 3D (ADR-0037).
 - When an issue's scope turns out to be wrong, update the issue; do not quietly expand or shrink it.

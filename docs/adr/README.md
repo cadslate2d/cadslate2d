@@ -47,6 +47,7 @@ There are two kinds:
 | [0034](0034-menu-macros.md) | A menu item is a macro over the command line — a command and its answers, typed — and may pause for the user's answer, as AutoCAD's `\` does | Accepted | Design |
 | [0035](0035-licence.md) | The repository is licensed AGPL-3.0-or-later: a hosted fork must offer its source; the private AI service relies on the maintainer's copyright and the contributor agreement | Accepted, legal review owed | Governance |
 | [0036](0036-dwg.md) | DWG is a crate of our own, `cad-dwg`, written from the Open Design Specification for `AC1015`, `AC1018`, and `AC1021`, feeding the records the DXF reader finishes; LibreDWG and acadrust are its test oracles, not dependencies | Accepted | Evidence (resolves §40) |
+| [0037](0037-ai-input-method.md) | Natural language is an optional input method: a hosted service in its own repository, a validated intent IR compiled to registered commands, every result a previewed proposal committed on Accept; drafting stays free, local, and account-free | Proposed (awaits the maintainer, #252) | Product and architecture (amends §3, §4, §8, §43–§46) |
 
 ## Expected evidence ADRs
 
