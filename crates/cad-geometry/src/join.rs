@@ -61,6 +61,11 @@ pub enum ArcJoinError {
     Apart,
 }
 
+/// How far the angle of a point about a centre can be from the true
+/// angle: a few spacings of the floating-point numbers near 2π, from the
+/// point's own rounding, `atan2`, and the differences taken afterwards.
+const ANGLE_ROUNDING: f64 = 8.0 * TAU * f64::EPSILON;
+
 /// Whether every arc is on the circle of the first.
 pub fn cocircular(arcs: &[Arc], tolerance: LinearTolerance) -> bool {
     arcs.split_first().is_some_and(|(first, rest)| {
@@ -77,8 +82,12 @@ pub fn join_arcs(arcs: &[Arc], tolerance: LinearTolerance) -> Result<JoinedArcs,
     if rest.is_empty() || !cocircular(arcs, tolerance) {
         return Err(ArcJoinError::NotOneCircle);
     }
-    // An end is matched within the linear tolerance, as an angle on this circle.
-    let slack = tolerance.value() / first.radius;
+    // An end is matched within the linear tolerance, as an angle on this
+    // circle — plus the rounding of the angles themselves: on a large
+    // circle the linear tolerance is a few spacings of the floating-point
+    // numbers near 2π, and two ends a hair inside it can measure a hair
+    // outside (the stress test's regression at a radius of 23,681).
+    let slack = tolerance.value() / first.radius + ANGLE_ROUNDING;
     let (mut start, mut sweep) = (first.start, first.sweep);
     let mut waiting: Vec<&Arc> = rest.iter().collect();
     while !waiting.is_empty() {
@@ -394,6 +403,33 @@ mod tests {
             join_arcs(&[arc(0.0, 90.0)], TOLERANCE),
             Err(ArcJoinError::NotOneCircle)
         );
+    }
+
+    /// Regression (stress test, 2026-10-21): an arc of radius 23,681
+    /// broken at two points 0.98 nm apart — inside the tolerance — gave
+    /// halves whose ends, measured as angles, were a hair further apart
+    /// than the tolerance's angle, and were refused.
+    #[test]
+    fn halves_whose_ends_meet_within_the_tolerance_join_on_a_large_circle() {
+        let arc = Arc::new(
+            Point2::ORIGIN,
+            23_681.521_789_992_323,
+            3.767_174_224_654_964,
+            1.539_524_884_357_837,
+        );
+        let at = |t: f64| arc.point_at(arc.start + arc.sweep * t);
+        let first = 0.686_607_482_768_722_4;
+        let second = first + 2.697_714_908_453_474e-14;
+        let halves = crate::break_arc(&arc, at(first), at(second), TOLERANCE).expect("two halves");
+        assert_eq!(halves.len(), 2);
+        let gap = (second - first) * arc.sweep * arc.radius;
+        assert!(gap <= TOLERANCE.value(), "{gap}");
+        match join_arcs(&halves, TOLERANCE) {
+            Ok(JoinedArcs::Arc(joined)) => {
+                assert!((joined.sweep - arc.sweep).abs() < 1e-12, "{}", joined.sweep);
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     /// The acceptance criterion: ends are matched with the tolerance class.

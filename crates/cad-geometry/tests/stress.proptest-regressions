@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 90fe63b4c3a36e5eab38dac354cd5e14338891a4773478f533de1eff33e4a42a # shrinks to frame = Frame { origin: Point2 { x: 0.0, y: 0.0 }, scale: 945.6191859027789 }, direction = 3.767174224654964, radius = 25.043402400284073, sweep = 1.539524884357837, first = 0.6866074827687224, second = None, nudge = Some(2.697714908453474e-14)
