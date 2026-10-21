@@ -1,6 +1,6 @@
 # ADR-0037: Natural language is an optional input method, through a hosted service, a validated intent IR, and a previewed proposal
 
-**Status:** Proposed (drafted 2026-10-21; records the product decisions the user made on 2026-10-19 and awaits the maintainer's acceptance, #252)  
+**Status:** Accepted (2026-10-21; records the product decisions the user made on 2026-10-19, accepted by the maintainer in #252)  
 **Date:** 2026-10-21  
 **Kind:** Product and architecture (amends DESIGN §3, §4, §8, §43, §44, §45, §46; the rule of ADR-0034 applied to a model)  
 **Design refs:** §3, §4, §8, §15, §43, §44, §45, §46

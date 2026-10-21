@@ -41,11 +41,11 @@ Filed on 2026-10-18 and 2026-10-19; M19 started on 2026-10-20. The order is the 
 
 ## M20, AI Foundations
 
-The user asked for natural language as a way to drive the program (2026-10-19) and decided its shape in the same discussion: an input method, not a design mode; a hosted service in its own private repository; accounts for AI only; the prompt sent, drawing context only on the user's confirmation of that request; one panel; the program whole without the service. [ADR-0037](adr/0037-ai-input-method.md) records it and amends DESIGN; it is proposed, and the maintainer's acceptance is #252. The epic is #251.
+The user asked for natural language as a way to drive the program (2026-10-19) and decided its shape in the same discussion: an input method, not a design mode; a hosted service in its own private repository; accounts for AI only; the prompt sent, drawing context only on the user's confirmation of that request; one panel; the program whole without the service. [ADR-0037](adr/0037-ai-input-method.md) records it and amends DESIGN; accepted by the maintainer on 2026-10-21 (#252). The epic is #251.
 
 ### Order of work
 
-1. **The ADR** (#252): proposed 2026-10-21; nothing is built before it is accepted.
+1. **The ADR** (#252): accepted 2026-10-21.
 2. **The intent IR** (#253): `cad-intent`, a versioned, validated operation language compiled to registered commands.
 3. **Proposals** (#254): an IR run against a scratch copy, drawn by the overlay, committed on Accept as one undo.
 4. **The service** (`cadslate2d/cadslate2d-ai-service` #1–#5): accounts, the model adapter, metering, what it keeps.
