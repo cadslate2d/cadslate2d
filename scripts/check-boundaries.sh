@@ -11,7 +11,8 @@ declare -A ALLOWED=(
   [cad-input]="cad-core"
   [cad-text]="cad-core"
   [cad-document]="cad-core cad-geometry cad-text"
-  [cad-commands]="cad-core cad-geometry cad-input cad-document"
+  [cad-intent]="cad-core"
+  [cad-commands]="cad-core cad-geometry cad-input cad-document cad-intent"
   [cad-dxf]="cad-core cad-document"
   [cad-dwg]="cad-core cad-document cad-dxf"
   [cad-render]="cad-core cad-geometry cad-document cad-commands"
@@ -32,6 +33,8 @@ for manifest in crates/*/Cargo.toml; do
     in_deps && /^[A-Za-z0-9_-]+/ { split($0, a, /[ .=]/); print a[1] }
   ' "$manifest" | sort -u)
   for dep in $deps; do
+    # A crate's own tests may use a feature of the crate: a dev-dependency on itself.
+    [[ $dep == "$crate" ]] && continue
     if [[ $dep == cad-* ]] && ! grep -qw -- "$dep" <<<"${ALLOWED[$crate]}"; then
       echo "boundary: $crate must not depend on $dep (ADR-0001)"; fail=1
     fi

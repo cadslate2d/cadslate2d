@@ -34,6 +34,7 @@ mod groups;
 mod hatch;
 mod housekeeping;
 mod inquiry;
+mod intent;
 mod join;
 mod layer_command;
 mod layers;

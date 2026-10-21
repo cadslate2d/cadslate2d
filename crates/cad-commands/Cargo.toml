@@ -16,9 +16,11 @@ cad-core.workspace = true
 cad-geometry.workspace = true
 cad-input.workspace = true
 cad-document.workspace = true
+cad-intent.workspace = true
 
 [lints]
 workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+cad-intent = { workspace = true, features = ["testing"] }

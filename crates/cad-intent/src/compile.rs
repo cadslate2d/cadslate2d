@@ -1,0 +1,417 @@
+//! Each operation as a registered command and its answers (ADR-0037): what
+//! a user would type, typed. The engine runs them through its one entry
+//! point; this module knows nothing of the drawing.
+
+use cad_core::Point2;
+
+use crate::{Color, Intent, Operation, Orientation, Pick, Targets, point};
+
+/// One answer to a prompt. Lengths and points are in the document's
+/// units; the runner converts them to the drawing's and formats them.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Answer {
+    /// A point of the drawing.
+    Point(Point2),
+    /// A length or distance.
+    Length(f64),
+    /// A plain number: a factor, a count.
+    Number(f64),
+    /// An angle in degrees.
+    Angle(f64),
+    /// A keyword, as the prompt offers it.
+    Keyword(&'static str),
+    /// Free text: a name, a line of text.
+    Text(String),
+    /// Enter with nothing typed: a default taken, a list ended.
+    Enter,
+}
+
+/// One step of a compiled operation.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Step {
+    /// Make these the selection before the command starts: the command then
+    /// acts on them without asking for objects.
+    Select(Targets),
+    /// Answer the command's prompt — only if the prompt begins with `when`,
+    /// where a prompt may be skipped (a text style that fixes the height
+    /// does not ask for one).
+    Answer {
+        answer: Answer,
+        when: Option<&'static str>,
+    },
+    /// Pick an object where the command asks for one, at its point nearest
+    /// `near`.
+    Pick(Pick),
+}
+
+/// An operation compiled: the command to start, then the steps.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Compiled {
+    /// The operation's index in the document.
+    pub operation: usize,
+    /// The operation's `op` name.
+    pub op: &'static str,
+    /// The registered command, by its name.
+    pub command: &'static str,
+    pub steps: Vec<Step>,
+}
+
+/// The commands the catalogue compiles to: the allowlist. No file, host,
+/// or settings command is among them.
+pub const COMMANDS: [&str; 25] = [
+    "LINE",
+    "PLINE",
+    "RECTANG",
+    "CIRCLE",
+    "ARC",
+    "POLYGON",
+    "TEXT",
+    "MOVE",
+    "COPY",
+    "ROTATE",
+    "SCALE",
+    "MIRROR",
+    "OFFSET",
+    "TRIM",
+    "EXTEND",
+    "FILLET",
+    "CHAMFER",
+    "ARRAY",
+    "LAYER",
+    "CHPROP",
+    "DIMLINEAR",
+    "DIMALIGNED",
+    "DIMRADIUS",
+    "DIMDIAMETER",
+    "DIMANGULAR",
+];
+
+/// Compiles every operation of a validated document, in order.
+pub fn compile(intent: &Intent) -> Vec<Compiled> {
+    intent
+        .operations
+        .iter()
+        .enumerate()
+        .map(|(index, operation)| {
+            let (command, steps) = steps_of(operation);
+            Compiled {
+                operation: index,
+                op: operation.name(),
+                command,
+                steps,
+            }
+        })
+        .collect()
+}
+
+fn answer(answer: Answer) -> Step {
+    Step::Answer { answer, when: None }
+}
+
+fn when(prefix: &'static str, answer: Answer) -> Step {
+    Step::Answer {
+        answer,
+        when: Some(prefix),
+    }
+}
+
+fn at(p: crate::Point) -> Step {
+    answer(Answer::Point(point(p)))
+}
+
+fn length(value: f64) -> Step {
+    answer(Answer::Length(value))
+}
+
+fn keyword(word: &'static str) -> Step {
+    answer(Answer::Keyword(word))
+}
+
+fn enter() -> Step {
+    answer(Answer::Enter)
+}
+
+fn pick(pick: &Pick) -> Step {
+    Step::Pick(pick.clone())
+}
+
+fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
+    match operation {
+        Operation::Line { points } => {
+            let mut steps: Vec<Step> = points.iter().map(|p| at(*p)).collect();
+            steps.push(enter());
+            ("LINE", steps)
+        }
+        Operation::Polyline { points, closed } => {
+            let mut steps: Vec<Step> = points.iter().map(|p| at(*p)).collect();
+            steps.push(if *closed { keyword("Close") } else { enter() });
+            ("PLINE", steps)
+        }
+        Operation::Rectangle { corner, opposite } => ("RECTANG", vec![at(*corner), at(*opposite)]),
+        Operation::Circle { center, radius } => ("CIRCLE", vec![at(*center), length(*radius)]),
+        Operation::Arc {
+            start,
+            through,
+            end,
+        } => ("ARC", vec![at(*start), at(*through), at(*end)]),
+        Operation::Polygon {
+            sides,
+            center,
+            radius,
+            circumscribed,
+        } => (
+            "POLYGON",
+            vec![
+                answer(Answer::Number(f64::from(*sides))),
+                at(*center),
+                keyword(if *circumscribed {
+                    "Circumscribed about circle"
+                } else {
+                    "Inscribed in circle"
+                }),
+                length(*radius),
+            ],
+        ),
+        Operation::Text {
+            at: start,
+            text,
+            height,
+            rotation,
+        } => (
+            "TEXT",
+            vec![
+                at(*start),
+                // Not asked when the current text style fixes the height.
+                when(
+                    "Specify height",
+                    height.map_or(Answer::Enter, Answer::Length),
+                ),
+                answer(rotation.map_or(Answer::Enter, Answer::Angle)),
+                answer(Answer::Text(text.clone())),
+            ],
+        ),
+        Operation::Move {
+            targets,
+            displacement,
+        } => (
+            "MOVE",
+            vec![
+                Step::Select(targets.clone()),
+                at([0.0, 0.0]),
+                at(*displacement),
+            ],
+        ),
+        Operation::Copy {
+            targets,
+            displacement,
+        } => (
+            "COPY",
+            vec![
+                Step::Select(targets.clone()),
+                at([0.0, 0.0]),
+                at(*displacement),
+                enter(),
+            ],
+        ),
+        Operation::Rotate {
+            targets,
+            base,
+            angle,
+        } => (
+            "ROTATE",
+            vec![
+                Step::Select(targets.clone()),
+                at(*base),
+                answer(Answer::Angle(*angle)),
+            ],
+        ),
+        Operation::Scale {
+            targets,
+            base,
+            factor,
+        } => (
+            "SCALE",
+            vec![
+                Step::Select(targets.clone()),
+                at(*base),
+                answer(Answer::Number(*factor)),
+            ],
+        ),
+        Operation::Mirror {
+            targets,
+            axis,
+            keep,
+        } => (
+            "MIRROR",
+            vec![
+                Step::Select(targets.clone()),
+                at(axis[0]),
+                at(axis[1]),
+                keyword(if *keep { "No" } else { "Yes" }),
+            ],
+        ),
+        Operation::Offset {
+            target,
+            distance,
+            toward,
+        } => (
+            "OFFSET",
+            vec![length(*distance), pick(target), at(*toward), enter()],
+        ),
+        Operation::Trim { edges, targets } => ("TRIM", edge_steps(edges, targets)),
+        Operation::Extend { edges, targets } => ("EXTEND", edge_steps(edges, targets)),
+        Operation::Fillet {
+            radius,
+            first,
+            second,
+        } => (
+            "FILLET",
+            vec![
+                keyword("Radius"),
+                length(*radius),
+                pick(first),
+                pick(second),
+            ],
+        ),
+        Operation::Chamfer {
+            first_distance,
+            second_distance,
+            first,
+            second,
+        } => (
+            "CHAMFER",
+            vec![
+                keyword("Distance"),
+                length(*first_distance),
+                length(*second_distance),
+                pick(first),
+                pick(second),
+            ],
+        ),
+        Operation::Array {
+            targets,
+            rows,
+            columns,
+            row_spacing,
+            column_spacing,
+        } => (
+            "ARRAY",
+            vec![
+                Step::Select(targets.clone()),
+                keyword("Rectangular"),
+                answer(Answer::Number(f64::from(*rows))),
+                answer(Answer::Number(f64::from(*columns))),
+                when(
+                    "Specify the distance between rows",
+                    Answer::Length(*row_spacing),
+                ),
+                when(
+                    "Specify the distance between columns",
+                    Answer::Length(*column_spacing),
+                ),
+            ],
+        ),
+        Operation::PolarArray {
+            targets,
+            center,
+            count,
+            angle,
+            rotate,
+        } => (
+            "ARRAY",
+            vec![
+                Step::Select(targets.clone()),
+                keyword("Polar"),
+                at(*center),
+                answer(Answer::Number(f64::from(*count))),
+                answer(Answer::Angle(*angle)),
+                keyword(if *rotate { "Yes" } else { "No" }),
+            ],
+        ),
+        Operation::Layer { name, current } => {
+            let mut steps = vec![keyword("New"), answer(Answer::Text(name.clone()))];
+            if *current {
+                steps.push(keyword("Set"));
+                steps.push(answer(Answer::Text(name.clone())));
+            }
+            steps.push(enter());
+            ("LAYER", steps)
+        }
+        Operation::SetProperties {
+            targets,
+            layer,
+            color,
+            linetype,
+            lineweight,
+        } => {
+            let mut steps = vec![Step::Select(targets.clone())];
+            if let Some(layer) = layer {
+                steps.push(keyword("LAyer"));
+                steps.push(answer(Answer::Text(layer.clone())));
+            }
+            if let Some(color) = color {
+                steps.push(keyword("Color"));
+                steps.push(answer(Answer::Text(match color {
+                    Color::Index(index) => index.to_string(),
+                    Color::Name(name) => name.clone(),
+                })));
+            }
+            if let Some(linetype) = linetype {
+                steps.push(keyword("LType"));
+                steps.push(answer(Answer::Text(linetype.clone())));
+            }
+            if let Some(lineweight) = lineweight {
+                steps.push(keyword("LWeight"));
+                steps.push(answer(Answer::Text(lineweight.clone())));
+            }
+            steps.push(enter());
+            ("CHPROP", steps)
+        }
+        Operation::DimLinear {
+            from,
+            to,
+            at: place,
+            orientation,
+        } => {
+            let mut steps = vec![at(*from), at(*to)];
+            match orientation {
+                Some(Orientation::Horizontal) => steps.push(keyword("Horizontal")),
+                Some(Orientation::Vertical) => steps.push(keyword("Vertical")),
+                None => {}
+            }
+            steps.push(at(*place));
+            ("DIMLINEAR", steps)
+        }
+        Operation::DimAligned {
+            from,
+            to,
+            at: place,
+        } => ("DIMALIGNED", vec![at(*from), at(*to), at(*place)]),
+        Operation::DimRadius { target, at: place } => ("DIMRADIUS", vec![pick(target), at(*place)]),
+        Operation::DimDiameter { target, at: place } => {
+            ("DIMDIAMETER", vec![pick(target), at(*place)])
+        }
+        Operation::DimAngular {
+            vertex,
+            first,
+            second,
+            at: place,
+        } => (
+            "DIMANGULAR",
+            vec![enter(), at(*vertex), at(*first), at(*second), at(*place)],
+        ),
+    }
+}
+
+/// TRIM and EXTEND: the edges — the selection, or every object with
+/// Enter — then each target picked, then Enter.
+fn edge_steps(edges: &Option<Targets>, targets: &[Pick]) -> Vec<Step> {
+    let mut steps = Vec::with_capacity(targets.len() + 3);
+    if let Some(edges) = edges {
+        steps.push(Step::Select(edges.clone()));
+    }
+    steps.push(enter());
+    steps.extend(targets.iter().map(pick));
+    steps.push(enter());
+    steps
+}

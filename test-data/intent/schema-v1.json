@@ -1,0 +1,1049 @@
+{
+  "$defs": {
+    "Color": {
+      "anyOf": [
+        {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "description": "A colour: an index of the 1–255 table, or a name the engine knows\n(`red`, `bylayer`, …)."
+    },
+    "Operation": {
+      "description": "One operation of the catalogue. Every length and coordinate is in the\ndocument's units; every angle is in degrees, counter-clockwise.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Line segments through the points, in order: one object per segment.",
+          "properties": {
+            "op": {
+              "const": "line",
+              "type": "string"
+            },
+            "points": {
+              "items": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "points"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "One polyline through the points, closed back to the first or not.",
+          "properties": {
+            "closed": {
+              "default": false,
+              "type": "boolean"
+            },
+            "op": {
+              "const": "polyline",
+              "type": "string"
+            },
+            "points": {
+              "items": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "points"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A closed rectangle from two opposite corners.",
+          "properties": {
+            "corner": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "op": {
+              "const": "rectangle",
+              "type": "string"
+            },
+            "opposite": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "corner",
+            "opposite"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "center": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "op": {
+              "const": "circle",
+              "type": "string"
+            },
+            "radius": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "op",
+            "center",
+            "radius"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An arc through three points: where it starts, a point on it, where it ends.",
+          "properties": {
+            "end": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "op": {
+              "const": "arc",
+              "type": "string"
+            },
+            "start": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "through": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "start",
+            "through",
+            "end"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A regular polygon as a closed polyline: the corners on the circle\n(inscribed, the default), or the sides touching it.",
+          "properties": {
+            "center": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "circumscribed": {
+              "default": false,
+              "type": "boolean"
+            },
+            "op": {
+              "const": "polygon",
+              "type": "string"
+            },
+            "radius": {
+              "format": "double",
+              "type": "number"
+            },
+            "sides": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "op",
+            "sides",
+            "center",
+            "radius"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A single line of text at a point; the current text style's height\nwhen none is given, and no rotation.",
+          "properties": {
+            "at": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "height": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "op": {
+              "const": "text",
+              "type": "string"
+            },
+            "rotation": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "at",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Moves the targets by a displacement.",
+          "properties": {
+            "displacement": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "op": {
+              "const": "move",
+              "type": "string"
+            },
+            "targets": {
+              "$ref": "#/$defs/Targets"
+            }
+          },
+          "required": [
+            "op",
+            "targets",
+            "displacement"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Copies the targets, the copies displaced; the originals stay.",
+          "properties": {
+            "displacement": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "op": {
+              "const": "copy",
+              "type": "string"
+            },
+            "targets": {
+              "$ref": "#/$defs/Targets"
+            }
+          },
+          "required": [
+            "op",
+            "targets",
+            "displacement"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Rotates the targets about a base point by an angle in degrees.",
+          "properties": {
+            "angle": {
+              "format": "double",
+              "type": "number"
+            },
+            "base": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "op": {
+              "const": "rotate",
+              "type": "string"
+            },
+            "targets": {
+              "$ref": "#/$defs/Targets"
+            }
+          },
+          "required": [
+            "op",
+            "targets",
+            "base",
+            "angle"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Scales the targets uniformly about a base point.",
+          "properties": {
+            "base": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "factor": {
+              "format": "double",
+              "type": "number"
+            },
+            "op": {
+              "const": "scale",
+              "type": "string"
+            },
+            "targets": {
+              "$ref": "#/$defs/Targets"
+            }
+          },
+          "required": [
+            "op",
+            "targets",
+            "base",
+            "factor"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Reflects the targets across the line through two points; the\noriginals are kept unless `keep` is false.",
+          "properties": {
+            "axis": {
+              "items": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "keep": {
+              "default": true,
+              "type": "boolean"
+            },
+            "op": {
+              "const": "mirror",
+              "type": "string"
+            },
+            "targets": {
+              "$ref": "#/$defs/Targets"
+            }
+          },
+          "required": [
+            "op",
+            "targets",
+            "axis"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A parallel copy of one object at a distance, on the side of a point.",
+          "properties": {
+            "distance": {
+              "format": "double",
+              "type": "number"
+            },
+            "op": {
+              "const": "offset",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/Pick"
+            },
+            "toward": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "target",
+            "distance",
+            "toward"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Trims objects at the cutting edges — every object when `edges` is\nabsent — removing the part of each target nearest its pick.",
+          "properties": {
+            "edges": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Targets"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "op": {
+              "const": "trim",
+              "type": "string"
+            },
+            "targets": {
+              "items": {
+                "$ref": "#/$defs/Pick"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "targets"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Extends objects to the boundary edges — every object when `edges`\nis absent — the end of each target nearest its pick.",
+          "properties": {
+            "edges": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Targets"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "op": {
+              "const": "extend",
+              "type": "string"
+            },
+            "targets": {
+              "items": {
+                "$ref": "#/$defs/Pick"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "targets"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Joins two objects with a tangent arc of the radius; zero makes a\nsharp corner. The picks say which parts are kept.",
+          "properties": {
+            "first": {
+              "$ref": "#/$defs/Pick"
+            },
+            "op": {
+              "const": "fillet",
+              "type": "string"
+            },
+            "radius": {
+              "format": "double",
+              "type": "number"
+            },
+            "second": {
+              "$ref": "#/$defs/Pick"
+            }
+          },
+          "required": [
+            "op",
+            "radius",
+            "first",
+            "second"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Joins two lines with a straight bevel, the distances along each.",
+          "properties": {
+            "first": {
+              "$ref": "#/$defs/Pick"
+            },
+            "first_distance": {
+              "format": "double",
+              "type": "number"
+            },
+            "op": {
+              "const": "chamfer",
+              "type": "string"
+            },
+            "second": {
+              "$ref": "#/$defs/Pick"
+            },
+            "second_distance": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "op",
+            "first_distance",
+            "second_distance",
+            "first",
+            "second"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Copies of the targets in rows and columns; a negative spacing goes\nthe other way.",
+          "properties": {
+            "column_spacing": {
+              "format": "double",
+              "type": "number"
+            },
+            "columns": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "op": {
+              "const": "array",
+              "type": "string"
+            },
+            "row_spacing": {
+              "format": "double",
+              "type": "number"
+            },
+            "rows": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "targets": {
+              "$ref": "#/$defs/Targets"
+            }
+          },
+          "required": [
+            "op",
+            "targets",
+            "rows",
+            "columns",
+            "row_spacing",
+            "column_spacing"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Copies of the targets round a centre: how many, over what angle\n(360 by default, negative clockwise), turned as they go round or not.",
+          "properties": {
+            "angle": {
+              "default": 360.0,
+              "format": "double",
+              "type": "number"
+            },
+            "center": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "count": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "op": {
+              "const": "polar_array",
+              "type": "string"
+            },
+            "rotate": {
+              "default": true,
+              "type": "boolean"
+            },
+            "targets": {
+              "$ref": "#/$defs/Targets"
+            }
+          },
+          "required": [
+            "op",
+            "targets",
+            "center",
+            "count"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A layer by name, made if it does not exist, and made current when\nasked.",
+          "properties": {
+            "current": {
+              "default": false,
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string"
+            },
+            "op": {
+              "const": "layer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Changes the layer, colour, linetype, or lineweight of the targets;\nwhatever is given, at least one.",
+          "properties": {
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Color"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "layer": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "linetype": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lineweight": {
+              "description": "A lineweight in millimetres, or `default`, `bylayer`, `byblock`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "op": {
+              "const": "set_properties",
+              "type": "string"
+            },
+            "targets": {
+              "$ref": "#/$defs/Targets"
+            }
+          },
+          "required": [
+            "op",
+            "targets"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A horizontal or vertical dimension between two points, its line\nthrough `at`; horizontal or vertical by where `at` is unless said.",
+          "properties": {
+            "at": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "from": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "op": {
+              "const": "dim_linear",
+              "type": "string"
+            },
+            "orientation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Orientation"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "to": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "from",
+            "to",
+            "at"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A dimension measured along the two points, its line through `at`.",
+          "properties": {
+            "at": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "from": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "op": {
+              "const": "dim_aligned",
+              "type": "string"
+            },
+            "to": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "from",
+            "to",
+            "at"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The radius of an arc or circle, the text toward `at`.",
+          "properties": {
+            "at": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "op": {
+              "const": "dim_radius",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/Pick"
+            }
+          },
+          "required": [
+            "op",
+            "target",
+            "at"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The diameter of an arc or circle, the text toward `at`.",
+          "properties": {
+            "at": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "op": {
+              "const": "dim_diameter",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/Pick"
+            }
+          },
+          "required": [
+            "op",
+            "target",
+            "at"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The angle at a vertex between two points, the arc through `at`.",
+          "properties": {
+            "at": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "first": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "op": {
+              "const": "dim_angular",
+              "type": "string"
+            },
+            "second": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "vertex": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "vertex",
+            "first",
+            "second",
+            "at"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Orientation": {
+      "description": "Where a linear dimension's line runs.",
+      "enum": [
+        "horizontal",
+        "vertical"
+      ],
+      "type": "string"
+    },
+    "Pick": {
+      "additionalProperties": false,
+      "description": "One object picked where a command asks for one, and, where it matters\nwhich part — the part of a line a trim removes, the side an offset goes\nto — the point the pick is nearest to.",
+      "properties": {
+        "id": {
+          "description": "The object's ID, as the context gave it out.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "near": {
+          "description": "A point near the part meant; the object's nearest point to it is\nwhere the pick lands. Any point of the object when absent.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "SelectionWord": {
+      "description": "The one word [`Targets::Selection`] takes.",
+      "enum": [
+        "selection"
+      ],
+      "type": "string"
+    },
+    "Targets": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SelectionWord",
+          "description": "`\"selection\"`."
+        },
+        {
+          "description": "Object IDs, at least one.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      ],
+      "description": "Which existing objects an operation acts on: the current selection —\nwhat the user had selected, or what the previous operation made — or\nobjects by the IDs the context gave out."
+    },
+    "Unit": {
+      "description": "A length unit the numbers are given in.",
+      "enum": [
+        "mm",
+        "cm",
+        "m",
+        "in",
+        "ft"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What a model asks the engine to do: a version, a unit the numbers are\nin, and the operations in order.",
+  "properties": {
+    "operations": {
+      "description": "The operations, run in order; each one's new objects are what the\nnext may refer to as the selection.",
+      "items": {
+        "$ref": "#/$defs/Operation"
+      },
+      "type": "array"
+    },
+    "units": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Unit"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The unit every length and coordinate is in; the drawing's own when\nabsent."
+    },
+    "version": {
+      "description": "The schema version; this crate reads [`VERSION`].",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "version",
+    "operations"
+  ],
+  "title": "Intent",
+  "type": "object"
+}

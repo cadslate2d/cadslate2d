@@ -21,6 +21,8 @@ pub enum SelectionMethod {
     Last,
     All,
     QuickSelect,
+    /// Named by an intent operation (ADR-0037): the IDs the context gave out.
+    Intent,
 }
 
 impl SelectionMethod {
@@ -38,6 +40,7 @@ impl SelectionMethod {
             Self::Last => "last",
             Self::All => "all",
             Self::QuickSelect => "quick select",
+            Self::Intent => "intent",
         }
     }
 }

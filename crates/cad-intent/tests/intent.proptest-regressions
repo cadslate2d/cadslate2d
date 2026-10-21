@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d8e7072dbe1d9ca498b29907cf882962086b540d0e8fb0579f1a0720ca847f69 # shrinks to intent = Intent { version: 1, units: None, operations: [Polyline { points: [[-1.3599999999999999, 0.0], [0.0, 0.0], [0.0, 0.01]], closed: false }] }

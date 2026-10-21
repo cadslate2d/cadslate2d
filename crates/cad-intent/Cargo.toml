@@ -1,0 +1,30 @@
+[package]
+name = "cad-intent"
+description = "The intent IR (ADR-0037): a versioned, validated operation language a model writes and the engine compiles to commands."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+# Exposes the proptest strategies (`cad_intent::testing`) to other crates' tests.
+testing = ["dep:proptest"]
+# The JSON Schema of the document, generated from the types (`cad_intent::schema`):
+# for the service and the tests, not the application's bundle.
+schema = ["dep:schemars"]
+
+[dependencies]
+cad-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars = { workspace = true, optional = true }
+proptest = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+# The integration tests use the strategies, which live behind the feature.
+cad-intent = { path = ".", features = ["testing", "schema"] }
+
+[lints]
+workspace = true

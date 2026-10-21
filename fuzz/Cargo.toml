@@ -18,6 +18,7 @@ cad-core = { path = "../crates/cad-core" }
 cad-dxf = { path = "../crates/cad-dxf" }
 cad-dwg = { path = "../crates/cad-dwg" }
 cad-input = { path = "../crates/cad-input" }
+cad-intent = { path = "../crates/cad-intent" }
 
 [[bin]]
 name = "dxf_import"
@@ -36,6 +37,13 @@ bench = false
 [[bin]]
 name = "input_resolve"
 path = "fuzz_targets/input_resolve.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "intent_parse"
+path = "fuzz_targets/intent_parse.rs"
 test = false
 doc = false
 bench = false

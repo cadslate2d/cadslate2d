@@ -46,7 +46,7 @@ The user asked for natural language as a way to drive the program (2026-10-19) a
 ### Order of work
 
 1. **The ADR** (#252): accepted 2026-10-21.
-2. **The intent IR** (#253): `cad-intent`, a versioned, validated operation language compiled to registered commands.
+2. **The intent IR** (#253): `cad-intent`, a versioned, validated operation language compiled to registered commands. Done 2026-10-21: 26 operations, the schema snapshot, `Session::run_intent`.
 3. **Proposals** (#254): an IR run against a scratch copy, drawn by the overlay, committed on Accept as one undo.
 4. **The service** (`cadslate2d/cadslate2d-ai-service` #1–#5): accounts, the model adapter, metering, what it keeps.
 5. **The AI panel** (#260), **AI commands** (#261), **evaluation** (#262), and **the exit** (#263).

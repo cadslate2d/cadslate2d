@@ -1,0 +1,319 @@
+//! The IR read, refused, and compiled (#253): what a model may write and
+//! what the engine is handed.
+
+use cad_intent::{
+    Answer, COMMANDS, Intent, IntentError, Operation, Pick, Reason, SelectionWord, Step, Targets,
+    Unit, VERSION, compile, limits, parse, schema,
+};
+use proptest::prelude::*;
+
+fn document(operations: &str) -> String {
+    format!(r#"{{"version": {VERSION}, "units": "mm", "operations": [{operations}]}}"#)
+}
+
+fn answers(steps: &[Step]) -> Vec<String> {
+    steps
+        .iter()
+        .map(|step| match step {
+            Step::Select(Targets::Selection(_)) => "select:selection".to_string(),
+            Step::Select(Targets::Ids(ids)) => format!("select:{ids:?}"),
+            Step::Pick(Pick { id, near }) => format!("pick:{id}:{near:?}"),
+            Step::Answer { answer, when } => {
+                let text = match answer {
+                    Answer::Point(p) => format!("{},{}", p.x, p.y),
+                    Answer::Length(v) | Answer::Number(v) | Answer::Angle(v) => v.to_string(),
+                    Answer::Keyword(k) => (*k).to_string(),
+                    Answer::Text(t) => t.clone(),
+                    Answer::Enter => String::new(),
+                };
+                match when {
+                    Some(prefix) => format!("{text}?{prefix}"),
+                    None => text,
+                }
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn a_document_is_read_and_each_operation_compiles_to_its_command_and_answers() {
+    let text = document(
+        r#"
+        {"op": "line", "points": [[0, 0], [100, 0], [100, 50]]},
+        {"op": "polyline", "points": [[0, 0], [40, 0], [40, 20]], "closed": true},
+        {"op": "rectangle", "corner": [0, 0], "opposite": [100, 60]},
+        {"op": "circle", "center": [30, 30], "radius": 8},
+        {"op": "arc", "start": [0, 0], "through": [10, 10], "end": [20, 0]},
+        {"op": "polygon", "sides": 6, "center": [0, 0], "radius": 10},
+        {"op": "text", "at": [0, -20], "text": "Plate A", "height": 5},
+        {"op": "move", "targets": "selection", "displacement": [0, 25]},
+        {"op": "copy", "targets": [12, 15], "displacement": [50, 0]},
+        {"op": "rotate", "targets": "selection", "base": [0, 0], "angle": 90},
+        {"op": "scale", "targets": [3], "base": [0, 0], "factor": 2},
+        {"op": "mirror", "targets": "selection", "axis": [[50, 0], [50, 10]]},
+        {"op": "offset", "target": {"id": 7, "near": [50, 0]}, "distance": 10, "toward": [50, 30]},
+        {"op": "trim", "edges": [1], "targets": [{"id": 2, "near": [5, 5]}]},
+        {"op": "extend", "targets": [{"id": 2}]},
+        {"op": "fillet", "radius": 5, "first": {"id": 1}, "second": {"id": 2}},
+        {"op": "chamfer", "first_distance": 3, "second_distance": 4, "first": {"id": 1}, "second": {"id": 2}},
+        {"op": "array", "targets": "selection", "rows": 2, "columns": 3, "row_spacing": 20, "column_spacing": 30},
+        {"op": "polar_array", "targets": [4], "center": [0, 0], "count": 6},
+        {"op": "layer", "name": "PLATE", "current": true},
+        {"op": "set_properties", "targets": [4], "layer": "PLATE", "color": "red", "lineweight": "0.5"},
+        {"op": "dim_linear", "from": [0, 0], "to": [100, 0], "at": [50, -20], "orientation": "horizontal"},
+        {"op": "dim_aligned", "from": [0, 0], "to": [30, 40], "at": [10, 30]},
+        {"op": "dim_radius", "target": {"id": 9}, "at": [40, 40]},
+        {"op": "dim_diameter", "target": {"id": 9}, "at": [40, 40]},
+        {"op": "dim_angular", "vertex": [0, 0], "first": [10, 0], "second": [0, 10], "at": [5, 5]}
+        "#,
+    );
+    let intent = parse(&text).unwrap();
+    assert_eq!(intent.units, Some(Unit::Mm));
+    let compiled = compile(&intent);
+    let got: Vec<(&str, Vec<String>)> = compiled
+        .iter()
+        .map(|c| (c.command, answers(&c.steps)))
+        .collect();
+    let expected: Vec<(&str, Vec<&str>)> = vec![
+        ("LINE", vec!["0,0", "100,0", "100,50", ""]),
+        ("PLINE", vec!["0,0", "40,0", "40,20", "Close"]),
+        ("RECTANG", vec!["0,0", "100,60"]),
+        ("CIRCLE", vec!["30,30", "8"]),
+        ("ARC", vec!["0,0", "10,10", "20,0"]),
+        ("POLYGON", vec!["6", "0,0", "Inscribed in circle", "10"]),
+        ("TEXT", vec!["0,-20", "5?Specify height", "", "Plate A"]),
+        ("MOVE", vec!["select:selection", "0,0", "0,25"]),
+        ("COPY", vec!["select:[12, 15]", "0,0", "50,0", ""]),
+        ("ROTATE", vec!["select:selection", "0,0", "90"]),
+        ("SCALE", vec!["select:[3]", "0,0", "2"]),
+        ("MIRROR", vec!["select:selection", "50,0", "50,10", "No"]),
+        (
+            "OFFSET",
+            vec!["10", "pick:7:Some([50.0, 0.0])", "50,30", ""],
+        ),
+        (
+            "TRIM",
+            vec!["select:[1]", "", "pick:2:Some([5.0, 5.0])", ""],
+        ),
+        ("EXTEND", vec!["", "pick:2:None", ""]),
+        ("FILLET", vec!["Radius", "5", "pick:1:None", "pick:2:None"]),
+        (
+            "CHAMFER",
+            vec!["Distance", "3", "4", "pick:1:None", "pick:2:None"],
+        ),
+        (
+            "ARRAY",
+            vec![
+                "select:selection",
+                "Rectangular",
+                "2",
+                "3",
+                "20?Specify the distance between rows",
+                "30?Specify the distance between columns",
+            ],
+        ),
+        (
+            "ARRAY",
+            vec!["select:[4]", "Polar", "0,0", "6", "360", "Yes"],
+        ),
+        ("LAYER", vec!["New", "PLATE", "Set", "PLATE", ""]),
+        (
+            "CHPROP",
+            vec![
+                "select:[4]",
+                "LAyer",
+                "PLATE",
+                "Color",
+                "red",
+                "LWeight",
+                "0.5",
+                "",
+            ],
+        ),
+        ("DIMLINEAR", vec!["0,0", "100,0", "Horizontal", "50,-20"]),
+        ("DIMALIGNED", vec!["0,0", "30,40", "10,30"]),
+        ("DIMRADIUS", vec!["pick:9:None", "40,40"]),
+        ("DIMDIAMETER", vec!["pick:9:None", "40,40"]),
+        ("DIMANGULAR", vec!["", "0,0", "10,0", "0,10", "5,5"]),
+    ];
+    assert_eq!(got.len(), expected.len());
+    for ((command, steps), (want_command, want_steps)) in got.iter().zip(&expected) {
+        assert_eq!(command, want_command);
+        assert_eq!(steps, want_steps, "{command}");
+    }
+    // Every command compiled to is in the allowlist; the allowlist holds no
+    // file, host, or settings command.
+    for c in &compiled {
+        assert!(COMMANDS.contains(&c.command), "{}", c.command);
+    }
+    for forbidden in [
+        "OPEN", "SAVE", "SAVEAS", "DXFOUT", "NEW", "PLOT", "SETTINGS", "WBLOCK", "INSERT",
+    ] {
+        assert!(!COMMANDS.contains(&forbidden));
+    }
+}
+
+#[test]
+fn what_is_refused_says_where_and_why() {
+    let refused = |operations: &str| parse(&document(operations)).unwrap_err();
+    let invalid = |operations: &str, field: &str, reason: Reason| match refused(operations) {
+        IntentError::Invalid {
+            operation: 0,
+            field: f,
+            reason: r,
+            ..
+        } => assert_eq!((f, r), (field, reason), "{operations}"),
+        other => panic!("{operations}: {other:?}"),
+    };
+    invalid(
+        r#"{"op": "line", "points": [[0, 0]]}"#,
+        "points",
+        Reason::TooFew(2),
+    );
+    invalid(
+        r#"{"op": "line", "points": [[0, 0], [0, 0]]}"#,
+        "points",
+        Reason::Coincident,
+    );
+    invalid(
+        r#"{"op": "circle", "center": [0, 0], "radius": 0}"#,
+        "radius",
+        Reason::NotPositive,
+    );
+    invalid(
+        r#"{"op": "circle", "center": [1e300, 0], "radius": 1}"#,
+        "center",
+        Reason::OutOfRange,
+    );
+    invalid(
+        r#"{"op": "polygon", "sides": 2, "center": [0, 0], "radius": 1}"#,
+        "sides",
+        Reason::TooFew(3),
+    );
+    invalid(
+        r#"{"op": "text", "at": [0, 0], "text": "   "}"#,
+        "text",
+        Reason::Empty,
+    );
+    invalid(
+        r#"{"op": "move", "targets": [], "displacement": [1, 1]}"#,
+        "targets",
+        Reason::TooFew(1),
+    );
+    invalid(r#"{"op": "layer", "name": "A/B"}"#, "name", Reason::BadName);
+    invalid(
+        r#"{"op": "set_properties", "targets": [1]}"#,
+        "layer",
+        Reason::Nothing,
+    );
+    invalid(
+        r#"{"op": "array", "targets": [1], "rows": 1, "columns": 1, "row_spacing": 1, "column_spacing": 1}"#,
+        "rows",
+        Reason::Nothing,
+    );
+    invalid(
+        r#"{"op": "rectangle", "corner": [0, 0], "opposite": [0, 5]}"#,
+        "opposite",
+        Reason::Coincident,
+    );
+    // NaN is not JSON, so it is refused as JSON; the version and the
+    // operation count have errors of their own; an unknown op or field is
+    // refused by the schema.
+    assert!(matches!(
+        refused(r#"{"op": "circle", "center": [0, 0], "radius": NaN}"#),
+        IntentError::Json { .. }
+    ));
+    assert!(matches!(
+        parse(r#"{"version": 2, "operations": []}"#).unwrap_err(),
+        IntentError::Version {
+            found: 2,
+            expected: VERSION
+        }
+    ));
+    let many = (0..=limits::OPERATIONS)
+        .map(|_| r#"{"op": "circle", "center": [0, 0], "radius": 1}"#)
+        .collect::<Vec<_>>()
+        .join(",");
+    assert!(matches!(
+        refused(&many),
+        IntentError::TooManyOperations { count, .. } if count == limits::OPERATIONS + 1
+    ));
+    assert!(matches!(
+        refused(r#"{"op": "explode", "targets": [1]}"#),
+        IntentError::Json { .. }
+    ));
+    assert!(matches!(
+        refused(r#"{"op": "circle", "center": [0, 0], "radius": 1, "colour": "red"}"#),
+        IntentError::Json { .. }
+    ));
+    assert_eq!(
+        refused(r#"{"op": "line", "points": [[0, 0]]}"#).to_string(),
+        "operation 0 (line): points needs at least 2"
+    );
+}
+
+/// The schema is what a model is handed: it changes only with the version.
+#[test]
+fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../test-data/intent/schema-v1.json"
+    );
+    let generated = serde_json::to_string_pretty(&schema()).unwrap() + "\n";
+    if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
+        std::fs::write(path, &generated).unwrap();
+    }
+    let recorded = std::fs::read_to_string(path).unwrap_or_default();
+    assert_eq!(
+        generated, recorded,
+        "the schema changed: bump cad_intent::VERSION, re-record with UPDATE_SNAPSHOTS=1, and name the file after the new version"
+    );
+    assert!(generated.contains(r#""version""#));
+    assert_eq!(VERSION, 1);
+}
+
+proptest! {
+    /// Any valid document survives JSON and is read back the same, and
+    /// compiles — to one command of the allowlist per operation.
+    #[test]
+    fn any_valid_document_round_trips_and_compiles(intent in cad_intent::testing::intent(12)) {
+        let text = serde_json::to_string(&intent).unwrap();
+        let back = parse(&text).unwrap();
+        prop_assert_eq!(&back, &intent);
+        let compiled = compile(&back);
+        prop_assert_eq!(compiled.len(), intent.operations.len());
+        for (index, c) in compiled.iter().enumerate() {
+            prop_assert_eq!(c.operation, index);
+            prop_assert!(COMMANDS.contains(&c.command));
+            prop_assert!(!c.steps.is_empty());
+        }
+    }
+
+    /// Any text is read or refused, never a panic.
+    #[test]
+    fn any_text_is_read_or_refused(text in "\\PC*") {
+        let _ = parse(&text);
+    }
+
+    /// Any JSON shape, too.
+    #[test]
+    fn any_json_is_read_or_refused(text in r#"\{"version": [0-9], "operations": \[(\{"op": "[a-z_]{1,12}"(, "[a-z]{1,8}": (-?[0-9]{1,4}|\[-?[0-9]{1,3}, -?[0-9]{1,3}\]|"[a-z]{0,5}"|true|null))*\},?)*\]\}"#) {
+        let _ = parse(&text);
+    }
+}
+
+#[test]
+fn the_selection_word_and_an_intent_serialise_as_the_document_says() {
+    let intent = Intent {
+        version: VERSION,
+        units: None,
+        operations: vec![Operation::Move {
+            targets: Targets::Selection(SelectionWord::Selection),
+            displacement: [1.0, 2.0],
+        }],
+    };
+    assert_eq!(
+        serde_json::to_string(&intent).unwrap(),
+        r#"{"version":1,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
+    );
+}

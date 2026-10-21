@@ -304,7 +304,7 @@ A `Makefile` at the root wraps the common ones: `make` lists its targets, for ex
 | Production bundle | `pnpm --dir web build` → `web/dist/` |
 | End-to-end tests (needs a production bundle) | `pnpm --dir web e2e` |
 | Rust benchmarks (store, index, scene, snapping, grips, offset, blocks, annotation, the mixed drawing) | `cargo bench -p cad-benchmarks` |
-| Coverage-guided fuzzing of the DXF and DWG readers and the input grammar (#177, #312), each target for a bounded time; needs `rustup toolchain install nightly && cargo install cargo-fuzz`; a crash lands in `fuzz/artifacts/` and becomes a fixture and a fix | `scripts/fuzz.sh [seconds] [target …]` |
+| Coverage-guided fuzzing of the DXF and DWG readers, the input grammar, and the intent parser (#177, #312, #253), each target for a bounded time; needs `rustup toolchain install nightly && cargo install cargo-fuzz`; a crash lands in `fuzz/artifacts/` and becomes a fixture and a fix | `scripts/fuzz.sh [seconds] [target …]` |
 | Open every DWG under a directory and print what the import makes of each (#313) | `scripts/dwg-sweep.sh <dir …>` |
 | Read the DWG fixtures and our `AC1015`, `AC1018`, and `AC1021` output of every DXF fixture with LibreDWG's `dwgread` (#315–#317; needs a LibreDWG build, `DWGREAD=/path/to/dwgread`) | `scripts/dwg-check.sh [more .dwg …]` |
 | Re-record visual baselines (Chromium) | `E2E_BROWSERS=chromium pnpm --dir web exec playwright test --update-snapshots` |
@@ -339,6 +339,7 @@ crates/
   cad-commands/   Session, command state machines, selection
   cad-dxf/        DXF import/export
   cad-dwg/        DWG import/export (AutoCAD 2000, 2004, 2007/2008)
+  cad-intent/     the intent IR a model writes, validated and compiled to commands (ADR-0037)
   cad-render/     RenderScene and OverlayFrame preparation
   cad-wasm/       the JS/WASM boundary (marshalling only)
 web/
@@ -350,7 +351,7 @@ web/
   bench/          Browser measurements, run on demand
 scripts/          build-wasm.sh, check.sh, check-boundaries.sh, stress.sh, fuzz.sh, dwg-sweep.sh, dwg-check.sh
 Makefile          shortcuts for the everyday commands; `make` lists them
-test-data/        DXF fixtures, geometry regression cases, screenshots
+test-data/        DXF and DWG fixtures, geometry regression cases, the intent schema, screenshots
 benches/          cad-benchmarks crate: drawing generator and criterion benchmarks
 docs/             DESIGN.md, ADRs, milestone reviews, roadmap
 ```

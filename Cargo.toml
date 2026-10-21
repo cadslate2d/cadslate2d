@@ -21,6 +21,7 @@ cad-document = { path = "crates/cad-document" }
 cad-commands = { path = "crates/cad-commands" }
 cad-dxf = { path = "crates/cad-dxf" }
 cad-dwg = { path = "crates/cad-dwg" }
+cad-intent = { path = "crates/cad-intent" }
 cad-render = { path = "crates/cad-render" }
 cad-plot = { path = "crates/cad-plot" }
 
@@ -29,6 +30,10 @@ cad-plot = { path = "crates/cad-plot" }
 wasm-bindgen = "=0.2.129"
 js-sys = "0.3.106"
 serde = { version = "1", features = ["derive"] }
+# float_roundtrip: a coordinate written is the coordinate read back.
+serde_json = { version = "1", features = ["float_roundtrip"] }
+# ADR-0037: the intent IR's JSON Schema is generated from its Rust types.
+schemars = "1"
 serde-wasm-bindgen = "0.6"
 console_error_panic_hook = "0.1"
 rstar = "0.13"

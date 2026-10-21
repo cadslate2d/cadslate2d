@@ -318,8 +318,35 @@ impl Session {
         &self.view
     }
 
+    /// Makes `ids` the selection and nothing else (#253): what an intent
+    /// operation names acts as if the user had picked it. The same rules as
+    /// a pick: groups whole, locked objects left out and said so.
+    pub fn select_only(&mut self, ids: &[EntityId]) -> Dirty {
+        self.selection.clear();
+        self.change_selection(ids, false, SelectionMethod::Intent) | Dirty::OVERLAY | Dirty::UI
+    }
+
     pub fn selection(&self) -> &Selection {
         &self.selection
+    }
+
+    /// Whether a command is in progress.
+    pub(crate) fn command_active(&self) -> bool {
+        self.active.is_some()
+    }
+
+    /// Log lines written so far, for `log_since`.
+    pub(crate) fn log_total(&self) -> u64 {
+        self.log.total()
+    }
+
+    pub(crate) fn clear_selection(&mut self) {
+        self.selection.clear();
+    }
+
+    /// Whether `name` starts a command here.
+    pub(crate) fn is_registered(&self, name: &str) -> bool {
+        self.registry.aliases().resolve(name).is_some()
     }
 
     pub fn snap_modes(&self) -> SnapModes {

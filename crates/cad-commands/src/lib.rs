@@ -14,6 +14,7 @@ mod dirty;
 mod events;
 pub mod grips;
 mod history;
+pub mod intent;
 mod log;
 mod overlay;
 mod registry;
@@ -37,6 +38,7 @@ pub use command::{
 pub use dirty::Dirty;
 pub use events::{FileFormat, HostRequest, KeyAction, Modifiers, PointerButton};
 pub use grips::{Grip, GripId};
+pub use intent::{Ran, RunError};
 pub use overlay::OverlayItem;
 pub use registry::CommandRegistry;
 pub use selection::{Selection, SelectionMethod};

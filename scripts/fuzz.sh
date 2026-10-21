@@ -17,7 +17,7 @@ seconds="${1:-600}"
 shift || true
 targets=("$@")
 if [ "${#targets[@]}" -eq 0 ]; then
-  targets=(dxf_import input_resolve dwg_read)
+  targets=(dxf_import input_resolve dwg_read intent_parse)
 fi
 
 if ! command -v cargo-fuzz >/dev/null; then
@@ -27,7 +27,11 @@ fi
 
 # Seeds: every DXF fixture, valid, malformed, and from the corpus; every
 # DWG fixture for the DWG reader.
-mkdir -p fuzz/corpus/dxf_import fuzz/corpus/input_resolve fuzz/corpus/dwg_read
+mkdir -p fuzz/corpus/dxf_import fuzz/corpus/input_resolve fuzz/corpus/dwg_read fuzz/corpus/intent_parse
+# The intent parser: the schema's own example documents as seeds.
+for file in test-data/intent/*.json; do
+  cp -n "$file" "fuzz/corpus/intent_parse/$(basename "$file")" 2>/dev/null || true
+done
 for file in test-data/dxf/valid/*.dxf test-data/dxf/malformed/*.dxf test-data/dxf/corpus/*.dxf; do
   cp -n "$file" "fuzz/corpus/dxf_import/$(basename "$file")" 2>/dev/null || true
 done
