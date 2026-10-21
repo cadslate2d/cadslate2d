@@ -54,8 +54,8 @@ pub fn control(
             .collect(),
         _ => entries.to_vec(),
     };
-    let mut w = ObjectWriter::new(type_code, handle);
-    w.object_common();
+    let mut w = ObjectWriter::new(type_code, handle, names.version);
+    w.object_common(xdic);
     if long_count {
         w.data.bl(listed.len() as i32);
     } else {
@@ -85,8 +85,12 @@ pub fn control(
 /// The viewport entity header control (§20.4.70), empty: R2000 files
 /// carry one.
 pub fn viewport_entity_header_control(handle: u64) -> ObjectBytes {
-    let mut w = ObjectWriter::new(types::VIEWPORT_ENTITY_HEADER_CONTROL, handle);
-    w.object_common();
+    let mut w = ObjectWriter::new(
+        types::VIEWPORT_ENTITY_HEADER_CONTROL,
+        handle,
+        crate::Version::R2000,
+    );
+    w.object_common(0);
     w.data.bs(0);
     w.object_handles(0, 0);
     w.finish()
@@ -108,29 +112,29 @@ pub fn row(
     let name = f.text(2).unwrap_or("").trim();
     Ok(match table {
         "LAYER" => layer(&f, handle, name, control, names),
-        "LTYPE" => linetype(&f, handle, name, control),
-        "STYLE" => text_style(&f, handle, name, control),
+        "LTYPE" => linetype(&f, handle, name, control, names),
+        "STYLE" => text_style(&f, handle, name, control, names),
         "DIMSTYLE" => dim_style(&f, handle, name, control, names),
-        "VPORT" => vport(&f, handle, name, control),
+        "VPORT" => vport(&f, handle, name, control, names),
         "APPID" => {
-            let mut w = ObjectWriter::new(types::APPID, handle);
-            w.object_common();
+            let mut w = ObjectWriter::new(types::APPID, handle, names.version);
+            w.object_common(0);
             row_head(&mut w, name);
             w.data.rc(f.int(71).unwrap_or(0) as u8);
             w.object_handles(control, 0);
             w.handles.handle(5, 0); // the xref block
             w.finish()
         }
-        "VIEW" => view(&f, handle, name, control),
-        "BLOCK_RECORD" => block_header(&f, handle, name, control, block),
+        "VIEW" => view(&f, handle, name, control, names),
+        "BLOCK_RECORD" => block_header(&f, handle, name, control, block, names),
         other => return Err(WriteError::new(other, "a table this crate does not write")),
     })
 }
 
 /// A LAYER row (§20.4.54).
 fn layer(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Names) -> ObjectBytes {
-    let mut w = ObjectWriter::new(types::LAYER, handle);
-    w.object_common();
+    let mut w = ObjectWriter::new(types::LAYER, handle, names.version);
+    w.object_common(0);
     row_head(&mut w, name);
     let flags = f.int(70).unwrap_or(0);
     let color = f.int(62).unwrap_or(7);
@@ -151,7 +155,7 @@ fn layer(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Names) -
     values |= 16; // plots
     values |= (u16::from(lineweight) & 0x1f) << 5;
     w.data.bs(values as i16);
-    w.data.cmc(color.unsigned_abs().min(256) as i16);
+    w.cmc(color.unsigned_abs().min(256) as i16);
     w.object_handles(control, 0);
     w.handles.handle(5, 0); // the xref block
     w.handles.handle(5, f.handle(390).unwrap_or(0)); // the plot style
@@ -166,9 +170,9 @@ fn layer(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Names) -
 
 /// An LTYPE row (§20.4.58): each dash with its shape fields, the text
 /// area empty.
-fn linetype(f: &Fields<'_>, handle: u64, name: &str, control: u64) -> ObjectBytes {
-    let mut w = ObjectWriter::new(types::LTYPE, handle);
-    w.object_common();
+fn linetype(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Names) -> ObjectBytes {
+    let mut w = ObjectWriter::new(types::LTYPE, handle, names.version);
+    w.object_common(0);
     row_head(&mut w, name);
     w.data.text(f.text(3).unwrap_or(""));
     w.data.bd(f.real(40).unwrap_or(0.0));
@@ -206,9 +210,9 @@ fn linetype(f: &Fields<'_>, handle: u64, name: &str, control: u64) -> ObjectByte
 }
 
 /// A STYLE row (§20.4.56): the shape bit before the vertical bit.
-fn text_style(f: &Fields<'_>, handle: u64, name: &str, control: u64) -> ObjectBytes {
-    let mut w = ObjectWriter::new(types::STYLE, handle);
-    w.object_common();
+fn text_style(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Names) -> ObjectBytes {
+    let mut w = ObjectWriter::new(types::STYLE, handle, names.version);
+    w.object_common(0);
     row_head(&mut w, name);
     let flags = f.int(70).unwrap_or(0);
     let d = &mut w.data;
@@ -309,8 +313,8 @@ fn dim_style(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Name
                 .map_or(0, |(_, v)| *v)
         })
     };
-    let mut w = ObjectWriter::new(types::DIMSTYLE, handle);
-    w.object_common();
+    let mut w = ObjectWriter::new(types::DIMSTYLE, handle, names.version);
+    w.object_common(0);
     row_head(&mut w, name);
     w.data.text(f.text(3).unwrap_or(""));
     w.data.text(f.text(4).unwrap_or(""));
@@ -333,8 +337,9 @@ fn dim_style(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Name
         d.bit(u8::from(int(code) != 0));
     }
     for code in 176..=178 {
-        d.cmc(int(code).clamp(0, 256) as i16);
+        w.cmc(int(code).clamp(0, 256) as i16);
     }
+    let d = &mut w.data;
     d.bs(int(179) as i16);
     for code in 271..=280 {
         d.bs(int(code) as i16);
@@ -369,9 +374,9 @@ fn dim_style(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Name
 }
 
 /// A VPORT row (§20.4.64).
-fn vport(f: &Fields<'_>, handle: u64, name: &str, control: u64) -> ObjectBytes {
-    let mut w = ObjectWriter::new(types::VPORT, handle);
-    w.object_common();
+fn vport(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Names) -> ObjectBytes {
+    let mut w = ObjectWriter::new(types::VPORT, handle, names.version);
+    w.object_common(0);
     row_head(&mut w, name);
     let height = f.real(40).unwrap_or(1.0);
     let d = &mut w.data;
@@ -420,9 +425,9 @@ fn vport(f: &Fields<'_>, handle: u64, name: &str, control: u64) -> ObjectBytes {
 }
 
 /// A VIEW row (§20.4.60).
-fn view(f: &Fields<'_>, handle: u64, name: &str, control: u64) -> ObjectBytes {
-    let mut w = ObjectWriter::new(types::VIEW, handle);
-    w.object_common();
+fn view(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Names) -> ObjectBytes {
+    let mut w = ObjectWriter::new(types::VIEW, handle, names.version);
+    w.object_common(0);
     row_head(&mut w, name);
     let d = &mut w.data;
     d.bd(f.real(40).unwrap_or(1.0));
@@ -466,9 +471,10 @@ fn block_header(
     name: &str,
     control: u64,
     block: Option<&BlockPlacement>,
+    names: &Names,
 ) -> ObjectBytes {
-    let mut w = ObjectWriter::new(types::BLOCK_HEADER, handle);
-    w.object_common();
+    let mut w = ObjectWriter::new(types::BLOCK_HEADER, handle, names.version);
+    w.object_common(0);
     row_head(&mut w, name);
     let flags = block.map_or(0, |b| b.flags);
     let d = &mut w.data;
@@ -477,6 +483,10 @@ fn block_header(
     d.bit(0); // an xref
     d.bit(0); // overlaid
     d.bit(0); // loaded
+    if w.r2004() {
+        w.data.bl(block.map_or(0, |b| b.members.len()) as i32);
+    }
+    let d = &mut w.data;
     let (base, z) = block.map_or((Point2::ORIGIN, 0.0), |b| (b.base, b.base_z));
     d.bd3(base, z);
     d.text(""); // the xref path
@@ -484,11 +494,24 @@ fn block_header(
     d.text(""); // the description
     d.bl(0); // no preview
     w.object_handles(control, 0);
+    let r2004 = w.r2004();
     let h = &mut w.handles;
     h.handle(5, 0);
     h.handle(3, block.map_or(0, |b| b.begin));
-    h.handle(4, block.map_or(0, |b| b.first));
-    h.handle(4, block.map_or(0, |b| b.last));
+    if r2004 {
+        for member in block.map_or(&[][..], |b| b.members.as_slice()) {
+            h.handle(3, *member);
+        }
+    } else {
+        h.handle(
+            4,
+            block.and_then(|b| b.members.first().copied()).unwrap_or(0),
+        );
+        h.handle(
+            4,
+            block.and_then(|b| b.members.last().copied()).unwrap_or(0),
+        );
+    }
     h.handle(3, block.map_or(0, |b| b.end));
     h.handle(5, f.handle(340).unwrap_or(0));
     w.finish()

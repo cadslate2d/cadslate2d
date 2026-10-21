@@ -97,7 +97,7 @@ pub fn entity(
         layer,
         linetype,
     };
-    let mut w = ObjectWriter::new(type_code, handle);
+    let mut w = ObjectWriter::new(type_code, handle, names.version);
     w.entity_common(&common);
     w.entity_handles(&common, &links);
     match kind {
@@ -312,6 +312,9 @@ fn mtext(w: &mut ObjectWriter, f: &Fields<'_>) {
     d.bs(f.int(73).unwrap_or(1) as i16);
     d.bd(f.real(44).unwrap_or(1.0));
     d.bit(0);
+    if w.r2004() {
+        w.data.bl(0); // no background fill
+    }
 }
 
 /// An INSERT (§20.4.9): the scale in its shortest form, the attributes
@@ -342,6 +345,9 @@ fn insert(w: &mut ObjectWriter, f: &Fields<'_>, place: &Placement, names: &Names
     d.bd3(xy, z);
     let has_attributes = place.owned.is_some();
     d.bit(u8::from(has_attributes));
+    if let (true, Some(owned)) = (w.r2004(), &place.owned) {
+        w.data.bl(owned.handles.len() as i32);
+    }
     let block = f
         .text(2)
         .and_then(|name| names.block_records.get(&name.trim().to_uppercase()))
@@ -349,8 +355,16 @@ fn insert(w: &mut ObjectWriter, f: &Fields<'_>, place: &Placement, names: &Names
         .unwrap_or(0);
     w.handles.handle(5, block);
     if let Some(owned) = &place.owned {
-        w.handles.handle(4, owned.first);
-        w.handles.handle(4, owned.last);
+        if w.r2004() {
+            for attribute in &owned.handles {
+                w.handles.handle(3, *attribute);
+            }
+        } else {
+            w.handles
+                .handle(4, owned.handles.first().copied().unwrap_or(0));
+            w.handles
+                .handle(4, owned.handles.last().copied().unwrap_or(0));
+        }
         w.handles.handle(3, owned.seqend);
     }
 }
@@ -529,6 +543,19 @@ fn spline(w: &mut ObjectWriter, f: &Fields<'_>) {
 /// A HATCH (§20.4.75), from its groups in the order a file carries them.
 fn hatch(w: &mut ObjectWriter, f: &Fields<'_>) -> Result<(), WriteError> {
     let groups = f.groups();
+    if w.r2004() {
+        // No gradient (§20.4.75, R2004): the flags, angle, shift, single
+        // colour, tint, colours, and name all zero or empty.
+        let d = &mut w.data;
+        d.bl(f.int(450).unwrap_or(0) as i32);
+        d.bl(0);
+        d.bd(0.0);
+        d.bd(0.0);
+        d.bl(0);
+        d.bd(0.0);
+        d.bl(0);
+        d.text("");
+    }
     let d = &mut w.data;
     d.bd(f.z(10));
     let (xy, z) = extrusion_of(f);
@@ -885,9 +912,15 @@ fn viewport(w: &mut ObjectWriter, f: &Fields<'_>) {
     d.bd3(f.point(112).unwrap_or(Point2::new(0.0, 1.0)), f.z(112));
     d.bd(f.real(146).unwrap_or(0.0));
     d.bs(f.int(79).unwrap_or(0) as i16);
+    let r2004 = w.r2004();
+    if r2004 {
+        w.data.bs(f.int(170).unwrap_or(0) as i16); // shade plot
+    }
     let h = &mut w.handles;
     h.handle(5, 0); // the clip boundary
-    h.handle(5, 0); // the viewport entity header
+    if !r2004 {
+        h.handle(5, 0); // the viewport entity header
+    }
     h.handle(5, 0); // the named UCS
     h.handle(5, 0); // the base UCS
 }
@@ -1017,10 +1050,12 @@ fn mleader(w: &mut ObjectWriter, f: &Fields<'_>, names: &Names) -> Result<(), Wr
         d.bd(c.real(44).unwrap_or(0.0));
         d.bd(c.real(45).unwrap_or(1.0));
         d.bs(c.int(170).unwrap_or(1) as i16);
-        d.cmc(color_index(c.int(90)));
+        w.cmc(color_index(c.int(90)));
+        let d = &mut w.data;
         d.bs(c.int(171).unwrap_or(1) as i16);
         d.bs(c.int(172).unwrap_or(1) as i16);
-        d.cmc(color_index(c.int(91)));
+        w.cmc(color_index(c.int(91)));
+        let d = &mut w.data;
         d.bd(c.real(141).unwrap_or(0.0));
         d.bl(c.int(92).unwrap_or(0) as i32);
         d.bit(u8::from(c.int(291).unwrap_or(0) != 0));
@@ -1053,7 +1088,8 @@ fn mleader(w: &mut ObjectWriter, f: &Fields<'_>, names: &Names) -> Result<(), Wr
                 c.real(36).unwrap_or(1.0),
             );
             d.bd(c.real(46).unwrap_or(0.0).to_radians());
-            d.cmc(color_index(c.int(93)));
+            w.cmc(color_index(c.int(93)));
+            let d = &mut w.data;
             let matrix = c.reals(47);
             for i in 0..16 {
                 let identity = if i % 5 == 0 { 1.0 } else { 0.0 };
@@ -1072,7 +1108,7 @@ fn mleader(w: &mut ObjectWriter, f: &Fields<'_>, names: &Names) -> Result<(), Wr
     let d = &mut w.data;
     d.bl(a.int(90).unwrap_or(0) as i32);
     d.bs(a.int(170).unwrap_or(1) as i16);
-    d.cmc(color_index(a.int(91)));
+    w.cmc(color_index(a.int(91)));
     w.handles.handle(5, a.handle(341).unwrap_or(0));
     let d = &mut w.data;
     d.bl(a.int(171).unwrap_or(-2) as i32);
@@ -1090,11 +1126,12 @@ fn mleader(w: &mut ObjectWriter, f: &Fields<'_>, names: &Names) -> Result<(), Wr
     d.bs(a.int(95).unwrap_or(1) as i16);
     d.bs(a.int(174).unwrap_or(0) as i16);
     d.bs(a.int(175).unwrap_or(0) as i16);
-    d.cmc(color_index(a.int(92)));
+    w.cmc(color_index(a.int(92)));
+    let d = &mut w.data;
     d.bit(u8::from(a.int(292).unwrap_or(0) != 0));
     w.handles.handle(5, a.handle(344).unwrap_or(0));
+    w.cmc(color_index(a.int(93)));
     let d = &mut w.data;
-    d.cmc(color_index(a.int(93)));
     d.bd3(
         a.point(10).unwrap_or(Point2::new(1.0, 1.0)),
         a.real(30).unwrap_or(1.0),

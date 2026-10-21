@@ -14,6 +14,16 @@ pub enum Version {
 }
 
 impl Version {
+    /// The number a file carries for its version (§27): AC1015 is 23,
+    /// AC1018 25, AC1021 27.
+    pub fn number(self) -> u8 {
+        match self {
+            Self::R2000 => 23,
+            Self::R2004 => 25,
+            Self::R2007 => 27,
+        }
+    }
+
     /// The six bytes a file of this version starts with.
     pub fn id(self) -> &'static str {
         match self {

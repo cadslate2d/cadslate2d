@@ -3,6 +3,7 @@
 //! extended data, the common data of an entity or an object, then the
 //! object's own fields and its handles; the size before and the CRC after.
 
+use crate::Version;
 use crate::crc::crc16;
 use crate::write::bits::BitWriter;
 
@@ -12,6 +13,7 @@ use crate::write::bits::BitWriter;
 pub struct ObjectWriter {
     pub type_code: u16,
     pub handle: u64,
+    pub version: Version,
     pub data: BitWriter,
     pub handles: BitWriter,
 }
@@ -25,7 +27,7 @@ pub struct ObjectBytes {
 }
 
 /// The common data of an entity as this crate writes it (§20.4.1): no
-/// preview, no reactors, links stored.
+/// preview, no reactors, links stored (R2000), no extension dictionary.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EntityCommon {
     /// 0: owned by a block or an insert, 1: paper space, 2: model space.
@@ -57,25 +59,37 @@ pub struct EntityLinks {
 impl ObjectWriter {
     /// Begins an object: its handle and no extended data in the data
     /// stream; the type and the size go in front when it is finished.
-    pub fn new(type_code: u16, handle: u64) -> Self {
+    pub fn new(type_code: u16, handle: u64, version: Version) -> Self {
         let mut data = BitWriter::new();
         data.handle(0, handle);
         data.bs(0);
         Self {
             type_code,
             handle,
+            version,
             data,
             handles: BitWriter::new(),
         }
     }
 
+    /// Whether the file is R2004 or later: no links, the extension
+    /// dictionary's absence flagged, owned objects listed.
+    pub fn r2004(&self) -> bool {
+        self.version >= Version::R2004
+    }
+
     /// The common data of an entity (§20.4.1), after the extended data.
     pub fn entity_common(&mut self, common: &EntityCommon) {
+        let r2004 = self.r2004();
         let d = &mut self.data;
         d.bit(0); // no preview
         d.bb(common.entmode);
         d.bl(0); // reactors
-        d.bit(0); // links stored (nolinks = 0)
+        if r2004 {
+            d.bit(1); // no extension dictionary
+        } else {
+            d.bit(0); // links stored (nolinks = 0)
+        }
         d.enc(common.color);
         d.bd(common.ltype_scale);
         d.bb(common.ltype_flags);
@@ -85,32 +99,60 @@ impl ObjectWriter {
     }
 
     /// The common handles of an entity (§20.4.2): the owner when owned,
-    /// no reactors, a null extension dictionary, the links, the layer,
-    /// the linetype when the flags name one.
+    /// no reactors, a null extension dictionary and the links (R2000),
+    /// the layer, the linetype when the flags name one.
     pub fn entity_handles(&mut self, common: &EntityCommon, links: &EntityLinks) {
+        let r2004 = self.r2004();
         let h = &mut self.handles;
         if common.entmode == 0 {
             h.handle(4, links.owner);
         }
-        h.handle(3, 0); // xdictionary
-        h.handle(4, links.prev);
-        h.handle(4, links.next);
+        if !r2004 {
+            h.handle(3, 0); // xdictionary
+            h.handle(4, links.prev);
+            h.handle(4, links.next);
+        }
         h.handle(5, links.layer);
         if common.ltype_flags == 3 {
             h.handle(5, links.linetype);
         }
     }
 
-    /// The common data of a non-entity object (§20.1): no reactors.
-    pub fn object_common(&mut self) {
+    /// The common data of a non-entity object (§20.1): no reactors; from
+    /// R2004, whether an extension dictionary follows in the handles.
+    pub fn object_common(&mut self, xdic: u64) {
         self.data.bl(0);
+        if self.r2004() {
+            self.data.bit(u8::from(xdic == 0));
+        }
     }
 
     /// The common handles of a non-entity object (§20.1): the owner, no
-    /// reactors, the extension dictionary (null unless given).
+    /// reactors, the extension dictionary — null in R2000, left out from
+    /// R2004 when there is none.
     pub fn object_handles(&mut self, owner: u64, xdic: u64) {
         self.handles.handle(4, owner);
-        self.handles.handle(3, xdic);
+        if xdic != 0 || !self.r2004() {
+            self.handles.handle(3, xdic);
+        }
+    }
+
+    /// CMC (§2.11): the index in R2000; from R2004 a zero index, then the
+    /// long with its method byte — by layer, by block, or an index — and
+    /// no names.
+    pub fn cmc(&mut self, index: i16) {
+        if !self.r2004() {
+            self.data.cmc(index);
+            return;
+        }
+        self.data.bs(0);
+        let value: u32 = match index {
+            256 => 0xC000_0000,
+            0 => 0xC100_0000,
+            i => 0xC300_0000 | u32::from(i as u16 & 0xff),
+        };
+        self.data.bl(value as i32);
+        self.data.rc(0);
     }
 
     /// The object's bytes: the type, the bit size of the data, the data,
@@ -145,7 +187,7 @@ mod tests {
     /// size, the CRC, the bit size, the handle, and the streams.
     #[test]
     fn an_object_is_framed_as_the_reader_expects() {
-        let mut w = ObjectWriter::new(0x13, 0x2A);
+        let mut w = ObjectWriter::new(0x13, 0x2A, Version::R2000);
         w.entity_common(&EntityCommon {
             entmode: 2,
             color: 256,

@@ -38,20 +38,21 @@ fn slice<'a>(d: &'a [u8], at: usize, len: usize, what: &'static str) -> Result<&
 
 /// A page of the page map (§4.4): its number, where it is, how long.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Page {
-    number: i32,
-    address: usize,
-    size: usize,
+pub struct Page {
+    pub number: i32,
+    pub address: usize,
+    pub size: usize,
 }
 
 /// A data section of the section map (§4.5).
 #[derive(Clone, Debug)]
-struct Described {
-    name: String,
-    size: usize,
-    page_size: usize,
-    compressed: bool,
-    pages: Vec<(u32, usize, usize)>, // page number, data size, start offset
+pub struct Described {
+    pub name: String,
+    pub size: usize,
+    pub page_size: usize,
+    pub compressed: bool,
+    /// Page number, data size, start offset.
+    pub pages: Vec<(u32, usize, usize)>,
 }
 
 /// Reads a system page (§4.3): its header, then LZ77 data checked against
@@ -129,7 +130,8 @@ fn file_header(d: &[u8]) -> Result<Vec<u8>, DwgError> {
     Ok(header)
 }
 
-fn pages_and_sections(
+/// The page map and the section map of a file (§4.4, §4.5).
+pub fn pages_and_sections(
     d: &[u8],
     limits: &ImportLimits,
 ) -> Result<(Vec<Page>, Vec<Described>), DwgError> {

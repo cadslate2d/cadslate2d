@@ -28,18 +28,18 @@ pub fn object(
             .ok_or_else(|| WriteError::new(name, "no class defined for it"))
     };
     Ok(match kind {
-        "DICTIONARY" => dictionary(&f, types::DICTIONARY, handle, owner, false),
-        "ACDBDICTIONARYWDFLT" => dictionary(&f, class(kind)?, handle, owner, true),
+        "DICTIONARY" => dictionary(&f, types::DICTIONARY, handle, owner, false, names),
+        "ACDBDICTIONARYWDFLT" => dictionary(&f, class(kind)?, handle, owner, true, names),
         "ACDBPLACEHOLDER" => {
-            let mut w = ObjectWriter::new(types::PLACEHOLDER, handle);
-            w.object_common();
+            let mut w = ObjectWriter::new(types::PLACEHOLDER, handle, names.version);
+            w.object_common(0);
             w.object_handles(owner, 0);
             w.finish()
         }
-        "LAYOUT" => layout(&f, class(kind)?, handle, owner),
+        "LAYOUT" => layout(&f, class(kind)?, handle, owner, names),
         "GROUP" => {
-            let mut w = ObjectWriter::new(types::GROUP, handle);
-            w.object_common();
+            let mut w = ObjectWriter::new(types::GROUP, handle, names.version);
+            w.object_common(0);
             w.data.text(f.text(300).unwrap_or(""));
             w.data.bs(f.int(70).unwrap_or(0) as i16);
             w.data.bs(f.int(71).unwrap_or(1) as i16);
@@ -51,12 +51,12 @@ pub fn object(
             }
             w.finish()
         }
-        "SORTENTSTABLE" => sortents_table(&f, class(kind)?, handle, owner),
-        "XRECORD" => xrecord(&f, handle, owner)?,
+        "SORTENTSTABLE" => sortents_table(&f, class(kind)?, handle, owner, names),
+        "XRECORD" => xrecord(&f, handle, owner, names)?,
         "MLEADERSTYLE" => mleader_style(&f, class(kind)?, handle, owner, names),
         "WIPEOUTVARIABLES" => {
-            let mut w = ObjectWriter::new(class(kind)?, handle);
-            w.object_common();
+            let mut w = ObjectWriter::new(class(kind)?, handle, names.version);
+            w.object_common(0);
             w.data.bs(f.int(70).unwrap_or(1) as i16);
             w.object_handles(owner, 0);
             w.finish()
@@ -79,6 +79,7 @@ fn dictionary(
     handle: u64,
     owner: u64,
     with_default: bool,
+    names: &Names,
 ) -> ObjectBytes {
     let mut entries: Vec<(&str, u64, u8)> = Vec::new();
     let mut name: Option<&str> = None;
@@ -93,8 +94,8 @@ fn dictionary(
             _ => {}
         }
     }
-    let mut w = ObjectWriter::new(type_code, handle);
-    w.object_common();
+    let mut w = ObjectWriter::new(type_code, handle, names.version);
+    w.object_common(0);
     w.data.bl(entries.len() as i32);
     w.data.bs(f.int(281).unwrap_or(1) as i16);
     w.data.rc(f.int(280).unwrap_or(0) as u8);
@@ -113,11 +114,12 @@ fn dictionary(
 
 /// A LAYOUT (§20.4.84): the plot settings, then the layout, each from its
 /// subclass's groups.
-fn layout(f: &Fields<'_>, type_code: u16, handle: u64, owner: u64) -> ObjectBytes {
+fn layout(f: &Fields<'_>, type_code: u16, handle: u64, owner: u64, names: &Names) -> ObjectBytes {
     let p = f.subclass("AcDbPlotSettings");
     let l = f.subclass("AcDbLayout");
-    let mut w = ObjectWriter::new(type_code, handle);
-    w.object_common();
+    let mut w = ObjectWriter::new(type_code, handle, names.version);
+    w.object_common(0);
+    let r2004 = w.r2004();
     let d = &mut w.data;
     d.text(p.text(1).unwrap_or(""));
     d.text(p.text(2).unwrap_or(""));
@@ -143,7 +145,9 @@ fn layout(f: &Fields<'_>, type_code: u16, handle: u64, owner: u64) -> ObjectByte
         p.real(140).unwrap_or(0.0),
         p.real(141).unwrap_or(0.0),
     ));
-    d.text(p.text(6).unwrap_or(""));
+    if !r2004 {
+        d.text(p.text(6).unwrap_or("")); // the plot view, by name
+    }
     d.bd(p.real(142).unwrap_or(1.0));
     d.bd(p.real(143).unwrap_or(1.0));
     d.text(p.text(7).unwrap_or(""));
@@ -153,6 +157,11 @@ fn layout(f: &Fields<'_>, type_code: u16, handle: u64, owner: u64) -> ObjectByte
         p.real(148).unwrap_or(0.0),
         p.real(149).unwrap_or(0.0),
     ));
+    if r2004 {
+        d.bs(p.int(76).unwrap_or(0) as i16);
+        d.bs(p.int(77).unwrap_or(2) as i16);
+        d.bs(p.int(78).unwrap_or(300) as i16);
+    }
     d.text(l.text(1).unwrap_or(""));
     d.bl(l.int(71).unwrap_or(0) as i32);
     d.bs(l.int(70).unwrap_or(1) as i16);
@@ -172,8 +181,14 @@ fn layout(f: &Fields<'_>, type_code: u16, handle: u64, owner: u64) -> ObjectByte
         l.point(15).unwrap_or(Point2::new(-1e20, -1e20)),
         l.real(35).unwrap_or(-1e20),
     );
+    if r2004 {
+        w.data.bl(0); // no viewports listed
+    }
     w.object_handles(owner, 0);
     let h = &mut w.handles;
+    if r2004 {
+        h.handle(5, 0); // the plot view
+    }
     h.handle(4, l.handle(330).unwrap_or(0)); // the block record
     h.handle(4, l.handle(331).unwrap_or(0)); // the active viewport
     h.handle(5, 0); // the base UCS
@@ -183,7 +198,13 @@ fn layout(f: &Fields<'_>, type_code: u16, handle: u64, owner: u64) -> ObjectByte
 
 /// A SORTENTSTABLE (§20.4.93): the sort handles in the data, the block
 /// record and the entities in the handle stream.
-fn sortents_table(f: &Fields<'_>, type_code: u16, handle: u64, owner: u64) -> ObjectBytes {
+fn sortents_table(
+    f: &Fields<'_>,
+    type_code: u16,
+    handle: u64,
+    owner: u64,
+    names: &Names,
+) -> ObjectBytes {
     let s = f.subclass("AcDbSortentsTable");
     let mut pairs: Vec<(u64, u64)> = Vec::new();
     let mut entity: Option<u64> = None;
@@ -199,8 +220,8 @@ fn sortents_table(f: &Fields<'_>, type_code: u16, handle: u64, owner: u64) -> Ob
             _ => {}
         }
     }
-    let mut w = ObjectWriter::new(type_code, handle);
-    w.object_common();
+    let mut w = ObjectWriter::new(type_code, handle, names.version);
+    w.object_common(0);
     w.data.bl(pairs.len() as i32);
     for (_, sort) in &pairs {
         w.data.handle(0, *sort);
@@ -250,7 +271,12 @@ fn kind_of(code: i32) -> Option<Kind> {
 
 /// An XRECORD (§20.4.104): its groups after the subclass marker as typed
 /// data, each handle also in the handle stream, then the cloning flag.
-fn xrecord(f: &Fields<'_>, handle: u64, owner: u64) -> Result<ObjectBytes, WriteError> {
+fn xrecord(
+    f: &Fields<'_>,
+    handle: u64,
+    owner: u64,
+    names: &Names,
+) -> Result<ObjectBytes, WriteError> {
     let body = f.subclass("AcDbXrecord");
     let mut data = crate::write::bits::BitWriter::new();
     let mut handles: Vec<(u8, u64)> = Vec::new();
@@ -313,8 +339,8 @@ fn xrecord(f: &Fields<'_>, handle: u64, owner: u64) -> Result<ObjectBytes, Write
             }
         }
     }
-    let mut w = ObjectWriter::new(types::XRECORD, handle);
-    w.object_common();
+    let mut w = ObjectWriter::new(types::XRECORD, handle, names.version);
+    w.object_common(0);
     w.data.bl(data.len() as i32);
     w.data.append(&data);
     w.data.bs(f.int(280).unwrap_or(1) as i16);
@@ -338,8 +364,8 @@ fn mleader_style(
         Some(v) if (0..=256).contains(&v) => v as i16,
         _ => 0,
     };
-    let mut w = ObjectWriter::new(type_code, handle);
-    w.object_common();
+    let mut w = ObjectWriter::new(type_code, handle, names.version);
+    w.object_common(0);
     let d = &mut w.data;
     d.bs(f.int(170).unwrap_or(2) as i16);
     d.bs(f.int(171).unwrap_or(1) as i16);
@@ -348,7 +374,8 @@ fn mleader_style(
     d.bd(f.real(40).unwrap_or(0.0).to_radians());
     d.bd(f.real(41).unwrap_or(0.0).to_radians());
     d.bs(f.int(173).unwrap_or(1) as i16);
-    d.cmc(color(91));
+    w.cmc(color(91));
+    let d = &mut w.data;
     d.bl(f.int(92).unwrap_or(-2) as i32);
     d.bit(u8::from(f.int(290).unwrap_or(1) != 0));
     d.bd(f.real(42).unwrap_or(0.0));
@@ -361,12 +388,14 @@ fn mleader_style(
     d.bs(f.int(178).unwrap_or(1) as i16);
     d.bs(f.int(175).unwrap_or(1) as i16);
     d.bs(f.int(176).unwrap_or(0) as i16);
-    d.cmc(color(93));
+    w.cmc(color(93));
+    let d = &mut w.data;
     d.bd(f.real(45).unwrap_or(0.0));
     d.bit(u8::from(f.int(292).unwrap_or(0) != 0));
     d.bit(u8::from(f.int(297).unwrap_or(0) != 0));
     d.bd(f.real(46).unwrap_or(0.0));
-    d.cmc(color(94));
+    w.cmc(color(94));
+    let d = &mut w.data;
     d.bd(f.real(47).unwrap_or(1.0));
     d.bd(f.real(49).unwrap_or(1.0));
     d.bd(f.real(140).unwrap_or(1.0));

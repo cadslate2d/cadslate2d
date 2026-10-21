@@ -7,8 +7,24 @@ use std::io::Cursor;
 use std::path::PathBuf;
 
 use cad_document::Drawing;
+use cad_dwg::Version;
 
 mod common;
+
+/// The versions the writer writes.
+const VERSIONS: [Version; 2] = [Version::R2000, Version::R2004];
+
+/// Every source in every version, named by both.
+fn cases(sources: &[(String, Drawing)]) -> Vec<(Version, String, &Drawing)> {
+    VERSIONS
+        .iter()
+        .flat_map(|version| {
+            sources
+                .iter()
+                .map(move |(name, drawing)| (*version, format!("{name}.{}", version.id()), drawing))
+        })
+        .collect()
+}
 use common::{describe, root};
 
 /// Every DXF fixture this project's reader takes, with its name.
@@ -67,8 +83,12 @@ fn diff(a: &[String], b: &[String]) -> String {
 #[test]
 fn every_fixture_round_trips_through_our_dwg_byte_for_byte() {
     let mut failures = Vec::new();
-    for (name, drawing) in sources() {
-        let first = cad_dwg::export(&drawing).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let sources = sources();
+    for (version, name, drawing) in cases(&sources) {
+        let first = cad_dwg::export(drawing, version).unwrap_or_else(|e| panic!("{name}: {e}"));
+        if Version::detect(&first) != Ok(version) {
+            failures.push(format!("{name}: not a file of its version"));
+        }
         let back = match cad_dwg::import(&first) {
             Ok(back) => back,
             Err(e) => {
@@ -76,7 +96,7 @@ fn every_fixture_round_trips_through_our_dwg_byte_for_byte() {
                 continue;
             }
         };
-        let expected: Vec<String> = describe(&normalised(&drawing))
+        let expected: Vec<String> = describe(&normalised(drawing))
             .into_iter()
             .map(without_fit_points)
             .collect();
@@ -90,7 +110,7 @@ fn every_fixture_round_trips_through_our_dwg_byte_for_byte() {
                 diff(&got, &expected)
             ));
         }
-        let second = cad_dwg::export(&back.drawing).unwrap();
+        let second = cad_dwg::export(&back.drawing, version).unwrap();
         if second != first {
             failures.push(format!(
                 "{name}: the second export differs ({} vs {} bytes)",
@@ -144,8 +164,9 @@ fn keeper(name: &str, losses: &[(&str, &str)]) -> impl Fn(&String) -> bool {
 #[test]
 fn acadrust_reads_our_output_with_nothing_lost() {
     let mut failures = Vec::new();
-    for (name, drawing) in sources() {
-        let dwg = cad_dwg::export(&drawing).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let sources = sources();
+    for (version, name, drawing) in cases(&sources) {
+        let dwg = cad_dwg::export(drawing, version).unwrap_or_else(|e| panic!("{name}: {e}"));
         let document = match acadrust::DwgReader::from_stream(Cursor::new(dwg)).read() {
             Ok(document) => document,
             Err(e) => {
@@ -168,7 +189,7 @@ fn acadrust_reads_our_output_with_nothing_lost() {
             }
         };
         let keep = keeper(&name, READER_LOSSES);
-        let expected: Vec<String> = describe(&normalised(&drawing))
+        let expected: Vec<String> = describe(&normalised(drawing))
             .into_iter()
             .map(without_fit_points)
             .filter(&keep)

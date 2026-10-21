@@ -305,7 +305,7 @@ A `Makefile` at the root wraps the common ones: `make` lists its targets, for ex
 | Rust benchmarks (store, index, scene, snapping, grips, offset, blocks, annotation, the mixed drawing) | `cargo bench -p cad-benchmarks` |
 | Coverage-guided fuzzing of the DXF and DWG readers and the input grammar (#177, #312), each target for a bounded time; needs `rustup toolchain install nightly && cargo install cargo-fuzz`; a crash lands in `fuzz/artifacts/` and becomes a fixture and a fix | `scripts/fuzz.sh [seconds] [target …]` |
 | Open every DWG under a directory and print what the import makes of each (#313) | `scripts/dwg-sweep.sh <dir …>` |
-| Read the DWG fixtures and our DWG output of every DXF fixture with LibreDWG's `dwgread` (#315; needs a LibreDWG build, `DWGREAD=/path/to/dwgread`) | `scripts/dwg-check.sh [more .dwg …]` |
+| Read the DWG fixtures and our `AC1015` and `AC1018` output of every DXF fixture with LibreDWG's `dwgread` (#315, #316; needs a LibreDWG build, `DWGREAD=/path/to/dwgread`) | `scripts/dwg-check.sh [more .dwg …]` |
 | Re-record visual baselines (Chromium) | `E2E_BROWSERS=chromium pnpm --dir web exec playwright test --update-snapshots` |
 | Generate a benchmark drawing | `cargo run --release -p cad-benchmarks --bin generate-drawing -- 100000 benches/generated-drawings/lines-100k.dxf` |
 | Render-transport measurement in the browser | `pnpm --dir web bench:transport` (after `build` and generating `lines-1k`, `-10k`, `-100k`) |

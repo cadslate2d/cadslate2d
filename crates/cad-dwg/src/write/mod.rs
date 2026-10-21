@@ -19,6 +19,7 @@ use cad_core::Point2;
 use cad_document::Drawing;
 use cad_dxf::{Record, Section};
 
+use crate::Version;
 use crate::bits::{Color, Handle};
 use crate::header::Value;
 use crate::write::classes::ClassDef;
@@ -30,8 +31,10 @@ mod classes;
 mod entities;
 mod fields;
 mod header;
+mod lz77;
 mod objects;
 mod r2000;
+mod r2004;
 mod records;
 mod tables;
 
@@ -61,9 +64,11 @@ impl fmt::Display for WriteError {
 
 impl std::error::Error for WriteError {}
 
-/// What the records name, by upper-case name, to the handle it has.
-#[derive(Debug, Default)]
+/// What the records name, by upper-case name, to the handle it has; and
+/// the version being written, which every encoder branches on.
+#[derive(Debug)]
 pub struct Names {
+    pub version: Version,
     pub layers: HashMap<String, u64>,
     pub linetypes: HashMap<String, u64>,
     pub text_styles: HashMap<String, u64>,
@@ -81,18 +86,17 @@ pub struct Names {
     pub ltype_continuous: u64,
 }
 
-/// The attributes an INSERT owns: the first and last of their chain and
-/// the SEQEND.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The attributes an INSERT owns, in order, and the SEQEND: R2000 names
+/// the first and last, R2004 lists them all.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Owned {
-    pub first: u64,
-    pub last: u64,
+    pub handles: Vec<u64>,
     pub seqend: u64,
 }
 
 /// Where an entity sits (§20.4.1–20.4.2): its space or owner, its
 /// neighbours in the owner's chain, and what it owns.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Placement {
     pub entmode: u8,
     pub owner: u64,
@@ -101,8 +105,10 @@ pub struct Placement {
     pub owned: Option<Owned>,
 }
 
-/// What a block header needs of its definition (§20.4.52).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// What a block header needs of its definition (§20.4.52): the chain of
+/// entities between its BLOCK and ENDBLK, which R2000 names by its ends
+/// and R2004 lists.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct BlockPlacement {
     pub flags: i64,
     pub base: Point2,
@@ -110,19 +116,25 @@ pub struct BlockPlacement {
     pub has_attributes: bool,
     pub begin: u64,
     pub end: u64,
-    pub first: u64,
-    pub last: u64,
+    pub members: Vec<u64>,
 }
 
-/// Writes a drawing as an AC1015 (AutoCAD 2000) DWG file.
-pub fn export(drawing: &Drawing) -> Result<Vec<u8>, WriteError> {
-    write_records(&cad_dxf::export_records(drawing))
+/// Writes a drawing as a DWG file of `version`: AC1015 (AutoCAD 2000) or
+/// AC1018 (2004); AC1021 is not written yet (#317).
+pub fn export(drawing: &Drawing, version: Version) -> Result<Vec<u8>, WriteError> {
+    write_records(&cad_dxf::export_records(drawing), version)
 }
 
-/// Writes records — the DXF exporter's, or another front end's — as an
-/// AC1015 file.
-pub fn write_records(records: &[Record]) -> Result<Vec<u8>, WriteError> {
-    let plan = Plan::new(records)?;
+/// Writes records — the DXF exporter's, or another front end's — as a
+/// file of `version`.
+pub fn write_records(records: &[Record], version: Version) -> Result<Vec<u8>, WriteError> {
+    if version == Version::R2007 {
+        return Err(WriteError::new(
+            version.id(),
+            "a version this crate does not write yet",
+        ));
+    }
+    let plan = Plan::new(records, version)?;
     let mut objects: Vec<ObjectBytes> = Vec::new();
     let names = &plan.names;
 
@@ -149,7 +161,9 @@ pub fn write_records(records: &[Record]) -> Result<Vec<u8>, WriteError> {
             objects.push(tables::row(&table.name, &row.groups, handle, names, block)?);
         }
     }
-    objects.push(tables::viewport_entity_header_control(plan.vx_control));
+    if let Some(vx_control) = plan.vx_control {
+        objects.push(tables::viewport_entity_header_control(vx_control));
+    }
 
     for (record, place) in &plan.entities {
         objects.push(entities::entity(
@@ -164,14 +178,24 @@ pub fn write_records(records: &[Record]) -> Result<Vec<u8>, WriteError> {
     }
     objects.sort_by_key(|object| object.handle);
 
-    let parts = r2000::Parts {
-        header: header::section(&plan.header_values()),
-        classes: classes::section(&plan.classes),
-        objects,
-        handseed: plan.handseed,
-        measurement: plan.measurement(),
-    };
-    Ok(r2000::file(&parts))
+    let header = header::section(&plan.header_values(), version);
+    let classes = classes::section(&plan.classes, &plan.instances(), version);
+    match version {
+        Version::R2000 => Ok(r2000::file(&r2000::Parts {
+            header,
+            classes,
+            objects,
+            handseed: plan.handseed,
+            measurement: plan.measurement(),
+        })),
+        _ => Ok(r2004::file(&r2004::Parts {
+            header,
+            classes,
+            objects,
+            handseed: plan.handseed,
+            measurement: plan.measurement(),
+        })),
+    }
 }
 
 /// A table: its TABLE record and its rows.
@@ -190,16 +214,16 @@ struct Plan<'a> {
     objects: Vec<&'a Record>,
     blocks: HashMap<u64, BlockPlacement>,
     names: Names,
-    /// The viewport entity header control, an object only a DWG has: it
-    /// takes the first free handle.
-    vx_control: u64,
+    /// The viewport entity header control, an object only an R2000 DWG
+    /// has: it takes the first free handle.
+    vx_control: Option<u64>,
     handseed: u64,
     root_dictionary: u64,
     root_entries: HashMap<String, u64>,
 }
 
 impl<'a> Plan<'a> {
-    fn new(records: &'a [Record]) -> Result<Self, WriteError> {
+    fn new(records: &'a [Record], version: Version) -> Result<Self, WriteError> {
         let mut header: HashMap<String, &'a [(i32, String)]> = HashMap::new();
         let mut classes: Vec<ClassDef> = vec![
             ClassDef {
@@ -285,7 +309,23 @@ impl<'a> Plan<'a> {
             }
         }
 
-        let mut names = Names::default();
+        let mut names = Names {
+            version,
+            layers: HashMap::new(),
+            linetypes: HashMap::new(),
+            text_styles: HashMap::new(),
+            dim_styles: HashMap::new(),
+            block_records: HashMap::new(),
+            classes: HashMap::new(),
+            layer_zero: 0,
+            standard_style: 0,
+            standard_dim_style: 0,
+            model_space: 0,
+            paper_space: 0,
+            ltype_byblock: 0,
+            ltype_bylayer: 0,
+            ltype_continuous: 0,
+        };
         for (i, class) in classes.iter().enumerate() {
             names
                 .classes
@@ -355,7 +395,7 @@ impl<'a> Plan<'a> {
             }
         };
         let place_chain =
-            |members: &[&'a Record], entities: &mut Vec<(&'a Record, Placement)>| -> (u64, u64) {
+            |members: &[&'a Record], entities: &mut Vec<(&'a Record, Placement)>| -> Vec<u64> {
                 // The chain: every entity but the attributes an insert owns and
                 // their SEQEND; those chain under the insert.
                 let mut chain: Vec<(usize, u64)> = Vec::new();
@@ -396,8 +436,7 @@ impl<'a> Plan<'a> {
                             .map(|&k| Fields::new(&members[k].groups).handle(5).unwrap_or(0))
                             .collect();
                         placement.owned = Some(Owned {
-                            first: handles.first().copied().unwrap_or(0),
-                            last: handles.last().copied().unwrap_or(0),
+                            handles: handles.clone(),
                             seqend,
                         });
                         placed.push((i, placement));
@@ -436,10 +475,7 @@ impl<'a> Plan<'a> {
                 for (k, placement) in placed {
                     entities.push((members[k], placement));
                 }
-                (
-                    chain.first().map_or(0, |(_, h)| *h),
-                    chain.last().map_or(0, |(_, h)| *h),
-                )
+                chain.into_iter().map(|(_, h)| h).collect()
             };
         for (begin, members, end) in &block_defs {
             let f = Fields::new(&begin.groups);
@@ -453,13 +489,13 @@ impl<'a> Plan<'a> {
             for member in members {
                 note(Fields::new(&member.groups).handle(5));
             }
-            let (first, last) = place_chain(members, &mut entities);
+            let chain = place_chain(members, &mut entities);
             let block_place = Placement {
                 entmode: entmode_of(record),
                 owner: record,
                 ..Placement::default()
             };
-            entities.push((begin, block_place));
+            entities.push((begin, block_place.clone()));
             if let Some(end) = end {
                 entities.push((end, block_place));
             }
@@ -472,8 +508,7 @@ impl<'a> Plan<'a> {
                     has_attributes: members.iter().any(|m| m.kind == "ATTDEF"),
                     begin: begin_handle,
                     end: end_handle,
-                    first,
-                    last,
+                    members: chain,
                 },
             );
         }
@@ -482,12 +517,9 @@ impl<'a> Plan<'a> {
         }
         // The model's entities: one chain, whichever block they say they
         // are in (the exporter puts the model's alone here).
+        let model_chain = place_chain(&entity_records, &mut entities);
         if let Some(model) = blocks.get_mut(&names.model_space) {
-            let (first, last) = place_chain(&entity_records, &mut entities);
-            model.first = first;
-            model.last = last;
-        } else {
-            place_chain(&entity_records, &mut entities);
+            model.members = model_chain;
         }
         for record in &objects {
             let f = Fields::new(&record.groups);
@@ -515,6 +547,11 @@ impl<'a> Plan<'a> {
             .and_then(|g| Fields::new(g).handle(5))
             .unwrap_or(0)
             .max(max_handle + 1);
+        let (vx_control, handseed) = if version == Version::R2000 {
+            (Some(seed), seed + 1)
+        } else {
+            (None, seed)
+        };
         Ok(Self {
             header,
             classes,
@@ -523,11 +560,27 @@ impl<'a> Plan<'a> {
             objects,
             blocks,
             names,
-            vx_control: seed,
-            handseed: seed + 1,
+            vx_control,
+            handseed,
             root_dictionary,
             root_entries,
         })
+    }
+
+    /// How many objects each class has, in the classes' order (§10.2).
+    fn instances(&self) -> Vec<u32> {
+        let mut counts = vec![0u32; self.classes.len()];
+        let kinds = self
+            .entities
+            .iter()
+            .map(|(record, _)| record.kind.as_str())
+            .chain(self.objects.iter().map(|record| record.kind.as_str()));
+        for kind in kinds {
+            if let Some(at) = self.classes.iter().position(|c| c.dxf_name == kind) {
+                counts[at] += 1;
+            }
+        }
+        counts
     }
 
     fn table_handle(&self, name: &str) -> u64 {
@@ -614,8 +667,10 @@ impl<'a> Plan<'a> {
         ] {
             out.insert(name, handle(3, self.table_handle(table)));
         }
-        out.insert("VIEWPORT_ENTITY_HEADER_CONTROL", handle(3, self.vx_control));
-        out.insert("CURRENT_VIEWPORT_ENTITY_HEADER", handle(5, 0));
+        if let Some(vx_control) = self.vx_control {
+            out.insert("VIEWPORT_ENTITY_HEADER_CONTROL", handle(3, vx_control));
+            out.insert("CURRENT_VIEWPORT_ENTITY_HEADER", handle(5, 0));
+        }
         out.insert("DICTIONARY_NAMED_OBJECTS", handle(3, self.root_dictionary));
         let entry = |name: &str| self.root_entries.get(name).copied().unwrap_or(0);
         out.insert("DICTIONARY_ACAD_GROUP", handle(5, entry("ACAD_GROUP")));

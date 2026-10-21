@@ -1,5 +1,5 @@
 //! The header variables section written (ODA spec §9): every variable of
-//! R2000 in the order `header::LAYOUT` reads them, the drawing's values
+//! the version in the order `header::LAYOUT` reads them, the drawing's values
 //! where the records give them, a new drawing's otherwise; between the
 //! sentinels, with the CRC.
 
@@ -90,25 +90,38 @@ const DEFAULTS: &[(&str, Value)] = &[
     ("DIMLWE", Value::Int(-2)),
     ("TSTACKALIGN", Value::Int(1)),
     ("TSTACKSIZE", Value::Int(70)),
+    // R2004.
+    ("SORTENTS", Value::Int(127)),
+    ("HIDETEXT", Value::Int(1)),
+    ("XCLIPFRAME", Value::Int(2)),
+    ("DIMASSOC", Value::Int(2)),
+    ("OBSCUREDCOLOR", Value::Int(257)),
+    ("INTERSECTIONCOLOR", Value::Int(257)),
 ];
 
 /// The header section: the sentinel, the size, the variables, the CRC,
 /// the ending sentinel.
-pub fn section(values: &HashMap<&'static str, Value>) -> Vec<u8> {
+pub fn section(values: &HashMap<&'static str, Value>, version: Version) -> Vec<u8> {
     let mut data = BitWriter::new();
     for &(name, kind, presence) in LAYOUT {
-        if !presence.holds(Version::R2000) {
+        if !presence.holds(version) {
             continue;
         }
         let value = values
             .get(name)
             .or_else(|| DEFAULTS.iter().find(|(n, _)| *n == name).map(|(_, v)| v));
-        write_value(&mut data, kind, value);
+        write_value(&mut data, kind, value, version);
     }
-    // Four shorts "not required even for type 5" close an R2000 header
-    // (§9, R14+), as LibreDWG and acadrust write them.
+    // Four shorts "not required even for type 5" close the header (§9,
+    // R14+), −1 as AutoCAD writes them; R2004 adds two longs and a bit
+    // that acadrust reads and LibreDWG passes over.
     for _ in 0..4 {
-        data.bs(0);
+        data.bs(-1);
+    }
+    if version >= Version::R2004 {
+        data.bl(0);
+        data.bl(0);
+        data.bit(0);
     }
     data.align();
     let body = data.into_bytes();
@@ -124,7 +137,7 @@ pub fn section(values: &HashMap<&'static str, Value>) -> Vec<u8> {
 }
 
 /// One variable by its kind, its value or a zero of that kind.
-fn write_value(d: &mut BitWriter, kind: Kind, value: Option<&Value>) {
+fn write_value(d: &mut BitWriter, kind: Kind, value: Option<&Value>, version: Version) {
     let int = || match value {
         Some(Value::Int(i)) => *i,
         Some(Value::Bool(b)) => i64::from(*b),
@@ -171,10 +184,26 @@ fn write_value(d: &mut BitWriter, kind: Kind, value: Option<&Value>) {
         // CPSNID is stored only when CEPSNTYPE is 3, which is never
         // written here.
         Kind::HPlotStyle => {}
-        Kind::Cmc => d.cmc(match value {
-            Some(Value::Color(c)) => c.index,
-            _ => 256,
-        }),
+        Kind::Cmc => {
+            let index = match value {
+                Some(Value::Color(c)) => c.index,
+                _ => 256,
+            };
+            if version >= Version::R2004 {
+                // The R2004 form (§2.11): a zero index, the long with its
+                // method, no names.
+                d.bs(0);
+                let long: u32 = match index {
+                    256 => 0xC000_0000,
+                    0 => 0xC100_0000,
+                    i => 0xC300_0000 | u32::from(i as u16 & 0xff),
+                };
+                d.bl(long as i32);
+                d.rc(0);
+            } else {
+                d.cmc(index);
+            }
+        }
     }
 }
 

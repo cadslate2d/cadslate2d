@@ -471,6 +471,8 @@ fn the_matrix_names_only_tests_and_fixtures_that_exist() {
         "src/header.rs",
         "src/records.rs",
         "src/write/objects.rs",
+        "src/write/lz77.rs",
+        "src/write/r2004.rs",
         "tests/fixtures.rs",
         "tests/drawing.rs",
         "tests/writer.rs",

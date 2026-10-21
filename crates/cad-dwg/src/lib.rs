@@ -28,7 +28,7 @@ mod limits;
 mod lz77;
 pub mod objects;
 mod r2000;
-mod r2004;
+pub mod r2004;
 mod r2007;
 pub mod records;
 mod sections;

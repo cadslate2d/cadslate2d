@@ -17,7 +17,18 @@ const PREVIEW_END: [u8; 16] = [
 
 /// The code page of the files this crate writes: ANSI 1252, as the DXF of
 /// this release declares.
-const CODEPAGE: u16 = 30;
+pub(super) const CODEPAGE: u16 = 30;
+
+/// An empty preview (§14.2): the sentinels around a size of one and no
+/// images.
+pub(super) fn preview() -> Vec<u8> {
+    let mut out = Vec::with_capacity(37);
+    out.extend_from_slice(&PREVIEW_BEGIN);
+    out.extend_from_slice(&1u32.to_le_bytes());
+    out.push(0);
+    out.extend_from_slice(&PREVIEW_END);
+    out
+}
 
 /// What the container needs besides the objects.
 pub struct Parts {
@@ -68,14 +79,11 @@ pub fn file(parts: &Parts) -> Vec<u8> {
     template.extend_from_slice(&0u16.to_le_bytes());
     template.extend_from_slice(&parts.measurement.to_le_bytes());
     addresses[4] = place(&mut out, &template);
-    addresses[5] = place(&mut out, &aux_header(parts.handseed));
+    addresses[5] = place(&mut out, &aux_header(parts.handseed, crate::Version::R2000));
 
     // The preview, empty, at the end; the file header points at it.
     let preview_at = out.len() as u32;
-    out.extend_from_slice(&PREVIEW_BEGIN);
-    out.extend_from_slice(&1u32.to_le_bytes());
-    out.push(0);
-    out.extend_from_slice(&PREVIEW_END);
+    out.extend_from_slice(&preview());
     out[0x0d..0x11].copy_from_slice(&preview_at.to_le_bytes());
 
     // The locators, then the header's CRC and sentinel (§3.2.6).
@@ -94,8 +102,9 @@ pub fn file(parts: &Parts) -> Vec<u8> {
 
 /// The object map (§23.1): sections of at most 2032 bytes of handle and
 /// address offsets, each with its big-endian size and CRC, then the
-/// empty section that ends it.
-fn object_map(entries: &[(u64, usize)]) -> Vec<u8> {
+/// empty section that ends it. The addresses are the file's in R2000, the
+/// objects section's from R2004.
+pub(super) fn object_map(entries: &[(u64, usize)]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut section = BitWriter::new();
     let mut last_handle = 0u64;
@@ -128,7 +137,7 @@ fn object_map(entries: &[(u64, usize)]) -> Vec<u8> {
 }
 
 /// The ObjFreeSpace section (§21.1): counts and the values the ODA writes.
-fn obj_free_space(objects: usize, objects_at: usize) -> Vec<u8> {
+pub(super) fn obj_free_space(objects: usize, objects_at: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(53);
     out.extend_from_slice(&0u32.to_le_bytes());
     out.extend_from_slice(&(objects as u32).to_le_bytes());
@@ -143,17 +152,18 @@ fn obj_free_space(objects: usize, objects_at: usize) -> Vec<u8> {
 
 /// The auxiliary header (§27): the version twice, the counts of saves, the
 /// handle seed; the dates zero.
-fn aux_header(handseed: u64) -> Vec<u8> {
+pub(super) fn aux_header(handseed: u64, version: crate::Version) -> Vec<u8> {
+    let number = u16::from(version.number());
     let mut out = Vec::with_capacity(123);
     out.extend_from_slice(&[0xff, 0x77, 0x01]);
-    out.extend_from_slice(&23u16.to_le_bytes()); // AC1015
+    out.extend_from_slice(&number.to_le_bytes());
     out.extend_from_slice(&0u16.to_le_bytes()); // the maintenance version
     out.extend_from_slice(&1u32.to_le_bytes()); // saves
     out.extend_from_slice(&u32::MAX.to_le_bytes());
     out.extend_from_slice(&1u16.to_le_bytes());
     out.extend_from_slice(&0u16.to_le_bytes());
     out.extend_from_slice(&0u32.to_le_bytes());
-    for value in [23u16, 0, 23, 0, 5, 0x893, 5, 0x893, 0, 1] {
+    for value in [number, 0, number, 0, 5, 0x893, 5, 0x893, 0, 1] {
         out.extend_from_slice(&value.to_le_bytes());
     }
     for _ in 0..5 {
@@ -191,6 +201,7 @@ mod tests {
     #[test]
     fn the_fixed_sections_have_the_specified_sizes() {
         assert_eq!(obj_free_space(3, 0x100).len(), 53);
-        assert_eq!(aux_header(0x35).len(), 123);
+        assert_eq!(aux_header(0x35, crate::Version::R2000).len(), 123);
+        assert_eq!(preview().len(), 37);
     }
 }
