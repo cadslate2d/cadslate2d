@@ -2,7 +2,7 @@
 //! acadrust's DXF of it: what the independent reader made of ours.
 //!
 //! ```text
-//! cargo run -p cad-dwg --example through-acadrust -- file.dxf out.dwg out.dxf [AC1015|AC1018]
+//! cargo run -p cad-dwg --example through-acadrust -- file.dxf out.dwg out.dxf [AC1015|AC1018|AC1021]
 //! ```
 use std::io::Cursor;
 
@@ -12,6 +12,7 @@ fn main() {
     let dxf_path = std::env::args().nth(3).expect("a .dxf output path");
     let version = match std::env::args().nth(4).as_deref() {
         Some("AC1018") => cad_dwg::Version::R2004,
+        Some("AC1021") => cad_dwg::Version::R2007,
         _ => cad_dwg::Version::R2000,
     };
     let bytes = std::fs::read(&source).expect("read");

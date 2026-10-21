@@ -12,7 +12,12 @@ use crate::write::{BlockPlacement, Names, WriteError};
 /// The head every row starts with (§20.4.54 and the rest): the name, the
 /// 64 flag, no xref, not dependent.
 fn row_head(w: &mut ObjectWriter, name: &str) {
-    w.data.text(name);
+    w.text(name);
+    if w.r2007() {
+        // R2007 keeps the name and the short alone (ADR-0036 errata).
+        w.data.bs(0);
+        return;
+    }
     w.data.bit(0);
     w.data.bs(0);
     w.data.bit(0);
@@ -159,6 +164,9 @@ fn layer(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Names) -
     w.object_handles(control, 0);
     w.handles.handle(5, 0); // the xref block
     w.handles.handle(5, f.handle(390).unwrap_or(0)); // the plot style
+    if w.r2007() {
+        w.handles.handle(5, 0); // the material
+    }
     let linetype = f
         .text(6)
         .and_then(|n| names.linetypes.get(&n.trim().to_uppercase()))
@@ -174,7 +182,7 @@ fn linetype(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Names
     let mut w = ObjectWriter::new(types::LTYPE, handle, names.version);
     w.object_common(0);
     row_head(&mut w, name);
-    w.data.text(f.text(3).unwrap_or(""));
+    w.text(f.text(3).unwrap_or(""));
     w.data.bd(f.real(40).unwrap_or(0.0));
     w.data.rc(f.int(72).unwrap_or(65) as u8);
     // Each dash starts at its 49; its shape groups follow.
@@ -198,8 +206,12 @@ fn linetype(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Names
         d.bd(dash.real(50).unwrap_or(0.0).to_radians());
         d.bs(dash.int(74).unwrap_or(0) as i16);
     }
-    for _ in 0..256 {
-        w.data.rc(0);
+    // The text area: 256 bytes before R2007, none there without a dash
+    // that has text.
+    if !w.r2007() {
+        for _ in 0..256 {
+            w.data.rc(0);
+        }
     }
     w.object_handles(control, 0);
     w.handles.handle(5, 0); // the xref block
@@ -223,8 +235,8 @@ fn text_style(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Nam
     d.bd(f.real(50).unwrap_or(0.0).to_radians());
     d.rc(f.int(71).unwrap_or(0) as u8);
     d.bd(f.real(42).unwrap_or(2.5));
-    d.text(f.text(3).unwrap_or("txt"));
-    d.text(f.text(4).unwrap_or(""));
+    w.text(f.text(3).unwrap_or("txt"));
+    w.text(f.text(4).unwrap_or(""));
     w.object_handles(control, 0);
     w.handles.handle(5, 0); // the xref block
     w.finish()
@@ -316,17 +328,29 @@ fn dim_style(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Name
     let mut w = ObjectWriter::new(types::DIMSTYLE, handle, names.version);
     w.object_common(0);
     row_head(&mut w, name);
-    w.data.text(f.text(3).unwrap_or(""));
-    w.data.text(f.text(4).unwrap_or(""));
+    w.text(f.text(3).unwrap_or(""));
+    w.text(f.text(4).unwrap_or(""));
     let d = &mut w.data;
     for code in 40..=48 {
         d.bd(real(code));
     }
+    let r2007 = w.r2007();
+    if r2007 {
+        let d = &mut w.data;
+        d.bd(f.real(49).unwrap_or(1.0)); // DIMFXL
+        d.bd(f.real(50).unwrap_or(45.0).to_radians()); // DIMJOGANG
+        d.bs(f.int(69).unwrap_or(0) as i16); // DIMTFILL
+        w.cmc(0); // DIMTFILLCLR
+    }
+    let d = &mut w.data;
     for code in 71..=76 {
         d.bit(u8::from(int(code) != 0));
     }
     for code in 77..=79 {
         d.bs(int(code) as i16);
+    }
+    if r2007 {
+        d.bs(f.int(90).unwrap_or(0) as i16); // DIMARCSYM
     }
     for code in 140..=148 {
         d.bd(real(code));
@@ -352,6 +376,9 @@ fn dim_style(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Name
     }
     d.bit(u8::from(int(288) != 0));
     d.bs(int(287) as i16);
+    if r2007 {
+        d.bit(u8::from(int(290) != 0)); // DIMFXLON
+    }
     d.bs(int(371) as i16);
     d.bs(int(372) as i16);
     d.bit(0);
@@ -369,6 +396,11 @@ fn dim_style(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Name
     h.handle(5, text_style);
     for _ in 0..4 {
         h.handle(5, 0); // DIMLDRBLK, DIMBLK, DIMBLK1, DIMBLK2
+    }
+    if r2007 {
+        for _ in 0..3 {
+            h.handle(5, 0); // DIMLTYPE, DIMLTEX1, DIMLTEX2
+        }
     }
     w.finish()
 }
@@ -395,6 +427,16 @@ fn vport(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Names) -
     let mode = f.int(71).unwrap_or(0);
     d.bits(4, ((mode & 7) | if mode & 16 == 0 { 8 } else { 0 }) as u64);
     d.rc(f.int(281).unwrap_or(0) as u8);
+    let r2007 = w.r2007();
+    if r2007 {
+        let d = &mut w.data;
+        d.bit(1); // the default lights
+        d.rc(1); // one distant light
+        d.bd(0.0); // brightness
+        d.bd(0.0); // contrast
+        w.cmc(250); // the ambient colour
+    }
+    let d = &mut w.data;
     d.rd2(f.point(10).unwrap_or(Point2::ORIGIN));
     d.rd2(f.point(11).unwrap_or(Point2::new(1.0, 1.0)));
     d.bit(u8::from(mode & 8 != 0)); // UCSFOLLOW
@@ -416,9 +458,18 @@ fn vport(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Names) -
     d.bd3(f.point(112).unwrap_or(Point2::new(0.0, 1.0)), f.z(112));
     d.bd(f.real(146).unwrap_or(0.0));
     d.bs(f.int(79).unwrap_or(0) as i16);
+    if r2007 {
+        d.bs(f.int(60).unwrap_or(0) as i16); // grid flags
+        d.bs(f.int(61).unwrap_or(5) as i16); // grid major
+    }
     w.object_handles(control, 0);
     let h = &mut w.handles;
     h.handle(5, 0); // the xref block
+    if r2007 {
+        h.handle(4, 0); // the background
+        h.handle(5, 0); // the visual style
+        h.handle(3, 0); // the sun
+    }
     h.handle(5, 0); // the named UCS
     h.handle(5, 0); // the base UCS
     w.finish()
@@ -445,6 +496,16 @@ fn view(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Names) ->
     let mode = f.int(71).unwrap_or(0);
     d.bits(4, ((mode & 7) | if mode & 16 == 0 { 8 } else { 0 }) as u64);
     d.rc(f.int(281).unwrap_or(0) as u8);
+    let r2007 = w.r2007();
+    if r2007 {
+        let d = &mut w.data;
+        d.bit(1); // the default lights
+        d.rc(1); // one distant light
+        d.bd(0.0); // brightness
+        d.bd(0.0); // contrast
+        w.cmc(250); // the ambient colour
+    }
+    let d = &mut w.data;
     d.bit(u8::from(f.int(70).unwrap_or(0) & 1 != 0));
     let ucs = f.int(72).unwrap_or(0) != 0;
     d.bit(u8::from(ucs));
@@ -455,11 +516,22 @@ fn view(f: &Fields<'_>, handle: u64, name: &str, control: u64, names: &Names) ->
         d.bd(f.real(146).unwrap_or(0.0));
         d.bs(f.int(79).unwrap_or(0) as i16);
     }
+    if r2007 {
+        d.bit(0); // the camera is not plottable
+    }
     w.object_handles(control, 0);
     let h = &mut w.handles;
     h.handle(5, 0); // the xref block
+    if r2007 {
+        h.handle(4, 0); // the background
+        h.handle(5, 0); // the visual style
+        h.handle(3, 0); // the sun
+    }
     h.handle(5, 0); // the base UCS
     h.handle(5, 0); // the named UCS
+    if r2007 {
+        h.handle(4, 0); // the live section
+    }
     w.finish()
 }
 
@@ -489,10 +561,18 @@ fn block_header(
     let d = &mut w.data;
     let (base, z) = block.map_or((Point2::ORIGIN, 0.0), |b| (b.base, b.base_z));
     d.bd3(base, z);
-    d.text(""); // the xref path
+    w.text(""); // the xref path
+    let d = &mut w.data;
     d.rc(0); // no inserts listed
-    d.text(""); // the description
+    w.text(""); // the description
+    let d = &mut w.data;
     d.bl(0); // no preview
+    if w.r2007() {
+        let d = &mut w.data;
+        d.bs(0); // insert units
+        d.bit(1); // explodable
+        d.rc(0); // scaling
+    }
     w.object_handles(control, 0);
     let r2004 = w.r2004();
     let h = &mut w.handles;

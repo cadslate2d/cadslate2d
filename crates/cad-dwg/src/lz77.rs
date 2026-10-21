@@ -164,7 +164,7 @@ pub fn decompress_2004(src: &[u8], out_size: usize) -> Result<Vec<u8>, DwgError>
 }
 
 /// The R2007 literal copy permutes the bytes of each run (§5.10.1).
-fn copy_literal_2007(out: &mut Vec<u8>, src: &[u8]) {
+pub(crate) fn copy_literal_2007(out: &mut Vec<u8>, src: &[u8]) {
     fn step(out: &mut Vec<u8>, src: &[u8], n: usize, o: usize) {
         match n {
             1 => out.push(src[o]),

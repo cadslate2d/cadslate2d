@@ -40,7 +40,7 @@ pub fn object(
         "GROUP" => {
             let mut w = ObjectWriter::new(types::GROUP, handle, names.version);
             w.object_common(0);
-            w.data.text(f.text(300).unwrap_or(""));
+            w.text(f.text(300).unwrap_or(""));
             w.data.bs(f.int(70).unwrap_or(0) as i16);
             w.data.bs(f.int(71).unwrap_or(1) as i16);
             let members = f.handles(340);
@@ -100,7 +100,7 @@ fn dictionary(
     w.data.bs(f.int(281).unwrap_or(1) as i16);
     w.data.rc(f.int(280).unwrap_or(0) as u8);
     for (n, _, _) in &entries {
-        w.data.text(n);
+        w.text(n);
     }
     w.object_handles(owner, 0);
     for (_, h, code) in &entries {
@@ -120,16 +120,17 @@ fn layout(f: &Fields<'_>, type_code: u16, handle: u64, owner: u64, names: &Names
     let mut w = ObjectWriter::new(type_code, handle, names.version);
     w.object_common(0);
     let r2004 = w.r2004();
+    w.text(p.text(1).unwrap_or(""));
+    w.text(p.text(2).unwrap_or(""));
     let d = &mut w.data;
-    d.text(p.text(1).unwrap_or(""));
-    d.text(p.text(2).unwrap_or(""));
     d.bs(p.int(70).unwrap_or(0) as i16);
     for code in 40..=43 {
         d.bd(p.real(code).unwrap_or(0.0));
     }
     d.bd(p.real(44).unwrap_or(420.0));
     d.bd(p.real(45).unwrap_or(297.0));
-    d.text(p.text(4).unwrap_or(""));
+    w.text(p.text(4).unwrap_or(""));
+    let d = &mut w.data;
     d.bd2(Point2::new(
         p.real(46).unwrap_or(0.0),
         p.real(47).unwrap_or(0.0),
@@ -146,11 +147,13 @@ fn layout(f: &Fields<'_>, type_code: u16, handle: u64, owner: u64, names: &Names
         p.real(141).unwrap_or(0.0),
     ));
     if !r2004 {
-        d.text(p.text(6).unwrap_or("")); // the plot view, by name
+        w.text(p.text(6).unwrap_or("")); // the plot view, by name
     }
+    let d = &mut w.data;
     d.bd(p.real(142).unwrap_or(1.0));
     d.bd(p.real(143).unwrap_or(1.0));
-    d.text(p.text(7).unwrap_or(""));
+    w.text(p.text(7).unwrap_or(""));
+    let d = &mut w.data;
     d.bs(p.int(75).unwrap_or(16) as i16);
     d.bd(p.real(147).unwrap_or(1.0));
     d.bd2(Point2::new(
@@ -162,7 +165,8 @@ fn layout(f: &Fields<'_>, type_code: u16, handle: u64, owner: u64, names: &Names
         d.bs(p.int(77).unwrap_or(2) as i16);
         d.bs(p.int(78).unwrap_or(300) as i16);
     }
-    d.text(l.text(1).unwrap_or(""));
+    w.text(l.text(1).unwrap_or(""));
+    let d = &mut w.data;
     d.bl(l.int(71).unwrap_or(0) as i32);
     d.bs(l.int(70).unwrap_or(1) as i16);
     d.bd3(l.point(12).unwrap_or(Point2::ORIGIN), l.z(12));
@@ -185,9 +189,13 @@ fn layout(f: &Fields<'_>, type_code: u16, handle: u64, owner: u64, names: &Names
         w.data.bl(0); // no viewports listed
     }
     w.object_handles(owner, 0);
+    let r2007 = w.r2007();
     let h = &mut w.handles;
     if r2004 {
         h.handle(5, 0); // the plot view
+    }
+    if r2007 {
+        h.handle(5, 0); // the visual style
     }
     h.handle(4, l.handle(330).unwrap_or(0)); // the block record
     h.handle(4, l.handle(331).unwrap_or(0)); // the active viewport
@@ -291,6 +299,14 @@ fn xrecord(
         data.rs(*code as u16);
         let v = value.trim();
         match kind {
+            Kind::Text if names.version >= crate::Version::R2007 => {
+                // A count of UTF-16 units, then the units (§20.4.104).
+                let units: Vec<u16> = value.encode_utf16().collect();
+                data.rs(units.len().min(u16::MAX as usize) as u16);
+                for unit in units.iter().take(u16::MAX as usize) {
+                    data.rs(*unit);
+                }
+            }
             Kind::Text => {
                 let bytes = value.as_bytes();
                 data.rs(bytes.len().min(u16::MAX as usize) as u16);
@@ -381,9 +397,11 @@ fn mleader_style(
     d.bd(f.real(42).unwrap_or(0.0));
     d.bit(u8::from(f.int(291).unwrap_or(1) != 0));
     d.bd(f.real(43).unwrap_or(0.0));
-    d.text(f.text(3).unwrap_or(""));
+    w.text(f.text(3).unwrap_or(""));
+    let d = &mut w.data;
     d.bd(f.real(44).unwrap_or(0.0));
-    d.text(f.text(300).unwrap_or(""));
+    w.text(f.text(300).unwrap_or(""));
+    let d = &mut w.data;
     d.bs(f.int(174).unwrap_or(1) as i16);
     d.bs(f.int(178).unwrap_or(1) as i16);
     d.bs(f.int(175).unwrap_or(1) as i16);

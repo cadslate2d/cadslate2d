@@ -22,10 +22,14 @@ pub(super) const CODEPAGE: u16 = 30;
 /// An empty preview (§14.2): the sentinels around a size of one and no
 /// images.
 pub(super) fn preview() -> Vec<u8> {
-    let mut out = Vec::with_capacity(37);
+    let mut out = Vec::with_capacity(53);
     out.extend_from_slice(&PREVIEW_BEGIN);
-    out.extend_from_slice(&1u32.to_le_bytes());
+    // No images: the count, then sixteen bytes of padding counted in the
+    // size, so a reader that takes the sentinels off and reads the size
+    // where a real image's would be (LibreDWG, R2007) still finds it.
+    out.extend_from_slice(&17u32.to_le_bytes());
     out.push(0);
+    out.extend_from_slice(&[0u8; 16]);
     out.extend_from_slice(&PREVIEW_END);
     out
 }
@@ -202,6 +206,6 @@ mod tests {
     fn the_fixed_sections_have_the_specified_sizes() {
         assert_eq!(obj_free_space(3, 0x100).len(), 53);
         assert_eq!(aux_header(0x35, crate::Version::R2000).len(), 123);
-        assert_eq!(preview().len(), 37);
+        assert_eq!(preview().len(), 53);
     }
 }

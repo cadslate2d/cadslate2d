@@ -15,6 +15,8 @@ pub struct ObjectWriter {
     pub handle: u64,
     pub version: Version,
     pub data: BitWriter,
+    /// R2007: the texts, in a stream of their own after the data (§20.1).
+    pub strings: BitWriter,
     pub handles: BitWriter,
 }
 
@@ -68,6 +70,7 @@ impl ObjectWriter {
             handle,
             version,
             data,
+            strings: BitWriter::new(),
             handles: BitWriter::new(),
         }
     }
@@ -76,6 +79,21 @@ impl ObjectWriter {
     /// dictionary's absence flagged, owned objects listed.
     pub fn r2004(&self) -> bool {
         self.version >= Version::R2004
+    }
+
+    /// Whether the file is R2007: texts in the string stream, as Unicode.
+    pub fn r2007(&self) -> bool {
+        self.version >= Version::R2007
+    }
+
+    /// A text field: into the string stream as UTF-16 in R2007, else
+    /// into the data as bytes (§20.1).
+    pub fn text(&mut self, value: &str) {
+        if self.r2007() {
+            self.strings.text_unicode(value);
+        } else {
+            self.data.text(value);
+        }
     }
 
     /// The common data of an entity (§20.4.1), after the extended data.
@@ -94,6 +112,10 @@ impl ObjectWriter {
         d.bd(common.ltype_scale);
         d.bb(common.ltype_flags);
         d.bb(0); // plot style by layer
+        if self.version >= Version::R2007 {
+            d.bb(0); // material by layer
+            d.rc(0); // shadows as the layer's
+        }
         d.bs(i16::from(common.invisible));
         d.rc(common.lineweight);
     }
@@ -155,14 +177,17 @@ impl ObjectWriter {
         self.data.rc(0);
     }
 
-    /// The object's bytes: the type, the bit size of the data, the data,
-    /// the handles, padded to a byte; the size in front, the CRC after.
+    /// The object's bytes: the type, the bit size of the data, the data —
+    /// in R2007 with the string stream, its size, and the bit that says it
+    /// is there (§20.1) — the handles, padded to a byte; the size in
+    /// front, the CRC after.
     pub fn finish(self) -> ObjectBytes {
+        let body = with_strings(self.data, &self.strings, self.version);
         let mut head = BitWriter::new();
         head.bs(self.type_code as i16);
-        let bitsize = head.position() + 32 + self.data.position();
+        let bitsize = head.position() + 32 + body.position();
         head.rl(bitsize as u32);
-        head.append(&self.data);
+        head.append(&body);
         head.append(&self.handles);
         head.align();
         let body = head.into_bytes();
@@ -177,6 +202,55 @@ impl ObjectWriter {
             bytes,
         }
     }
+}
+
+/// The data stream closed for its version: in R2007 the string stream
+/// follows the data, then its size in bits — one short, or two with the
+/// high bit of the second set when it is 0x8000 or more — and the bit
+/// that says it is there; a zero bit when there are no strings (§20.1).
+/// The header and the classes sections frame their streams the same
+/// way (§5.8, §9).
+pub fn with_strings(data: BitWriter, strings: &BitWriter, version: Version) -> BitWriter {
+    let mut body = data;
+    if version >= Version::R2007 {
+        let size = strings.position();
+        if size == 0 {
+            body.bit(0);
+        } else {
+            body.append(strings);
+            if size >= 0x8000 {
+                body.rs((size >> 15) as u16);
+                body.rs((size & 0x7fff) as u16 | 0x8000);
+            } else {
+                body.rs(size as u16);
+            }
+            body.bit(1);
+        }
+    }
+    body
+}
+
+/// A section of streams (§5.8, §9): in R2007 the bit size of what comes
+/// before the handles — counted from the size itself — then the data
+/// with its strings, then the handles; before R2007 the data alone.
+pub fn section_streams(
+    data: BitWriter,
+    strings: &BitWriter,
+    handles: &BitWriter,
+    version: Version,
+) -> Vec<u8> {
+    if version < Version::R2007 {
+        let mut data = data;
+        data.align();
+        return data.into_bytes();
+    }
+    let body = with_strings(data, strings, version);
+    let mut head = BitWriter::new();
+    head.rl((32 + body.position()) as u32);
+    head.append(&body);
+    head.append(handles);
+    head.align();
+    head.into_bytes()
 }
 
 #[cfg(test)]

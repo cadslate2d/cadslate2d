@@ -28,6 +28,7 @@ use crate::write::objects::ObjectBytes;
 
 pub mod bits;
 mod classes;
+mod crc64;
 mod entities;
 mod fields;
 mod header;
@@ -35,7 +36,9 @@ mod lz77;
 mod objects;
 mod r2000;
 mod r2004;
+mod r2007;
 mod records;
+mod rs;
 mod tables;
 
 /// A record the writer cannot encode: its kind and why. The records of
@@ -119,8 +122,8 @@ pub struct BlockPlacement {
     pub members: Vec<u64>,
 }
 
-/// Writes a drawing as a DWG file of `version`: AC1015 (AutoCAD 2000) or
-/// AC1018 (2004); AC1021 is not written yet (#317).
+/// Writes a drawing as a DWG file of `version`: AC1015 (AutoCAD 2000),
+/// AC1018 (2004), or AC1021 (2007).
 pub fn export(drawing: &Drawing, version: Version) -> Result<Vec<u8>, WriteError> {
     write_records(&cad_dxf::export_records(drawing), version)
 }
@@ -128,12 +131,6 @@ pub fn export(drawing: &Drawing, version: Version) -> Result<Vec<u8>, WriteError
 /// Writes records — the DXF exporter's, or another front end's — as a
 /// file of `version`.
 pub fn write_records(records: &[Record], version: Version) -> Result<Vec<u8>, WriteError> {
-    if version == Version::R2007 {
-        return Err(WriteError::new(
-            version.id(),
-            "a version this crate does not write yet",
-        ));
-    }
     let plan = Plan::new(records, version)?;
     let mut objects: Vec<ObjectBytes> = Vec::new();
     let names = &plan.names;
@@ -188,13 +185,20 @@ pub fn write_records(records: &[Record], version: Version) -> Result<Vec<u8>, Wr
             handseed: plan.handseed,
             measurement: plan.measurement(),
         })),
-        _ => Ok(r2004::file(&r2004::Parts {
-            header,
-            classes,
-            objects,
-            handseed: plan.handseed,
-            measurement: plan.measurement(),
-        })),
+        Version::R2004 | Version::R2007 => {
+            let parts = r2004::Parts {
+                header,
+                classes,
+                objects,
+                handseed: plan.handseed,
+                measurement: plan.measurement(),
+            };
+            Ok(if version == Version::R2004 {
+                r2004::file(&parts)
+            } else {
+                r2007::file(&parts)
+            })
+        }
     }
 }
 

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use crate::crc::crc16;
 use crate::header::{Kind, LAYOUT, SENTINEL_BEGIN};
 use crate::write::bits::BitWriter;
+use crate::write::objects::section_streams;
 use crate::{Version, header::Value};
 
 const SENTINEL_END: [u8; 16] = [
@@ -97,12 +98,40 @@ const DEFAULTS: &[(&str, Value)] = &[
     ("DIMASSOC", Value::Int(2)),
     ("OBSCUREDCOLOR", Value::Int(257)),
     ("INTERSECTIONCOLOR", Value::Int(257)),
+    // R2007: what AutoCAD 2007 writes into an empty drawing.
+    ("DIMFXL", Value::Real(1.0)),
+    ("DIMJOGANG", Value::Real(std::f64::consts::FRAC_PI_4)),
+    ("STEPSPERSEC", Value::Real(2.0)),
+    ("STEPSIZE", Value::Real(6.0)),
+    ("3DDWFPREC", Value::Real(2.0)),
+    ("LENSLENGTH", Value::Real(50.0)),
+    ("SHOWHIST", Value::Int(1)),
+    ("PSOLWIDTH", Value::Real(0.25)),
+    ("PSOLHEIGHT", Value::Real(4.0)),
+    ("LATITUDE", Value::Real(37.795)),
+    ("LONGITUDE", Value::Real(-122.394)),
+    ("TIMEZONE", Value::Int(-8000)),
+    ("DWFFRAME", Value::Int(2)),
 ];
+
+/// The three streams a header is written into: before R2007 the texts and
+/// the handles go into the data.
+struct Streams {
+    data: BitWriter,
+    strings: BitWriter,
+    handles: BitWriter,
+    version: Version,
+}
 
 /// The header section: the sentinel, the size, the variables, the CRC,
 /// the ending sentinel.
 pub fn section(values: &HashMap<&'static str, Value>, version: Version) -> Vec<u8> {
-    let mut data = BitWriter::new();
+    let mut streams = Streams {
+        data: BitWriter::new(),
+        strings: BitWriter::new(),
+        handles: BitWriter::new(),
+        version,
+    };
     for &(name, kind, presence) in LAYOUT {
         if !presence.holds(version) {
             continue;
@@ -110,8 +139,9 @@ pub fn section(values: &HashMap<&'static str, Value>, version: Version) -> Vec<u
         let value = values
             .get(name)
             .or_else(|| DEFAULTS.iter().find(|(n, _)| *n == name).map(|(_, v)| v));
-        write_value(&mut data, kind, value, version);
+        write_value(&mut streams, kind, value);
     }
+    let data = &mut streams.data;
     // Four shorts "not required even for type 5" close the header (§9,
     // R14+), −1 as AutoCAD writes them; R2004 adds two longs and a bit
     // that acadrust reads and LibreDWG passes over.
@@ -123,8 +153,7 @@ pub fn section(values: &HashMap<&'static str, Value>, version: Version) -> Vec<u
         data.bl(0);
         data.bit(0);
     }
-    data.align();
-    let body = data.into_bytes();
+    let body = section_streams(streams.data, &streams.strings, &streams.handles, version);
     let mut out = Vec::with_capacity(body.len() + 38);
     out.extend_from_slice(&SENTINEL_BEGIN);
     let start = out.len();
@@ -137,7 +166,10 @@ pub fn section(values: &HashMap<&'static str, Value>, version: Version) -> Vec<u
 }
 
 /// One variable by its kind, its value or a zero of that kind.
-fn write_value(d: &mut BitWriter, kind: Kind, value: Option<&Value>, version: Version) {
+fn write_value(streams: &mut Streams, kind: Kind, value: Option<&Value>) {
+    let version = streams.version;
+    let r2007 = version >= Version::R2007;
+    let d = &mut streams.data;
     let int = || match value {
         Some(Value::Int(i)) => *i,
         Some(Value::Bool(b)) => i64::from(*b),
@@ -170,16 +202,27 @@ fn write_value(d: &mut BitWriter, kind: Kind, value: Option<&Value>, version: Ve
             d.rd(p[0]);
             d.rd(p[1]);
         }
-        Kind::Tv => d.text(match value {
-            Some(Value::Text(t)) => t,
-            _ => "",
-        }),
+        Kind::Tv => {
+            let text = match value {
+                Some(Value::Text(t)) => t,
+                _ => "",
+            };
+            if r2007 {
+                streams.strings.text_unicode(text);
+            } else {
+                d.text(text);
+            }
+        }
         Kind::H | Kind::HData => {
             let (code, handle) = match value {
                 Some(Value::Handle(h)) => (h.code, h.value),
                 _ => (if kind == Kind::H { 5 } else { 0 }, 0),
             };
-            d.handle(code, handle);
+            if r2007 && kind == Kind::H {
+                streams.handles.handle(code, handle);
+            } else {
+                d.handle(code, handle);
+            }
         }
         // CPSNID is stored only when CEPSNTYPE is 3, which is never
         // written here.

@@ -39,7 +39,7 @@ done
 if cargo build -q --release -p cad-dwg --example write 2>/dev/null; then
   for dxf in test-data/dxf/valid/*.dxf; do
     name=$(basename "$dxf" .dxf)
-    for version in AC1015 AC1018; do
+    for version in AC1015 AC1018 AC1021; do
       target/release/examples/write "$dxf" "fuzz/corpus/dwg_read/ours-$name.$version.dwg" "$version" >/dev/null 2>&1 || true
     done
   done

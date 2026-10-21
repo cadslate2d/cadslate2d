@@ -27,7 +27,7 @@ fn slice<'a>(d: &'a [u8], at: usize, len: usize, what: &'static str) -> Result<&
 /// Undoes the interleaving of `blocks` codewords of 255 bytes and keeps
 /// the `k` data bytes of each (§5.13). The caller has checked that the
 /// source holds the blocks, so the output is at most its size.
-fn rs_deinterleave(src: &[u8], blocks: usize, k: usize) -> Vec<u8> {
+pub(crate) fn rs_deinterleave(src: &[u8], blocks: usize, k: usize) -> Vec<u8> {
     debug_assert!(blocks * k <= src.len() + 255);
     let mut out = Vec::with_capacity((blocks * k).min(src.len() + 255));
     for b in 0..blocks {
@@ -73,21 +73,25 @@ fn system_page(
     }
 }
 
+/// A page of the page map (§5.3): its id, where it is, how long.
 #[derive(Clone, Copy, Debug)]
-struct Page {
-    id: i64,
-    address: usize,
-    size: usize,
+pub struct Page {
+    pub id: i64,
+    pub address: usize,
+    pub size: usize,
 }
 
+/// A data section of the section map (§5.3).
 #[derive(Clone, Debug)]
-struct Described {
-    name: String,
-    size: usize,
-    pages: Vec<(usize, i64, usize, usize)>, // offset, id, uncompressed, compressed
+pub struct Described {
+    pub name: String,
+    pub size: usize,
+    /// Offset, id, uncompressed size, compressed size.
+    pub pages: Vec<(usize, i64, usize, usize)>,
 }
 
-fn pages_and_sections(
+/// The page map and the section map of a file (§5.2, §5.3).
+pub fn pages_and_sections(
     d: &[u8],
     limits: &ImportLimits,
 ) -> Result<(Vec<Page>, Vec<Described>), DwgError> {

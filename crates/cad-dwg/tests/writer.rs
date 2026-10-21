@@ -12,7 +12,7 @@ use cad_dwg::Version;
 mod common;
 
 /// The versions the writer writes.
-const VERSIONS: [Version; 2] = [Version::R2000, Version::R2004];
+const VERSIONS: [Version; 3] = [Version::R2000, Version::R2004, Version::R2007];
 
 /// Every source in every version, named by both.
 fn cases(sources: &[(String, Drawing)]) -> Vec<(Version, String, &Drawing)> {

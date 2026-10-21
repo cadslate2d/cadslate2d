@@ -2,13 +2,14 @@
 //! at the result by hand:
 //!
 //! ```text
-//! cargo run -p cad-dwg --example write -- file.dxf out.dwg [AC1015|AC1018]
+//! cargo run -p cad-dwg --example write -- file.dxf out.dwg [AC1015|AC1018|AC1021]
 //! ```
 
 fn version_arg(at: usize) -> cad_dwg::Version {
     match std::env::args().nth(at).as_deref() {
         None | Some("AC1015") => cad_dwg::Version::R2000,
         Some("AC1018") => cad_dwg::Version::R2004,
+        Some("AC1021") => cad_dwg::Version::R2007,
         Some(other) => panic!("{other}: not a version this crate writes"),
     }
 }

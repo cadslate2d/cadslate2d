@@ -4,6 +4,7 @@
 //! repeated at the end. The sections are the R2000 ones in a different
 //! wrapping, plus the ones every R2004 reader expects to find.
 
+use crate::Version;
 use crate::crc::{checksum_2004, crc32};
 use crate::r2004::magic_sequence;
 use crate::write::lz77::compress_2004;
@@ -46,8 +47,9 @@ fn aligned(len: usize) -> usize {
     len.div_ceil(0x20) * 0x20
 }
 
-/// Assembles the file.
-pub fn file(parts: &Parts) -> Vec<u8> {
+/// The data sections of an R2004 or R2007 file, in the order of the
+/// stream (§4.5, §5.5): the name and the bytes of each.
+pub(super) fn section_data(parts: &Parts, version: Version) -> Vec<(&'static str, Vec<u8>)> {
     // The objects, then the map of their offsets within the section.
     let mut objects = Vec::new();
     let mut entries: Vec<(u64, usize)> = Vec::with_capacity(parts.objects.len());
@@ -59,82 +61,43 @@ pub fn file(parts: &Parts) -> Vec<u8> {
     let mut template = Vec::new();
     template.extend_from_slice(&0u16.to_le_bytes());
     template.extend_from_slice(&parts.measurement.to_le_bytes());
+    vec![
+        ("AcDb:SummaryInfo", summary_info(version)),
+        ("AcDb:Preview", preview()),
+        ("AcDb:AppInfo", app_info()),
+        ("AcDb:FileDepList", vec![0; 8]),
+        ("AcDb:RevHistory", rev_history()),
+        ("AcDb:AcDbObjects", objects),
+        ("AcDb:ObjFreeSpace", obj_free_space(parts.objects.len(), 0)),
+        ("AcDb:Template", template),
+        ("AcDb:Handles", handles),
+        ("AcDb:Classes", parts.classes.clone()),
+        ("AcDb:AuxHeader", aux_header(parts.handseed, version)),
+        ("AcDb:Header", parts.header.clone()),
+    ]
+}
 
-    // The sections in the order of the stream (§4.5).
-    let sections: Vec<DataSection> = vec![
-        DataSection {
-            name: "AcDb:SummaryInfo",
-            data: summary_info(),
-            page_size: 0x100,
-            compressed: false,
-        },
-        DataSection {
-            name: "AcDb:Preview",
-            data: preview(),
-            page_size: 0x400,
-            compressed: false,
-        },
-        DataSection {
-            name: "AcDb:AppInfo",
-            data: app_info(),
-            page_size: 0x80,
-            compressed: false,
-        },
-        DataSection {
-            name: "AcDb:FileDepList",
-            data: vec![0; 8],
-            page_size: 0x80,
-            compressed: false,
-        },
-        DataSection {
-            name: "AcDb:RevHistory",
-            data: rev_history(),
-            page_size: PAGE_SIZE,
-            compressed: true,
-        },
-        DataSection {
-            name: "AcDb:AcDbObjects",
-            data: objects,
-            page_size: PAGE_SIZE,
-            compressed: true,
-        },
-        DataSection {
-            name: "AcDb:ObjFreeSpace",
-            data: obj_free_space(parts.objects.len(), 0),
-            page_size: PAGE_SIZE,
-            compressed: true,
-        },
-        DataSection {
-            name: "AcDb:Template",
-            data: template,
-            page_size: PAGE_SIZE,
-            compressed: true,
-        },
-        DataSection {
-            name: "AcDb:Handles",
-            data: handles,
-            page_size: PAGE_SIZE,
-            compressed: true,
-        },
-        DataSection {
-            name: "AcDb:Classes",
-            data: parts.classes.clone(),
-            page_size: PAGE_SIZE,
-            compressed: true,
-        },
-        DataSection {
-            name: "AcDb:AuxHeader",
-            data: aux_header(parts.handseed, crate::Version::R2004),
-            page_size: PAGE_SIZE,
-            compressed: true,
-        },
-        DataSection {
-            name: "AcDb:Header",
-            data: parts.header.clone(),
-            page_size: PAGE_SIZE,
-            compressed: true,
-        },
-    ];
+/// Assembles the file.
+pub fn file(parts: &Parts) -> Vec<u8> {
+    // The sections in the order of the stream (§4.5): the small fixed ones
+    // in small uncompressed pages, the rest compressed.
+    let sections: Vec<DataSection> = section_data(parts, Version::R2004)
+        .into_iter()
+        .map(|(name, data)| {
+            let (page_size, compressed) = match name {
+                "AcDb:SummaryInfo" => (0x100, false),
+                "AcDb:Preview" => (0x400, false),
+                "AcDb:AppInfo" | "AcDb:FileDepList" => (0x80, false),
+                _ => (PAGE_SIZE, true),
+            };
+            DataSection {
+                name,
+                data,
+                page_size,
+                compressed,
+            }
+        })
+        .collect();
 
     // The file header's 0x100 bytes come first; every page after it is
     // aligned to 0x20 and numbered from one in the order written.
@@ -329,7 +292,7 @@ fn system_page(out: &mut Vec<u8>, kind: u32, data: &[u8]) -> usize {
 
 /// A text of the summary and app info sections: a short count of UTF-16
 /// units, the terminator counted, then the units.
-fn text16(out: &mut Vec<u8>, text: &str) {
+pub(super) fn text16(out: &mut Vec<u8>, text: &str) {
     let units: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     out.extend_from_slice(&(units.len() as u16).to_le_bytes());
     for unit in units {
@@ -337,13 +300,17 @@ fn text16(out: &mut Vec<u8>, text: &str) {
     }
 }
 
-/// AcDb:SummaryInfo: eight empty properties as short-counted single-byte
-/// texts, three zero dates, no custom properties, two zero longs.
-fn summary_info() -> Vec<u8> {
-    let mut out = Vec::with_capacity(58);
+/// AcDb:SummaryInfo: eight empty properties as short-counted texts — a
+/// single byte each before R2007, a UTF-16 unit from it — three zero
+/// dates, no custom properties, two zero longs.
+pub(super) fn summary_info(version: Version) -> Vec<u8> {
+    let mut out = Vec::with_capacity(66);
     for _ in 0..8 {
         out.extend_from_slice(&1u16.to_le_bytes());
         out.push(0);
+        if version >= Version::R2007 {
+            out.push(0);
+        }
     }
     out.extend_from_slice(&[0u8; 24]);
     out.extend_from_slice(&0u16.to_le_bytes());
@@ -352,7 +319,7 @@ fn summary_info() -> Vec<u8> {
 }
 
 /// AcDb:AppInfo: the writer named, in the form AutoCAD 2004 writes it.
-fn app_info() -> Vec<u8> {
+pub(super) fn app_info() -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(&2u32.to_le_bytes());
     text16(&mut out, "AppInfoDataList");
@@ -373,7 +340,7 @@ fn app_info() -> Vec<u8> {
 }
 
 /// AcDb:RevHistory: version zero, one history entry of zero.
-fn rev_history() -> Vec<u8> {
+pub(super) fn rev_history() -> Vec<u8> {
     let mut out = Vec::with_capacity(16);
     for value in [0u32, 0, 1, 0] {
         out.extend_from_slice(&value.to_le_bytes());
@@ -387,7 +354,8 @@ mod tests {
 
     #[test]
     fn the_fixed_sections_have_the_sizes_the_specifications_give() {
-        assert_eq!(summary_info().len(), 58);
+        assert_eq!(summary_info(Version::R2004).len(), 58);
+        assert_eq!(summary_info(Version::R2007).len(), 66);
         assert_eq!(rev_history().len(), 16);
         assert!(app_info().starts_with(&[2, 0, 0, 0, 16, 0, b'A', 0, b'p', 0]));
     }

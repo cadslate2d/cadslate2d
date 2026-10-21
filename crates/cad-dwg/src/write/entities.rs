@@ -139,11 +139,14 @@ pub fn entity(
         "TEXT" | "ATTRIB" | "ATTDEF" => {
             text(&mut w, &f);
             if kind != "TEXT" {
-                w.data.text(f.text(2).unwrap_or(""));
+                w.text(f.text(2).unwrap_or(""));
                 w.data.bs(0); // field length
                 w.data.rc(f.int(70).unwrap_or(0) as u8);
+                if w.r2007() {
+                    w.data.bit(0); // the position is not locked
+                }
                 if kind == "ATTDEF" {
-                    w.data.text(f.text(3).unwrap_or(""));
+                    w.text(f.text(3).unwrap_or(""));
                 }
             }
             w.handles.handle(5, text_style(&f, names));
@@ -154,7 +157,7 @@ pub fn entity(
         }
         "INSERT" => insert(&mut w, &f, place, names),
         "SEQEND" | "ENDBLK" => {}
-        "BLOCK" => w.data.text(f.text(2).unwrap_or("")),
+        "BLOCK" => w.text(f.text(2).unwrap_or("")),
         "SPLINE" => spline(&mut w, &f),
         "HATCH" => hatch(&mut w, &f)?,
         "WIPEOUT" => wipeout(&mut w, &f),
@@ -271,7 +274,8 @@ fn text(w: &mut ObjectWriter, f: &Fields<'_>) {
     if flags & 0x10 == 0 {
         d.rd(width);
     }
-    d.text(f.text(1).unwrap_or(""));
+    w.text(f.text(1).unwrap_or(""));
+    let d = &mut w.data;
     if flags & 0x20 == 0 {
         d.bs(generation);
     }
@@ -298,6 +302,10 @@ fn mtext(w: &mut ObjectWriter, f: &Fields<'_>) {
     };
     d.bd3(direction.0, direction.1);
     d.bd(f.real(41).unwrap_or(0.0)); // the rectangle's width
+    if w.r2007() {
+        w.data.bd(0.0); // the rectangle's height
+    }
+    let d = &mut w.data;
     d.bd(f.real(40).unwrap_or(1.0)); // the height
     d.bs(f.int(71).unwrap_or(1) as i16);
     d.bs(f.int(72).unwrap_or(1) as i16);
@@ -308,7 +316,8 @@ fn mtext(w: &mut ObjectWriter, f: &Fields<'_>) {
         words.push_str(piece);
     }
     words.push_str(f.text(1).unwrap_or(""));
-    d.text(&words);
+    w.text(&words);
+    let d = &mut w.data;
     d.bs(f.int(73).unwrap_or(1) as i16);
     d.bd(f.real(44).unwrap_or(1.0));
     d.bit(0);
@@ -554,13 +563,14 @@ fn hatch(w: &mut ObjectWriter, f: &Fields<'_>) -> Result<(), WriteError> {
         d.bl(0);
         d.bd(0.0);
         d.bl(0);
-        d.text("");
+        w.text("");
     }
     let d = &mut w.data;
     d.bd(f.z(10));
     let (xy, z) = extrusion_of(f);
     d.bd3(xy, z);
-    d.text(f.text(2).unwrap_or("SOLID"));
+    w.text(f.text(2).unwrap_or("SOLID"));
+    let d = &mut w.data;
     let solid = f.int(70).unwrap_or(1) != 0;
     d.bit(u8::from(solid));
     d.bit(u8::from(f.int(71).unwrap_or(0) != 0));
@@ -766,7 +776,8 @@ fn dimension(
     d.bd(elevation);
     // Bit 0 set when the text was placed by the style, not by hand (128).
     d.rc(u8::from(flags70 & 128 == 0));
-    d.text(f.text(1).unwrap_or(""));
+    w.text(f.text(1).unwrap_or(""));
+    let d = &mut w.data;
     d.bd(f.real(53).unwrap_or(0.0).to_radians());
     d.bd(f.real(51).unwrap_or(0.0).to_radians());
     d.bd3(Point2::new(1.0, 1.0), 1.0); // the block's scale
@@ -775,6 +786,13 @@ fn dimension(
     d.bs(f.int(72).unwrap_or(1) as i16);
     d.bd(f.real(41).unwrap_or(1.0));
     d.bd(f.real(42).unwrap_or(0.0));
+    if w.r2007() {
+        let d = &mut w.data;
+        d.bit(0);
+        d.bit(0); // the first arrowhead is not flipped
+        d.bit(0); // nor the second
+    }
+    let d = &mut w.data;
     d.rd2(f.point(12).unwrap_or(Point2::ORIGIN));
     match type_code {
         types::DIMENSION_ORDINATE => {
@@ -897,13 +915,18 @@ fn viewport(w: &mut ObjectWriter, f: &Fields<'_>) {
     d.rd2(f.point(14).unwrap_or(Point2::new(0.5, 0.5)));
     d.rd2(f.point(15).unwrap_or(Point2::new(0.5, 0.5)));
     d.bs(f.int(72).unwrap_or(1000) as i16);
+    if w.r2007() {
+        w.data.bs(f.int(61).unwrap_or(5) as i16); // grid major
+    }
+    let d = &mut w.data;
     d.bl(0); // frozen layers
     let mut status = f.int(90).unwrap_or(0) as i32;
     if f.int(68).unwrap_or(1) == 0 {
         status |= 0x20000;
     }
     d.bl(status);
-    d.text(f.text(1).unwrap_or(""));
+    w.text(f.text(1).unwrap_or(""));
+    let d = &mut w.data;
     d.rc(f.int(281).unwrap_or(0) as u8);
     d.bit(u8::from(f.int(74).unwrap_or(0) != 0));
     d.bit(u8::from(f.int(71).unwrap_or(1) != 0));
@@ -913,8 +936,17 @@ fn viewport(w: &mut ObjectWriter, f: &Fields<'_>) {
     d.bd(f.real(146).unwrap_or(0.0));
     d.bs(f.int(79).unwrap_or(0) as i16);
     let r2004 = w.r2004();
+    let r2007 = w.r2007();
     if r2004 {
         w.data.bs(f.int(170).unwrap_or(0) as i16); // shade plot
+    }
+    if r2007 {
+        let d = &mut w.data;
+        d.bit(1); // the default lights
+        d.rc(1); // one distant light
+        d.bd(0.0); // brightness
+        d.bd(0.0); // contrast
+        w.cmc(250); // the ambient colour
     }
     let h = &mut w.handles;
     h.handle(5, 0); // the clip boundary
@@ -923,6 +955,12 @@ fn viewport(w: &mut ObjectWriter, f: &Fields<'_>) {
     }
     h.handle(5, 0); // the named UCS
     h.handle(5, 0); // the base UCS
+    if r2007 {
+        h.handle(4, 0); // the background
+        h.handle(5, 0); // the visual style
+        h.handle(4, 0); // the shade plot
+        h.handle(3, 0); // the sun
+    }
 }
 
 /// A MULTILEADER (§20.4.48, §20.4.86, LibreDWG's `dwg2.spec`): the
@@ -1035,7 +1073,8 @@ fn mleader(w: &mut ObjectWriter, f: &Fields<'_>, names: &Names) -> Result<(), Wr
     let has_text = c.int(290).unwrap_or(0) != 0;
     d.bit(u8::from(has_text));
     if has_text {
-        d.text(c.text(304).unwrap_or(""));
+        w.text(c.text(304).unwrap_or(""));
+        let d = &mut w.data;
         d.bd3(
             c.point(11).unwrap_or(Point2::ORIGIN),
             c.real(31).unwrap_or(1.0),
@@ -1156,8 +1195,8 @@ fn mleader(w: &mut ObjectWriter, f: &Fields<'_>, names: &Names) -> Result<(), Wr
     w.data.bl(labels.len() as i32);
     for (i, attdef) in labels.iter().enumerate() {
         w.handles.handle(5, *attdef);
+        w.text(label_texts.get(i).copied().unwrap_or(""));
         let d = &mut w.data;
-        d.text(label_texts.get(i).copied().unwrap_or(""));
         d.bs(label_indices
             .get(i)
             .and_then(|v| v.trim().parse().ok())

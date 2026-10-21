@@ -29,7 +29,7 @@ mod lz77;
 pub mod objects;
 mod r2000;
 pub mod r2004;
-mod r2007;
+pub mod r2007;
 pub mod records;
 mod sections;
 pub mod tables;

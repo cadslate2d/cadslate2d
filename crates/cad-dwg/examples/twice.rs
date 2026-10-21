@@ -4,6 +4,7 @@ fn main() {
     let source = std::env::args().nth(1).expect("a .dxf path");
     let version = match std::env::args().nth(2).as_deref() {
         Some("AC1018") => cad_dwg::Version::R2004,
+        Some("AC1021") => cad_dwg::Version::R2007,
         _ => cad_dwg::Version::R2000,
     };
     let bytes = std::fs::read(&source).expect("read");

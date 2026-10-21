@@ -5,6 +5,7 @@ use crate::Version;
 use crate::classes::SENTINEL;
 use crate::crc::crc16;
 use crate::write::bits::BitWriter;
+use crate::write::objects::section_streams;
 
 const SENTINEL_END: [u8; 16] = [
     0x72, 0x5E, 0x3B, 0x47, 0x3B, 0x56, 0x07, 0x3A, 0x3F, 0x23, 0x0B, 0xA0, 0x18, 0x30, 0x49, 0x75,
@@ -24,10 +25,13 @@ pub struct ClassDef {
 /// The section: the sentinel, the size, each class, the CRC, the ending
 /// sentinel. From R2004 the highest class number leads, and each class
 /// carries how many objects it has and the version that wrote it
-/// (§10.2).
+/// (§10.2); in R2007 the names go into a string stream after the data,
+/// framed as an object's (§5.8).
 pub fn section(classes: &[ClassDef], instances: &[u32], version: Version) -> Vec<u8> {
     let mut data = BitWriter::new();
+    let mut strings = BitWriter::new();
     let r2004 = version >= Version::R2004;
+    let r2007 = version >= Version::R2007;
     if r2004 {
         data.bs((499 + classes.len()) as i16);
         data.rc(0);
@@ -37,9 +41,13 @@ pub fn section(classes: &[ClassDef], instances: &[u32], version: Version) -> Vec
     for (i, class) in classes.iter().enumerate() {
         data.bs((500 + i) as i16);
         data.bs(class.proxy_flags as i16);
-        data.text(&class.app_name);
-        data.text(&class.cpp_name);
-        data.text(&class.dxf_name);
+        for text in [&class.app_name, &class.cpp_name, &class.dxf_name] {
+            if r2007 {
+                strings.text_unicode(text);
+            } else {
+                data.text(text);
+            }
+        }
         data.bit(u8::from(class.was_zombie));
         data.bs(if class.is_entity { 0x1f2 } else { 0x1f3 });
         if r2004 {
@@ -50,8 +58,7 @@ pub fn section(classes: &[ClassDef], instances: &[u32], version: Version) -> Vec
             data.bl(0);
         }
     }
-    data.align();
-    let body = data.into_bytes();
+    let body = section_streams(data, &strings, &BitWriter::new(), version);
     let mut out = Vec::with_capacity(body.len() + 38);
     out.extend_from_slice(&SENTINEL);
     let start = out.len();

@@ -151,7 +151,10 @@ pub(crate) const LAYOUT: &[(&str, Kind, In)] = &[
     ("FACETRES", Bd, All),
     ("CMLSCALE", Bd, All),
     ("CELTSCALE", Bd, All),
-    ("MENUNAME", Tv, Until(R2004)),
+    // The specification keeps MENUNAME to R2004; the R2007 string stream
+    // holds it too, between the unit names and DIMPOST (LibreDWG, acadrust;
+    // ADR-0036 errata).
+    ("MENUNAME", Tv, All),
     ("TDCREATE_DAY", Bl, All),
     ("TDCREATE_MS", Bl, All),
     ("TDUPDATE_DAY", Bl, All),

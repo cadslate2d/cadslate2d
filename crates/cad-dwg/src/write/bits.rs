@@ -279,6 +279,17 @@ impl BitWriter {
         }
     }
 
+    /// TU: a Unicode text of the R2007 kind — a bit short count of UTF-16
+    /// units, then the units.
+    pub fn text_unicode(&mut self, value: &str) {
+        let units: Vec<u16> = value.encode_utf16().collect();
+        let n = units.len().min(i16::MAX as usize);
+        self.bs(n as i16);
+        for unit in &units[..n] {
+            self.rs(*unit);
+        }
+    }
+
     /// CMC of R2000 (§2.11): the colour index alone.
     pub fn cmc(&mut self, index: i16) {
         self.bs(index);
