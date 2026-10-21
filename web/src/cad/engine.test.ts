@@ -17,6 +17,10 @@ import {
 } from "./engine";
 import { loadEngineForTests } from "./test-support";
 
+/** The drawing as DXF text, as the autosave and a DXF save read it. */
+const snapshotDxf = (engine: CadEngine): string =>
+  new TextDecoder().decode(engine.snapshotFile("dxf"));
+
 beforeAll(loadEngineForTests);
 
 /** An engine as the app starts it: 800×600, grid and object snaps on. */
@@ -163,7 +167,7 @@ describe("commands", () => {
     let steps = 0;
     while (cad.snapshotStep(2) === SnapshotStatus.Running) steps += 1;
     expect(steps).toBeGreaterThan(0);
-    expect(new TextDecoder().decode(cad.snapshotBytes())).toBe(cad.snapshotDxf());
+    expect(new TextDecoder().decode(cad.snapshotBytes())).toBe(snapshotDxf(cad));
     expect(cad.snapshotBytes().length, "taken once").toBe(0);
 
     cad.snapshotBegin();
@@ -417,7 +421,7 @@ describe("object snap", () => {
     cad.pointerDown(...NEAR_THE_END, 0, 0);
     cad.pointerUp(...NEAR_THE_END, 0, 0);
     enter(cad, "@0,50", "");
-    expect(cad.snapshotDxf()).toContain(" 10\n100.0\n 20\n0.0\n");
+    expect(snapshotDxf(cad)).toContain(" 10\n100.0\n 20\n0.0\n");
   });
 });
 
@@ -522,11 +526,11 @@ describe("grips", () => {
 
     expect(enter(cad, "150,50") & Dirty.Scene).toBeTruthy();
     // R2000: the end point's Z sits between the start and end groups (ADR-0018).
-    expect(cad.snapshotDxf()).toContain(" 10\n0.0\n 20\n0.0\n 30\n0.0\n 11\n150.0\n 21\n50.0\n");
+    expect(snapshotDxf(cad)).toContain(" 10\n0.0\n 20\n0.0\n 30\n0.0\n 11\n150.0\n 21\n50.0\n");
     expect(cad.uiState().selectionCount).toBe(1);
 
     cad.key(KeyAction.Undo);
-    expect(cad.snapshotDxf()).toContain(" 11\n100.0\n 21\n0.0\n");
+    expect(snapshotDxf(cad)).toContain(" 11\n100.0\n 21\n0.0\n");
     expect(cad.uiState().selectionCount).toBe(1);
   });
 });

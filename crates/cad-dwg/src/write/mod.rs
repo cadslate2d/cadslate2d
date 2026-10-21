@@ -128,6 +128,41 @@ pub fn export(drawing: &Drawing, version: Version) -> Result<Vec<u8>, WriteError
     write_records(&cad_dxf::export_records(drawing), version)
 }
 
+/// What a DWG of `version` will not include of `drawing` (#319), line by
+/// line, for the host to warn with before the export; empty when the file
+/// holds the drawing whole. A spline is by its control points or by its
+/// fit points (§20.4.40): one given by control data of its own and fit
+/// points too keeps the control data, which is its geometry.
+pub fn export_losses(drawing: &Drawing, _version: Version) -> Vec<String> {
+    let splines = drawing
+        .entities()
+        .filter(|(_, entity)| match entity {
+            cad_document::Entity::Spline(spline) => {
+                let controls: Vec<(Point2, f64)> =
+                    spline.control.iter().map(|p| (*p, 0.0)).collect();
+                let fits: Vec<(Point2, f64)> = spline.fit.iter().map(|p| (*p, 0.0)).collect();
+                !spline.fit.is_empty()
+                    && !entities::fit_points_define(
+                        &fits,
+                        spline.degree as i32,
+                        &controls,
+                        &spline.knots,
+                        &spline.weights,
+                    )
+            }
+            _ => false,
+        })
+        .count();
+    let mut losses = Vec::new();
+    if splines > 0 {
+        losses.push(format!(
+            "{splines} spline{} with control points of their own also carry fit points, which a DWG cannot hold beside them (the control points are kept)",
+            if splines == 1 { "" } else { "s" }
+        ));
+    }
+    losses
+}
+
 /// Writes records — the DXF exporter's, or another front end's — as a
 /// file of `version`.
 pub fn write_records(records: &[Record], version: Version) -> Result<Vec<u8>, WriteError> {

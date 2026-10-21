@@ -9,14 +9,23 @@ import {
   POINTER_REST_MS,
   SNAPSHOT_SLICE,
 } from "./cad-app";
-import type { AutosaveRecord, AutosaveStore, FileAccess, FileTarget } from "./host-services";
-import { parseSettings } from "./host-services";
+import type {
+  AutosaveRecord,
+  AutosaveStore,
+  FileAccess,
+  FileContent,
+  FileTarget,
+} from "./host-services";
+import { parseSettings, saveTypesFor } from "./host-services";
 import { PAUSE, SELECTION } from "./macro";
 import type { HostServices, PickedFile, Settings, SettingsStore, Theme } from "./host-services";
 
 beforeAll(loadEngineForTests);
 
 const encode = (text: string) => new TextEncoder().encode(text);
+/** The first six bytes of a file as text: a DWG's version id. */
+const signature = (bytes: Uint8Array | undefined) =>
+  bytes === undefined ? undefined : new TextDecoder().decode(bytes.subarray(0, 6));
 
 /** A DXF file from `code value` pairs. */
 const dxf = (...groups: [number, string][]) =>
@@ -64,10 +73,11 @@ class FakeFiles implements FileAccess {
   writesBack = false;
   fileToPick: PickedFile | undefined;
   picks = 0;
-  /** What `saveAs` was asked for: a download, or a picker. */
-  saved: { name: string; text: string; mimeType: string }[] = [];
+  /** What `saveAs` was asked for: a download, or a picker. A DXF travels as text, a DWG as bytes. */
+  saved: { name: string; text: string; bytes?: Uint8Array; mimeType: string; format?: string }[] =
+    [];
   /** What was written back to a target. */
-  written: { name: string; text: string }[] = [];
+  written: { name: string; text: string; bytes?: Uint8Array }[] = [];
   writeAnswer = true;
 
   open(): Promise<PickedFile | undefined> {
@@ -75,14 +85,23 @@ class FakeFiles implements FileAccess {
     return Promise.resolve(this.fileToPick);
   }
 
-  saveAs(name: string, text: string, mimeType: string): Promise<FileTarget | undefined> {
-    this.saved.push({ name, text, mimeType });
+  saveAs(
+    name: string,
+    content: FileContent,
+    mimeType: string,
+    format?: string,
+  ): Promise<FileTarget | undefined> {
+    const text = typeof content === "string" ? content : "";
+    const bytes = typeof content === "string" ? undefined : content;
+    this.saved.push({ name, text, bytes, mimeType, format });
     return Promise.resolve({ name });
   }
 
-  write(target: FileTarget, text: string): Promise<boolean> {
+  write(target: FileTarget, content: FileContent): Promise<boolean> {
     if (!this.writeAnswer) return Promise.resolve(false);
-    this.written.push({ name: target.name, text });
+    const text = typeof content === "string" ? content : "";
+    const bytes = typeof content === "string" ? undefined : content;
+    this.written.push({ name: target.name, text, bytes });
     return Promise.resolve(true);
   }
 }
@@ -391,8 +410,9 @@ describe("saving to a file", () => {
     expect(app.ui.getSnapshot().unsavedChanges).toBe(false);
     expect(host.autosave.record).toMatchObject({ name: "plan.dxf", exported: true });
 
-    // SAVEAS asks where even with a file, and the new file is the one from then on.
-    enter("C", "5,5", "1", "SAVEAS");
+    // SAVEAS asks the format (Enter keeps it) and where, even with a file,
+    // and the new file is the one from then on.
+    enter("C", "5,5", "1", "SAVEAS", "");
     await tick();
     expect(host.files.saved.map((save) => save.name)).toEqual(["plan.dxf"]);
     host.files.saved = [];
@@ -434,7 +454,7 @@ describe("saving to a file", () => {
     await tick();
     enter("L", "0,0", "10,0", "", "SAVE");
     await tick();
-    enter("SAVEAS");
+    enter("SAVEAS", "");
     await tick();
     expect(host.files.saved.map((save) => save.name)).toEqual(["plan.dxf", "plan.dxf"]);
     expect(host.files.written).toHaveLength(0);
@@ -562,7 +582,7 @@ describe("open", () => {
   });
 
   // #318: the format is read from the bytes, not the name.
-  test("a DWG opens by its bytes, whatever its extension, and SAVE makes a DXF of it", async () => {
+  test("a DWG opens by its bytes, whatever its extension, and SAVE writes it back as DWG", async () => {
     const dwg = new Uint8Array(
       await readFile(
         new URL("../../../test-data/dwg/valid/ezdxf-r12-three-lines.AC1015.dwg", import.meta.url),
@@ -580,15 +600,13 @@ describe("open", () => {
     });
     expect(app.ui.getSnapshot().log).toContain("Imported 3 lines.");
 
-    // SAVE says what it writes, and asks where: the DWG is not written over.
-    enter("SAVE");
+    // SAVE keeps the format the file came in (#319): the DWG is written back.
+    enter("L", "0,0", "5,5", "", "SAVE");
     await tick();
-    expect(app.ui.getSnapshot().log).toContain(
-      "The drawing came in as DWG 2000; it is saved as DXF.",
-    );
-    expect(host.files.written).toHaveLength(0);
-    expect(host.files.saved.map((save) => save.name)).toEqual(["plan.dxf"]);
-    expect(host.files.saved[0]?.text).toContain("AcDbLine");
+    expect(host.files.saved).toHaveLength(0);
+    expect(host.files.written.map((write) => write.name)).toEqual(["plan.dwg"]);
+    expect(signature(host.files.written[0]?.bytes)).toBe("AC1015");
+    expect(app.ui.getSnapshot().log.at(-1)).toBe("Drawing exported as DWG 2000.");
 
     // The same bytes under a misleading name are still the DWG.
     host.files.fileToPick = { name: "plan.dxf", bytes: dwg };
@@ -599,6 +617,54 @@ describe("open", () => {
       documentName: "plan.dxf",
       documentFormat: "dwg2000",
     });
+  });
+
+  // #319: SAVEAS takes the format; the picker is offered every drawing
+  // type, the chosen one first; the file is named by the format.
+  test("SAVEAS writes the format chosen, under the format's extension, and SAVE keeps it", async () => {
+    const { app, host, tick, enter } = harness();
+    host.files.writesBack = true;
+    enter("L", "0,0", "10,0", "");
+    enter("SAVEAS", "DWG2004");
+    await tick();
+    expect(host.files.saved).toHaveLength(1);
+    expect(host.files.saved[0]).toMatchObject({
+      name: "drawing.dwg",
+      mimeType: "application/acad",
+      format: "dwg2004",
+    });
+    expect(signature(host.files.saved[0]?.bytes)).toBe("AC1018");
+    expect(app.ui.getSnapshot()).toMatchObject({
+      documentName: "drawing.dwg",
+      documentFormat: "dwg2004",
+      unsavedChanges: false,
+    });
+    expect(saveTypesFor("application/acad", "dwg2004").map((type) => type.description)).toEqual([
+      "DWG drawing (AutoCAD 2004)",
+      "DXF drawing (R2000)",
+      "DWG drawing (AutoCAD 2000)",
+      "DWG drawing (AutoCAD 2007)",
+    ]);
+
+    // SAVE writes the same format back to the same file.
+    enter("L", "0,1", "10,1", "", "SAVE");
+    await tick();
+    expect(host.files.written.map((write) => write.name)).toEqual(["drawing.dwg"]);
+    expect(signature(host.files.written[0]?.bytes)).toBe("AC1018");
+
+    // SAVEAS to another format asks where, names the file by it, and the
+    // drawing is of that format from then on; DXFOUT is DXF with no question.
+    enter("SAVEAS", "DWG2007");
+    await tick();
+    expect(host.files.saved.map((save) => save.name)).toEqual(["drawing.dwg", "drawing.dwg"]);
+    expect(signature(host.files.saved[1]?.bytes)).toBe("AC1021");
+    expect(app.ui.getSnapshot().documentFormat).toBe("dwg2007");
+    enter("DXFOUT");
+    await tick();
+    expect(host.files.saved[2]).toMatchObject({ name: "drawing.dxf", format: "dxf" });
+    expect(host.files.saved[2]?.text).toContain("AcDbLine");
+    expect(app.ui.getSnapshot().documentFormat).toBe("dxf");
+    expect(host.files.written).toHaveLength(1);
   });
 
   test("a file that cannot be read keeps the drawing and explains why", async () => {

@@ -38,12 +38,28 @@ test.describe("file handles", () => {
     expect(store.files["drawing.dxf"]).toContain("AcDbCircle");
     await expect(page.getByTestId("document")).toHaveText("drawing.dxf");
 
-    // SAVEAS asks where even with a file.
+    // SAVEAS asks the format, Enter keeping it, then where, even with a file.
     await enter(page, "SAVEAS");
+    await expect(prompt(page)).toHaveText("Save as or [DXF/DWG2000/DWG2004/DWG2007] <DXF>:");
+    await enter(page, "");
     await expect(prompt(page)).toHaveText("Command:");
     store = await fakeFiles(page);
     expect(store.pickers.save).toBe(2);
     expect(downloads).toBe(0);
+
+    // #319: saved as DWG, the drawing is of that format: SAVE writes the
+    // DWG back to the file the dialog chose, no dialog.
+    await enter(page, "SAVEAS", "DWG2004");
+    await expect(prompt(page)).toHaveText("Command:");
+    await expect(page.getByTestId("document")).toHaveText("drawing.dwg");
+    store = await fakeFiles(page);
+    expect(store.pickers.save).toBe(3);
+    expect(store.files["drawing.dwg"]).toBe("AC1018");
+    await enter(page, "L", "0,0", "1,1", "", "SAVE");
+    await expect(prompt(page)).toHaveText("Command:");
+    store = await fakeFiles(page);
+    expect(store.pickers.save).toBe(3);
+    await expect(page.getByTestId("document")).toHaveText("drawing.dwg");
   });
 
   // A real handle rides in the autosave record (it survives the structured

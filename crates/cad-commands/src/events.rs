@@ -67,6 +67,9 @@ pub enum FileFormat {
 }
 
 impl FileFormat {
+    /// Every format, in the order the prompt offers them.
+    pub const ALL: [Self; 4] = [Self::Dxf, Self::Dwg2000, Self::Dwg2004, Self::Dwg2007];
+
     /// The format's name as a user reads it.
     pub fn label(self) -> &'static str {
         match self {
@@ -74,6 +77,30 @@ impl FileFormat {
             Self::Dwg2000 => "DWG 2000",
             Self::Dwg2004 => "DWG 2004",
             Self::Dwg2007 => "DWG 2007",
+        }
+    }
+
+    /// The format's id as the host names it: `dxf`, `dwg2000`, `dwg2004`,
+    /// `dwg2007`.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Dxf => "dxf",
+            Self::Dwg2000 => "dwg2000",
+            Self::Dwg2004 => "dwg2004",
+            Self::Dwg2007 => "dwg2007",
+        }
+    }
+
+    /// The format of an id, or none.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|format| format.id() == id)
+    }
+
+    /// The file extension the format takes.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Dxf => "dxf",
+            _ => "dwg",
         }
     }
 }
@@ -88,9 +115,9 @@ pub enum HostRequest {
     /// Save the drawing to the file it came from or last went to, where the
     /// browser can write there again; ask where, otherwise.
     SaveFile,
-    /// Save the drawing to a file the user chooses — a dialog, or a
-    /// download where there is none.
-    ExportFile,
+    /// Save the drawing in `format` to a file the user chooses — a dialog,
+    /// or a download where there is none (#319).
+    ExportFile(FileFormat),
     /// Show the settings panel (#186): the toggles, the unit, the autosave
     /// delay, the theme — what the host keeps between sessions.
     Settings,

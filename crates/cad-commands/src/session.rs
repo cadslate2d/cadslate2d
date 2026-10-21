@@ -1302,14 +1302,16 @@ impl Session {
         Dirty::UI
     }
 
-    /// Records that the host has saved the drawing in its current state —
-    /// to `name`, when the drawing has a file now that it did not before.
-    pub fn mark_exported(&mut self, name: Option<&str>) -> Dirty {
+    /// Records that the host has saved the drawing in its current state,
+    /// as `format` — to `name`, when the drawing has a file now that it did
+    /// not before. The format is the drawing's from then on (#319).
+    pub fn mark_exported(&mut self, name: Option<&str>, format: FileFormat) -> Dirty {
         self.saved_revision = self.drawing.revision();
         if let Some(name) = name {
             self.document_name = Some(name.to_owned());
         }
-        self.notify("Drawing exported as DXF.")
+        self.document_format = format;
+        self.notify(format!("Drawing exported as {}.", format.label()))
     }
 
     /// Writes a host-side message, such as a failed import, to the command log.

@@ -208,3 +208,58 @@ fn acadrust_reads_our_output_with_nothing_lost() {
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
+
+/// #319: a spline drawn through points — its control data is what a
+/// spline through them has — keeps its fit points in every version, and
+/// nothing is reported lost; one whose control data is its own loses the
+/// fit points it also carries, and the loss is named before the export.
+#[test]
+fn a_spline_through_points_keeps_them_and_one_with_control_data_of_its_own_is_reported() {
+    use cad_core::Point2;
+    use cad_document::{Drawing, Entity, SplineEntity};
+    let points = [
+        Point2::new(0.0, 0.0),
+        Point2::new(10.0, 5.0),
+        Point2::new(20.0, -3.0),
+        Point2::new(35.0, 8.0),
+    ];
+    let through = SplineEntity::through(&points).unwrap();
+    let mut own = through.clone();
+    own.control[1] = Point2::new(11.0, 6.0);
+    for version in VERSIONS {
+        let drawing = Drawing::from_entities([Entity::Spline(through.clone())]);
+        assert_eq!(
+            cad_dwg::export_losses(&drawing, version),
+            Vec::<String>::new()
+        );
+        let bytes = cad_dwg::export(&drawing, version).unwrap();
+        let back = cad_dwg::import(&bytes).unwrap().drawing;
+        let (_, entity) = back.entities().next().expect("the spline");
+        match entity {
+            Entity::Spline(spline) => {
+                assert_eq!(spline.fit, points, "{version:?}");
+                assert_eq!(spline.control, through.control, "{version:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let drawing = Drawing::from_entities([Entity::Spline(own.clone())]);
+        let losses = cad_dwg::export_losses(&drawing, version);
+        assert_eq!(losses.len(), 1, "{losses:?}");
+        assert!(
+            losses[0].starts_with("1 spline with control points of their own"),
+            "{losses:?}"
+        );
+        let back = cad_dwg::import(&cad_dwg::export(&drawing, version).unwrap())
+            .unwrap()
+            .drawing;
+        let (_, entity) = back.entities().next().expect("the spline");
+        match entity {
+            Entity::Spline(spline) => {
+                assert!(spline.fit.is_empty(), "{version:?}");
+                assert_eq!(spline.control, own.control, "{version:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}

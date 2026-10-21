@@ -86,7 +86,10 @@ test("the menus' keys: Ctrl+A selects all, Ctrl+Shift+S saves as, Ctrl+P plots",
   await expect(page.getByTestId("selection-headline")).toHaveText("2 objects: 1 line, 1 circle");
   await page.keyboard.press("Escape");
 
-  const saved = await downloadFrom(page, () => page.keyboard.press("Control+Shift+S"));
+  // Save As asks the format first (#319); Enter keeps the drawing's, DXF.
+  await page.keyboard.press("Control+Shift+S");
+  await expect(prompt(page)).toHaveText("Save as or [DXF/DWG2000/DWG2004/DWG2007] <DXF>:");
+  const saved = await downloadFrom(page, () => enter(page, ""));
   expect(saved.text).toContain("AcDbCircle");
   // PLOT asks for the sheet before it makes the file.
   await page.keyboard.press("Control+p");

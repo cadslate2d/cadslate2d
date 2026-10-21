@@ -49,7 +49,7 @@ export async function probeMainThread(text: string): Promise<MainThreadReport> {
     let written = "";
     for (let run = 0; run < 5; run += 1) {
       const start = performance.now();
-      written = engine.snapshotDxf();
+      written = new TextDecoder().decode(engine.snapshotFile("dxf"));
       exports.push(performance.now() - start);
     }
 
@@ -62,7 +62,7 @@ export async function probeMainThread(text: string): Promise<MainThreadReport> {
       await indexedDbAutosave.clear();
       return { totalMs, longestFrameGapMs: watched.gap };
     };
-    const autosave = await timed(() => put(new TextEncoder().encode(engine.snapshotDxf())));
+    const autosave = await timed(() => put(engine.snapshotFile("dxf")));
     const autosaveSliced = await timed(async () => {
       engine.snapshotBegin();
       while (engine.snapshotStep(SNAPSHOT_SLICE) === SnapshotStatus.Running) {

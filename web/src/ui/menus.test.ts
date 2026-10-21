@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import type { UiSnapshot } from "../app/ui-store";
-import { CadEngine } from "../cad/engine";
+import { PAUSE, pauseState } from "../app/macro";
+import { CadEngine, HostRequest } from "../cad/engine";
 import { loadEngineForTests } from "../cad/test-support";
 import { allItems, mnemonic, type MenuContext, type MenuEntry } from "./menu-model";
 import { MENUS } from "./menus";
@@ -57,6 +58,32 @@ describe("the menus of the classic workspace (#247)", () => {
       engine.dispose();
     }
     expect(macros).toBeGreaterThan(100);
+  });
+
+  // #319: File › Save As… is SAVEAS with a pause for the format; the
+  // command asks it, and the host asks where once it is answered.
+  test("File › Save As… runs SAVEAS and pauses for the format", () => {
+    const entry = item("File", "Save As...");
+    expect("macro" in entry.action && entry.action.macro).toEqual({
+      command: "SAVEAS",
+      steps: [PAUSE],
+    });
+    const engine = new CadEngine();
+    engine.resize(800, 600);
+    engine.invoke("SAVEAS");
+    const asking = engine.uiState();
+    expect(asking.prompt).toBe("Save as or [DXF/DWG2000/DWG2004/DWG2007] <DXF>:");
+    const paused = {
+      command: asking.command,
+      prompt: asking.prompt,
+      kind: "answer",
+      rest: [],
+    } as const;
+    expect(pauseState(paused, { command: asking.command, prompt: asking.prompt })).toBe("wait");
+    engine.submitText("DWG2004");
+    expect(pauseState(paused, { command: undefined, prompt: "Command:" })).toBe("drop");
+    expect(engine.takeHostRequest()).toEqual({ kind: HostRequest.ExportFile, format: "dwg2004" });
+    engine.dispose();
   });
 
   test("every list has a mnemonic per entry, none twice", () => {

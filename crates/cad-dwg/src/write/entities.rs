@@ -501,8 +501,10 @@ fn lwpolyline(w: &mut ObjectWriter, f: &Fields<'_>) {
     }
 }
 
-/// A SPLINE (§20.4.40): by its control points when it has them (scenario
-/// 1), else by its fit points (scenario 2).
+/// A SPLINE (§20.4.40): by its fit points when they are what defines it
+/// (scenario 2) — none, or control data that is exactly what a spline
+/// through them has — else by its control points (scenario 1), and the
+/// fit points, if any, go (`export_losses`).
 fn spline(w: &mut ObjectWriter, f: &Fields<'_>) {
     let flags = f.int(70).unwrap_or(8);
     let degree = f.int(71).unwrap_or(3) as i32;
@@ -511,7 +513,7 @@ fn spline(w: &mut ObjectWriter, f: &Fields<'_>) {
     let controls = f.points(10);
     let fits = f.points(11);
     let d = &mut w.data;
-    if controls.is_empty() {
+    if controls.is_empty() || fit_points_define(&fits, degree, &controls, &knots, &weights) {
         d.bl(2);
         d.bl(degree);
         d.bd(f.real(44).unwrap_or(1e-10));
@@ -547,6 +549,34 @@ fn spline(w: &mut ObjectWriter, f: &Fields<'_>) {
             d.bd(weights[i]);
         }
     }
+}
+
+/// Whether `fits` define the spline whose control data this is: the
+/// spline through them has the same degree, control points, and knots,
+/// and no weights. Then the fit points alone carry it, and a reader that
+/// interpolates them gets this control data back.
+pub(crate) fn fit_points_define(
+    fits: &[(Point2, f64)],
+    degree: i32,
+    controls: &[(Point2, f64)],
+    knots: &[f64],
+    weights: &[f64],
+) -> bool {
+    if fits.is_empty() || !weights.is_empty() || fits.iter().any(|(_, z)| *z != 0.0) {
+        return false;
+    }
+    let points: Vec<Point2> = fits.iter().map(|(point, _)| *point).collect();
+    let Some(through) = cad_document::SplineEntity::through(&points) else {
+        return false;
+    };
+    through.degree as i32 == degree
+        && through.knots == knots
+        && through.control.len() == controls.len()
+        && through
+            .control
+            .iter()
+            .zip(controls)
+            .all(|(a, (b, z))| a == b && *z == 0.0)
 }
 
 /// A HATCH (§20.4.75), from its groups in the order a file carries them.

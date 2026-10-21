@@ -2,6 +2,8 @@
 // and the autosave slot. Behind an interface so the app logic can be tested
 // without a browser (dependency inversion).
 
+import { DOCUMENT_FORMATS, type DocumentFormat } from "../cad/engine";
+
 /** A file the browser can find again: its name, and its handle when the browser gives one. */
 export interface FileTarget {
   readonly name: string;
@@ -22,18 +24,28 @@ export interface PickedFile {
  * with the File System Access API, which write back to the file they opened.
  * The app chooses by capability, never by user agent.
  */
+/** What a file is written from: text, or the bytes of a binary format. */
+export type FileContent = string | Uint8Array<ArrayBuffer>;
+
 export interface FileAccess {
   /** Whether a saved file can be written again without asking where. */
   readonly writesBack: boolean;
   /** Lets the user choose a file. Resolves to `undefined` if they cancel. */
   open(accept: string): Promise<PickedFile | undefined>;
   /**
-   * Saves `text` to a file the user chooses — a dialog, or a download where
-   * there is none — and says where it went; `undefined` if they cancelled.
+   * Saves `content` to a file the user chooses — a dialog, or a download
+   * where there is none — and says where it went; `undefined` if they
+   * cancelled. A drawing names its `format` (#319): the dialog offers the
+   * drawing formats with that one first.
    */
-  saveAs(suggestedName: string, text: string, mimeType: string): Promise<FileTarget | undefined>;
-  /** Writes `text` back to `target`. `false` when the browser would not, so the caller asks where instead. */
-  write(target: FileTarget, text: string): Promise<boolean>;
+  saveAs(
+    suggestedName: string,
+    content: FileContent,
+    mimeType: string,
+    format?: DocumentFormat,
+  ): Promise<FileTarget | undefined>;
+  /** Writes `content` back to `target`. `false` when the browser would not, so the caller asks where instead. */
+  write(target: FileTarget, content: FileContent): Promise<boolean>;
 }
 
 /** The drawing as last kept in the browser (DESIGN §25; ADR-0019). */
@@ -122,8 +134,8 @@ export const downloadFiles: FileAccess = {
     });
   },
 
-  saveAs(suggestedName, text, mimeType) {
-    const url = URL.createObjectURL(new Blob([text], { type: mimeType }));
+  saveAs(suggestedName, content, mimeType) {
+    const url = URL.createObjectURL(new Blob([content], { type: mimeType }));
     const link = document.createElement("a");
     link.href = url;
     link.download = suggestedName;
@@ -141,6 +153,13 @@ export const downloadFiles: FileAccess = {
 
 /** The picker's description of the files it shows. */
 const DXF_TYPES = [{ description: "DXF drawing", accept: { "application/dxf": [".dxf"] } }];
+/** The drawing formats a save offers (#319), one picker type each. */
+const DRAWING_FORMAT_TYPES: Record<DocumentFormat, FilePickerAcceptType> = {
+  dxf: { description: "DXF drawing (R2000)", accept: { "application/dxf": [".dxf"] } },
+  dwg2000: { description: "DWG drawing (AutoCAD 2000)", accept: { "application/acad": [".dwg"] } },
+  dwg2004: { description: "DWG drawing (AutoCAD 2004)", accept: { "application/acad": [".dwg"] } },
+  dwg2007: { description: "DWG drawing (AutoCAD 2007)", accept: { "application/acad": [".dwg"] } },
+};
 /** What OPEN shows (#318): DXF and DWG; the format is read from the bytes. */
 const DRAWING_TYPES = [
   {
@@ -150,9 +169,15 @@ const DRAWING_TYPES = [
 ];
 const PDF_TYPES = [{ description: "PDF plot", accept: { "application/pdf": [".pdf"] } }];
 
-/** What the save picker offers for a file of this type (#187: plots are PDFs). */
-function typesFor(mimeType: string) {
-  return mimeType === "application/pdf" ? PDF_TYPES : DXF_TYPES;
+/**
+ * What the save picker offers for a file of this type (#187: plots are
+ * PDFs): for a drawing, every format, the one asked for first (#319).
+ */
+export function saveTypesFor(mimeType: string, format?: DocumentFormat): FilePickerAcceptType[] {
+  if (mimeType === "application/pdf") return PDF_TYPES;
+  if (format === undefined) return DXF_TYPES;
+  const others = DOCUMENT_FORMATS.filter((other) => other !== format);
+  return [format, ...others].map((each) => DRAWING_FORMAT_TYPES[each]);
 }
 
 /** A cancelled picker rejects with an AbortError: that is an answer, not a failure. */
@@ -167,9 +192,9 @@ async function mayWrite(handle: FileSystemFileHandle): Promise<boolean> {
   return (await handle.requestPermission?.(options)) === "granted";
 }
 
-async function writeThrough(handle: FileSystemFileHandle, text: string): Promise<void> {
+async function writeThrough(handle: FileSystemFileHandle, content: FileContent): Promise<void> {
   const writable = await handle.createWritable();
-  await writable.write(text);
+  await writable.write(content);
   await writable.close();
 }
 
@@ -198,12 +223,15 @@ export const fileSystemAccessFiles: FileAccess = {
     }
   },
 
-  async saveAs(suggestedName, text, mimeType) {
+  async saveAs(suggestedName, content, mimeType, format) {
     const picker = window.showSaveFilePicker;
     if (!picker) return undefined;
     try {
-      const handle = await picker.call(window, { suggestedName, types: typesFor(mimeType) });
-      await writeThrough(handle, text);
+      const handle = await picker.call(window, {
+        suggestedName,
+        types: saveTypesFor(mimeType, format),
+      });
+      await writeThrough(handle, content);
       return { name: handle.name, handle };
     } catch (error) {
       if (cancelled(error)) return undefined;
@@ -211,9 +239,9 @@ export const fileSystemAccessFiles: FileAccess = {
     }
   },
 
-  async write(target, text) {
+  async write(target, content) {
     if (!target.handle || !(await mayWrite(target.handle))) return false;
-    await writeThrough(target.handle, text);
+    await writeThrough(target.handle, content);
     return true;
   },
 };

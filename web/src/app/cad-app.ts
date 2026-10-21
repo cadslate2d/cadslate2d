@@ -1,6 +1,13 @@
 // The application object: one engine session, one UI store, one frame loop.
 // React components and the canvas binding talk to the engine only through it.
-import { Dirty, HostRequest, KeyAction, SnapshotStatus, type CadEngine } from "../cad/engine";
+import {
+  Dirty,
+  HostRequest,
+  KeyAction,
+  SnapshotStatus,
+  type CadEngine,
+  type DocumentFormat,
+} from "../cad/engine";
 import { FrameLoop, type ScheduleFrame } from "./frame-loop";
 import { pauseState, type Macro, type MacroStep, type PausedMacro } from "./macro";
 import {
@@ -19,12 +26,15 @@ const DRAWING_ACCEPT = ".dxf,.dwg";
 /** What INSERT offers to pick (#222). */
 const DXF_ACCEPT = ".dxf";
 const DXF_MIME_TYPE = "application/dxf";
+const DWG_MIME_TYPE = "application/acad";
 const PDF_MIME_TYPE = "application/pdf";
 const DEFAULT_FILE_NAME = "drawing.dxf";
 const RECOVERED_FILE_NAME = "recovered.dxf";
-/** The name a DXF of the drawing is saved under: its file's, with the DXF extension. */
-function dxfName(documentName: string | undefined): string {
-  return documentName === undefined ? DEFAULT_FILE_NAME : documentName.replace(/\.dwg$/i, ".dxf");
+/** The name a file of `format` is saved under: the drawing's, with the format's extension (#319). */
+function nameFor(documentName: string | undefined, format: DocumentFormat): string {
+  const extension = format === "dxf" ? "dxf" : "dwg";
+  const stem = (documentName ?? DEFAULT_FILE_NAME).replace(/\.(dxf|dwg)$/i, "");
+  return `${stem}.${extension}`;
 }
 
 /** How long after the last change the drawing is kept (ADR-0019). */
@@ -117,7 +127,8 @@ export class CadApp {
   /** The file the drawing came from or last went to, where the browser can write back. */
   #target: FileTarget | undefined;
   /** Whether the save the export warning asked about must ask where. */
-  #pendingSaveAsks = false;
+  /** The save a warning is asking about (DESIGN §24.2): whether it asks where, and its format. */
+  #pendingSave: { ask: boolean; format: DocumentFormat } | undefined;
   /** When the drawing was last kept, for the failure dialog. */
   #keptAt: number | undefined;
   /** The engine has panicked (#176): nothing reaches it any more. */
@@ -508,14 +519,15 @@ export class CadApp {
     if (dirty & Dirty.Host) void this.#serveHostRequest(this.engine.takeHostRequest());
   }
 
-  async #serveHostRequest(request: HostRequest): Promise<void> {
-    switch (request) {
+  async #serveHostRequest(request: { kind: HostRequest; format?: DocumentFormat }): Promise<void> {
+    switch (request.kind) {
       case HostRequest.OpenFile:
         return this.#openFile();
       case HostRequest.ExportFile:
-        return this.#save(true);
+        return this.#save(true, request.format ?? "dxf");
       case HostRequest.SaveFile:
-        return this.#save(false);
+        // SAVE keeps the format the file came in (#319).
+        return this.#save(false, this.engine.uiState().documentFormat);
       case HostRequest.Settings:
         this.openSettings();
         return;
@@ -569,36 +581,38 @@ export class CadApp {
     const file = await this.#host.files.open(DRAWING_ACCEPT);
     if (!file) return;
     this.loop.invalidate(this.engine.loadDrawing(file.bytes, file.name));
-    // Until SAVE writes DWG (#319), a DWG's file is not written back to:
-    // the DXF a save makes goes to a file of its own.
-    this.#target = this.engine.uiState().documentFormat === "dxf" ? file.target : undefined;
+    this.#target = file.target;
     // The opened file holds the drawing: whatever was kept before is replaced.
     this.#cancelAutosave?.();
     await this.#keep(true);
   }
 
   /**
-   * Saves the drawing: back to its file when the browser can and `ask` is
-   * not set (SAVE), otherwise to a file the user chooses (SAVEAS, DXFOUT),
-   * which is a download where the browser has no picker (DESIGN §25.3).
+   * Saves the drawing as `format`: back to its file when the browser can
+   * and `ask` is not set (SAVE), otherwise to a file the user chooses
+   * (SAVEAS, DXFOUT), which is a download where the browser has no picker
+   * (DESIGN §25.3).
    */
-  async #save(ask: boolean): Promise<void> {
+  async #save(ask: boolean, format: DocumentFormat): Promise<void> {
     const state = this.engine.uiState();
     // DESIGN §24.2: never imply a lossless round trip when content was
-    // skipped. The warning names what the file will lose; the user decides.
-    if (state.exportLosses.length > 0) {
-      this.#pendingSaveAsks = ask;
-      this.ui.setExportWarning(state.exportLosses);
+    // skipped — by the import, or by the format (#319). The warning names
+    // what the file will lose; the user decides.
+    const losses = [...state.exportLosses, ...this.engine.exportLosses(format)];
+    if (losses.length > 0) {
+      this.#pendingSave = { ask, format };
+      this.ui.setExportWarning(losses);
       return;
     }
-    await this.#performSave(ask);
+    await this.#performSave(ask, format);
   }
 
   /** The save the warning asked about: the user chose to go ahead. */
   exportAnyway(): void {
     this.ui.setExportWarning(undefined);
     if (this.#failed) return;
-    void this.#performSave(this.#pendingSaveAsks);
+    const pending = this.#pendingSave;
+    if (pending) void this.#performSave(pending.ask, pending.format);
   }
 
   /** The export the warning asked about: the user chose not to. */
@@ -619,24 +633,33 @@ export class CadApp {
   async #plot(): Promise<void> {
     const pdf = this.engine.plotPdf();
     const state = this.engine.uiState();
-    const name = (state.documentName ?? DEFAULT_FILE_NAME).replace(/\.(dxf|dwg)$/i, "");
+    const name = nameFor(state.documentName, "dxf").replace(/\.dxf$/, "");
     const file = state.paper ? `${name}-${state.space}.pdf` : `${name}.pdf`;
     await this.#host.files.saveAs(file, pdf, PDF_MIME_TYPE);
   }
 
-  async #performSave(ask: boolean): Promise<void> {
+  async #performSave(ask: boolean, format: DocumentFormat): Promise<void> {
     const files = this.#host.files;
     const state = this.engine.uiState();
-    const text = this.engine.snapshotDxf();
-    const known = this.#target;
+    const bytes = this.engine.snapshotFile(format);
+    if (bytes.length === 0) {
+      this.ui.refresh(this.engine);
+      return;
+    }
+    // A DXF travels as text, as it always has; a DWG as its bytes.
+    const content = format === "dxf" ? new TextDecoder().decode(bytes) : bytes;
+    const mimeType = format === "dxf" ? DXF_MIME_TYPE : DWG_MIME_TYPE;
+    // Written back only to a file of the same format: SAVEAS to another
+    // format, or SAVE of a drawing whose file came in otherwise, asks where.
+    const known = state.documentFormat === format ? this.#target : undefined;
     const writtenBack =
-      !ask && known !== undefined && files.writesBack && (await files.write(known, text));
+      !ask && known !== undefined && files.writesBack && (await files.write(known, content));
     const target = writtenBack
       ? known
-      : await files.saveAs(dxfName(state.documentName), text, DXF_MIME_TYPE);
+      : await files.saveAs(nameFor(state.documentName, format), content, mimeType, format);
     if (!target) return;
     this.#target = files.writesBack ? target : undefined;
-    this.loop.invalidate(this.engine.markExported(target.name));
+    this.loop.invalidate(this.engine.markExported(target.name, format));
     // The file holds the drawing now: a reload has nothing to recover.
     this.#cancelAutosave?.();
     void this.#keep(true);

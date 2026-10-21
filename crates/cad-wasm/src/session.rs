@@ -68,6 +68,15 @@ fn transform_words(transform: ClipTransform) -> Vec<f32> {
     ]
 }
 
+/// The DWG version a format names; not for DXF.
+fn dwg_version(format: FileFormat) -> cad_dwg::Version {
+    match format {
+        FileFormat::Dxf | FileFormat::Dwg2000 => cad_dwg::Version::R2000,
+        FileFormat::Dwg2004 => cad_dwg::Version::R2004,
+        FileFormat::Dwg2007 => cad_dwg::Version::R2007,
+    }
+}
+
 /// Reads a drawing file by its signature (#318): a DWG of a version the
 /// crate reads, a DWG of another version refused by name, a DXF otherwise.
 fn open_drawing_file(bytes: &[u8]) -> Result<(cad_dxf::Import, FileFormat), String> {
@@ -413,7 +422,15 @@ impl CadSession {
         match self.session.take_host_request() {
             None => 0,
             Some(HostRequest::OpenFile) => 1,
-            Some(HostRequest::ExportFile) => 2,
+            // The format the export asked for (#319) rides in the high
+            // byte: its index in `FileFormat::ALL`, one-based.
+            Some(HostRequest::ExportFile(format)) => {
+                let index = FileFormat::ALL
+                    .iter()
+                    .position(|f| *f == format)
+                    .unwrap_or(0);
+                2 | ((index as u32 + 1) << 8)
+            }
             Some(HostRequest::SaveFile) => 3,
             Some(HostRequest::Settings) => 4,
             Some(HostRequest::Plot) => 5,
@@ -501,10 +518,33 @@ impl CadSession {
         self.report(dirty)
     }
 
-    /// The drawing as ASCII DXF, for the host to keep as an autosave (#158):
-    /// marks nothing, so what the user has and has not exported stays true.
-    pub fn snapshot_dxf(&self) -> String {
-        cad_dxf::export(self.session.drawing())
+    /// The drawing as a file of `format` — `dxf`, `dwg2000`, `dwg2004`,
+    /// `dwg2007` (#319) — for the host to save: marks nothing, so what the
+    /// user has and has not exported stays true. Empty for a format this
+    /// crate does not know or cannot write, which the log then says.
+    pub fn snapshot_file(&mut self, format: &str) -> Vec<u8> {
+        let drawing = self.session.drawing();
+        match FileFormat::from_id(format) {
+            Some(FileFormat::Dxf) => cad_dxf::export(drawing).into_bytes(),
+            Some(format) => match cad_dwg::export(drawing, dwg_version(format)) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    self.session
+                        .notify(format!("Cannot write {}: {error}.", format.label()));
+                    Vec::new()
+                }
+            },
+            None => Vec::new(),
+        }
+    }
+
+    /// What a file of `format` will not include of the drawing (#319),
+    /// line by line: the DWG writer's own losses; a DXF holds everything.
+    pub fn export_losses(&self, format: &str) -> Vec<String> {
+        match FileFormat::from_id(format) {
+            Some(FileFormat::Dxf) | None => Vec::new(),
+            Some(format) => cad_dwg::export_losses(self.session.drawing(), dwg_version(format)),
+        }
     }
 
     /// Begins a snapshot in slices (#178, ADR-0024): the same file as
@@ -544,10 +584,12 @@ impl CadSession {
         Uint8Array::from(text.as_bytes())
     }
 
-    /// Records that the host has saved the drawing (the text of
-    /// `snapshot_dxf`) — to `name`, when it has a file now (#159).
-    pub fn mark_exported(&mut self, name: Option<String>) -> u32 {
-        let dirty = self.session.mark_exported(name.as_deref());
+    /// Records that the host has saved the drawing (the bytes of
+    /// `snapshot_file`) as `format` — to `name`, when it has a file now
+    /// (#159, #319).
+    pub fn mark_exported(&mut self, name: Option<String>, format: &str) -> u32 {
+        let format = FileFormat::from_id(format).unwrap_or_default();
+        let dirty = self.session.mark_exported(name.as_deref(), format);
         self.report(dirty)
     }
 
@@ -877,6 +919,61 @@ mod tests {
             }),
             "{log:?}"
         );
+    }
+
+    /// #319: SAVEAS with each format keyword asks the host for that format
+    /// and the bytes carry its signature; SAVE after opening a DWG writes
+    /// its version; a new drawing saves as DXF.
+    #[test]
+    fn saveas_writes_the_format_asked_for_and_save_keeps_the_files_own() {
+        let signature = |bytes: &[u8]| String::from_utf8_lossy(&bytes[..6]).into_owned();
+        let mut cad = CadSession::new();
+        cad.submit_text("L");
+        cad.submit_text("0,0");
+        cad.submit_text("10,10");
+        cad.submit_text("");
+        for (keyword, id, head) in [
+            (
+                "DXF", "dxf", "  0
+SE",
+            ),
+            ("DWG2000", "dwg2000", "AC1015"),
+            ("DWG2004", "dwg2004", "AC1018"),
+            ("DWG2007", "dwg2007", "AC1021"),
+        ] {
+            cad.submit_text("SAVEAS");
+            cad.submit_text(keyword);
+            let request = cad.take_host_request();
+            assert_eq!(request & 0xff, 2, "{keyword}");
+            let format = FileFormat::ALL[(request >> 8) as usize - 1];
+            assert_eq!(format.id(), id);
+            assert_eq!(signature(&cad.snapshot_file(id)), head, "{keyword}");
+            assert_eq!(cad.export_losses(id), Vec::<String>::new());
+        }
+        // A new drawing saves as DXF.
+        cad.submit_text("SAVE");
+        assert_eq!(cad.take_host_request(), 3);
+        assert_eq!(cad.session.document_format(), FileFormat::Dxf);
+        // One opened from a DWG saves as its version, and a name with a
+        // space in it is the drawing's name from then on.
+        for (version, id) in [
+            ("AC1015", "dwg2000"),
+            ("AC1018", "dwg2004"),
+            ("AC1021", "dwg2007"),
+        ] {
+            let bytes = fixture(&format!("dwg/valid/ezdxf-r12-three-lines.{version}.dwg"));
+            cad.load_drawing(&bytes, "plan.dwg");
+            cad.submit_text("SAVE");
+            assert_eq!(cad.take_host_request(), 3);
+            let format = cad.session.document_format();
+            assert_eq!(format.id(), id);
+            assert_eq!(signature(&cad.snapshot_file(format.id())), version);
+            cad.mark_exported(Some("my plan.dwg".into()), id);
+            let state = cad.session.ui_state();
+            assert_eq!(state.document_name.as_deref(), Some("my plan.dwg"));
+            assert!(!state.unsaved_changes);
+        }
+        assert!(cad.snapshot_file("gif").is_empty());
     }
 
     /// A DWG with content the drawing cannot hold reports it like a DXF

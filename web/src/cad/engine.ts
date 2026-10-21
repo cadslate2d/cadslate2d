@@ -80,8 +80,10 @@ export type HostRequest = (typeof HostRequest)[keyof typeof HostRequest];
  * Presentation state for the shell. It holds nothing from which drawing
  * geometry could be reconstructed (ADR-0002 §5).
  */
+/** The formats a drawing is read from and saved in (#318, #319), in the order the core lists them. */
+export const DOCUMENT_FORMATS = ["dxf", "dwg2000", "dwg2004", "dwg2007"] as const;
 /** The format a drawing's file came in (#318). */
-export type DocumentFormat = "dxf" | "dwg2000" | "dwg2004" | "dwg2007";
+export type DocumentFormat = (typeof DOCUMENT_FORMATS)[number];
 
 export interface UiState {
   /** The current prompt, e.g. `Command:` or `Specify next point:`. */
@@ -507,9 +509,15 @@ export class CadEngine {
 
   // ── files: the host does the I/O, Rust does the format ──
 
-  /** The request behind a `Dirty.Host` flag. Taking it clears it. */
-  takeHostRequest(): HostRequest {
-    return this.#session.take_host_request() as HostRequest;
+  /**
+   * The request behind a `Dirty.Host` flag. Taking it clears it. An export
+   * carries the format asked for (#319), in the high byte of the code.
+   */
+  takeHostRequest(): { kind: HostRequest; format?: DocumentFormat } {
+    const code = this.#session.take_host_request();
+    const kind = (code & 0xff) as HostRequest;
+    const format = DOCUMENT_FORMATS[(code >> 8) - 1];
+    return format === undefined ? { kind } : { kind, format };
   }
 
   /**
@@ -546,9 +554,14 @@ export class CadEngine {
     return this.#session.restore_settings(toggles, unit, aliases);
   }
 
-  /** The drawing as ASCII DXF, for a save or an autosave: marks nothing. */
-  snapshotDxf(): string {
-    return this.#session.snapshot_dxf();
+  /** The drawing as a file of `format` (#319), for a save: marks nothing. Empty when it cannot be written. */
+  snapshotFile(format: DocumentFormat): Uint8Array<ArrayBuffer> {
+    return new Uint8Array(this.#session.snapshot_file(format));
+  }
+
+  /** What a file of `format` will not include of the drawing (#319): the writer's own losses. */
+  exportLosses(format: DocumentFormat): string[] {
+    return this.#session.export_losses(format);
   }
 
   /** The space shown as a one-page PDF with the session's plot settings (#187, #194): ASCII text. */
@@ -571,9 +584,9 @@ export class CadEngine {
     return this.#session.snapshot_bytes();
   }
 
-  /** Records that the drawing was saved — to `name`, when it has a file now. */
-  markExported(name?: string): number {
-    return this.#session.mark_exported(name);
+  /** Records that the drawing was saved as `format` — to `name`, when it has a file now. */
+  markExported(name: string | undefined, format: DocumentFormat): number {
+    return this.#session.mark_exported(name, format);
   }
 
   /** Takes the import report off the screen; the log keeps its lines. */

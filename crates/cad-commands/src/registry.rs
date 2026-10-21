@@ -14,21 +14,21 @@ use crate::commands::{
     AtteditCommand, BlockCommand, BoundaryCommand, BreakCommand, ChpropCommand, CircleCommand,
     ColorCommand, CopyClipCommand, CornerCommand, DimAngularCommand, DimChainCommand,
     DimLinearCommand, DimOrdinateCommand, DimRadialCommand, DimStyleCommand, DistCommand,
-    DivideCommand, DonutCommand, DrawOrderCommand, EdgeCommand, EllipseCommand, EraseCommand,
-    ExplodeCommand, ExportCommand, FindCommand, GridCommand, GroupCommand, HatchCommand,
-    HatchEditCommand, IdCommand, InsertCommand, JoinCommand, LayIsoCommand, LayUnisoCommand,
-    LayerAllCommand, LayerCommand, LayerMergeCommand, LayerPickCommand, LayerStateCommand,
-    LayoutCommand, LeaderCommand, LengthenCommand, LineCommand, LinetypeCommand, ListCommand,
-    LtscaleCommand, LweightCommand, MLeaderCommand, MLeaderEditCommand, MLeaderStyleCommand,
-    MTextCommand, MatchpropCommand, MeasureCommand, MirrorCommand, ModelCommand, MspaceCommand,
-    MviewCommand, NewCommand, OffsetCommand, OpenCommand, OsnapCommand, OverkillCommand,
-    PanCommand, PasteClipCommand, PeditCommand, PickStyleCommand, PlineCommand, PlotCommand,
-    PointCommand, PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand,
-    QdimCommand, QselectCommand, RayCommand, RectangCommand, RedoCommand, RenameCommand,
-    RevCloudCommand, SaveCommand, SelectCommand, SettingsCommand, SnapCommand, SplineCommand,
-    SplineEditCommand, StretchCommand, StyleCommand, TextCommand, TextEditCommand,
-    TextToFrontCommand, TransformCommand, UndoCommand, UngroupCommand, UnitsCommand, ViewCommand,
-    WBlockCommand, WipeoutCommand, XLineCommand, ZoomCommand,
+    DivideCommand, DonutCommand, DrawOrderCommand, DxfOutCommand, EdgeCommand, EllipseCommand,
+    EraseCommand, ExplodeCommand, ExportCommand, FindCommand, GridCommand, GroupCommand,
+    HatchCommand, HatchEditCommand, IdCommand, InsertCommand, JoinCommand, LayIsoCommand,
+    LayUnisoCommand, LayerAllCommand, LayerCommand, LayerMergeCommand, LayerPickCommand,
+    LayerStateCommand, LayoutCommand, LeaderCommand, LengthenCommand, LineCommand, LinetypeCommand,
+    ListCommand, LtscaleCommand, LweightCommand, MLeaderCommand, MLeaderEditCommand,
+    MLeaderStyleCommand, MTextCommand, MatchpropCommand, MeasureCommand, MirrorCommand,
+    ModelCommand, MspaceCommand, MviewCommand, NewCommand, OffsetCommand, OpenCommand,
+    OsnapCommand, OverkillCommand, PanCommand, PasteClipCommand, PeditCommand, PickStyleCommand,
+    PlineCommand, PlotCommand, PointCommand, PolarAngleCommand, PolygonCommand, PspaceCommand,
+    PtypeCommand, PurgeCommand, QdimCommand, QselectCommand, RayCommand, RectangCommand,
+    RedoCommand, RenameCommand, RevCloudCommand, SaveCommand, SelectCommand, SettingsCommand,
+    SnapCommand, SplineCommand, SplineEditCommand, StretchCommand, StyleCommand, TextCommand,
+    TextEditCommand, TextToFrontCommand, TransformCommand, UndoCommand, UngroupCommand,
+    UnitsCommand, ViewCommand, WBlockCommand, WipeoutCommand, XLineCommand, ZoomCommand,
 };
 use crate::session::select_keywords;
 
@@ -65,7 +65,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 130] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 131] = [
             ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
             ("RAY", &[], || Box::new(RayCommand::new())),
             ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
@@ -195,7 +195,8 @@ impl CommandRegistry {
             ("POLARANG", &[], || Box::new(PolarAngleCommand::default())),
             ("NEW", &["QNEW"], || Box::new(NewCommand)),
             ("OPEN", &["DXFIN"], || Box::new(OpenCommand)),
-            ("DXFOUT", &["SAVEAS", "EXPORT"], || Box::new(ExportCommand)),
+            ("SAVEAS", &["EXPORT"], || Box::new(ExportCommand::default())),
+            ("DXFOUT", &[], || Box::new(DxfOutCommand)),
             ("SAVE", &["QSAVE"], || Box::new(SaveCommand)),
             ("DIMSTYLE", &["D", "DST"], || {
                 Box::new(DimStyleCommand::new())

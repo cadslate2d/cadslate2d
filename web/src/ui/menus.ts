@@ -35,8 +35,9 @@ const FILE: Menu = {
     command("&Open...", "OPEN", { shortcut: "Ctrl+O" }),
     SEPARATOR,
     command("&Save", "SAVE", { shortcut: "Ctrl+S" }),
-    command("Save &As...", "SAVEAS", { shortcut: "Ctrl+Shift+S" }),
-    command("&Export...", "EXPORT"),
+    // The format is the user's answer (#319); the host asks where after.
+    command("Save &As...", { command: "SAVEAS", steps: [PAUSE] }, { shortcut: "Ctrl+Shift+S" }),
+    command("&Export...", { command: "EXPORT", steps: [PAUSE] }),
     SEPARATOR,
     command("&Plot...", "PLOT", { shortcut: "Ctrl+P" }),
     SEPARATOR,

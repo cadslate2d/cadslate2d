@@ -1,11 +1,35 @@
-//! NEW, OPEN, SAVE, and DXFOUT: file commands that need the host.
+//! NEW, OPEN, SAVE, SAVEAS, and DXFOUT: file commands that need the host.
 //!
 //! A browser file picker or download cannot be driven from Rust, and Rust
 //! never calls into JavaScript (ADR-0002). These commands therefore only
 //! record a request; the host carries it out and reports back through
 //! `Session::open_drawing` or `Session::mark_exported`.
 
-use crate::{Command, CommandContext, FileFormat, HostRequest, Step};
+use cad_input::{ExpectedInput, InputKind, Keyword};
+
+use crate::{Command, CommandContext, CommandInput, FileFormat, HostRequest, Prompt, Step};
+
+const DXF: Keyword = Keyword::new("DXF");
+const DWG2000: Keyword = Keyword::new("DWG2000");
+const DWG2004: Keyword = Keyword::new("DWG2004");
+const DWG2007: Keyword = Keyword::new("DWG2007");
+/// The formats SAVEAS offers, in `FileFormat::ALL`'s order.
+const FORMATS: [Keyword; 4] = [DXF, DWG2000, DWG2004, DWG2007];
+
+fn format_of(keyword: Keyword) -> FileFormat {
+    FORMATS
+        .iter()
+        .zip(FileFormat::ALL)
+        .find(|(k, _)| **k == keyword)
+        .map_or(FileFormat::Dxf, |(_, format)| format)
+}
+
+fn keyword_of(format: FileFormat) -> Keyword {
+    FORMATS[FileFormat::ALL
+        .iter()
+        .position(|f| *f == format)
+        .unwrap_or(0)]
+}
 
 /// NEW (#245): an empty drawing. Whether unsaved work may go is the
 /// host's question to ask, as it is for OPEN.
@@ -34,20 +58,13 @@ impl Command for OpenCommand {
 }
 
 /// SAVE: back to the file where the browser can, asking where otherwise
-/// (DESIGN §25.3). What "can" means is the host's to know.
+/// (DESIGN §25.3), in the format the file came in (#319). What "can"
+/// means is the host's to know.
 #[derive(Debug)]
 pub(crate) struct SaveCommand;
 
 impl Command for SaveCommand {
     fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
-        // Until #319 writes DWG from the commands, a drawing that came in
-        // as DWG is saved as DXF, and says so before the host asks where.
-        if ctx.document_format != FileFormat::Dxf {
-            ctx.message(format!(
-                "The drawing came in as {}; it is saved as DXF.",
-                ctx.document_format.label()
-            ));
-        }
         ctx.request_host(HostRequest::SaveFile);
         Step::Finished
     }
@@ -55,12 +72,46 @@ impl Command for SaveCommand {
     immediate_command!();
 }
 
-#[derive(Debug)]
-pub(crate) struct ExportCommand;
+/// SAVEAS and EXPORT (#319): the format — DXF, or DWG 2000, 2004, or 2007
+/// — then the host asks where. Enter keeps the format the file came in.
+#[derive(Debug, Default)]
+pub(crate) struct ExportCommand {
+    /// The format the file came in: the default.
+    current: FileFormat,
+}
 
 impl Command for ExportCommand {
     fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
-        ctx.request_host(HostRequest::ExportFile);
+        self.current = ctx.document_format;
+        Step::Continue
+    }
+
+    fn prompt(&self) -> Prompt {
+        Prompt::new("Save as").with_default(keyword_of(self.current).name())
+    }
+
+    fn expected(&self) -> ExpectedInput {
+        ExpectedInput::new(InputKind::Nothing).with_keywords(&FORMATS)
+    }
+
+    fn step(&mut self, input: CommandInput, ctx: &mut CommandContext<'_>) -> Step {
+        let format = match input {
+            CommandInput::Keyword(keyword) => format_of(keyword),
+            CommandInput::Accept => self.current,
+            _ => return Step::Continue,
+        };
+        ctx.request_host(HostRequest::ExportFile(format));
+        Step::Finished
+    }
+}
+
+/// DXFOUT: what its name says, with no question asked.
+#[derive(Debug)]
+pub(crate) struct DxfOutCommand;
+
+impl Command for DxfOutCommand {
+    fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
+        ctx.request_host(HostRequest::ExportFile(FileFormat::Dxf));
         Step::Finished
     }
 
@@ -96,11 +147,9 @@ mod tests {
             ("qnew", HostRequest::NewDrawing),
             ("OPEN", HostRequest::OpenFile),
             ("dxfin", HostRequest::OpenFile),
-            ("DXFOUT", HostRequest::ExportFile),
+            ("DXFOUT", HostRequest::ExportFile(FileFormat::Dxf)),
             ("save", HostRequest::SaveFile),
             ("qsave", HostRequest::SaveFile),
-            ("SAVEAS", HostRequest::ExportFile),
-            ("export", HostRequest::ExportFile),
         ];
         for (text, expected) in cases {
             let mut h = Harness::new();
@@ -123,7 +172,7 @@ mod tests {
     fn a_new_drawing_is_empty_untitled_and_keeps_the_unit() {
         let drawing = imported().with_unit(Some(cad_core::LengthUnit::Millimetres));
         let mut h = Harness::with_drawing(drawing);
-        h.session.mark_exported(Some("plan.dxf"));
+        h.session.mark_exported(Some("plan.dxf"), FileFormat::Dxf);
         h.enter_all(&["L", "0,0", "10,0", ""]);
         h.enter("ALL");
         h.enter("MOVE");
@@ -216,7 +265,7 @@ mod tests {
         h.enter_all(&["L", "0,0", "10,0", ""]);
         assert!(h.session.ui_state().unsaved_changes);
 
-        let dirty = h.session.mark_exported(None);
+        let dirty = h.session.mark_exported(None, FileFormat::Dxf);
         assert!(dirty.contains(Dirty::UI));
         assert!(!h.session.ui_state().unsaved_changes);
         assert_eq!(h.log().last().unwrap(), "Drawing exported as DXF.");
@@ -258,7 +307,7 @@ mod tests {
         // Editing and exporting do not make the original content come back;
         // dismissing the report keeps the losses.
         h.enter_all(&["L", "0,0", "1,1", ""]);
-        h.session.mark_exported(None);
+        h.session.mark_exported(None, FileFormat::Dxf);
         h.session.dismiss_import_report();
         let state = h.session.ui_state();
         assert_eq!(state.export_losses, losses);
@@ -303,5 +352,65 @@ mod tests {
             h.log(),
             vec!["Cannot open broken.dxf: line 1: expected a DXF group code"]
         );
+    }
+    /// #319: SAVEAS asks the format, Enter keeping the file's own; the
+    /// request carries the choice. `2mm` is no format.
+    #[test]
+    fn saveas_asks_the_format_and_enter_keeps_the_files_own() {
+        let mut h = Harness::new();
+        for (answer, format) in [
+            ("DXF", FileFormat::Dxf),
+            ("dwg2000", FileFormat::Dwg2000),
+            ("DWG2004", FileFormat::Dwg2004),
+            ("DWG2007", FileFormat::Dwg2007),
+        ] {
+            h.enter("SAVEAS");
+            assert_eq!(
+                h.prompt(),
+                "Save as or [DXF/DWG2000/DWG2004/DWG2007] <DXF>:"
+            );
+            let dirty = h.enter(answer);
+            assert!(dirty.contains(Dirty::HOST), "{answer}");
+            assert_eq!(
+                h.session.take_host_request(),
+                Some(HostRequest::ExportFile(format))
+            );
+        }
+        h.enter_all(&["EXPORT", "2mm"]);
+        assert_eq!(h.log().last().unwrap(), "An option keyword is required.");
+        assert_eq!(h.session.take_host_request(), None);
+        h.enter("");
+        assert_eq!(
+            h.session.take_host_request(),
+            Some(HostRequest::ExportFile(FileFormat::Dxf))
+        );
+
+        // A drawing that came in as DWG 2004 offers that, and SAVE keeps it.
+        h.session.open_drawing(
+            imported(),
+            "my plan.dwg",
+            FileFormat::Dwg2004,
+            Vec::new(),
+            Vec::new(),
+        );
+        h.enter("SAVEAS");
+        assert_eq!(
+            h.prompt(),
+            "Save as or [DXF/DWG2000/DWG2004/DWG2007] <DWG2004>:"
+        );
+        h.enter("");
+        assert_eq!(
+            h.session.take_host_request(),
+            Some(HostRequest::ExportFile(FileFormat::Dwg2004))
+        );
+        assert_eq!(h.session.document_format(), FileFormat::Dwg2004);
+        // Saved as another format, under a name with a space: that is the
+        // drawing's format and name from then on.
+        h.session
+            .mark_exported(Some("my plan 2.dwg"), FileFormat::Dwg2007);
+        let state = h.session.ui_state();
+        assert_eq!(state.document_name.as_deref(), Some("my plan 2.dwg"));
+        assert_eq!(state.document_format, FileFormat::Dwg2007);
+        assert_eq!(h.log().last().unwrap(), "Drawing exported as DWG 2007.");
     }
 }

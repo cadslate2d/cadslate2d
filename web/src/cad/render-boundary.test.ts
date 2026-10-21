@@ -26,6 +26,8 @@ describe("WASM API surface", () => {
   test("is exactly the reviewed set of coarse calls", async () => {
     expect(await exportedSessionApi()).toEqual([
       "dismiss_import_report",
+      // #319: what a format will not include, the list whole, before the save.
+      "export_losses",
       "history_next",
       "history_previous",
       // #222: a file INSERT asked for, read whole and handed over in one call.
@@ -89,7 +91,8 @@ describe("WASM API surface", () => {
       // ADR-0024: the autosave's snapshot in slices — begun, stepped by a budget of records, taken as one buffer.
       "snapshot_begin",
       "snapshot_bytes",
-      "snapshot_dxf",
+      // #319: the drawing as a file of a format, whole, in one call (was snapshot_dxf).
+      "snapshot_file",
       "snapshot_step",
       "submit_text",
       // #222: the file WBLOCK made, name and text in one call.

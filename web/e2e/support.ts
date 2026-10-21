@@ -60,8 +60,14 @@ function installFileSystemAccess(mode: string): void {
     getFile: () => Promise.resolve(new File([files.get(name) ?? ""], name)),
     createWritable: () =>
       Promise.resolve({
-        write: (text: string) => {
-          files.set(name, text);
+        // Text as it is; a DWG's bytes as the text of their first six, the version id.
+        write: (content: string | Uint8Array) => {
+          files.set(
+            name,
+            typeof content === "string"
+              ? content
+              : new TextDecoder().decode(content.subarray(0, 6)),
+          );
           return Promise.resolve();
         },
         close: () => Promise.resolve(),
@@ -308,6 +314,17 @@ export function fixturePath(relative: string): string {
 /** Absolute path of a DWG fixture under `test-data/dwg/`. */
 export function dwgFixturePath(relative: string): string {
   return fileURLToPath(new URL(`../../test-data/dwg/${relative}`, import.meta.url));
+}
+
+/** Runs `action`, which must trigger a download, and returns the downloaded bytes and file name. */
+export async function downloadBytesFrom(
+  page: Page,
+  action: () => Promise<void>,
+): Promise<{ name: string; bytes: Buffer }> {
+  const pending = page.waitForEvent("download");
+  await action();
+  const download = await pending;
+  return { name: download.suggestedFilename(), bytes: await readFile(await download.path()) };
 }
 
 /** Runs `action`, which must trigger a download, and returns the downloaded text and file name. */

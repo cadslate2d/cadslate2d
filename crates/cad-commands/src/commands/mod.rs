@@ -134,7 +134,7 @@ pub(crate) use donut::DonutCommand;
 pub(crate) use draworder::{DrawOrderCommand, TextToFrontCommand};
 pub(crate) use edge::EdgeCommand;
 pub(crate) use ellipse::EllipseCommand;
-pub(crate) use files::{ExportCommand, NewCommand, OpenCommand, SaveCommand};
+pub(crate) use files::{DxfOutCommand, ExportCommand, NewCommand, OpenCommand, SaveCommand};
 pub(crate) use find::FindCommand;
 pub(crate) use grid::GridCommand;
 pub(crate) use grip::GripEditCommand;

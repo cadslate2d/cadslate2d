@@ -42,4 +42,4 @@ pub use import::{Import, import, import_with_limits, records};
 pub use limits::ImportLimits;
 pub use sections::{File, MapEntry, Section, SectionName};
 pub use version::Version;
-pub use write::{WriteError, export, write_records};
+pub use write::{WriteError, export, export_losses, write_records};

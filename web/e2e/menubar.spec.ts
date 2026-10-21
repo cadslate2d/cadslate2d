@@ -93,12 +93,13 @@ test("View shows and hides the panels, checked while each shows; Tools › Optio
 test("the quick actions at the row's right run their commands", async ({ page }) => {
   await openApp(page);
   await enter(page, "L", "0,0", "10,0", "");
-  const file = await downloadFrom(page, () =>
-    page
-      .getByRole("group", { name: "Quick actions" })
-      .getByRole("button", { name: "Export" })
-      .click(),
-  );
+  await page
+    .getByRole("group", { name: "Quick actions" })
+    .getByRole("button", { name: "Export" })
+    .click();
+  // EXPORT asks the format first (#319); Enter keeps the drawing's, DXF.
+  await expect(prompt(page)).toHaveText("Save as or [DXF/DWG2000/DWG2004/DWG2007] <DXF>:");
+  const file = await downloadFrom(page, () => enter(page, ""));
   expect(file.text).toContain("AcDbLine");
   await expect(logLines(page).filter({ hasText: "Command: EXPORT" })).toHaveCount(1);
 });

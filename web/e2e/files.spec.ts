@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   blocks,
   chooseFile,
+  downloadBytesFrom,
   downloadFrom,
   dwgFixturePath,
   enter,
@@ -13,6 +14,7 @@ import {
   litPixels,
   logLines,
   openApp,
+  prompt,
   recordRequests,
   settle,
   tableRow,
@@ -119,6 +121,47 @@ test.describe("open", () => {
       expect(file.text.match(/^LINE$/gm)).toHaveLength(3);
     });
   }
+
+  // #319: a DWG opened, edited, and saved as each version comes back with the edit.
+  test("a DWG edited and saved as each version reopens with the edit", async ({ page }) => {
+    await openApp(page);
+    await chooseFile(
+      page,
+      () => enter(page, "OPEN"),
+      dwgFixturePath("valid/ezdxf-r12-three-lines.AC1015.dwg"),
+    );
+    await expect(logLines(page).filter({ hasText: "Imported 3 lines." })).toHaveCount(1);
+    await enter(page, "L", "0,0", "40,40", "");
+    let round = 0;
+    for (const [keyword, signature] of [
+      ["DWG2000", "AC1015"],
+      ["DWG2004", "AC1018"],
+      ["DWG2007", "AC1021"],
+    ] as const) {
+      round += 1;
+      const file = await downloadBytesFrom(page, () => enter(page, "SAVEAS", keyword));
+      expect(file.name).toBe(round === 1 ? "ezdxf-r12-three-lines.AC1015.dwg" : "again.dwg");
+      expect(file.bytes.subarray(0, 6).toString()).toBe(signature);
+      await expect(logLines(page).last()).toHaveText(
+        `Drawing exported as DWG ${keyword.slice(3)}.`,
+      );
+      // Reopened: the three lines and the edit, whichever version carried them.
+      await chooseFile(page, () => enter(page, "OPEN"), {
+        name: "again.dwg",
+        mimeType: "application/acad",
+        buffer: file.bytes,
+      });
+      await expect(logLines(page).filter({ hasText: "Imported 4 lines." })).toHaveCount(round);
+      await expect(page.getByTestId("document")).toContainText("again.dwg");
+      // The next SAVEAS starts from this file's version.
+      await enter(page, "SAVEAS");
+      await expect(prompt(page)).toHaveText(
+        `Save as or [DXF/DWG2000/DWG2004/DWG2007] <${keyword}>:`,
+      );
+      await page.keyboard.press("Escape");
+      await settle(page);
+    }
+  });
 
   test("a DWG with content the drawing cannot hold is LOSSY, like a DXF", async ({ page }) => {
     await openApp(page);

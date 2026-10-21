@@ -59,7 +59,10 @@ test("the M18 scenario: a plate drafted through the menus alone, then saved", as
 
   // 6. Saved from File: the outline, two holes, the dimension, the fillet's
   // arc, all on the layer made from Format.
-  const file = await downloadFrom(page, () => chooseMenu(page, "File", "Save As..."));
+  // Save As… asks the format first (#319); Enter keeps the drawing's, DXF.
+  await chooseMenu(page, "File", "Save As...");
+  await expect(prompt(page)).toHaveText("Save as or [DXF/DWG2000/DWG2004/DWG2007] <DXF>:");
+  const file = await downloadFrom(page, () => enter(page, ""));
   expect(entities(file.text, "LWPOLYLINE")).toHaveLength(1);
   expect(circles(file.text)).toEqual([
     [30, 30, 8],
