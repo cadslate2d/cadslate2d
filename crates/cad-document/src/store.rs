@@ -24,7 +24,7 @@ impl fmt::Display for DuplicateEntityId {
 
 impl std::error::Error for DuplicateEntityId {}
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Slot {
     id: EntityId,
     record: EntityRecord,
@@ -32,7 +32,7 @@ struct Slot {
 
 /// Dense entity storage addressed by stable ID. A slot holds an entity's
 /// shared geometry and, beside it, its properties.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct EntityStore {
     slots: Vec<Slot>,
     id_to_slot: HashMap<EntityId, usize>,

@@ -97,6 +97,38 @@ pub struct Drawing {
 /// this is rebuilt whole.
 const JOURNAL_LENGTH: usize = 64;
 
+/// A copy of the drawing, history and all: what a proposal runs against
+/// (#254), so the drawing itself and its revision are untouched until the
+/// user accepts.
+impl Clone for Drawing {
+    fn clone(&self) -> Self {
+        Self {
+            entities: self.entities.clone(),
+            layers: self.layers.clone(),
+            linetypes: self.linetypes.clone(),
+            text_styles: self.text_styles.clone(),
+            dim_styles: self.dim_styles.clone(),
+            blocks: self.blocks.clone(),
+            settings: self.settings,
+            ids: self.ids.clone(),
+            index: self.index.boxed_clone(),
+            unbounded: self.unbounded.clone(),
+            radii: self.radii.clone(),
+            radius_of: self.radius_of.clone(),
+            orders: self.orders.clone(),
+            history: self.history.clone(),
+            revision: self.revision,
+            shown_revision: self.shown_revision,
+            journal: self.journal.clone(),
+            layouts: self.layouts.clone(),
+            groups: self.groups.clone(),
+            layer_states: self.layer_states.clone(),
+            views: self.views.clone(),
+            mleader_styles: self.mleader_styles.clone(),
+        }
+    }
+}
+
 /// What a commit, undo, or redo did, so interaction state such as the
 /// selection can follow along without being stored in history (DESIGN §19.7).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -4196,6 +4228,51 @@ mod tests {
         drawing.undo().unwrap();
         assert_eq!(drawing.entity(id), None);
         assert!(!drawing.can_undo());
+    }
+
+    /// #254: groups nest; the outermost closes them all as one step.
+    #[test]
+    fn a_group_inside_a_group_is_part_of_the_outer_step() {
+        let mut drawing = Drawing::new();
+        drawing.begin_group();
+        drawing.begin_group();
+        create(&mut drawing, line(0.0, 0.0, 1.0, 0.0));
+        create(&mut drawing, line(0.0, 1.0, 1.0, 1.0));
+        drawing.end_group();
+        drawing.begin_group();
+        create(&mut drawing, line(0.0, 2.0, 1.0, 2.0));
+        drawing.end_group();
+        drawing.end_group();
+        assert_eq!(drawing.len(), 3);
+        drawing.undo().unwrap();
+        assert!(drawing.is_empty() && !drawing.can_undo());
+    }
+
+    /// #254: a clone is a drawing of its own — entities, index, history —
+    /// and changing it leaves the original and its revision as they were.
+    #[test]
+    fn a_clone_changes_apart_from_its_original() {
+        let mut drawing = Drawing::new();
+        let a = create(&mut drawing, line(0.0, 0.0, 1.0, 0.0));
+        let revision = drawing.revision();
+        let mut copy = drawing.clone();
+        assert_eq!(copy.revision(), revision);
+        let b = create(&mut copy, line(5.0, 5.0, 6.0, 5.0));
+        copy.undo().unwrap();
+        copy.undo().unwrap();
+        assert!(copy.is_empty());
+        assert_eq!(live_ids(&drawing), vec![a]);
+        assert_eq!(drawing.revision(), revision);
+        assert!(drawing.can_undo() && !drawing.can_redo());
+        // The ID the copy gave out is the one the original gives next.
+        assert_eq!(create(&mut drawing, line(5.0, 5.0, 6.0, 5.0)), b);
+        assert_eq!(
+            drawing.query(&Aabb::from_points(
+                Point2::new(4.0, 4.0),
+                Point2::new(7.0, 6.0)
+            )),
+            vec![b]
+        );
     }
 
     #[test]

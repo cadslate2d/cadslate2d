@@ -170,7 +170,7 @@ struct SpyLog {
 }
 
 /// An index that records every query and can be told to hide everything.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct SpyIndex {
     inner: RTreeIndex,
     log: Rc<RefCell<SpyLog>>,
@@ -178,6 +178,10 @@ struct SpyIndex {
 }
 
 impl SpatialIndex for SpyIndex {
+    fn boxed_clone(&self) -> Box<dyn SpatialIndex> {
+        Box::new(self.clone())
+    }
+
     fn insert(&mut self, id: EntityId, bounds: Aabb) {
         self.inner.insert(id, bounds);
     }

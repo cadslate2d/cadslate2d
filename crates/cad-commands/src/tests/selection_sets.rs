@@ -155,9 +155,13 @@ fn a_box_selection_makes_one_index_query_for_the_box() {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    #[derive(Debug)]
+    #[derive(Clone, Debug)]
     struct Spy(RTreeIndex, Rc<RefCell<Vec<Aabb>>>);
     impl SpatialIndex for Spy {
+        fn boxed_clone(&self) -> Box<dyn SpatialIndex> {
+            Box::new(self.clone())
+        }
+
         fn insert(&mut self, id: EntityId, bounds: Aabb) {
             self.0.insert(id, bounds);
         }

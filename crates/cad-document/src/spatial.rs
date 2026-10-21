@@ -38,6 +38,9 @@ pub trait SpatialIndex: Debug {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// A copy of the index, boxed: what a drawing's clone takes.
+    fn boxed_clone(&self) -> Box<dyn SpatialIndex>;
 }
 
 type RTreeEntry = GeomWithData<Rectangle<[f64; 2]>, EntityId>;
@@ -66,7 +69,7 @@ const PACKED_FANOUT: usize = 16;
 /// below. Built in one pass from sorted entries, never inserted into: what
 /// is added later lives in the dynamic tree beside it, and what is removed
 /// is marked.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct PackedTree {
     entries: Vec<(EntityId, Aabb)>,
     /// `levels[0]` holds the bounds of each run of `PACKED_FANOUT` entries,
@@ -172,7 +175,7 @@ enum Place {
 /// into a static tree in one pass; what is inserted later goes into an
 /// R*-tree beside it, and what is removed from the packed tree is marked.
 /// The packed tree is repacked from what is left when half of it is gone.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct RTreeIndex {
     packed: PackedTree,
     /// Packed entries removed since the rebuild.
@@ -206,6 +209,10 @@ impl RTreeIndex {
 }
 
 impl SpatialIndex for RTreeIndex {
+    fn boxed_clone(&self) -> Box<dyn SpatialIndex> {
+        Box::new(self.clone())
+    }
+
     fn insert(&mut self, id: EntityId, bounds: Aabb) {
         let previous = self.bounds.insert(id, (bounds, Place::Dynamic));
         debug_assert!(previous.is_none(), "entity {id} is already indexed");
@@ -264,7 +271,7 @@ impl SpatialIndex for RTreeIndex {
 ///
 /// It is the reference implementation the R-tree is checked against, and a
 /// baseline for benchmarks. Not intended for large drawings.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct LinearIndex {
     entries: Vec<(EntityId, Aabb)>,
 }
@@ -276,6 +283,10 @@ impl LinearIndex {
 }
 
 impl SpatialIndex for LinearIndex {
+    fn boxed_clone(&self) -> Box<dyn SpatialIndex> {
+        Box::new(self.clone())
+    }
+
     fn insert(&mut self, id: EntityId, bounds: Aabb) {
         debug_assert!(
             self.entries.iter().all(|(existing, _)| *existing != id),

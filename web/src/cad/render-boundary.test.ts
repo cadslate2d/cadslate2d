@@ -25,6 +25,8 @@ describe("WASM API surface", () => {
   // reviewed for coarseness before it ships.
   test("is exactly the reviewed set of coarse calls", async () => {
     expect(await exportedSessionApi()).toEqual([
+      // #254: a proposal accepted as one undo, in one call.
+      "accept_proposal",
       "dismiss_import_report",
       // #319: what a format will not include, the list whole, before the save.
       "export_losses",
@@ -56,6 +58,12 @@ describe("WASM API surface", () => {
       // #220: the pointer rested a moment, which only the host can time.
       "pointer_rest",
       "pointer_up",
+      // #254: the proposal as the panel shows it, whole, in one call.
+      "proposal_summary",
+      // #254: an intent document run against a copy and kept as the proposal, in one call.
+      "propose",
+      // #254: the proposal dropped, in one call.
+      "reject_proposal",
       "resize",
       // #186: what the browser kept between sessions, given back in one call.
       "restore_settings",

@@ -17,6 +17,7 @@ cad-commands.workspace = true
 cad-render.workspace = true
 cad-dxf.workspace = true
 cad-dwg.workspace = true
+cad-intent.workspace = true
 cad-plot.workspace = true
 wasm-bindgen.workspace = true
 js-sys.workspace = true

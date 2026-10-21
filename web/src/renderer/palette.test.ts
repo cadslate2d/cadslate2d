@@ -54,8 +54,10 @@ describe("readPalette", () => {
     "--canvas-lineweight-grip-hot": "2",
     "--canvas-hover": "#aaccff",
     "--canvas-removal": "#ff5555",
+    "--canvas-proposal": "#55ff55",
     "--canvas-lineweight-hover": "2.25",
     "--canvas-lineweight-removal": "2.25",
+    "--canvas-lineweight-proposal": "1.75",
   };
   const read = (property: string) => tokens[property] ?? "";
 

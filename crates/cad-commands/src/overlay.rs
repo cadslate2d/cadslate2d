@@ -35,6 +35,11 @@ pub enum OverlayItem {
     PreviewSegment { start: Point2, end: Point2 },
     /// The entity a command would create if the next input were the cursor.
     PreviewEntity(Entity),
+    /// An object a proposal would add, or the state it would give one
+    /// (#254): drawn in the proposal's own style.
+    ProposalAdded(Entity),
+    /// An object a proposal would remove, or the state it would change.
+    ProposalRemoved(Entity),
     /// Existing entities shown where an edit would put them. The document is
     /// not touched until the edit is committed (DESIGN §17).
     PreviewTransformed {

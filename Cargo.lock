@@ -219,6 +219,7 @@ dependencies = [
  "cad-core",
  "cad-document",
  "cad-geometry",
+ "cad-intent",
 ]
 
 [[package]]
@@ -238,6 +239,7 @@ dependencies = [
  "cad-document",
  "cad-dwg",
  "cad-dxf",
+ "cad-intent",
  "cad-plot",
  "cad-render",
  "console_error_panic_hook",

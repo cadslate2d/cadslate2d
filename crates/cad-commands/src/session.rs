@@ -19,6 +19,7 @@ use crate::commands::{Clipboard, GripEditCommand, Isolation, grip};
 use crate::grips::{grip_at, grips_of};
 use crate::history::InputHistory;
 use crate::log::CommandLog;
+use crate::proposal::Proposal;
 use crate::snap::find_snap_from;
 use crate::{
     Command, CommandContext, CommandInput, CommandRegistry, Dirty, DraftingSettings, FileDrawing,
@@ -230,6 +231,8 @@ pub struct Session {
     last_command: Option<&'static str>,
     toggles: Toggles,
     settings: DraftingSettings,
+    /// What an intent would do, waiting for Accept or Reject (#254).
+    proposal: Option<Proposal>,
     /// Where the primary button went down on a grip. Releasing it somewhere
     /// else drops the grip there, so a grip can be dragged as well as clicked.
     grip_press: Option<ScreenPoint>,
@@ -295,6 +298,7 @@ impl Session {
             last_command: None,
             toggles: Toggles::default(),
             settings: DraftingSettings::default(),
+            proposal: None,
             grip_press: None,
             summary: RefCell::new(None),
         }
@@ -328,6 +332,37 @@ impl Session {
 
     pub fn selection(&self) -> &Selection {
         &self.selection
+    }
+
+    /// A session on a copy of the drawing, placed and set as this one, to
+    /// run a proposal against (#254).
+    pub(crate) fn scratch(&self) -> Session {
+        let mut scratch = Session::with_drawing(self.drawing.clone()).with_toggles(self.toggles);
+        scratch.settings = self.settings;
+        scratch.view = self.view.clone();
+        scratch.space = self.space;
+        scratch.selection = self.selection.clone();
+        scratch
+    }
+
+    pub(crate) fn proposal_ref(&self) -> &Option<Proposal> {
+        &self.proposal
+    }
+
+    pub(crate) fn set_proposal(&mut self, proposal: Option<Proposal>) {
+        self.proposal = proposal;
+    }
+
+    pub(crate) fn take_proposal(&mut self) -> Option<Proposal> {
+        self.proposal.take()
+    }
+
+    pub(crate) fn begin_undo_group(&mut self) {
+        self.drawing.begin_group();
+    }
+
+    pub(crate) fn end_undo_group(&mut self) {
+        self.drawing.end_group();
     }
 
     /// Whether a command is in progress.
@@ -636,6 +671,9 @@ impl Session {
             });
         }
         items.extend(self.selection.iter().map(OverlayItem::Highlight));
+        if let Some(proposal) = &self.proposal {
+            proposal.overlay(&mut items);
+        }
         let grips = self.grips();
         if !grips.is_empty() {
             items.push(OverlayItem::Grips {
@@ -1297,6 +1335,7 @@ impl Session {
         self.drawing = drawing;
         self.document_name = name;
         self.document_format = format;
+        self.proposal = None;
         self.export_losses = losses;
         self.imports += 1;
         self.import_report = (!messages.is_empty()).then(|| ImportReport {

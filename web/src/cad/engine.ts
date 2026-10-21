@@ -80,6 +80,16 @@ export type HostRequest = (typeof HostRequest)[keyof typeof HostRequest];
  * Presentation state for the shell. It holds nothing from which drawing
  * geometry could be reconstructed (ADR-0002 §5).
  */
+/** What a proposal would do (#254): counts, one line per operation, and what stopped it. */
+export interface ProposalSummary {
+  readonly headline: string;
+  readonly added: number;
+  readonly changed: number;
+  readonly removed: number;
+  readonly operations: readonly string[];
+  readonly error?: string;
+}
+
 /** The formats a drawing is read from and saved in (#318, #319), in the order the core lists them. */
 export const DOCUMENT_FORMATS = ["dxf", "dwg2000", "dwg2004", "dwg2007"] as const;
 /** The format a drawing's file came in (#318). */
@@ -208,6 +218,8 @@ export const StyleRole = {
   GripHot: 11,
   Hover: 12,
   Removal: 13,
+  /** What a proposal would add, or the state it would give an object (#254). */
+  Proposal: 14,
 } as const;
 export type StyleRole = (typeof StyleRole)[keyof typeof StyleRole];
 
@@ -587,6 +599,30 @@ export class CadEngine {
   /** Records that the drawing was saved as `format` — to `name`, when it has a file now. */
   markExported(name: string | undefined, format: DocumentFormat): number {
     return this.#session.mark_exported(name, format);
+  }
+
+  /**
+   * Runs an intent document (ADR-0037) against a copy of the drawing and
+   * keeps it as the proposal the overlay shows (#254). The drawing is
+   * untouched; an invalid document is refused in the log.
+   */
+  propose(intent: string): number {
+    return this.#session.propose(intent);
+  }
+
+  /** Applies the proposal as one undo step (#254). */
+  acceptProposal(): number {
+    return this.#session.accept_proposal();
+  }
+
+  /** Drops the proposal (#254). */
+  rejectProposal(): number {
+    return this.#session.reject_proposal();
+  }
+
+  /** The proposal as the panel shows it, or none (#254). */
+  proposalSummary(): ProposalSummary | undefined {
+    return (this.#session.proposal_summary() as ProposalSummary | null) ?? undefined;
   }
 
   /** Takes the import report off the screen; the log keeps its lines. */

@@ -15,9 +15,9 @@ declare -A ALLOWED=(
   [cad-commands]="cad-core cad-geometry cad-input cad-document cad-intent"
   [cad-dxf]="cad-core cad-document"
   [cad-dwg]="cad-core cad-document cad-dxf"
-  [cad-render]="cad-core cad-geometry cad-document cad-commands"
+  [cad-render]="cad-core cad-geometry cad-document cad-commands cad-intent"
   [cad-plot]="cad-core cad-geometry cad-document cad-commands cad-render"
-  [cad-wasm]="cad-core cad-geometry cad-document cad-commands cad-render cad-dxf cad-dwg cad-plot"
+  [cad-wasm]="cad-core cad-geometry cad-document cad-commands cad-render cad-dxf cad-dwg cad-plot cad-intent"
 )
 JS_ONLY='wasm-bindgen|js-sys|web-sys|serde-wasm-bindgen|console_error_panic_hook'
 

@@ -1311,3 +1311,53 @@ fn a_layouts_scene_is_the_model_through_its_viewports_and_the_paper_over_it() {
 fn p(x: f64, y: f64) -> cad_core::Point2 {
     cad_core::Point2::new(x, y)
 }
+
+/// #254: a proposal is overlay content in its own style. Proposing,
+/// moving the pointer over it, and rejecting it never touch the committed
+/// scene or its revision; accepting it is an ordinary commit.
+#[test]
+fn a_proposal_is_overlay_content_and_leaves_the_scene_alone() {
+    let mut h = Harness::with_entities([cad_document::Entity::Line(
+        cad_document::LineEntity::new(p(0.0, 0.0), p(100.0, 0.0)),
+    )]);
+    let mut scenes = SceneCache::new();
+    let revision = scenes.scene(h.session.drawing()).revision();
+    let intent = cad_intent::parse(
+        r#"{"version": 1, "operations": [
+            {"op": "circle", "center": [50, 50], "radius": 10},
+            {"op": "move", "targets": [1], "displacement": [0, 20]}
+        ]}"#,
+    )
+    .unwrap();
+    let dirty = h.session.propose(intent);
+    assert!(dirty.contains(Dirty::OVERLAY));
+    assert!(!dirty.contains(Dirty::SCENE));
+    assert_eq!(scenes.scene(h.session.drawing()).revision(), revision);
+
+    let overlay = overlay_of(&h);
+    assert_frame_is_consistent(overlay.frame(), "a proposal");
+    let roles = |frame: &PackedFrame| -> Vec<StyleRole> {
+        frame
+            .batches()
+            .iter()
+            .chain(frame.arc_batches().iter())
+            .map(|batch| batch.style)
+            .collect()
+    };
+    let shown = roles(overlay.frame());
+    assert!(shown.contains(&StyleRole::Proposal), "{shown:?}");
+    assert!(shown.contains(&StyleRole::Removal), "{shown:?}");
+    // The same proposal draws the same frame; the pointer does not rebuild it.
+    assert_eq!(overlay_of(&h), overlay);
+    for step in 0..50 {
+        let dirty = h.move_to(f64::from(step * 13 % 800), f64::from(step * 7 % 600));
+        assert!(!dirty.contains(Dirty::SCENE));
+    }
+    assert!(roles(overlay_of(&h).frame()).contains(&StyleRole::Proposal));
+    assert_eq!(scenes.scene(h.session.drawing()).revision(), revision);
+
+    h.session.reject_proposal();
+    assert!(!roles(overlay_of(&h).frame()).contains(&StyleRole::Proposal));
+    assert_eq!(scenes.scene(h.session.drawing()).revision(), revision);
+    assert_eq!(scenes.build_count(), 1, "the scene was built once");
+}

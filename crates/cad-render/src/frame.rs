@@ -63,10 +63,13 @@ pub enum StyleRole {
     Hover = 12,
     /// Geometry an edit would remove.
     Removal = 13,
+    /// What a proposal would add, or the state it would give an object
+    /// (ADR-0037, #254).
+    Proposal = 14,
 }
 
 impl StyleRole {
-    const ALL: [Self; 14] = [
+    const ALL: [Self; 15] = [
         Self::Entity,
         Self::Selection,
         Self::Preview,
@@ -81,6 +84,7 @@ impl StyleRole {
         Self::GripHot,
         Self::Hover,
         Self::Removal,
+        Self::Proposal,
     ];
 
     fn from_word(word: u32) -> Option<Self> {

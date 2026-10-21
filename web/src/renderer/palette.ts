@@ -32,6 +32,7 @@ const ROLE_TOKENS: Readonly<Record<StyleRole, string>> = {
   [StyleRole.GripHot]: "grip-hot",
   [StyleRole.Hover]: "hover",
   [StyleRole.Removal]: "removal",
+  [StyleRole.Proposal]: "proposal",
 };
 
 /** Parses `#rgb`, `#rrggbb`, or `#rrggbbaa`. */

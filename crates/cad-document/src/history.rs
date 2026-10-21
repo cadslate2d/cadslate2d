@@ -7,12 +7,16 @@ use crate::Transaction;
 ///
 /// History holds transactions only — never spatial-index or render-cache
 /// state, which is derived and rebuilt from the document (§19.5).
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct History {
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
     /// Length of the undo stack when the open group began, if one is open.
     group_start: Option<usize>,
+    /// How many `begin_group`s are open: groups nest, and only the
+    /// outermost `end_group` merges (#254: a proposal accepted is one undo
+    /// however many commands it ran, each a group of its own).
+    depth: usize,
 }
 
 impl History {
@@ -54,11 +58,19 @@ impl History {
     /// Starts a group: everything recorded until [`History::end_group`]
     /// becomes a single undo step (one gesture, one transaction — §19.4).
     pub(crate) fn begin_group(&mut self) {
-        self.group_start = Some(self.undo.len());
+        if self.depth == 0 {
+            self.group_start = Some(self.undo.len());
+        }
+        self.depth += 1;
     }
 
-    /// Closes the open group, merging what was recorded inside it.
+    /// Closes the open group, merging what was recorded inside it; a group
+    /// inside another closes with the outer one.
     pub(crate) fn end_group(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
+        if self.depth > 0 {
+            return;
+        }
         let Some(start) = self.group_start.take() else {
             return;
         };

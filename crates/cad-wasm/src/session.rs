@@ -97,6 +97,18 @@ fn open_drawing_file(bytes: &[u8]) -> Result<(cad_dxf::Import, FileFormat), Stri
     }
 }
 
+/// A proposal as the panel shows it (#254).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProposalSummaryDto {
+    headline: String,
+    added: u32,
+    changed: u32,
+    removed: u32,
+    operations: Vec<String>,
+    error: Option<String>,
+}
+
 /// `UiState` as the plain object JavaScript receives.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -510,6 +522,51 @@ impl CadSession {
             .take_block_file()
             .map(|(name, drawing)| vec![name, cad_dxf::export(&drawing)])
             .unwrap_or_default()
+    }
+
+    /// Runs an intent document — the JSON a model wrote (ADR-0037, #254) —
+    /// against a copy of the drawing and keeps it as the proposal, which
+    /// the overlay then shows. The drawing is untouched. A document that
+    /// is not valid is refused in the log, and no proposal is kept.
+    pub fn propose(&mut self, intent: &str) -> u32 {
+        let dirty = match cad_intent::parse(intent) {
+            Ok(intent) => self.session.propose(intent),
+            Err(error) => {
+                self.session.reject_proposal()
+                    | self
+                        .session
+                        .notify(format!("The proposal is not valid: {error}."))
+            }
+        };
+        self.report(dirty)
+    }
+
+    /// Applies the proposal as one undo step (#254).
+    pub fn accept_proposal(&mut self) -> u32 {
+        let dirty = self.session.accept_proposal();
+        self.report(dirty)
+    }
+
+    /// Drops the proposal; the drawing was never touched (#254).
+    pub fn reject_proposal(&mut self) -> u32 {
+        let dirty = self.session.reject_proposal();
+        self.report(dirty)
+    }
+
+    /// The proposal as the panel shows it, whole, or `undefined` (#254).
+    pub fn proposal_summary(&self) -> Result<JsValue, JsError> {
+        let summary = self.session.proposal().map(|proposal| {
+            let summary = proposal.summary();
+            ProposalSummaryDto {
+                headline: summary.headline,
+                added: summary.added as u32,
+                changed: summary.changed as u32,
+                removed: summary.removed as u32,
+                operations: summary.operations,
+                error: summary.error,
+            }
+        });
+        Ok(serde_wasm_bindgen::to_value(&summary)?)
     }
 
     /// Takes the import report off the screen (#157).
@@ -995,6 +1052,38 @@ SE",
             state.export_losses.iter().any(|l| l.contains("MLINE")),
             "{:?}",
             state.export_losses
+        );
+    }
+    /// #254: a proposal through the calls the host makes: the drawing is
+    /// untouched until Accept, which is one undo; an invalid document is
+    /// refused in the log.
+    #[test]
+    fn a_proposal_is_proposed_accepted_and_undone_as_one_step() {
+        let mut cad = CadSession::new();
+        let revision = cad.session.drawing().revision();
+        cad.propose(
+            r#"{"version": 1, "operations": [
+                {"op": "circle", "center": [0, 0], "radius": 5},
+                {"op": "line", "points": [[0, 0], [10, 0]]}
+            ]}"#,
+        );
+        assert_eq!(cad.session.drawing().revision(), revision);
+        assert_eq!(
+            cad.session.proposal().map(|p| p.summary().headline),
+            Some("Adds 2 objects".to_owned())
+        );
+        cad.accept_proposal();
+        assert_eq!(cad.session.drawing().len(), 2);
+        cad.submit_text("U");
+        assert!(cad.session.drawing().is_empty());
+
+        cad.propose(r#"{"version": 1, "operations": [{"op": "circle"}]}"#);
+        assert!(cad.session.proposal().is_none());
+        let log = cad.session.log_since(0);
+        assert!(
+            log.last()
+                .is_some_and(|l| l.starts_with("The proposal is not valid:")),
+            "{log:?}"
         );
     }
 }

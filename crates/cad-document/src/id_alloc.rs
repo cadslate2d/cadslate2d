@@ -6,7 +6,7 @@ use cad_core::EntityId;
 ///
 /// There is deliberately no way to lower or reset the counter: undo removes
 /// entities but never returns their IDs to the pool.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct EntityIdAllocator {
     next: u64,
 }

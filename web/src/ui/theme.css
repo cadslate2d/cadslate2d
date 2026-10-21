@@ -44,6 +44,8 @@
   /* The object a click would pick, and what an edit would cut away. */
   --canvas-hover: #a9cdff;
   --canvas-removal: #ff6b5e;
+  /* What a proposal would add or change (ADR-0037). */
+  --canvas-proposal: #7ee787;
   /* The marker of the object snap under the cursor. */
   --canvas-snap-marker: #ffb224;
   /* The direction polar tracking has locked onto. */
@@ -60,6 +62,7 @@
   --canvas-lineweight-grip-hot: 2;
   --canvas-lineweight-hover: 2.25;
   --canvas-lineweight-removal: 2.25;
+  --canvas-lineweight-proposal: 1.75;
   --canvas-lineweight-snap-marker: 1.5;
   --canvas-lineweight-tracking: 1;
 
@@ -127,6 +130,7 @@
   --canvas-grip-hot: #d9442f;
   --canvas-hover: #2a7fff;
   --canvas-removal: #d9442f;
+  --canvas-proposal: #1a7f37;
   --canvas-snap-marker: #b87400;
   --canvas-tracking: #1b7f78;
 }

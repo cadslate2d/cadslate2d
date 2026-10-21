@@ -209,6 +209,14 @@ impl OverlayFrame {
                     self.frame
                         .push_entity(StyleRole::Preview, entity, drawing.tables())
                 }
+                OverlayItem::ProposalAdded(entity) => {
+                    self.frame
+                        .push_entity(StyleRole::Proposal, entity, drawing.tables())
+                }
+                OverlayItem::ProposalRemoved(entity) => {
+                    self.frame
+                        .push_entity(StyleRole::Removal, entity, drawing.tables())
+                }
                 OverlayItem::PreviewTransformed { ids, transform } => {
                     for entity in ids.iter().filter_map(|id| drawing.entity(*id)) {
                         self.frame.push_entity(
@@ -373,6 +381,12 @@ impl OverlayFrame {
                 }
                 OverlayItem::PreviewEntity(entity) => {
                     self.push_construction(StyleRole::Preview, entity, &bounds);
+                }
+                OverlayItem::ProposalAdded(entity) => {
+                    self.push_construction(StyleRole::Proposal, entity, &bounds);
+                }
+                OverlayItem::ProposalRemoved(entity) => {
+                    self.push_construction(StyleRole::Removal, entity, &bounds);
                 }
                 OverlayItem::PreviewTransformed { ids, transform } => {
                     for entity in ids.iter().filter_map(|id| drawing.entity(*id)) {

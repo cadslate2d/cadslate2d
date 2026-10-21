@@ -56,6 +56,7 @@ mod plot;
 mod points;
 mod polygon;
 mod properties;
+mod proposal;
 mod reconciliation;
 mod revcloud;
 mod selection;

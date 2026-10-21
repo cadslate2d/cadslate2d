@@ -566,3 +566,40 @@ describe("paper space", () => {
     expect(cad.readScene((frame) => (frame.regions ?? []).length / WORDS_PER_REGION)).toBe(1);
   });
 });
+
+// #254: a proposal through the engine: shown, the drawing untouched, then
+// accepted as one undo.
+describe("proposals", () => {
+  test("propose, summarise, accept, and undo as one step", () => {
+    const engine = new CadEngine();
+    engine.resize(800, 600);
+    const before = engine.uiState().revision;
+    engine.propose(
+      JSON.stringify({
+        version: 1,
+        operations: [
+          { op: "circle", center: [0, 0], radius: 5 },
+          {
+            op: "line",
+            points: [
+              [0, 0],
+              [10, 0],
+            ],
+          },
+        ],
+      }),
+    );
+    expect(engine.uiState().revision).toBe(before);
+    expect(engine.proposalSummary()).toMatchObject({ headline: "Adds 2 objects", added: 2 });
+    engine.acceptProposal();
+    expect(engine.proposalSummary()).toBeUndefined();
+    expect(engine.uiState().canUndo).toBe(true);
+    engine.submitText("U");
+    expect(engine.uiState().canUndo).toBe(false);
+    engine.propose("{}");
+    expect(engine.proposalSummary()).toBeUndefined();
+    expect(engine.logSince(0).at(-1)).toMatch(/^The proposal is not valid:/);
+    engine.rejectProposal();
+    engine.dispose();
+  });
+});
