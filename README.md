@@ -31,7 +31,7 @@ You can do all of this in a static page with no backend:
 
 The tables below list the commands; what each modify command does to each kind of object is in [`docs/modify-matrix.md`](docs/modify-matrix.md).
 
-What remains, **M15**, is verification that needs a person: real GPUs, WebKit, and a check in AutoCAD and a desktop PDF viewer. See the [milestones](https://github.com/cadslate2d/cadslate2d/milestones) and [issues](https://github.com/cadslate2d/cadslate2d/issues).
+What remains, **M15**, is verification that needs a person: real GPUs, WebKit, and a check of the DXF, the DWG, and the PDF in AutoCAD and a desktop viewer. See the [milestones](https://github.com/cadslate2d/cadslate2d/milestones) and [issues](https://github.com/cadslate2d/cadslate2d/issues).
 
 ## What works today
 
