@@ -284,6 +284,8 @@ pnpm --dir web dev
 
 `dev` builds the WASM core (debug) and starts Vite. After changing Rust code, rebuild with `pnpm --dir web wasm` and reload the page.
 
+The optional AI input method ([ADR-0037](docs/adr/0037-ai-input-method.md)) talks to a hosted service, whose address the build takes from `VITE_AI_SERVICE_URL` — `https://…`, or `http://localhost…` for development. A build without it has no AI and is otherwise the same program.
+
 ### Everyday commands
 
 A `Makefile` at the root wraps the common ones: `make` lists its targets, for example `make dev`, `make check`, `make test`, `make lint`, `make fmt`, `make e2e` (which builds the bundle first), `make baselines`, and `make fuzz FUZZ_SECONDS=60`. Each target runs one of the commands below and adds nothing of its own.
