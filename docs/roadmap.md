@@ -25,15 +25,15 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M16 — Occasional Conveniences | Complete and closed ([review](reviews/m16-exit-review.md)): `OVERKILL`, named views, `LAYMRG` and `LAYDEL`, `SPLINEDIT`. |
 | M17 — Multileaders | Complete and closed ([review](reviews/m17-exit-review.md)): `MLEADER` with text or block notes, `MLEADEREDIT`, `MLEADERSTYLE`, and DXF `MULTILEADER` and `MLEADERSTYLE` both ways. |
 | M18 — Classic Menu Bar | Complete and closed ([review](reviews/m18-exit-review.md)): the menu bar of DESIGN §5, after AutoCAD 2007/2008's classic workspace, with File › New, menu macros that pause (ADR-0034), and keyboard access. |
+| M19 — DWG | Complete and closed ([review](reviews/m19-exit-review.md)): DWG read and written in the AutoCAD 2000, 2004, and 2007/2008 formats by a crate of our own (ADR-0036). The check in AutoCAD needs a person (#321, M15). |
+| M20 — AI Foundations | Complete and closed ([review](reviews/m20-exit-review.md)): natural language as an optional input method (ADR-0037) — the intent IR, proposals, the AI panel, AI commands, and a corpus replayed in CI and asked live nightly; the service in its own private repository. Its nightly job's key and production need a person. |
 
 ## What is planned next
 
-Filed on 2026-10-18 and 2026-10-19; M19 started on 2026-10-20. The order is the user's.
+Filed on 2026-10-18 and 2026-10-19; M21 is next. The order is the user's.
 
 | Milestone | What | Epic |
 | --- | --- | --- |
-| M19 — DWG | Reading and writing DWG in the AutoCAD 2000, 2004, and 2007/2008 formats. [ADR-0036](adr/0036-dwg.md) decided how (§40): a crate of our own from the Open Design Specification; the issues are below. | #250 |
-| M20 — AI Foundations | Natural language as one more input method, optional and off by default: an ADR amending DESIGN §4, §43–§45; a validated intent IR compiled to commands (ADR-0034's rule, for a model); proposals previewed and committed on Accept; the AI panel; AI commands on the drawing and the selection; recorded-replay evaluation. The hosted service itself lives in a private repository, `cadslate2d/cadslate2d-ai-service`; the app works without it. | #251 |
 | M21 — Constraints and Constrained Generation | Persistent geometric and dimensional constraints with a 2D solver (`GEOMCONSTRAINT`, `DIMCONSTRAINT`, constraint bars, re-solving on edit, DXF round trip); part generators — plates and hole patterns, bolt circles and flanges, arrays and grids, tangent and concentric placement — as commands and through the AI. | #264 |
 | M22 — Floor-Plan Generator | A deterministic layout solver from a terrain and room constraints to walls, doors, and labels; `FLOORPLAN` as a command with alternatives; briefs and revisions through the AI. | #276 |
 | M23 — AI Plans and Billing | In the service repository. The app's side is its account view (#289). | — |
@@ -51,7 +51,10 @@ The user asked for natural language as a way to drive the program (2026-10-19) a
 4. **The service** (`cadslate2d/cadslate2d-ai-service` #1–#5): accounts, the model adapter, metering, what it keeps. Done 2026-10-24, on Fly.io, the model `gpt-6-luna`.
 5. **The AI panel** (#260): done 2026-10-24 — sign-in by link, the consent for context, the proposal's Accept, Revise, and Reject, the allowance, and every state without the service; its end-to-end tests answer from a stand-in service (`web/e2e/ai-fake.ts`) with real recorded model answers, so this repository's CI never needs the private service.
 6. **AI commands** (#261): done 2026-10-24 — a corpus of 70 requests in English and Portuguese (`test-data/ai/l1/`), each with the drawing it should make, replayed from the model's recordings in CI: all 70 make it. A revision goes with the proposal it replaces; a proposal the engine stops is dropped and explained in the request's language. Making it found that an intent's `trim` and `extend` ignored the edges they named.
-7. **Evaluation** (#262) and **the exit** (#263).
+7. **Evaluation** (#262): done 2026-10-24 — `cad_commands::evaluation` judges a recording against its case, and `ai-eval` scores every level per language: the committed recordings in `make check`, a live run nightly in the service repository (`nightly-eval.yml`) against them as the baseline. Two live runs: 70 of 70.
+8. **The exit** (#263): done 2026-10-24 — `web/e2e/m20-scenario.spec.ts`, also run against the service itself, and [the review](reviews/m20-exit-review.md): $0.00010 a request, 2.5 s at p50. The scenario found the panel's exchange shrinking to nothing beside a long address.
+
+M20 is closed. The nightly job waits on its provider key, and production on the app's address: both need a person.
 
 ## M19, DWG
 

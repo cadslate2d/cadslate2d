@@ -1036,13 +1036,16 @@ body {
   overflow: auto;
 }
 
-/* Signed in: the exchange scrolls; the prompt and the account stay at the foot. */
+/* Signed in: the exchange scrolls; the prompt and the account stay at the foot.
+   A panel too short for both keeps room for a proposal and its buttons, and
+   the whole body scrolls instead: without it the exchange shrank to nothing
+   beside a long address, and Accept was out of reach. */
 .ai__scroll {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 0 0;
   flex-direction: column;
   gap: var(--space-2);
-  min-height: 0;
+  min-height: 8rem;
   overflow: auto;
 }
 

@@ -131,7 +131,9 @@ test("a request is previewed, accepted as one undo, rejected, and revised", asyn
 test("drawing context is sent only when the user agrees, for that request", async ({ page }) => {
   const service = await fakeAiService(page);
   await openApp(page);
-  await signIn(page, service);
+  // A long address beside Layers and Properties: the exchange keeps room
+  // for the proposal's buttons (the M20 scenario found it shrunk to nothing).
+  await signIn(page, service, "a-drafter-with-a-rather-long-address@example.com");
   await enter(page, "C", "30,30", "8", "C", "70,30", "8", "ALL");
 
   // Asked with a selection: the user sees what would go, and nothing has.
