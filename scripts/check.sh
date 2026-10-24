@@ -10,6 +10,7 @@ step() { printf '\n── %s\n' "$*"; }
 step "rust: format";      cargo fmt --all --check
 step "rust: clippy";      cargo clippy --workspace --all-targets -- -D warnings
 step "rust: tests";       cargo test --workspace --quiet
+step "ai corpus: replay"; cargo run --quiet -p cad-commands --features testing --example ai-eval -- test-data/ai
 step "crate boundaries";  scripts/check-boundaries.sh
 step "licences: rust";    cargo deny check
 step "licences: web";     scripts/check-licenses.sh

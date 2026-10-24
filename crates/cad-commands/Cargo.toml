@@ -8,8 +8,9 @@ publish.workspace = true
 license.workspace = true
 
 [features]
-# Exposes the headless test harness (`cad_commands::testing`) to other crates' tests.
-testing = []
+# Exposes the headless test harness (`cad_commands::testing`) to other crates' tests,
+# and the AI corpus's evaluation (`cad_commands::evaluation`, `examples/ai-eval.rs`).
+testing = ["dep:serde_json"]
 
 [dependencies]
 cad-core.workspace = true
@@ -17,6 +18,11 @@ cad-geometry.workspace = true
 cad-input.workspace = true
 cad-document.workspace = true
 cad-intent.workspace = true
+serde_json = { workspace = true, optional = true }
+
+[[example]]
+name = "ai-eval"
+required-features = ["testing"]
 
 [lints]
 workspace = true

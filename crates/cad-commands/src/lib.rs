@@ -11,6 +11,8 @@ pub mod aids;
 mod command;
 mod commands;
 mod dirty;
+#[cfg(any(test, feature = "testing"))]
+pub mod evaluation;
 mod events;
 pub mod grips;
 mod history;

@@ -48,7 +48,7 @@ jobs:
       - name: Install web dependencies
         run: pnpm --dir web install --frozen-lockfile
 
-      # Format, clippy, Rust tests, crate boundaries, WASM build, typecheck, lint, unit tests.
+      # Format, clippy, Rust tests, the AI corpus replayed, crate boundaries, WASM build, typecheck, lint, unit tests.
       - name: Check
         run: scripts/check.sh
 

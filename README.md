@@ -306,6 +306,7 @@ A `Makefile` at the root wraps the common ones: `make` lists its targets, for ex
 | Full check (run before pushing) | `scripts/check.sh` |
 | Rust tests | `cargo test --workspace` |
 | Geometry regression corpus only | `cargo test -p cad-geometry --test regression` (see [`test-data/geometry/`](test-data/geometry/README.md)) |
+| Score the AI corpus against its recordings, per level and language (see [`test-data/ai/`](test-data/ai/README.md)) | `cargo run -p cad-commands --features testing --example ai-eval -- test-data/ai` |
 | Long stress run of the geometry property tests (not part of the check) | `scripts/stress.sh` |
 | Rust lints | `cargo clippy --workspace --all-targets -- -D warnings` |
 | Rust format | `cargo fmt --all` |
