@@ -620,3 +620,70 @@ mod tests {
         assert!(summary.geometry.is_empty());
     }
 }
+
+/// The most selected objects a request to the AI may describe (ADR-0037):
+/// the service refuses more.
+pub const AI_CONTEXT_LIMIT: usize = 500;
+
+/// What a request to the AI may carry with the user's consent (ADR-0037,
+/// #260): the selected objects as the Properties panel describes them,
+/// with the IDs an intent refers to them by, the layers by name, and the
+/// unit. Shown to the user before it is sent; never kept by the service.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AiContext {
+    pub unit: Option<&'static str>,
+    pub layers: Vec<String>,
+    pub objects: Vec<AiObject>,
+    /// Objects selected beyond `AI_CONTEXT_LIMIT`, left out.
+    pub left_out: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AiObject {
+    pub id: u64,
+    pub kind: &'static str,
+    /// `start 0,0; end 100,0; length 100; angle 0°`.
+    pub geometry: String,
+    pub layer: Option<String>,
+}
+
+impl AiContext {
+    /// The context of `selection` in `drawing`.
+    pub fn of(drawing: &Drawing, selection: &crate::Selection) -> Self {
+        let mut ids: Vec<cad_core::EntityId> = selection.iter().collect();
+        ids.sort_unstable();
+        let left_out = ids.len().saturating_sub(AI_CONTEXT_LIMIT);
+        let objects = ids
+            .into_iter()
+            .take(AI_CONTEXT_LIMIT)
+            .filter_map(|id| {
+                let entity = drawing.entity(id)?;
+                let geometry = geometry_of(entity, drawing)
+                    .into_iter()
+                    .map(|(label, value)| format!("{} {value}", label.to_lowercase()))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                let layer = drawing
+                    .properties(id)
+                    .and_then(|p| drawing.layers().get(p.layer))
+                    .map(|layer| layer.name.clone());
+                Some(AiObject {
+                    id: id.raw(),
+                    kind: KINDS[kind_index(entity)].0,
+                    geometry,
+                    layer,
+                })
+            })
+            .collect();
+        Self {
+            unit: drawing.unit().map(cad_core::LengthUnit::suffix),
+            layers: drawing
+                .layers()
+                .iter()
+                .map(|(_, layer)| layer.name.clone())
+                .collect(),
+            objects,
+            left_out,
+        }
+    }
+}

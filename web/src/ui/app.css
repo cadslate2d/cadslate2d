@@ -992,3 +992,202 @@ body {
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
 }
+
+/* ── AI panel (ADR-0037) ── */
+
+.ai {
+  display: flex;
+  /* The conversation needs room: twice a table panel's share. */
+  flex: 2 1 0;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-panel);
+  font-size: var(--font-size-sm);
+}
+
+.ai__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.ai__title {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+}
+
+.ai__allowance {
+  color: var(--color-text-muted);
+}
+
+.ai__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  padding: var(--space-2) var(--space-3);
+  overflow: auto;
+}
+
+/* Signed in: the exchange scrolls; the prompt and the account stay at the foot. */
+.ai__scroll {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  overflow: auto;
+}
+
+.ai__footer {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ai__section,
+.ai__ask {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ai__note {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.ai__error {
+  margin: 0;
+  color: var(--color-danger);
+}
+
+.ai__label {
+  color: var(--color-text-muted);
+}
+
+.ai__input {
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-canvas);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.ai__prompt {
+  resize: vertical;
+}
+
+.ai__button {
+  align-self: flex-start;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ai__button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ai__button--primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.ai__button--quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.ai__button--danger {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.ai__turns {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai__turn {
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  white-space: pre-wrap;
+}
+
+.ai__turn--you {
+  align-self: flex-end;
+  background: var(--color-accent-soft);
+}
+
+.ai__turn--ai {
+  background: var(--color-surface-raised);
+}
+
+.ai__turn--notice {
+  color: var(--color-text-faint);
+}
+
+.ai__proposal,
+.ai__consent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+}
+
+.ai__proposal-headline {
+  margin: 0;
+  font-weight: 600;
+}
+
+.ai__steps,
+.ai__context {
+  margin: 0;
+  padding-left: var(--space-4);
+  color: var(--color-text-muted);
+}
+
+.ai__actions,
+.ai__account,
+.ai__confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ai__account {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.ai__email {
+  color: var(--color-text-muted);
+}
+
+.ai__link {
+  color: var(--color-accent);
+}

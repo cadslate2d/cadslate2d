@@ -88,13 +88,15 @@ licences: ## Dependency licences and advisories (cargo-deny, the web allow list,
 notices: ## Regenerate web/public/third-party-notices.txt after a dependency changes
 	scripts/third-party-notices.sh
 
-e2e: build ## End-to-end tests against a fresh production bundle (E2E_BROWSERS=…)
+e2e: ## End-to-end tests against a fresh production bundle, its AI service the tests' stand-in (E2E_BROWSERS=…)
+	$(WEB) build:e2e
 	$(WEB) e2e
 
 e2e-only: ## End-to-end tests against the bundle already built
 	$(WEB) e2e
 
-baselines: build ## Re-record the visual baselines (Chromium); look at them before committing
+baselines: ## Re-record the visual baselines (Chromium); look at them before committing
+	$(WEB) build:e2e
 	E2E_BROWSERS=chromium $(WEB) exec playwright test --update-snapshots
 
 # ── Long runs, not part of the check ──

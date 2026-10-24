@@ -27,6 +27,8 @@ describe("WASM API surface", () => {
     expect(await exportedSessionApi()).toEqual([
       // #254: a proposal accepted as one undo, in one call.
       "accept_proposal",
+      // #260: what a request to the AI may carry, whole, shown before the user consents to send it.
+      "ai_context",
       "dismiss_import_report",
       // #319: what a format will not include, the list whole, before the save.
       "export_losses",

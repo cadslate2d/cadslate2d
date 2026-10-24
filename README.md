@@ -27,7 +27,8 @@ You can do all of this in a static page with no backend:
 - annotate with text, styles, dimensions of every kind, leaders, hatches, and wipeouts;
 - lay out sheets with viewports and plot them to PDF;
 - exchange DXF and DWG (AutoCAD 2000, 2004, 2007/2008), with what is not held reported;
-- undo everything, and recover after a crash.
+- undo everything, and recover after a crash;
+- optionally, say what to draw or change in plain words, in the AI Assistant panel, and accept or reject what it proposes.
 
 The tables below list the commands; what each modify command does to each kind of object is in [`docs/modify-matrix.md`](docs/modify-matrix.md).
 
@@ -250,6 +251,16 @@ Both constrain the pointer's direction from the previous point, and both show a 
 The order of precedence for a point is fixed: **typed coordinates, then an object snap, then ORTHO or POLAR, then the free cursor.**
 
 Unexported changes exist only in the browser tab until autosave arrives (M5); the page asks before you leave with unexported work.
+
+## The AI Assistant (optional)
+
+View › AI Assistant (or Tools › AI Assistant) opens a panel where you describe what to draw or change, in any language: "a 120 × 80 plate with a hole of Ø10 at each corner", "move these 25 mm up". It is the one part of CadSlate2D that needs an account and a network, and nothing else depends on it ([ADR-0037](docs/adr/0037-ai-input-method.md)).
+
+- **Sign in** with your email: a link arrives that works once, for 15 minutes. Signing out, or deleting the account and every record of it, is in the panel.
+- **Every answer is a proposal.** The AI writes no geometry itself: it answers with operations the program checks and runs as ordinary commands, on a copy of the drawing. The proposal is drawn on the canvas in its own colour and its steps listed; **Accept** applies it as one undo, **Reject** drops it, **Revise** keeps it while your next request refines it.
+- **Your drawing stays yours.** The request is sent; the selected objects and your layer names go with it only when you agree, for that request, after seeing exactly what would go. Nothing is sent in the background. What the service keeps, and for how long, is on its privacy page, linked from the panel.
+- **The allowance** — AI actions per month — is shown in the panel, with when it resets.
+- **Without the service** — a build with none, signed out, over the allowance, or offline — the panel says why, and everything else works as before.
 
 ## Architecture in one paragraph
 

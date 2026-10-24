@@ -97,6 +97,26 @@ fn open_drawing_file(bytes: &[u8]) -> Result<(cad_dxf::Import, FileFormat), Stri
     }
 }
 
+/// What a request to the AI may carry (#260).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiContextDto {
+    unit: Option<String>,
+    layers: Vec<String>,
+    objects: Vec<AiObjectDto>,
+    left_out: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiObjectDto {
+    /// An entity ID: exact in a double up to 2^53.
+    id: f64,
+    kind: &'static str,
+    geometry: String,
+    layer: Option<String>,
+}
+
 /// A proposal as the panel shows it (#254).
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -551,6 +571,27 @@ impl CadSession {
     pub fn reject_proposal(&mut self) -> u32 {
         let dirty = self.session.reject_proposal();
         self.report(dirty)
+    }
+
+    /// What a request to the AI may carry, whole, for the user to see
+    /// before consenting to send it (ADR-0037, #260).
+    pub fn ai_context(&self) -> Result<JsValue, JsError> {
+        let context = self.session.ai_context();
+        Ok(serde_wasm_bindgen::to_value(&AiContextDto {
+            unit: context.unit.map(str::to_owned),
+            layers: context.layers,
+            objects: context
+                .objects
+                .into_iter()
+                .map(|object| AiObjectDto {
+                    id: object.id as f64,
+                    kind: object.kind,
+                    geometry: object.geometry,
+                    layer: object.layer,
+                })
+                .collect(),
+            left_out: context.left_out as u32,
+        })?)
     }
 
     /// The proposal as the panel shows it, whole, or `undefined` (#254).

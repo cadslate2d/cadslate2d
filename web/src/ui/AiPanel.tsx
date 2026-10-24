@@ -1,0 +1,376 @@
+// The AI panel (ADR-0037, #260): the one sanctioned "AI sidebar" of DESIGN
+// §45, docked beside Layers and Properties. Signing in, the exchange, the
+// consent for drawing context, and the proposal on the canvas with Accept,
+// Revise, and Reject. It shows what the assistant holds — text — and never
+// the drawing: the proposal lives in the engine's session.
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
+import type { AiAssistant, AiSnapshot } from "../app/ai-assistant";
+
+/** How many selected objects the consent lists before "and N more". */
+const LISTED = 12;
+
+function resetDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "long",
+    timeZone: "UTC",
+  });
+}
+
+/**
+ * Keys typed into the panel's fields are the panel's: the command line does
+ * not see them. Keys pressed on its buttons go on to the command line, so
+ * U after Accept undoes, as it would anywhere else.
+ */
+const keep = (event: KeyboardEvent) => {
+  const target = event.target as HTMLElement;
+  if (target.closest("input, textarea, select")) event.stopPropagation();
+};
+
+export function AiPanel({
+  assistant,
+  privacyUrl,
+}: {
+  assistant: AiAssistant;
+  privacyUrl?: string;
+}) {
+  const snapshot = useSyncExternalStore(assistant.subscribe, assistant.getSnapshot);
+  return (
+    <aside className="ai" aria-label="AI Assistant" onKeyDown={keep} data-testid="ai-panel">
+      <div className="ai__header">
+        <h2 className="ai__title">AI Assistant</h2>
+        {snapshot.status === "signed-in" && snapshot.allowance && (
+          <span className="ai__allowance" data-testid="ai-allowance">
+            {snapshot.allowance.remaining} of {snapshot.allowance.allowance} left · resets{" "}
+            {resetDate(snapshot.allowance.resetsAt)}
+          </span>
+        )}
+      </div>
+      <div className="ai__body">
+        <Body assistant={assistant} snapshot={snapshot} privacyUrl={privacyUrl} />
+      </div>
+    </aside>
+  );
+}
+
+function Body({
+  assistant,
+  snapshot,
+  privacyUrl,
+}: {
+  assistant: AiAssistant;
+  snapshot: AiSnapshot;
+  privacyUrl?: string;
+}) {
+  const privacy = privacyUrl && (
+    <a
+      className="ai__link"
+      href={privacyUrl}
+      target="_blank"
+      rel="noreferrer"
+      data-testid="ai-privacy"
+    >
+      What is sent and kept
+    </a>
+  );
+  switch (snapshot.status) {
+    case "unconfigured":
+      return (
+        <p className="ai__note" data-testid="ai-unconfigured">
+          This copy of CadSlate2D has no AI service. Everything else works without it; a build made
+          with an AI service address (<code>VITE_AI_SERVICE_URL</code>) offers it here.
+        </p>
+      );
+    case "starting":
+      return <p className="ai__note">Checking your sign-in…</p>;
+    case "signed-out":
+      return <SignIn assistant={assistant} snapshot={snapshot} privacy={privacy} />;
+    case "link-sent":
+      return (
+        <div className="ai__section" data-testid="ai-link-sent">
+          <p className="ai__note">
+            A sign-in link is on its way to <strong>{snapshot.email}</strong>. It works once, for 15
+            minutes, in this browser.
+          </p>
+          <button type="button" className="ai__button" onClick={() => assistant.restartSignIn()}>
+            Use another address
+          </button>
+        </div>
+      );
+    case "signed-in":
+      return <Conversation assistant={assistant} snapshot={snapshot} privacy={privacy} />;
+  }
+}
+
+function SignIn({
+  assistant,
+  snapshot,
+  privacy,
+}: {
+  assistant: AiAssistant;
+  snapshot: AiSnapshot;
+  privacy: ReactNode;
+}) {
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const email = new FormData(event.currentTarget).get("email");
+    if (typeof email === "string" && email.trim()) void assistant.requestLink(email);
+  };
+  return (
+    <form className="ai__section" onSubmit={submit} data-testid="ai-sign-in">
+      <p className="ai__note">
+        Describe what to draw or change, and the AI proposes it on the canvas for you to accept. It
+        is optional: drafting needs no account. Sign in with your email to use it.
+      </p>
+      <label className="ai__label" htmlFor="ai-email">
+        Email
+      </label>
+      <input
+        id="ai-email"
+        className="ai__input"
+        name="email"
+        type="email"
+        autoComplete="email"
+        required
+        disabled={snapshot.busy}
+      />
+      <button type="submit" className="ai__button ai__button--primary" disabled={snapshot.busy}>
+        Email me a sign-in link
+      </button>
+      <Problem snapshot={snapshot} />
+      {privacy}
+    </form>
+  );
+}
+
+function Problem({ snapshot }: { snapshot: AiSnapshot }) {
+  if (!snapshot.error) return null;
+  return (
+    <p className="ai__error" role="alert" data-testid="ai-error" data-kind={snapshot.error.kind}>
+      {snapshot.error.message}
+      {snapshot.error.kind === "limit" && snapshot.allowance && (
+        <>
+          {" "}
+          More actions come with a paid plan, when plans exist; until then, they come back on{" "}
+          {resetDate(snapshot.allowance.resetsAt)}.
+        </>
+      )}
+    </p>
+  );
+}
+
+function Conversation({
+  assistant,
+  snapshot,
+  privacy,
+}: {
+  assistant: AiAssistant;
+  snapshot: AiSnapshot;
+  privacy: ReactNode;
+}) {
+  const [text, setText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const atLimit = snapshot.allowance?.remaining === 0;
+  // The newest of the exchange stays in view as it grows.
+  const scroll = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const scroller = scroll.current;
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+  }, [snapshot.turns.length, snapshot.proposal, snapshot.consent, snapshot.busy, snapshot.error]);
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!text.trim()) return;
+    void assistant.ask(text);
+    setText("");
+  };
+  return (
+    <>
+      <div className="ai__scroll" ref={scroll}>
+        <ol className="ai__turns" data-testid="ai-turns" aria-live="polite">
+          {snapshot.turns.map((turn, index) => (
+            <li key={index} className={`ai__turn ai__turn--${turn.role}`} data-role={turn.role}>
+              {turn.text}
+            </li>
+          ))}
+          {snapshot.busy && <li className="ai__turn ai__turn--notice">Thinking…</li>}
+        </ol>
+
+        {snapshot.proposal && (
+          <section className="ai__proposal" aria-label="Proposal" data-testid="ai-proposal">
+            <p className="ai__proposal-headline">{snapshot.proposal.headline}</p>
+            {snapshot.proposal.operations.length > 0 && (
+              <ol className="ai__steps">
+                {snapshot.proposal.operations.map((step, index) => (
+                  <li key={index}>{step}</li>
+                ))}
+              </ol>
+            )}
+            {snapshot.proposal.error && <p className="ai__error">{snapshot.proposal.error}</p>}
+            <div className="ai__actions">
+              <button
+                type="button"
+                className="ai__button ai__button--primary"
+                onClick={() => assistant.accept()}
+              >
+                Accept
+              </button>
+              <button type="button" className="ai__button" onClick={() => assistant.revise()}>
+                Revise
+              </button>
+              <button type="button" className="ai__button" onClick={() => assistant.reject()}>
+                Reject
+              </button>
+            </div>
+            {snapshot.revising !== undefined && (
+              <p className="ai__note" data-testid="ai-revising">
+                Say how to change it: the next request refines this one.
+              </p>
+            )}
+          </section>
+        )}
+
+        {snapshot.consent && (
+          <section
+            className="ai__consent"
+            aria-label="Send drawing context?"
+            data-testid="ai-consent"
+          >
+            <p className="ai__note">
+              Send these with your request, so the AI can act on them? They are used for this
+              request only, and not kept.
+            </p>
+            <ul className="ai__context">
+              {snapshot.consent.context.objects.slice(0, LISTED).map((object) => (
+                <li key={object.id}>
+                  <strong>{object.kind}</strong> {object.geometry}
+                  {object.layer ? ` · layer ${object.layer}` : ""}
+                </li>
+              ))}
+              {snapshot.consent.context.objects.length > LISTED && (
+                <li>and {snapshot.consent.context.objects.length - LISTED} more</li>
+              )}
+              {snapshot.consent.context.leftOut > 0 && (
+                <li>{snapshot.consent.context.leftOut} more selected are left out</li>
+              )}
+              <li>
+                <strong>layers</strong> {snapshot.consent.context.layers.join(", ")}
+              </li>
+            </ul>
+            <div className="ai__actions">
+              <button
+                type="button"
+                className="ai__button ai__button--primary"
+                onClick={() => void assistant.sendWithContext()}
+              >
+                Send with these
+              </button>
+              <button
+                type="button"
+                className="ai__button"
+                onClick={() => void assistant.sendWithout()}
+              >
+                Send without
+              </button>
+              <button
+                type="button"
+                className="ai__button"
+                onClick={() => assistant.cancelConsent()}
+              >
+                Cancel
+              </button>
+            </div>
+          </section>
+        )}
+
+        <Problem snapshot={snapshot} />
+        {atLimit && !snapshot.error && snapshot.allowance && (
+          <p className="ai__error" role="status" data-testid="ai-limit">
+            You have used this month&apos;s {snapshot.allowance.allowance} AI actions. They come
+            back on {resetDate(snapshot.allowance.resetsAt)}; more come with a paid plan, when plans
+            exist. Drafting is unaffected.
+          </p>
+        )}
+      </div>
+      <div className="ai__footer">
+        <form className="ai__ask" onSubmit={submit}>
+          <label className="ai__label" htmlFor="ai-prompt">
+            {snapshot.revising !== undefined
+              ? "How should it change?"
+              : "What should be drawn or changed?"}
+          </label>
+          <textarea
+            id="ai-prompt"
+            className="ai__input ai__prompt"
+            rows={3}
+            value={text}
+            disabled={snapshot.busy || snapshot.consent !== undefined || atLimit}
+            placeholder="A 120 × 80 plate with a hole of Ø10 at each corner"
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
+          />
+          <button
+            type="submit"
+            className="ai__button ai__button--primary"
+            disabled={snapshot.busy || snapshot.consent !== undefined || atLimit || !text.trim()}
+          >
+            Ask
+          </button>
+        </form>
+
+        <div className="ai__account">
+          <span className="ai__email" data-testid="ai-email">
+            {snapshot.email}
+          </span>
+          <button
+            type="button"
+            className="ai__button ai__button--quiet"
+            onClick={() => void assistant.signOut()}
+          >
+            Sign out
+          </button>
+          {deleting ? (
+            <span className="ai__confirm" data-testid="ai-delete-confirm">
+              Delete the account and every record of it?
+              <button
+                type="button"
+                className="ai__button ai__button--danger"
+                onClick={() => void assistant.deleteAccount().then(() => setDeleting(false))}
+              >
+                Delete
+              </button>
+              <button
+                type="button"
+                className="ai__button ai__button--quiet"
+                onClick={() => setDeleting(false)}
+              >
+                Keep it
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="ai__button ai__button--quiet"
+              onClick={() => setDeleting(true)}
+            >
+              Delete account
+            </button>
+          )}
+          {privacy}
+        </div>
+      </div>
+    </>
+  );
+}

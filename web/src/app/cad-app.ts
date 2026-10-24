@@ -620,6 +620,28 @@ export class CadApp {
     this.ui.setExportWarning(undefined);
   }
 
+  /**
+   * Proposes an intent document the AI service returned (ADR-0037, #254):
+   * run against a copy of the drawing, shown by the overlay, the drawing
+   * untouched until Accept.
+   */
+  propose(intent: string): void {
+    if (this.#failed) return;
+    this.loop.invalidate(this.engine.propose(intent));
+  }
+
+  /** Applies the proposal as one undo step. */
+  acceptProposal(): void {
+    if (this.#failed) return;
+    this.loop.invalidate(this.engine.acceptProposal());
+  }
+
+  /** Drops the proposal. */
+  rejectProposal(): void {
+    if (this.#failed) return;
+    this.loop.invalidate(this.engine.rejectProposal());
+  }
+
   /** Takes the import report off the screen. */
   dismissImportReport(): void {
     if (this.#failed) return;

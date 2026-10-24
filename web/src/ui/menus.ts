@@ -90,6 +90,7 @@ const VIEW: Menu = {
     panel("&Toolbar", "toolbar"),
     panel("&Layers Panel", "layers"),
     panel("Pr&operties Panel", "properties"),
+    panel("&AI Assistant", "ai"),
   ],
 };
 
@@ -170,6 +171,8 @@ const TOOLS: Menu = {
       command("&Polar Angle...", "POLARANG"),
       command("Pic&k Style...", "PICKSTYLE"),
     ]),
+    panel("AI Assis&tant", "ai"),
+    SEPARATOR,
     command("Edit &Aliases...", "ALIASEDIT"),
     command("O&ptions...", "SETTINGS"),
   ],

@@ -166,3 +166,35 @@ fn opening_another_drawing_drops_the_proposal() {
     h.session.new_drawing();
     assert!(h.session.proposal().is_none());
 }
+
+/// #260: what a request may carry is the selection as the Properties panel
+/// describes it, with the IDs an intent refers to, and the layers.
+#[test]
+fn the_ai_context_describes_the_selection_with_its_ids_and_the_layers() {
+    let mut h = with_a_line();
+    h.enter_all(&["LAYER", "N", "HOLES", ""]);
+    h.enter_all(&["C", "30,30", "8"]);
+    let context = h.session.ai_context();
+    assert!(context.objects.is_empty(), "nothing is selected");
+    assert_eq!(context.layers, ["0", "HOLES"]);
+    h.enter("ALL");
+    let context = h.session.ai_context();
+    assert_eq!(context.objects.len(), 2);
+    assert_eq!(context.objects[0].id, 1);
+    assert_eq!(context.objects[0].kind, "line");
+    assert!(
+        context.objects[0]
+            .geometry
+            .starts_with("start 0.0000, 0.0000; end 100.0000, 0.0000"),
+        "{}",
+        context.objects[0].geometry
+    );
+    assert_eq!(context.objects[0].layer.as_deref(), Some("0"));
+    assert_eq!(context.objects[1].kind, "circle");
+    assert!(
+        context.objects[1].geometry.contains("radius 8.0000"),
+        "{}",
+        context.objects[1].geometry
+    );
+    assert_eq!(context.left_out, 0);
+}

@@ -13,7 +13,7 @@ const REFUSAL = /is required\.$|^Unknown command/;
 
 const context = (ui: Partial<UiSnapshot>): MenuContext => ({
   ui: { canUndo: false, canRedo: false, canPaste: false, paper: false, ...ui } as UiSnapshot,
-  panels: { toolbar: true, layers: true, properties: true },
+  panels: { toolbar: true, layers: true, properties: true, ai: false },
 });
 
 /** The item at `path`, by labels without their `&`. */

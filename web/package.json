@@ -9,6 +9,7 @@
     "wasm:release": "../scripts/build-wasm.sh --release",
     "dev": "pnpm wasm && vite",
     "build": "pnpm wasm:release && tsc --noEmit && vite build",
+    "build:e2e": "VITE_AI_SERVICE_URL=https://ai-service.e2e.invalid pnpm build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . && prettier --check .",

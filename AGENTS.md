@@ -109,6 +109,7 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 | A drafting aid or its setting | Pure functions in `crates/cad-commands/src/aids.rs`; state in `Toggles` or `DraftingSettings`; applied in `Session::aim` | Unit tests for the function; headless precedence tests |
 | A browser capability | `web/src/app/host-services.ts`, behind the `HostServices` interface | A `CadApp` test with a fake host |
 | A menu item | `web/src/ui/menus.ts`, data in the model of `menu-model.ts`: a macro over the command line (`app/macro.ts`, ADR-0034), a panel, or a dialog; greyed or checked by a pure function of the UI snapshot | A Vitest test that its command is registered and its macro runs; an e2e flow for a new kind of item |
+| Something the AI panel does (ADR-0037) | `web/src/app/ai-assistant.ts` (the state, behind `AiClient` and `AssistantHost`), `web/src/app/ai-client.ts` (the service's routes), `web/src/ui/AiPanel.tsx`. The proposal lives in the engine's session; drawing context is read from `CadEngine::aiContext` only when the user is asked about it | A test in `ai-assistant.test.ts` with the fakes; an e2e flow in `web/e2e/ai-panel.spec.ts` against the stand-in service `web/e2e/ai-fake.ts`, which follows the service's routes and replays recorded model answers. The e2e bundle is `pnpm build:e2e`, built with the stand-in's address |
 | UI | `web/src/ui/`, styled only through tokens in `theme.css` | No drawing data in React state |
 
 ## Commands

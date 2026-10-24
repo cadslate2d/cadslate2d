@@ -80,6 +80,22 @@ export type HostRequest = (typeof HostRequest)[keyof typeof HostRequest];
  * Presentation state for the shell. It holds nothing from which drawing
  * geometry could be reconstructed (ADR-0002 §5).
  */
+/** What a request to the AI may carry (ADR-0037, #260): the selection as the Properties panel describes it, with IDs, and the layers. */
+export interface AiContext {
+  readonly unit?: string;
+  readonly layers: readonly string[];
+  readonly objects: readonly AiObject[];
+  /** Selected objects beyond the limit, left out. */
+  readonly leftOut: number;
+}
+
+export interface AiObject {
+  readonly id: number;
+  readonly kind: string;
+  readonly geometry: string;
+  readonly layer?: string;
+}
+
 /** What a proposal would do (#254): counts, one line per operation, and what stopped it. */
 export interface ProposalSummary {
   readonly headline: string;
@@ -618,6 +634,11 @@ export class CadEngine {
   /** Drops the proposal (#254). */
   rejectProposal(): number {
     return this.#session.reject_proposal();
+  }
+
+  /** What a request to the AI may carry, shown before the user consents to send it (#260). */
+  aiContext(): AiContext {
+    return this.#session.ai_context() as AiContext;
   }
 
   /** The proposal as the panel shows it, or none (#254). */

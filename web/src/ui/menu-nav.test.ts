@@ -5,7 +5,7 @@ import { byMnemonic, nextSelectable, openedByKeyboard, stepMenu, type OpenState 
 
 const context: MenuContext = {
   ui: { canUndo: false } as UiSnapshot,
-  panels: { toolbar: true, layers: true, properties: true },
+  panels: { toolbar: true, layers: true, properties: true, ai: false },
 };
 
 const undo = command("&Undo", "U", { enabled: ({ ui }) => ui.canUndo });

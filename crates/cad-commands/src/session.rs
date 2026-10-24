@@ -624,6 +624,12 @@ impl Session {
         }
     }
 
+    /// What a request to the AI may carry, shown before the user consents
+    /// to send it (ADR-0037, #260).
+    pub fn ai_context(&self) -> crate::summary::AiContext {
+        crate::summary::AiContext::of(&self.drawing, &self.selection)
+    }
+
     /// The layer table as the Layers panel shows it.
     fn layer_rows(&self) -> Vec<LayerRow> {
         let current = self.drawing.current_layer();

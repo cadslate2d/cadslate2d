@@ -53,7 +53,7 @@ jobs:
         run: scripts/check.sh
 
       - name: Build production bundle
-        run: pnpm --dir web build
+        run: pnpm --dir web build:e2e
 
       - name: Install Playwright browser
         run: pnpm --dir web exec playwright install --with-deps chromium

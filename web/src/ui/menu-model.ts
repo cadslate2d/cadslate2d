@@ -6,7 +6,7 @@ import type { UiSnapshot } from "../app/ui-store";
 import type { Macro } from "../app/macro";
 
 /** A part of the shell a View item shows or hides. */
-export type Panel = "toolbar" | "layers" | "properties";
+export type Panel = "toolbar" | "layers" | "properties" | "ai";
 
 /** A dialog of the shell's own that an item opens. */
 export type Dialog = "about";

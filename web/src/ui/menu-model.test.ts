@@ -15,7 +15,7 @@ import { MENUS } from "./menus";
 
 const context = (ui: Partial<UiSnapshot> = {}): MenuContext => ({
   ui: { canUndo: false, canRedo: false, selectionCount: 0, ...ui } as UiSnapshot,
-  panels: { toolbar: true, layers: false, properties: true },
+  panels: { toolbar: true, layers: false, properties: true, ai: false },
 });
 
 describe("the menu model (ADR-0034)", () => {
@@ -55,6 +55,7 @@ describe("the menu model (ADR-0034)", () => {
       ["Toolbar", true],
       ["Layers Panel", false],
       ["Properties Panel", true],
+      ["AI Assistant", false],
     ]);
   });
 });

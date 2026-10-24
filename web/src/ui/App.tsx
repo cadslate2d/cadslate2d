@@ -14,6 +14,10 @@ import { MenuBar } from "./MenuBar";
 import type { MenuAction, Panel } from "./menu-model";
 import { MENUS } from "./menus";
 import { PropertiesPanel } from "./PropertiesPanel";
+import { AiPanel } from "./AiPanel";
+import { AiAssistant, browserSessionStore } from "../app/ai-assistant";
+import { httpAiClient } from "../app/ai-client";
+import { AI_SERVICE_URL } from "../app/ai-service";
 import { StatusBar } from "./StatusBar";
 import { TextEditor } from "./TextEditor";
 import { SettingsPanel } from "./SettingsPanel";
@@ -21,8 +25,27 @@ import { Toolbar } from "./Toolbar";
 
 type CoreState =
   | { status: "loading" }
-  | { status: "ready"; app: CadApp; version: string }
+  | { status: "ready"; app: CadApp; assistant: AiAssistant; version: string }
   | { status: "failed"; reason: string };
+
+/** A sign-in link opens the app with its token in the fragment. */
+const SIGNING_IN = typeof window !== "undefined" && window.location.hash.includes("ai-sign-in=");
+
+/** The assistant over the app, talking to this build's service, if it has one (ADR-0037). */
+function assistantFor(app: CadApp): AiAssistant {
+  return new AiAssistant(
+    {
+      aiContext: () => app.engine.aiContext(),
+      unit: () => app.engine.uiState().unit,
+      propose: (intent) => app.propose(intent),
+      acceptProposal: () => app.acceptProposal(),
+      rejectProposal: () => app.rejectProposal(),
+      proposalSummary: () => app.engine.proposalSummary(),
+    },
+    AI_SERVICE_URL ? httpAiClient(AI_SERVICE_URL) : undefined,
+    browserSessionStore,
+  );
+}
 
 /** Whether a part of the shell is shown, and how to flip it. */
 export interface Visibility {
@@ -31,8 +54,11 @@ export interface Visibility {
 }
 
 /** Whether the toolbar or a panel is shown is a UI preference: it lives in the browser, not in the drawing. */
-function useVisibilityPreference(key: string): Visibility {
-  const [visible, setVisible] = useState(() => localStorage.getItem(key) !== "hidden");
+function useVisibilityPreference(key: string, shownAtFirst = true): Visibility {
+  const [visible, setVisible] = useState(() => {
+    const kept = localStorage.getItem(key);
+    return kept === null ? shownAtFirst : kept !== "hidden";
+  });
   const toggle = () =>
     setVisible((current) => {
       localStorage.setItem(key, current ? "hidden" : "shown");
@@ -47,6 +73,8 @@ export function App() {
   const toolbar = useVisibilityPreference("cadslate2d.toolbar");
   const layers = useVisibilityPreference("cadslate2d.layers");
   const properties = useVisibilityPreference("cadslate2d.properties");
+  // Off until the user opens it (ADR-0037), or comes back from a sign-in link.
+  const ai = useVisibilityPreference("cadslate2d.ai", SIGNING_IN);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,9 +83,20 @@ export function App() {
       () => {
         if (cancelled) return;
         app = new CadApp(new CadEngine());
-        setCore({ status: "ready", app, version: coreVersion() });
+        const assistant = assistantFor(app);
+        setCore({ status: "ready", app, assistant, version: coreVersion() });
         // A drawing kept by a tab that closed before exporting is offered back.
         void app.start();
+        // A sign-in link's token is spent, and taken off the address bar.
+        void assistant.start(window.location.hash).then((rest) => {
+          if (rest !== window.location.hash) {
+            history.replaceState(
+              null,
+              "",
+              `${window.location.pathname}${window.location.search}${rest}`,
+            );
+          }
+        });
       },
       (cause: unknown) => !cancelled && setCore({ status: "failed", reason: String(cause) }),
     );
@@ -107,7 +146,7 @@ export function App() {
     );
   }
 
-  const visibility: Record<Panel, Visibility> = { toolbar, layers, properties };
+  const visibility: Record<Panel, Visibility> = { toolbar, layers, properties, ai };
   // What a menu item names, carried out (ADR-0034): a macro typed into the
   // command line, or a part of the shell shown or hidden.
   const act = (action: MenuAction) => {
@@ -115,7 +154,7 @@ export function App() {
     else if ("panel" in action) visibility[action.panel].toggle();
     else if (action.dialog === "about") setAbout(true);
   };
-  const panels = layers.visible || properties.visible;
+  const panels = layers.visible || properties.visible || ai.visible;
   const shell = ["shell", toolbar.visible && "shell--with-toolbar", panels && "shell--with-panels"]
     .filter(Boolean)
     .join(" ");
@@ -129,6 +168,7 @@ export function App() {
           toolbar: toolbar.visible,
           layers: layers.visible,
           properties: properties.visible,
+          ai: ai.visible,
         }}
         onAction={act}
       />
@@ -146,6 +186,12 @@ export function App() {
         <div className="panels">
           {layers.visible && <LayersPanel app={core.app} />}
           {properties.visible && <PropertiesPanel app={core.app} />}
+          {ai.visible && (
+            <AiPanel
+              assistant={core.assistant}
+              privacyUrl={AI_SERVICE_URL ? new URL("privacy", AI_SERVICE_URL).href : undefined}
+            />
+          )}
         </div>
       )}
       <StatusBar app={core.app} />
