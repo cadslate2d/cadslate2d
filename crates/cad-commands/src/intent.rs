@@ -19,9 +19,17 @@ pub enum RunError {
     UnknownEntity { operation: usize, id: u64 },
     /// The operation acts on the selection, and nothing is selected.
     NothingSelected { operation: usize },
-    /// The command was still asking when the answers ran out: an answer was
-    /// refused, or the command needed one the document does not give. The
-    /// command is cancelled; the log's last line says what was asked.
+    /// The command refused what it was given and said why — `The lines
+    /// are parallel.` — and the drawing is as it was. The command is
+    /// cancelled if it was still asking.
+    Refused {
+        operation: usize,
+        command: &'static str,
+        reason: String,
+    },
+    /// The command was still asking when the answers ran out: it needed one
+    /// the document does not give. The command is cancelled; the log's last
+    /// line says what was asked.
     Incomplete {
         operation: usize,
         command: &'static str,
@@ -43,6 +51,15 @@ impl fmt::Display for RunError {
             Self::NothingSelected { operation } => {
                 write!(f, "operation {operation}: nothing is selected")
             }
+            Self::Refused {
+                operation,
+                command,
+                reason,
+            } => write!(
+                f,
+                "operation {operation}: {command} refused: {}",
+                reason.trim_end_matches('.')
+            ),
             Self::Incomplete {
                 operation,
                 command,
@@ -65,8 +82,9 @@ impl std::error::Error for RunError {}
 pub struct Ran {
     pub operation: usize,
     pub command: &'static str,
-    /// Whether the drawing changed: a command that refused an answer and
-    /// went on to its end leaves this false, and the log says why.
+    /// Whether the drawing changed: an operation asking for what is
+    /// already so leaves it false. One that was refused is a
+    /// [`RunError::Refused`].
     pub changed: bool,
     /// The log lines the operation wrote, the echoes of its answers included.
     pub log: Vec<String>,
@@ -106,16 +124,40 @@ impl Session {
         let revision = self.drawing().revision();
         let first_new = self.drawing().next_entity_id();
         let result = self.run_steps(compiled, scale);
+        // The command's own words for what it refused: the last line it
+        // wrote that is a sentence, not the echo of a prompt and answer.
+        let reason = self
+            .log_since(log_from)
+            .into_iter()
+            .rev()
+            .find(|line| line.ends_with('.') && !line.starts_with("Command:"));
+        let changed = self.drawing().revision() != revision;
         if self.command_active() {
             let prompt = self.prompt();
             self.key(KeyAction::Escape);
-            return Err(result.err().unwrap_or(RunError::Incomplete {
-                operation,
-                command,
-                prompt,
+            return Err(result.err().unwrap_or(match reason {
+                Some(reason) => RunError::Refused {
+                    operation,
+                    command,
+                    reason,
+                },
+                None => RunError::Incomplete {
+                    operation,
+                    command,
+                    prompt,
+                },
             }));
         }
         result?;
+        // A command that goes on after a refusal — OFFSET, TRIM, EXTEND ask
+        // for the next object — ends having changed nothing, and said why.
+        if let (false, Some(reason)) = (changed, reason) {
+            return Err(RunError::Refused {
+                operation,
+                command,
+                reason,
+            });
+        }
         let made: Vec<EntityId> = (first_new..self.drawing().next_entity_id())
             .map(EntityId::from_raw)
             .filter(|id| self.drawing().entity(*id).is_some())
@@ -126,7 +168,7 @@ impl Session {
         Ok(Ran {
             operation,
             command,
-            changed: self.drawing().revision() != revision,
+            changed,
             log: self.log_since(log_from),
         })
     }
@@ -135,16 +177,24 @@ impl Session {
         let operation = compiled.operation;
         let command = compiled.command;
         let mut steps = compiled.steps.iter().peekable();
-        match steps.peek() {
+        let selected: Vec<EntityId> = match steps.peek() {
             Some(Step::Select(targets)) => {
                 self.select_targets(operation, targets)?;
                 steps.next();
+                self.selection().iter().collect()
             }
             _ => {
                 self.clear_selection();
+                Vec::new()
             }
-        }
+        };
         self.invoke_from_ui(command);
+        // A command that chooses its objects from nothing — TRIM's and
+        // EXTEND's edges — clears what was selected as it starts: it is
+        // chosen again at the command's own prompt.
+        if !selected.is_empty() && self.command_active() && self.selection().is_empty() {
+            self.select_only(&selected);
+        }
         for step in steps {
             if !self.command_active() {
                 // The command ended before its answers did: what is left is

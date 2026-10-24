@@ -51,6 +51,13 @@ class FakeClient implements AiClient {
   async reportOutcome(_session: string, request: number, outcome: "accepted" | "rejected") {
     this.outcomes.push([request, outcome]);
   }
+  explained: [number, string][] = [];
+  explanation: string | AiError = "Those lines are parallel, so they never meet.";
+  async explain(_session: string, request: number, reason: string) {
+    this.explained.push([request, reason]);
+    if (this.explanation instanceof AiError) throw this.explanation;
+    return this.explanation;
+  }
 }
 
 class FakeHost implements AssistantHost {
@@ -73,8 +80,16 @@ class FakeHost implements AssistantHost {
   rejectProposal() {
     this.rejected += 1;
   }
+  stopped: string | undefined;
   proposalSummary(): ProposalSummary {
-    return { headline: "Adds 1 object", added: 1, changed: 0, removed: 0, operations: ["CIRCLE"] };
+    return {
+      headline: "Adds 1 object",
+      added: 1,
+      changed: 0,
+      removed: 0,
+      operations: ["CIRCLE"],
+      ...(this.stopped ? { error: this.stopped } : {}),
+    };
   }
 }
 
@@ -210,9 +225,12 @@ describe("the AI assistant (#260)", () => {
       allowance: allowance(96),
     };
     await assistant.ask("make it bigger");
-    expect(client.asked.at(-1)?.request.prompt).toBe(
-      'Revise the previous request "a circle" as follows: make it bigger',
-    );
+    // The revision goes with the proposal it refines.
+    expect(client.asked.at(-1)?.request).toEqual({
+      prompt: "make it bigger",
+      unit: "mm",
+      previous: { prompt: "a circle", intent: CIRCLE },
+    });
     // The revised proposal replaced the first, which was not taken.
     expect(host.rejected).toBe(2);
     expect(assistant.getSnapshot().proposal?.request).toBe(4);
@@ -222,6 +240,34 @@ describe("the AI assistant (#260)", () => {
       [1, "rejected"],
       [3, "rejected"],
     ]);
+    // Once taken or dropped, the next request revises nothing.
+    assistant.accept();
+    await assistant.ask("a circle");
+    expect(client.asked.at(-1)?.request.previous).toBeUndefined();
+  });
+
+  test("a proposal the engine stops is dropped, and the AI says why (#261)", async () => {
+    const { assistant, client, host } = await signedIn();
+    host.stopped = "operation 0: FILLET refused: The lines are parallel";
+    client.answer = { request: 7, reply: "A fillet.", intent: CIRCLE, allowance: allowance(99) };
+    await assistant.ask("fillet these");
+    expect(host.rejected).toBe(1);
+    expect(client.explained).toEqual([[7, "operation 0: FILLET refused: The lines are parallel"]]);
+    expect(assistant.getSnapshot()).toMatchObject({ busy: false, proposal: undefined });
+    expect(assistant.getSnapshot().turns.slice(-2)).toEqual([
+      { role: "ai", text: "A fillet." },
+      { role: "ai", text: "Those lines are parallel, so they never meet." },
+    ]);
+    // Not a decision of the user's: nothing is reported.
+    expect(client.outcomes).toEqual([]);
+
+    // Without the AI, the engine's own words.
+    client.explanation = new AiError("unavailable", "The AI is not available right now.");
+    await assistant.ask("fillet these");
+    expect(assistant.getSnapshot().turns.at(-1)).toEqual({
+      role: "ai",
+      text: "That could not be done: operation 0: FILLET refused: The lines are parallel.",
+    });
   });
 
   test("a reply without a document proposes nothing", async () => {

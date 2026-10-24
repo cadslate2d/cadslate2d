@@ -625,6 +625,9 @@ mod tests {
 /// the service refuses more.
 pub const AI_CONTEXT_LIMIT: usize = 500;
 
+/// The most vertices of one polyline a request describes.
+pub const AI_CONTEXT_VERTICES: usize = 64;
+
 /// What a request to the AI may carry with the user's consent (ADR-0037,
 /// #260): the selected objects as the Properties panel describes them,
 /// with the IDs an intent refers to them by, the layers by name, and the
@@ -658,11 +661,35 @@ impl AiContext {
             .take(AI_CONTEXT_LIMIT)
             .filter_map(|id| {
                 let entity = drawing.entity(id)?;
-                let geometry = geometry_of(entity, drawing)
+                let mut geometry = geometry_of(entity, drawing)
                     .into_iter()
                     .map(|(label, value)| format!("{} {value}", label.to_lowercase()))
                     .collect::<Vec<_>>()
                     .join("; ");
+                // The panel counts a polyline's vertices; an edit needs them.
+                if let Entity::Polyline(polyline) = entity {
+                    let listed: Vec<String> = polyline
+                        .vertices
+                        .iter()
+                        .take(AI_CONTEXT_VERTICES)
+                        .enumerate()
+                        .map(|(index, vertex)| {
+                            let bulge = polyline.bulge(index);
+                            if bulge == 0.0 {
+                                format!("({})", point(*vertex))
+                            } else {
+                                format!("({}) bulge {}", point(*vertex), number(bulge))
+                            }
+                        })
+                        .collect();
+                    geometry.push_str(&format!("; points {}", listed.join(", ")));
+                    if polyline.vertices.len() > AI_CONTEXT_VERTICES {
+                        geometry.push_str(&format!(
+                            "; and {} more vertices",
+                            polyline.vertices.len() - AI_CONTEXT_VERTICES
+                        ));
+                    }
+                }
                 let layer = drawing
                     .properties(id)
                     .and_then(|p| drawing.layers().get(p.layer))

@@ -41,6 +41,8 @@ export interface AiRequest {
   readonly prompt: string;
   readonly unit?: string;
   readonly context?: RequestContext;
+  /** The proposal this request revises (#261): its request and its document. */
+  readonly previous?: { readonly prompt: string; readonly intent: unknown };
 }
 
 export interface AiAnswer {
@@ -79,6 +81,8 @@ export interface AiClient {
   deleteAccount(session: string): Promise<void>;
   interpret(session: string, request: AiRequest): Promise<AiAnswer>;
   reportOutcome(session: string, request: number, outcome: "accepted" | "rejected"): Promise<void>;
+  /** Why the engine stopped the proposal of `request`, in the request's language (#261). */
+  explain(session: string, request: number, reason: string): Promise<string>;
 }
 
 interface WireAllowance {
@@ -186,6 +190,14 @@ export function httpAiClient(service: URL, fetcher: typeof fetch = globalThis.fe
     },
     async reportOutcome(session, request, outcome) {
       await call(`/v1/requests/${request}/outcome`, { method: "POST", session, body: { outcome } });
+    },
+    async explain(session, request, reason) {
+      const explained = (await call(`/v1/requests/${request}/explain`, {
+        method: "POST",
+        session,
+        body: { reason },
+      })) as { reply: string };
+      return explained.reply;
     },
   };
 }

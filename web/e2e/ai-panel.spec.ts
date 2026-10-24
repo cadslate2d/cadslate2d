@@ -1,11 +1,21 @@
-// The AI panel (#260), against the stand-in service of ai-fake.ts and real
-// recorded model answers: signing in by an emailed link, a request and its
-// preview, Accept as one undo, Reject, Revise, the consent for drawing
-// context, the allowance, signing out and deleting the account — and
-// everything else working signed out.
+// The AI panel (#260, #261), against the stand-in service of ai-fake.ts and
+// the L1 corpus's recorded model answers: signing in by an emailed link, a
+// request and its preview, Accept as one undo, Reject, Revise, the consent
+// for drawing context, a creation and a selection edit as they land in the
+// drawing, a refusal explained, the allowance, signing out and deleting the
+// account — and everything else working signed out.
 import { expect, test, type Page } from "@playwright/test";
 import { fakeAiService, type FakeAiService } from "./ai-fake";
-import { chooseMenu, enter, openApp, rendererStats } from "./support";
+import {
+  chooseMenu,
+  downloadFrom,
+  enter,
+  entities,
+  group,
+  num,
+  openApp,
+  rendererStats,
+} from "./support";
 
 /** After a page load: the canvas, then its first frame. */
 async function loaded(page: Page) {
@@ -14,8 +24,21 @@ async function loaded(page: Page) {
 }
 
 const CIRCLE = "Draw a circle of radius 25 centred at 100,100";
+const BIGGER = "Make it radius 40 instead";
 const MOVE = "Move these 25 mm up";
 const IMPOSSIBLE = "Extrude this into a 3D box and render it";
+const PLATE =
+  "A 120 by 80 rectangle with its lower left corner at the origin, and a hole of diameter 10 at each corner, 10 in from both edges";
+const HOLES = "Make these holes diameter 6";
+const TOO_BIG = "Fillet these lines with a radius of 50";
+
+/** The circles of the drawing as DXFOUT writes them: centre and radius. */
+async function circles(page: Page): Promise<[number, number, number][]> {
+  const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+  return entities(file.text, "CIRCLE")
+    .map((circle): [number, number, number] => [num(circle, 10), num(circle, 20), num(circle, 40)])
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+}
 
 const panel = (page: Page) => page.getByTestId("ai-panel");
 
@@ -78,24 +101,30 @@ test("a request is previewed, accepted as one undo, rejected, and revised", asyn
   expect(await contents(page)).toBe("No selection");
 
   // Revised: the proposal stays while the next request refines it, which
-  // is sent as a revision of the first.
+  // goes with the proposal's request and document, and replaces it.
   await ask(page, CIRCLE);
   await proposal.getByRole("button", { name: "Revise" }).click();
   await expect(panel(page).getByTestId("ai-revising")).toBeVisible();
   await expect(proposal).toContainText("Adds 1 object");
-  await ask(page, CIRCLE);
-  expect(service.interpreted.at(-1)?.prompt).toBe(
-    `Revise the previous request "${CIRCLE}" as follows: ${CIRCLE}`,
-  );
+  await ask(page, BIGGER);
+  await expect(panel(page).getByTestId("ai-turns")).toContainText("40");
+  expect(service.interpreted.at(-1)).toMatchObject({
+    prompt: BIGGER,
+    previous: {
+      prompt: CIRCLE,
+      intent: { version: 1, operations: [{ op: "circle", center: [100, 100], radius: 25 }] },
+    },
+  });
   await proposal.getByRole("button", { name: "Accept" }).click();
   expect(await contents(page)).toBe("1 circle");
+  expect(await circles(page)).toEqual([[100, 100, 40]]);
   await expect
     .poll(() => service.outcomes.map(([, outcome]) => outcome))
     .toEqual(["accepted", "rejected", "rejected", "accepted"]);
 
   // A request the operations cannot do is answered, and proposes nothing.
   await ask(page, IMPOSSIBLE);
-  await expect(panel(page).getByTestId("ai-turns")).toContainText("2D drawing operations only");
+  await expect(panel(page).getByTestId("ai-turns").locator("li").last()).toContainText("2D");
   await expect(proposal).toHaveCount(0);
 });
 
@@ -140,6 +169,69 @@ test("drawing context is sent only when the user agrees, for that request", asyn
   await ask(page, CIRCLE);
   await expect.poll(() => service.interpreted.length).toBe(3);
   expect(service.interpreted[2]?.context).toBeUndefined();
+});
+
+test("a creation lands in the drawing as the model proposed it", async ({ page }) => {
+  const service = await fakeAiService(page);
+  await openApp(page);
+  await signIn(page, service);
+  await ask(page, PLATE);
+  const proposal = panel(page).getByTestId("ai-proposal");
+  await expect(proposal).toContainText("Adds 5 objects");
+  await proposal.getByRole("button", { name: "Accept" }).click();
+  expect(await contents(page)).toBe("5 objects: 4 circles, 1 polyline");
+  expect(await circles(page)).toEqual([
+    [10, 10, 5],
+    [10, 70, 5],
+    [110, 10, 5],
+    [110, 70, 5],
+  ]);
+  const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+  const plate = entities(file.text, "LWPOLYLINE")[0];
+  expect(group(plate, 70)).toBe("1");
+  expect(entities(file.text, "LWPOLYLINE")).toHaveLength(1);
+});
+
+test("an edit of the selection, by the IDs the context gave out", async ({ page }) => {
+  const service = await fakeAiService(page);
+  await openApp(page);
+  await signIn(page, service);
+  await enter(page, "C", "30,30", "8", "C", "70,30", "8", "ALL");
+  await ask(page, HOLES);
+  await panel(page)
+    .getByTestId("ai-consent")
+    .getByRole("button", { name: "Send with these" })
+    .click();
+  const proposal = panel(page).getByTestId("ai-proposal");
+  await expect(proposal).toContainText("Changes 2 objects");
+  expect(service.interpreted[0]?.context?.objects.map((object) => object.id)).toEqual([1, 2]);
+  await proposal.getByRole("button", { name: "Accept" }).click();
+  await expect(proposal).toHaveCount(0);
+  expect(await circles(page)).toEqual([
+    [30, 30, 3],
+    [70, 30, 3],
+  ]);
+});
+
+test("what the engine refuses is explained, and nothing is proposed", async ({ page }) => {
+  const service = await fakeAiService(page);
+  await openApp(page);
+  await signIn(page, service);
+  await enter(page, "L", "0,0", "10,0", "", "L", "0,0", "0,10", "", "ALL");
+  await ask(page, TOO_BIG);
+  await panel(page)
+    .getByTestId("ai-consent")
+    .getByRole("button", { name: "Send with these" })
+    .click();
+  await expect
+    .poll(() => service.explained.map(([, reason]) => reason))
+    .toEqual(["operation 0: FILLET refused: The radius is too large for these lines"]);
+  await expect(panel(page).getByTestId("ai-turns").locator("li").last()).toContainText(
+    "smaller radius",
+  );
+  await expect(panel(page).getByTestId("ai-proposal")).toHaveCount(0);
+  expect(await contents(page)).toBe("2 lines");
+  expect(service.outcomes).toEqual([]);
 });
 
 test("the allowance shows what remains, and at the limit what to do", async ({ page }) => {

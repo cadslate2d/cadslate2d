@@ -130,6 +130,7 @@ dependencies = [
  "cad-input",
  "cad-intent",
  "proptest",
+ "serde_json",
 ]
 
 [[package]]

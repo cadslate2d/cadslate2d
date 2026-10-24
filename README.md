@@ -364,7 +364,7 @@ web/
   bench/          Browser measurements, run on demand
 scripts/          build-wasm.sh, check.sh, check-boundaries.sh, stress.sh, fuzz.sh, dwg-sweep.sh, dwg-check.sh
 Makefile          shortcuts for the everyday commands; `make` lists them
-test-data/        DXF and DWG fixtures, geometry regression cases, the intent schema, screenshots
+test-data/        DXF and DWG fixtures, geometry regression cases, the intent schema, the AI corpus, screenshots
 benches/          cad-benchmarks crate: drawing generator and criterion benchmarks
 docs/             DESIGN.md, ADRs, milestone reviews, roadmap
 ```

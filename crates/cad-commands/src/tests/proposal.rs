@@ -197,4 +197,20 @@ fn the_ai_context_describes_the_selection_with_its_ids_and_the_layers() {
         context.objects[1].geometry
     );
     assert_eq!(context.left_out, 0);
+
+    // A polyline's vertices, where an edit needs them, and its bulges.
+    h.escape();
+    h.escape();
+    h.enter_all(&["PLINE", "0,50", "40,50", "A", "40,90", ""]);
+    h.enter("SELECT");
+    h.enter_all(&["L", ""]);
+    let context = h.session.ai_context();
+    assert_eq!(context.objects[0].kind, "polyline");
+    assert!(
+        context.objects[0].geometry.ends_with(
+            "points (0.0000, 50.0000), (40.0000, 50.0000) bulge 1.0000, (40.0000, 90.0000)"
+        ),
+        "{}",
+        context.objects[0].geometry
+    );
 }

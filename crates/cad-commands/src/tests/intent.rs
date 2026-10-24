@@ -252,11 +252,14 @@ fn what_cannot_run_is_refused_typed_and_leaves_the_session_idle() {
     // cancelled, and the log says what was refused.
     let refused = document(r#"{"op": "set_properties", "targets": [1], "linetype": "Hidden"}"#);
     match h.session.run_intent(&refused) {
-        Err(RunError::Incomplete {
+        Err(RunError::Refused {
             operation: 0,
             command: "CHPROP",
-            prompt,
-        }) => assert!(prompt.starts_with("Enter property to change"), "{prompt}"),
+            reason,
+        }) => assert_eq!(
+            reason,
+            "Linetype \"Hidden\" is not loaded: load it with LINETYPE first."
+        ),
         other => panic!("{other:?}"),
     }
     assert_eq!(h.prompt(), "Command:");
@@ -268,17 +271,17 @@ fn what_cannot_run_is_refused_typed_and_leaves_the_session_idle() {
     assert_eq!(ran[0].command, "MOVE");
 
     // Two lines that never meet: FILLET refuses and asks for the first
-    // object again; the answers are spent, so the operation is incomplete
-    // and the command cancelled.
+    // object again; the operation is refused with FILLET's reason, and the
+    // command cancelled.
     h.enter_all(&["L", "0,50", "10,50", ""]);
     let incomplete =
         document(r#"{"op": "fillet", "radius": 10, "first": {"id": 1}, "second": {"id": 2}}"#);
     match h.session.run_intent(&incomplete) {
-        Err(RunError::Incomplete {
+        Err(RunError::Refused {
             operation: 0,
             command: "FILLET",
-            prompt,
-        }) => assert!(prompt.starts_with("Select first object"), "{prompt}"),
+            reason,
+        }) => assert!(reason.ends_with('.'), "{reason}"),
         other => panic!("{other:?}"),
     }
     assert_eq!(h.prompt(), "Command:");
@@ -368,4 +371,47 @@ proptest! {
         let _ = h.session.run_intent(&intent);
         prop_assert_eq!(h.prompt(), "Command:");
     }
+}
+
+/// #261: TRIM and EXTEND choose their edges from nothing as they start;
+/// the edges an operation names are chosen at their prompt all the same.
+#[test]
+fn trim_and_extend_take_the_edges_named_not_every_object() {
+    let h = run(r#"
+        {"op": "line", "points": [[0, 0], [100, 0]]},
+        {"op": "line", "points": [[0, 20], [100, 20]]},
+        {"op": "line", "points": [[50, -10], [50, 40]]},
+        {"op": "trim", "edges": [1], "targets": [{"id": 3, "near": [50, 30]}]}
+    "#);
+    // Cut at the first line alone: every object an edge would have cut
+    // only the piece above the second.
+    assert!(
+        h.lines()
+            .iter()
+            .any(|l| l.start == Point2::new(50.0, -10.0) && l.end == Point2::new(50.0, 0.0)),
+        "{:?}",
+        h.lines()
+    );
+}
+
+/// #261: a command that goes on after refusing — OFFSET asks for the next
+/// object — ends having changed nothing; the operation is refused with
+/// the command's words, for the reply to explain.
+#[test]
+fn an_edit_that_changes_nothing_is_refused_with_the_reason() {
+    let mut h = Harness::new();
+    h.enter_all(&["C", "0,0", "10"]);
+    let before = h.session.drawing().revision();
+    let inward =
+        document(r#"{"op": "offset", "target": {"id": 1}, "distance": 20, "toward": [0, 0]}"#);
+    assert_eq!(
+        h.session.run_intent(&inward),
+        Err(RunError::Refused {
+            operation: 0,
+            command: "OFFSET",
+            reason: "The offset would leave nothing.".to_owned()
+        })
+    );
+    assert_eq!(h.session.drawing().revision(), before);
+    assert_eq!(h.prompt(), "Command:");
 }

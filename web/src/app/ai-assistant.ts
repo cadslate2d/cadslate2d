@@ -73,6 +73,8 @@ export class AiAssistant {
   #snapshot: AiSnapshot;
   readonly #listeners = new Set<() => void>();
   #kept: Kept | undefined;
+  /** The request and document of the proposal on the canvas, for a revision. */
+  #proposed: { prompt: string; intent: unknown } | undefined;
 
   constructor(
     readonly host: AssistantHost,
@@ -218,10 +220,8 @@ export class AiAssistant {
 
   async #send(prompt: string, context: AiRequest["context"]): Promise<void> {
     if (!this.client || !this.#kept) return;
-    const revising = this.#snapshot.revising;
-    const asked = revising
-      ? `Revise the previous request "${revising}" as follows: ${prompt}`
-      : prompt;
+    // A revision goes with the proposal it refines, which the answer replaces.
+    const revised = this.#snapshot.revising !== undefined ? this.#proposed : undefined;
     const unit = this.host.unit();
     this.#set({
       busy: true,
@@ -230,9 +230,10 @@ export class AiAssistant {
     });
     try {
       const answer = await this.client.interpret(this.#kept.session, {
-        prompt: asked,
+        prompt,
         ...(unit ? { unit } : {}),
         ...(context ? { context } : {}),
+        ...(revised ? { previous: revised } : {}),
       });
       // A new answer replaces the proposal waiting: that one was not taken.
       const previous = this.#snapshot.proposal;
@@ -244,6 +245,20 @@ export class AiAssistant {
       if (answer.intent) {
         this.host.propose(JSON.stringify(answer.intent));
         const summary = this.host.proposalSummary();
+        if (summary?.error) {
+          // The engine stopped it: nothing is proposed, and the AI says why.
+          this.host.rejectProposal();
+          this.#proposed = undefined;
+          this.#set({
+            turns,
+            allowance: answer.allowance,
+            revising: undefined,
+            proposal: undefined,
+          });
+          await this.#explain(answer.request, summary.error);
+          return;
+        }
+        this.#proposed = { prompt, intent: answer.intent };
         this.#set({
           turns,
           busy: false,
@@ -252,6 +267,7 @@ export class AiAssistant {
           proposal: summary ? { ...summary, request: answer.request } : undefined,
         });
       } else {
+        this.#proposed = undefined;
         this.#set({
           turns,
           busy: false,
@@ -265,6 +281,19 @@ export class AiAssistant {
     }
   }
 
+  /** Asks the AI why the engine stopped the proposal of `request`. */
+  async #explain(request: number, reason: string): Promise<void> {
+    if (!this.client || !this.#kept) return;
+    let text: string;
+    try {
+      text = await this.client.explain(this.#kept.session, request, reason);
+    } catch {
+      // Without the AI's words, the engine's own.
+      text = `That could not be done: ${reason}.`;
+    }
+    this.#set({ busy: false, turns: [...this.#snapshot.turns, { role: "ai", text }] });
+  }
+
   async #report(request: number, outcome: "accepted" | "rejected"): Promise<void> {
     if (!this.client || !this.#kept) return;
     // The record is for evaluation: a lost report changes nothing for the user.
@@ -276,6 +305,7 @@ export class AiAssistant {
     const proposal = this.#snapshot.proposal;
     if (!proposal) return;
     this.host.acceptProposal();
+    this.#proposed = undefined;
     this.#set({
       proposal: undefined,
       revising: undefined,
@@ -289,6 +319,7 @@ export class AiAssistant {
     const proposal = this.#snapshot.proposal;
     if (!proposal) return;
     this.host.rejectProposal();
+    this.#proposed = undefined;
     this.#set({
       proposal: undefined,
       revising: undefined,
@@ -344,6 +375,7 @@ export class AiAssistant {
 
   #dropProposal(): void {
     if (this.#snapshot.proposal) this.host.rejectProposal();
+    this.#proposed = undefined;
     this.#set({ proposal: undefined, revising: undefined, consent: undefined });
   }
 }

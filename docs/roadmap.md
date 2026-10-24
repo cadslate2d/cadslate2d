@@ -50,7 +50,8 @@ The user asked for natural language as a way to drive the program (2026-10-19) a
 3. **Proposals** (#254): an IR run against a scratch copy, drawn by the overlay, committed on Accept as one undo. Done 2026-10-21: `Session::propose`, `accept_proposal`, `reject_proposal`; the overlay's `Proposal` style; four coarse WASM calls.
 4. **The service** (`cadslate2d/cadslate2d-ai-service` #1–#5): accounts, the model adapter, metering, what it keeps. Done 2026-10-24, on Fly.io, the model `gpt-6-luna`.
 5. **The AI panel** (#260): done 2026-10-24 — sign-in by link, the consent for context, the proposal's Accept, Revise, and Reject, the allowance, and every state without the service; its end-to-end tests answer from a stand-in service (`web/e2e/ai-fake.ts`) with real recorded model answers, so this repository's CI never needs the private service.
-6. **AI commands** (#261), **evaluation** (#262), and **the exit** (#263).
+6. **AI commands** (#261): done 2026-10-24 — a corpus of 70 requests in English and Portuguese (`test-data/ai/l1/`), each with the drawing it should make, replayed from the model's recordings in CI: all 70 make it. A revision goes with the proposal it replaces; a proposal the engine stops is dropped and explained in the request's language. Making it found that an intent's `trim` and `extend` ignored the edges they named.
+7. **Evaluation** (#262) and **the exit** (#263).
 
 ## M19, DWG
 

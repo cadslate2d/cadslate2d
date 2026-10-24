@@ -2,23 +2,46 @@
 // with VITE_AI_SERVICE_URL=https://ai-service.e2e.invalid, and Playwright
 // answers that address from here. It follows the service's routes and their
 // shapes (cadslate2d-ai-service's README) — sign-in links into a mail sink
-// the test reads, sessions, the monthly allowance, interpret answered from
-// real recorded model answers, outcomes — so the panel's tests need nothing
-// that is not in this repository.
+// the test reads, sessions, the monthly allowance, interpret and explain
+// answered from the L1 corpus's recordings of the real model
+// (test-data/ai/l1/recordings.jsonl, #261), outcomes — so the panel's tests
+// need nothing that is not in this repository.
+import { readFileSync } from "node:fs";
 import type { Page, Route } from "@playwright/test";
-import recorded from "./fixtures/ai-answers.json" with { type: "json" };
 
 export const AI_SERVICE = "https://ai-service.e2e.invalid";
 
 interface Answer {
   reply: string;
   intent: unknown;
+  /** Why the engine stopped the document, as the model explained it. */
+  explanation?: string;
 }
+
+/** The corpus's recorded answers, by prompt: the model's last attempt at each. */
+const recorded: ReadonlyMap<string, Answer> = new Map(
+  readFileSync(new URL("../../test-data/ai/l1/recordings.jsonl", import.meta.url), "utf8")
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => {
+      const recording = JSON.parse(line) as {
+        request: { prompt: string };
+        raw: { content: string }[];
+        explanation?: { content: string };
+      };
+      const answer = JSON.parse(recording.raw.at(-1)?.content ?? "{}") as Answer;
+      const explanation = recording.explanation
+        ? (JSON.parse(recording.explanation.content) as { reply: string }).reply
+        : undefined;
+      return [recording.request.prompt, { ...answer, explanation }] as const;
+    }),
+);
 
 export interface Interpreted {
   prompt: string;
   unit?: string;
   context?: { layers: string[]; objects: { id: number; kind: string; geometry: string }[] };
+  previous?: { prompt: string; intent: unknown };
 }
 
 /** What the stand-in holds; tests read and steer it. */
@@ -31,6 +54,10 @@ export class FakeAiService {
   /** Every interpret request, as the service received it. */
   readonly interpreted: Interpreted[] = [];
   readonly outcomes: [number, string][] = [];
+  /** Each explanation asked for: the request, and the engine's reason. */
+  readonly explained: [number, string][] = [];
+  /** Each answered request's prompt, by its record. */
+  readonly #requests = new Map<number, string>();
   allowance = 100;
   used = 0;
   #next = 1;
@@ -126,20 +153,27 @@ export class FakeAiService {
         });
       }
       this.interpreted.push(body as unknown as Interpreted);
-      const prompt = String(body["prompt"]).replace(
-        /^Revise the previous request ".*" as follows: /,
-        "",
-      );
-      const answers = recorded.answers as Record<string, Answer>;
-      const answer = answers[prompt];
+      const prompt = String(body["prompt"]);
+      const answer = recorded.get(prompt);
       if (!answer) return reply(503, { error: "The AI is not available right now." });
       this.used += 1;
+      const request = this.#next++;
+      this.#requests.set(request, prompt);
       return reply(200, {
-        request: this.#next++,
+        request,
         reply: answer.reply,
-        intent: answer.intent,
+        intent: answer.intent ?? null,
         allowance: this.#allowance(),
       });
+    }
+    const explain = /^POST \/v1\/requests\/(\d+)\/explain$/.exec(path);
+    if (explain) {
+      if (!account) return signedOut();
+      const request = Number(explain[1]);
+      this.explained.push([request, String(body["reason"])]);
+      const explanation = recorded.get(this.#requests.get(request) ?? "")?.explanation;
+      if (!explanation) return reply(404, { error: "There is no such proposal waiting." });
+      return reply(200, { reply: explanation });
     }
     const outcome = /^POST \/v1\/requests\/(\d+)\/outcome$/.exec(path);
     if (outcome) {
