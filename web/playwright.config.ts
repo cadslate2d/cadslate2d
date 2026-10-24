@@ -10,7 +10,12 @@ const BROWSERS = [
     use: {
       ...devices["Desktop Chrome"],
       // Software WebGL2 so the suite runs on machines and CI runners without a GPU.
-      launchOptions: { args: ["--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] },
+      // Text antialiased in grey everywhere: the CI runner's Chromium drew
+      // it in colour (subpixel), so a baseline with text recorded on a
+      // developer machine differed there by a pixel.
+      launchOptions: {
+        args: ["--enable-unsafe-swiftshader", "--ignore-gpu-blocklist", "--disable-lcd-text"],
+      },
     },
   },
   {
