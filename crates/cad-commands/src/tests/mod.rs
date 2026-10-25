@@ -19,6 +19,7 @@ mod construction;
 mod corner;
 mod corpus;
 mod dimchain;
+mod dimconstraint;
 mod dimcurve;
 mod dimension;
 mod dimlinear;

@@ -245,6 +245,9 @@ pub struct Constraint {
     /// `d1`, `d2`, …: a dimensional constraint's name, unique in the
     /// drawing; empty for a geometric one.
     pub name: String,
+    /// Where a dimensional constraint's dimension line is shown, when it
+    /// has been placed (#268, #269).
+    pub place: Option<Point2>,
 }
 
 /// Why a constraint cannot be a row of the drawing.
@@ -301,6 +304,7 @@ impl Constraint {
             kind,
             references,
             name: String::new(),
+            place: None,
         }
     }
 
@@ -310,7 +314,15 @@ impl Constraint {
             kind,
             references,
             name: name.into(),
+            place: None,
         }
+    }
+
+    /// The same constraint, its dimension shown through `at`.
+    #[must_use]
+    pub fn placed(mut self, at: Point2) -> Self {
+        self.place = Some(at);
+        self
     }
 
     /// Whether it refers to `id`.
@@ -364,7 +376,10 @@ impl Constraint {
             Kind::Radius { value } | Kind::Diameter { value } => value.is_finite() && value > 0.0,
             _ => true,
         };
-        if good {
+        let placed = self
+            .place
+            .is_none_or(|at| at.x.is_finite() && at.y.is_finite());
+        if good && placed {
             Ok(())
         } else {
             Err(ConstraintError::BadValue)

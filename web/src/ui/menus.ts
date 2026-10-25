@@ -306,8 +306,19 @@ const PARAMETRIC: Menu = {
       command("&Symmetric", "GCSYMMETRIC"),
       command("E&qual", "GCEQUAL"),
     ]),
+    cascade("D&imensional Constraints", [
+      command("&Linear", "DCLINEAR"),
+      command("&Horizontal", "DCHORIZONTAL"),
+      command("&Vertical", "DCVERTICAL"),
+      command("&Aligned", "DCALIGNED"),
+      command("A&ngular", "DCANGULAR"),
+      command("&Radius", "DCRADIUS"),
+      command("&Diameter", "DCDIAMETER"),
+    ]),
     SEPARATOR,
     command("&Delete Constraints", "DELCONSTRAINT"),
+    SEPARATOR,
+    command("&Parameters", "-PARAMETERS"),
   ],
 };
 

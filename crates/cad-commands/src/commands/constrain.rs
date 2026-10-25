@@ -148,7 +148,11 @@ impl GeomConstraintCommand {
 /// object shown in the current space, other than one already `picked`:
 /// two ends that meet are told apart by picking the place twice. The
 /// lowest ID among equals.
-fn point_near(ctx: &CommandContext<'_>, at: Point2, picked: &[Reference]) -> Option<Reference> {
+pub(super) fn point_near(
+    ctx: &CommandContext<'_>,
+    at: Point2,
+    picked: &[Reference],
+) -> Option<Reference> {
     let reach = ctx.view.pixels_to_world(POINT_APERTURE.0);
     let screen = ctx.view.world_to_screen(at);
     let mut best: Option<(f64, Reference)> = None;
@@ -178,7 +182,7 @@ fn point_near(ctx: &CommandContext<'_>, at: Point2, picked: &[Reference]) -> Opt
 
 /// The edge of `entity` a pick at `at` means: the whole of a line, circle,
 /// or arc; the polyline segment nearest it.
-fn edge_at(entity: &Entity, id: EntityId, at: Point2) -> Option<Reference> {
+pub(super) fn edge_at(entity: &Entity, id: EntityId, at: Point2) -> Option<Reference> {
     match entity {
         Entity::Line(_) | Entity::Circle(_) | Entity::Arc(_) => {
             Some(Reference::new(id, Part::Edge))

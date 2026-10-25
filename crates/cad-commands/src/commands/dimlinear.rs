@@ -116,7 +116,7 @@ impl DimLinearCommand {
 /// Horizontal when the placement is above or below the two points,
 /// vertical when it is beside them: whichever band it is further into,
 /// and horizontal on a tie.
-fn auto_rotation(a: Point2, b: Point2, place: Point2) -> f64 {
+pub(crate) fn auto_rotation(a: Point2, b: Point2, place: Point2) -> f64 {
     let beyond =
         |low: f64, high: f64, at: f64| (low.min(high) - at).max(at - low.max(high)).max(0.0);
     let out_x = beyond(a.x, b.x, place.x);
