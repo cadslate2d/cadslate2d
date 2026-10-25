@@ -227,6 +227,38 @@ fn what_is_refused_says_where_and_why() {
         "column_spacing",
         Reason::NotPositive,
     );
+    // A constraint: one object or two, as the relation takes; a dimension
+    // by points or by an object, as its measure takes.
+    invalid(
+        r#"{"op": "constrain", "relation": "parallel", "first": {"id": 1}}"#,
+        "second",
+        Reason::Missing,
+    );
+    invalid(
+        r#"{"op": "constrain", "relation": "horizontal", "first": {"id": 1}, "second": {"id": 2}}"#,
+        "second",
+        Reason::Unwanted,
+    );
+    invalid(
+        r#"{"op": "constrain_dimension", "measure": "aligned", "at": [0, 5]}"#,
+        "points",
+        Reason::Missing,
+    );
+    invalid(
+        r#"{"op": "constrain_dimension", "measure": "radius", "points": [[0, 0], [1, 0]], "at": [0, 5]}"#,
+        "points",
+        Reason::Unwanted,
+    );
+    invalid(
+        r#"{"op": "constrain_dimension", "measure": "angular", "of": {"id": 1}, "at": [0, 5]}"#,
+        "and",
+        Reason::Missing,
+    );
+    invalid(
+        r#"{"op": "set_parameter", "name": "d1", "value": 0}"#,
+        "value",
+        Reason::NotPositive,
+    );
     invalid(
         r#"{"op": "set_properties", "targets": [1]}"#,
         "layer",
@@ -250,9 +282,9 @@ fn what_is_refused_says_where_and_why() {
         IntentError::Json { .. }
     ));
     assert!(matches!(
-        parse(r#"{"version": 4, "operations": []}"#).unwrap_err(),
+        parse(r#"{"version": 5, "operations": []}"#).unwrap_err(),
         IntentError::Version {
-            found: 4,
+            found: 5,
             expected: VERSION
         }
     ));
@@ -296,7 +328,7 @@ fn what_is_refused_says_where_and_why() {
 fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../test-data/intent/schema-v3.json"
+        "/../../test-data/intent/schema-v4.json"
     );
     let generated = serde_json::to_string_pretty(&schema()).unwrap() + "\n";
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
@@ -308,7 +340,7 @@ fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
         "the schema changed: bump cad_intent::VERSION, re-record with UPDATE_SNAPSHOTS=1, and name the file after the new version"
     );
     assert!(generated.contains(r#""version""#));
-    assert_eq!(VERSION, 3);
+    assert_eq!(VERSION, 4);
 }
 
 proptest! {
@@ -353,6 +385,6 @@ fn the_selection_word_and_an_intent_serialise_as_the_document_says() {
     };
     assert_eq!(
         serde_json::to_string(&intent).unwrap(),
-        r#"{"version":3,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
+        r#"{"version":4,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
     );
 }

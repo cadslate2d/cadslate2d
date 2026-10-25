@@ -27,12 +27,13 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
-/// the parts (#272), version 3 the placements (#273).
-pub const READS: [u32; 3] = [1, 2, 3];
+/// the parts (#272), version 3 the placements (#273), version 4 the
+/// constraints and parameters (#274).
+pub const READS: [u32; 4] = [1, 2, 3, 4];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -122,6 +123,63 @@ pub struct Pick {
 pub enum Orientation {
     Horizontal,
     Vertical,
+}
+
+/// A geometric constraint's kind (ADR-0038).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum Relation {
+    /// Two points at one place: `first` and `second` each near an end, a
+    /// centre, or a vertex.
+    Coincident,
+    /// Two lines on one line.
+    Collinear,
+    /// Two circles or arcs about one centre.
+    Concentric,
+    /// A point kept where it is: `first` near an end, a centre, or a vertex.
+    Fix,
+    Parallel,
+    Perpendicular,
+    /// A line level: `first` only.
+    Horizontal,
+    /// A line plumb: `first` only.
+    Vertical,
+    /// A line or a circle touching a circle or an arc.
+    Tangent,
+    /// Two lines of one length, or two circles or arcs of one radius.
+    Equal,
+}
+
+impl Relation {
+    /// Whether it relates a part of one object only.
+    pub fn takes_one(self) -> bool {
+        matches!(self, Self::Fix | Self::Horizontal | Self::Vertical)
+    }
+}
+
+/// What a dimensional constraint measures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum Measure {
+    /// Along x.
+    Horizontal,
+    /// Along y.
+    Vertical,
+    /// Point to point.
+    Aligned,
+    /// The angle between two lines, degrees.
+    Angular,
+    Radius,
+    Diameter,
+}
+
+impl Measure {
+    /// Whether it measures between two points.
+    pub fn is_linear(self) -> bool {
+        matches!(self, Self::Horizontal | Self::Vertical | Self::Aligned)
+    }
 }
 
 /// A colour: an index of the 1–255 table, or a name the engine knows
@@ -445,6 +503,40 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         row_spacing: Option<f64>,
     },
+
+    // ── constraints (#274): relations kept, and parameters that drive ──
+    /// A geometric constraint between parts of objects: the second comes to
+    /// the first. A point is meant by `near` at it.
+    Constrain {
+        relation: Relation,
+        first: Pick,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        second: Option<Pick>,
+    },
+    /// A dimensional constraint, a parameter named `d1`, `ang1`, `rad1`,
+    /// `dia1` … that drives the geometry: between two `points` — ends,
+    /// centres, or vertices — or along the line `of`, end to end; of the
+    /// circle or arc `of`; or the angle from the line `of` to the line
+    /// `and`. Shown with its dimension line through `at`; `value`, when
+    /// given, is what it is made — the measured one otherwise.
+    ConstrainDimension {
+        measure: Measure,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        points: Option<[Point; 2]>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        of: Option<Pick>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        and: Option<Pick>,
+        at: Point,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value: Option<f64>,
+    },
+    /// A parameter set to a new value — a length, or an angle in degrees
+    /// for an `ang` one — and the constrained geometry follows.
+    SetParameter {
+        name: String,
+        value: f64,
+    },
 }
 
 fn default_true() -> bool {
@@ -496,6 +588,9 @@ impl Operation {
             Self::ConcentricCircle { .. } => "concentric_circle",
             Self::PathArray { .. } => "path_array",
             Self::GridArray { .. } => "grid_array",
+            Self::Constrain { .. } => "constrain",
+            Self::ConstrainDimension { .. } => "constrain_dimension",
+            Self::SetParameter { .. } => "set_parameter",
         }
     }
 }

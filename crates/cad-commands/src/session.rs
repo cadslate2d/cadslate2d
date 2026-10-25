@@ -1754,7 +1754,7 @@ impl Session {
     }
 
     /// What the current prompt accepts.
-    fn expected(&self) -> ExpectedInput {
+    pub(crate) fn expected(&self) -> ExpectedInput {
         if self.selection_shape.is_some() {
             return ExpectedInput::point().with_keywords(&[select_keywords::UNDO]);
         }

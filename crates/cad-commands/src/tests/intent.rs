@@ -415,3 +415,205 @@ fn an_edit_that_changes_nothing_is_refused_with_the_reason() {
     assert_eq!(h.session.drawing().revision(), before);
     assert_eq!(h.prompt(), "Command:");
 }
+
+fn parameters(h: &Harness) -> Vec<String> {
+    let mut names: Vec<String> = h
+        .session
+        .drawing()
+        .constraints()
+        .iter()
+        .filter_map(|(_, c)| c.kind.value().map(|v| format!("{} = {v}", c.name)))
+        .collect();
+    names.sort();
+    names
+}
+
+/// #274: a plate made, its parameters in the context the AI is sent, then
+/// widened by its width parameter with its holes keeping their places from
+/// the edges; a parameter that is not there refused with the reason.
+#[test]
+fn a_part_is_widened_by_its_parameter_and_its_holes_follow() {
+    let mut h = run(
+        r#"{"op": "plate", "corner": [0, 0], "width": 120, "height": 80, "hole_diameter": 8, "hole_offset": 10}"#,
+    );
+    let context = h.session.ai_context();
+    assert_eq!(context.objects.len(), 8, "the plate is the selection");
+    assert!(
+        context
+            .parameters
+            .iter()
+            .any(|p| p.starts_with("d1 = 120: horizontal distance, id ")),
+        "{:?}",
+        context.parameters
+    );
+    assert!(
+        context
+            .parameters
+            .iter()
+            .any(|p| p.starts_with("dia1 = 8: diameter, of id ")),
+        "{:?}",
+        context.parameters
+    );
+    h.session
+        .run_intent(&document(
+            r#"{"op": "set_parameter", "name": "d1", "value": 140}"#,
+        ))
+        .unwrap();
+    assert!(h.session.drawing().unsatisfied_constraints().is_empty());
+    let xs: Vec<f64> = h
+        .entities()
+        .iter()
+        .filter_map(|e| match e {
+            Entity::Line(l) => Some([l.start.x, l.end.x]),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let (left, right) = (
+        xs.iter().copied().fold(f64::INFINITY, f64::min),
+        xs.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+    );
+    assert!((right - left - 140.0).abs() < 1e-6, "{left} {right}");
+    for hole in h.entities().iter().filter_map(|e| match e {
+        Entity::Circle(c) => Some(*c),
+        _ => None,
+    }) {
+        let from_edge = (hole.center.x - left).min(right - hole.center.x);
+        assert!((from_edge - 10.0).abs() < 1e-6, "{hole:?}");
+    }
+    assert!(parameters(&h).contains(&"d1 = 140".to_owned()));
+
+    let error = h
+        .session
+        .run_intent(&document(
+            r#"{"op": "set_parameter", "name": "d99", "value": 5}"#,
+        ))
+        .unwrap_err();
+    assert!(
+        matches!(&error, RunError::Refused { reason, .. } if reason == "No parameter called \"d99\"."),
+        "{error:?}"
+    );
+}
+
+/// An edit the constraints cannot take is refused with the solver's
+/// reason, and the drawing is as it was: six holes a chord of 50 apart
+/// do not go round a circle 40 across.
+#[test]
+fn a_parameter_the_constraints_cannot_take_is_refused_with_the_reason() {
+    let mut h = run(
+        r#"{"op": "bolt_circle", "center": [0, 0], "pitch_diameter": 100, "count": 6, "hole_diameter": 10}"#,
+    );
+    let context = h.session.ai_context();
+    let pitch = context
+        .parameters
+        .iter()
+        .find(|p| p.contains("= 100: diameter"))
+        .and_then(|p| p.split(' ').next())
+        .unwrap_or_else(|| panic!("{:?}", context.parameters))
+        .to_owned();
+    let revision = h.session.drawing().revision();
+    let error = h
+        .session
+        .run_intent(&document(&format!(
+            r#"{{"op": "set_parameter", "name": "{pitch}", "value": 40}}"#
+        )))
+        .unwrap_err();
+    match &error {
+        RunError::Refused {
+            command, reason, ..
+        } => {
+            assert_eq!(*command, "-PARAMETERS");
+            assert!(reason.starts_with("The edit would break"), "{reason}");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(h.session.drawing().revision(), revision);
+
+    // Two lines kept parallel cannot be made perpendicular.
+    let mut h = run(r#"{"op": "line", "points": [[0, 0], [100, 0]]},
+        {"op": "line", "points": [[0, 20], [100, 20]]},
+        {"op": "constrain", "relation": "parallel", "first": {"id": 1}, "second": {"id": 2}}"#);
+    let error = h
+        .session
+        .run_intent(&document(
+            r#"{"op": "constrain", "relation": "perpendicular", "first": {"id": 1}, "second": {"id": 2}}"#,
+        ))
+        .unwrap_err();
+    assert!(
+        matches!(&error, RunError::Refused { reason, .. } if reason == "It contradicts the other constraints."),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn geometric_and_dimensional_constraints_by_intent() {
+    // Two lines made parallel: the second turns to the first.
+    let h = run(r#"{"op": "line", "points": [[0, 0], [100, 0]]},
+        {"op": "line", "points": [[0, 20], [100, 35]]},
+        {"op": "constrain", "relation": "parallel", "first": {"id": 1}, "second": {"id": 2}}"#);
+    let second = *h
+        .session
+        .drawing()
+        .entity(EntityId::from_raw(2))
+        .and_then(Entity::as_line)
+        .unwrap();
+    assert!((second.end.y - second.start.y).abs() < 1e-7, "{second:?}");
+    assert!(h.session.drawing().unsatisfied_constraints().is_empty());
+
+    // A line made horizontal, its length dimensioned and set; a circle's
+    // diameter; the angle between two lines.
+    let h = run(r#"{"op": "line", "points": [[0, 0], [100, 10]]},
+        {"op": "constrain", "relation": "horizontal", "first": {"id": 1}},
+        {"op": "constrain_dimension", "measure": "aligned", "of": {"id": 1}, "at": [50, -20], "value": 80},
+        {"op": "circle", "center": [200, 0], "radius": 10},
+        {"op": "constrain_dimension", "measure": "diameter", "of": {"id": 2}, "at": [220, 20], "value": 30},
+        {"op": "line", "points": [[300, 0], [400, 0]]},
+        {"op": "line", "points": [[300, 0], [350, 60]]},
+        {"op": "constrain", "relation": "coincident", "first": {"id": 3, "near": [300, 0]}, "second": {"id": 4, "near": [300, 0]}},
+        {"op": "constrain_dimension", "measure": "angular", "of": {"id": 3, "near": [350, 0]}, "and": {"id": 4, "near": [325, 30]}, "at": [330, 15], "value": 45}"#);
+    assert_eq!(
+        parameters(&h)[..2],
+        ["ang1 = 0.7853981633974483".to_owned(), "d1 = 80".to_owned()]
+    );
+    let line = *h
+        .session
+        .drawing()
+        .entity(EntityId::from_raw(1))
+        .and_then(Entity::as_line)
+        .unwrap();
+    assert!((line.start.distance_to(line.end) - 80.0).abs() < 1e-6);
+    assert!((line.end.y - line.start.y).abs() < 1e-7);
+    match h.session.drawing().entity(EntityId::from_raw(2)) {
+        Some(Entity::Circle(c)) => assert!((c.radius - 15.0).abs() < 1e-7),
+        other => panic!("{other:?}"),
+    }
+    assert!(h.session.drawing().unsatisfied_constraints().is_empty());
+}
+
+/// A dimensional constraint between two points, and a fix at a point.
+#[test]
+fn constraints_at_points_take_the_point_named() {
+    let h = run(r#"{"op": "line", "points": [[0, 0], [100, 0]]},
+        {"op": "line", "points": [[100, 0], [100, 50]]},
+        {"op": "constrain", "relation": "fix", "first": {"id": 1, "near": [0, 0]}},
+        {"op": "constrain_dimension", "measure": "vertical", "points": [[0, 0], [100, 50]], "at": [120, 25], "value": 70}"#);
+    let second = *h
+        .session
+        .drawing()
+        .entity(EntityId::from_raw(2))
+        .and_then(Entity::as_line)
+        .unwrap();
+    assert!((second.end.y - 70.0).abs() < 1e-6, "{second:?}");
+    let first = *h
+        .session
+        .drawing()
+        .entity(EntityId::from_raw(1))
+        .and_then(Entity::as_line)
+        .unwrap();
+    assert!(first.start.distance_to(Point2::ORIGIN) < 1e-9, "{first:?}");
+    assert!(
+        first.end.distance_to(Point2::new(100.0, 0.0)) < 1e-9,
+        "{first:?}"
+    );
+    assert_eq!(h.session.drawing().constraints().len(), 2);
+}

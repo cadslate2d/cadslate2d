@@ -4,7 +4,7 @@
 
 use cad_core::Point2;
 
-use crate::{Color, Intent, Operation, Orientation, Pick, Targets, point};
+use crate::{Color, Intent, Measure, Operation, Orientation, Pick, Relation, Targets, point};
 
 /// One answer to a prompt. Lengths and points are in the document's
 /// units; the runner converts them to the drawing's and formats them.
@@ -58,7 +58,7 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 34] = [
+pub const COMMANDS: [&str; 37] = [
     "LINE",
     "PLINE",
     "RECTANG",
@@ -93,6 +93,9 @@ pub const COMMANDS: [&str; 34] = [
     "CONCENTRIC",
     "ARRAYPATH",
     "ARRAYGRID",
+    "GEOMCONSTRAINT",
+    "DIMCONSTRAINT",
+    "-PARAMETERS",
 ];
 
 /// Compiles every operation of a validated document, in order.
@@ -579,6 +582,76 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
                 row_spacing.map_or_else(enter, length),
             ],
         ),
+        Operation::Constrain {
+            relation,
+            first,
+            second,
+        } => {
+            let mut steps = vec![keyword(relation_keyword(*relation)), pick(first)];
+            steps.extend(second.as_ref().map(pick));
+            ("GEOMCONSTRAINT", steps)
+        }
+        Operation::ConstrainDimension {
+            measure,
+            points,
+            of,
+            and,
+            at: place,
+            value,
+        } => {
+            let mut steps = vec![keyword(match measure {
+                Measure::Horizontal => "Horizontal",
+                Measure::Vertical => "Vertical",
+                Measure::Aligned => "ALigned",
+                Measure::Angular => "ANgular",
+                Measure::Radius => "Radial",
+                Measure::Diameter => "Diameter",
+            })];
+            match (points, of) {
+                (Some([a, b]), _) => steps.extend([at(*a), at(*b)]),
+                // A line measured end to end: the Object option.
+                (None, Some(of)) if measure.is_linear() => steps.extend([enter(), pick(of)]),
+                (None, Some(of)) => steps.push(pick(of)),
+                (None, None) => {}
+            }
+            steps.extend(and.as_ref().map(pick));
+            steps.push(at(*place));
+            steps.push(match (value, measure) {
+                (Some(v), Measure::Angular) => answer(Answer::Angle(*v)),
+                (Some(v), _) => length(*v),
+                (None, _) => enter(),
+            });
+            ("DIMCONSTRAINT", steps)
+        }
+        Operation::SetParameter { name, value } => (
+            "-PARAMETERS",
+            vec![
+                keyword("Edit"),
+                answer(Answer::Text(name.clone())),
+                // An angle's value is in degrees, whatever the length unit.
+                if name.trim().to_ascii_lowercase().starts_with("ang") {
+                    answer(Answer::Angle(*value))
+                } else {
+                    length(*value)
+                },
+            ],
+        ),
+    }
+}
+
+/// GEOMCONSTRAINT's keyword for a relation.
+fn relation_keyword(relation: Relation) -> &'static str {
+    match relation {
+        Relation::Coincident => "Coincident",
+        Relation::Collinear => "COLlinear",
+        Relation::Concentric => "CONcentric",
+        Relation::Fix => "Fix",
+        Relation::Parallel => "PArallel",
+        Relation::Perpendicular => "Perpendicular",
+        Relation::Horizontal => "Horizontal",
+        Relation::Vertical => "Vertical",
+        Relation::Tangent => "Tangent",
+        Relation::Equal => "Equal",
     }
 }
 

@@ -5,7 +5,8 @@ use proptest::prelude::*;
 
 use crate::validate::same_point;
 use crate::{
-    Color, Intent, Operation, Orientation, Pick, Point, SelectionWord, Targets, Unit, VERSION,
+    Color, Intent, Measure, Operation, Orientation, Pick, Point, Relation, SelectionWord, Targets,
+    Unit, VERSION,
 };
 
 fn differ(a: Point, b: Point) -> bool {
@@ -239,6 +240,74 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         }),
         part(),
         placement(),
+        constraint(),
+    ]
+}
+
+/// A constraint or a parameter (#274); the picks are arbitrary, so most
+/// find nothing to relate, and the engine says so.
+fn constraint() -> impl Strategy<Value = Operation> {
+    let relation = prop_oneof![
+        Just(Relation::Coincident),
+        Just(Relation::Collinear),
+        Just(Relation::Concentric),
+        Just(Relation::Fix),
+        Just(Relation::Parallel),
+        Just(Relation::Perpendicular),
+        Just(Relation::Horizontal),
+        Just(Relation::Vertical),
+        Just(Relation::Tangent),
+        Just(Relation::Equal),
+    ];
+    let measure = prop_oneof![
+        Just(Measure::Horizontal),
+        Just(Measure::Vertical),
+        Just(Measure::Aligned),
+        Just(Measure::Angular),
+        Just(Measure::Radius),
+        Just(Measure::Diameter),
+    ];
+    prop_oneof![
+        (relation, pick(), pick()).prop_map(|(relation, first, second)| Operation::Constrain {
+            relation,
+            first,
+            second: (!relation.takes_one()).then_some(second),
+        }),
+        (
+            measure,
+            point(),
+            point(),
+            pick(),
+            pick(),
+            point(),
+            proptest::option::of(positive()),
+            any::<bool>()
+        )
+            .prop_filter("two points", |(_, a, b, ..)| differ(*a, *b))
+            .prop_map(|(measure, a, b, of, and, at, value, by_points)| {
+                let (points, of, and) = match measure {
+                    m if m.is_linear() && by_points => (Some([a, b]), None, None),
+                    m if m.is_linear() => (None, Some(of), None),
+                    Measure::Angular => (None, Some(of), Some(and)),
+                    _ => (None, Some(of), None),
+                };
+                Operation::ConstrainDimension {
+                    measure,
+                    points,
+                    of,
+                    and,
+                    at,
+                    value,
+                }
+            }),
+        (
+            prop_oneof![Just("d1"), Just("dia1"), Just("ang1"), Just("width")],
+            positive()
+        )
+            .prop_map(|(name, value)| Operation::SetParameter {
+                name: name.to_owned(),
+                value
+            }),
     ]
 }
 

@@ -104,6 +104,7 @@ struct AiContextDto {
     unit: Option<String>,
     layers: Vec<String>,
     objects: Vec<AiObjectDto>,
+    parameters: Vec<String>,
     left_out: u32,
 }
 
@@ -594,6 +595,7 @@ impl CadSession {
                     layer: object.layer,
                 })
                 .collect(),
+            parameters: context.parameters,
             left_out: context.left_out as u32,
         })?)
     }

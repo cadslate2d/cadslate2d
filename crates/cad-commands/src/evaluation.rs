@@ -255,6 +255,9 @@ pub fn request(case: &Case) -> Value {
             })
             .collect();
         request["context"] = json!({ "layers": context.layers, "objects": objects });
+        if !context.parameters.is_empty() {
+            request["context"]["parameters"] = json!(context.parameters);
+        }
     }
     if let Some(previous) = &case.previous {
         request["previous"] = previous.clone();
@@ -401,6 +404,21 @@ pub fn describe(h: &Harness) -> Vec<String> {
             line
         })
         .collect();
+    // The constraints by what they hold, the parameters by name and value:
+    // the same part made two ways holds the same.
+    lines.extend(
+        drawing
+            .constraints()
+            .iter()
+            .map(|(_, c)| match c.kind.value() {
+                Some(value) => format!("constraint {} = {}", c.name, n(value.abs())),
+                None => {
+                    let kind = format!("{:?}", c.kind);
+                    let word = kind.split([' ', '{']).next().unwrap_or_default();
+                    format!("constraint {}", word.to_lowercase())
+                }
+            }),
+    );
     lines.sort();
     let layers = drawing.layers();
     let mut names: Vec<&str> = layers

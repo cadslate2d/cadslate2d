@@ -4,7 +4,7 @@ use std::fmt;
 
 use cad_core::tolerance::LinearTolerance;
 
-use crate::{Color, Intent, Operation, Pick, Point, Targets, VERSION, point};
+use crate::{Color, Intent, Measure, Operation, Pick, Point, Targets, VERSION, point};
 
 /// Two points of a document are the same point when the drawing would
 /// treat them so (DESIGN §21).
@@ -64,6 +64,9 @@ pub enum Reason {
     /// A field given with another it excludes: a radius with a third
     /// tangent.
     Both(&'static str),
+    /// A field the operation does not take in the form asked: a second
+    /// object for a fix.
+    Unwanted,
 }
 
 impl fmt::Display for Reason {
@@ -81,6 +84,7 @@ impl fmt::Display for Reason {
             Self::Nothing => write!(f, "asks for nothing"),
             Self::Missing => write!(f, "must be given"),
             Self::Both(other) => write!(f, "cannot be given with {other}"),
+            Self::Unwanted => write!(f, "is not taken here"),
         }
     }
 }
@@ -698,6 +702,76 @@ impl Check {
                     self.positive("row_spacing", *row_spacing)?;
                 }
                 Ok(())
+            }
+            Operation::Constrain {
+                relation,
+                first,
+                second,
+            } => {
+                self.pick("first", first)?;
+                match (relation.takes_one(), second) {
+                    (true, Some(_)) => Err(self.refuse("second", Reason::Unwanted)),
+                    (false, None) => Err(self.refuse("second", Reason::Missing)),
+                    (true, None) => Ok(()),
+                    (false, Some(second)) => self.pick("second", second),
+                }
+            }
+            Operation::ConstrainDimension {
+                measure,
+                points,
+                of,
+                and,
+                at,
+                value,
+            } => {
+                if let Some([a, b]) = points {
+                    self.distinct("points", *a, *b)?;
+                }
+                if let Some(of) = of {
+                    self.pick("of", of)?;
+                }
+                if let Some(and) = and {
+                    self.pick("and", and)?;
+                }
+                match measure {
+                    m if m.is_linear() => match (points, of) {
+                        (Some(_), Some(_)) => return Err(self.refuse("of", Reason::Both("points"))),
+                        (None, None) => return Err(self.refuse("points", Reason::Missing)),
+                        _ if and.is_some() => return Err(self.refuse("and", Reason::Unwanted)),
+                        _ => {}
+                    },
+                    Measure::Angular => {
+                        if points.is_some() {
+                            return Err(self.refuse("points", Reason::Unwanted));
+                        }
+                        if of.is_none() {
+                            return Err(self.refuse("of", Reason::Missing));
+                        }
+                        if and.is_none() {
+                            return Err(self.refuse("and", Reason::Missing));
+                        }
+                    }
+                    _ => {
+                        if points.is_some() {
+                            return Err(self.refuse("points", Reason::Unwanted));
+                        }
+                        if and.is_some() {
+                            return Err(self.refuse("and", Reason::Unwanted));
+                        }
+                        if of.is_none() {
+                            return Err(self.refuse("of", Reason::Missing));
+                        }
+                    }
+                }
+                self.point("at", *at)?;
+                if let Some(value) = value {
+                    self.positive("value", *value)?;
+                }
+                Ok(())
+            }
+            Operation::SetParameter { name, value } => {
+                self.name("name", name)?;
+                self.positive("value", *value)
             }
         }
     }

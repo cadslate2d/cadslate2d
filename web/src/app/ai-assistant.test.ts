@@ -61,7 +61,7 @@ class FakeClient implements AiClient {
 }
 
 class FakeHost implements AssistantHost {
-  context: AiContext = { layers: ["0"], objects: [], leftOut: 0 };
+  context: AiContext = { layers: ["0"], objects: [], parameters: [], leftOut: 0 };
   proposed: string[] = [];
   accepted = 0;
   rejected = 0;
@@ -181,6 +181,7 @@ describe("the AI assistant (#260)", () => {
     host.context = {
       layers: ["0", "HOLES"],
       objects: [{ id: 4, kind: "circle", geometry: "center 30, 30; radius 8", layer: "HOLES" }],
+      parameters: [],
       leftOut: 0,
     };
     await assistant.ask("move these up 25");
@@ -201,6 +202,24 @@ describe("the AI assistant (#260)", () => {
     assistant.cancelConsent();
     expect(client.asked).toHaveLength(2);
     expect(assistant.getSnapshot().consent).toBeUndefined();
+  });
+
+  test("a part's parameters go with its objects, shown before they are sent (#274)", async () => {
+    const { assistant, client, host } = await signedIn();
+    host.context = {
+      layers: ["0"],
+      objects: [{ id: 1, kind: "line", geometry: "start 0, 0; end 120, 0", layer: "0" }],
+      parameters: ["d1 = 120: horizontal distance, id 1 start to id 1 end"],
+      leftOut: 0,
+    };
+    await assistant.ask("make it 20 wider");
+    expect(assistant.getSnapshot().consent?.context.parameters).toEqual([
+      "d1 = 120: horizontal distance, id 1 start to id 1 end",
+    ]);
+    await assistant.sendWithContext();
+    expect(client.asked[0]?.request.context?.parameters).toEqual([
+      "d1 = 120: horizontal distance, id 1 start to id 1 end",
+    ]);
   });
 
   test("accept, reject, and revise act on the proposal and report what the user did", async () => {

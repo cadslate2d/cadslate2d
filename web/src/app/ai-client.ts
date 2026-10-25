@@ -35,6 +35,8 @@ export interface RequestContext {
     readonly geometry: string;
     readonly layer?: string;
   }[];
+  /** The parameters on those objects, by name, value, and what they measure (#274). */
+  readonly parameters?: readonly string[];
 }
 
 export interface AiRequest {

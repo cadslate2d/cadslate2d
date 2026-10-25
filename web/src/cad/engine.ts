@@ -85,6 +85,8 @@ export interface AiContext {
   readonly unit?: string;
   readonly layers: readonly string[];
   readonly objects: readonly AiObject[];
+  /** The parameters on those objects (#274): `d1 = 120: horizontal distance, id 1 start to id 1 end`. */
+  readonly parameters: readonly string[];
   /** Selected objects beyond the limit, left out. */
   readonly leftOut: number;
 }

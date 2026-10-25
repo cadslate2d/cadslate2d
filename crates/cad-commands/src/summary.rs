@@ -637,6 +637,9 @@ pub struct AiContext {
     pub unit: Option<&'static str>,
     pub layers: Vec<String>,
     pub objects: Vec<AiObject>,
+    /// The parameters — dimensional constraints — on the objects listed,
+    /// by name: `d1 = 120: horizontal distance, id 1 start to id 1 end`.
+    pub parameters: Vec<String>,
     /// Objects selected beyond `AI_CONTEXT_LIMIT`, left out.
     pub left_out: usize,
 }
@@ -656,7 +659,7 @@ impl AiContext {
         let mut ids: Vec<cad_core::EntityId> = selection.iter().collect();
         ids.sort_unstable();
         let left_out = ids.len().saturating_sub(AI_CONTEXT_LIMIT);
-        let objects = ids
+        let objects: Vec<AiObject> = ids
             .into_iter()
             .take(AI_CONTEXT_LIMIT)
             .filter_map(|id| {
@@ -702,7 +705,21 @@ impl AiContext {
                 })
             })
             .collect();
+        let listed: Vec<u64> = objects.iter().map(|object| object.id).collect();
+        let mut parameters: Vec<(String, String)> = drawing
+            .constraints()
+            .iter()
+            .filter(|(_, c)| c.kind.is_dimensional())
+            .filter(|(_, c)| {
+                c.references
+                    .iter()
+                    .any(|r| listed.contains(&r.entity.raw()))
+            })
+            .map(|(_, c)| (c.name.clone(), parameter(c)))
+            .collect();
+        parameters.sort();
         Self {
+            parameters: parameters.into_iter().map(|(_, text)| text).collect(),
             unit: drawing.unit().map(cad_core::LengthUnit::suffix),
             layers: drawing
                 .layers()
@@ -713,4 +730,53 @@ impl AiContext {
             left_out,
         }
     }
+}
+
+/// A value to four places, without trailing zeros: `120`, `0.5`.
+fn short(value: f64) -> String {
+    let text = format!("{value:.4}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    if text == "-0" {
+        "0".to_owned()
+    } else {
+        text.to_owned()
+    }
+}
+
+/// A parameter as the AI is told it: its name and value, what it
+/// measures, and between which parts of which objects.
+fn parameter(constraint: &cad_document::Constraint) -> String {
+    use cad_document::{Axis, Kind, Part};
+    let part = |r: &cad_document::Reference| {
+        let id = r.entity.raw();
+        match r.part {
+            Part::Start => format!("id {id} start"),
+            Part::End => format!("id {id} end"),
+            Part::Center => format!("id {id} centre"),
+            Part::Vertex(n) => format!("id {id} vertex {n}"),
+            Part::Segment(n) => format!("id {id} segment {n}"),
+            Part::Point | Part::Edge => format!("id {id}"),
+        }
+    };
+    let parts: Vec<String> = constraint.references.iter().map(part).collect();
+    let (value, what, between) = match constraint.kind {
+        Kind::Angle { value } => (
+            format!("{}°", short(value.to_degrees().abs())),
+            "angle",
+            parts.join(" to "),
+        ),
+        Kind::Radius { value } => (short(value), "radius", format!("of {}", parts.join(""))),
+        Kind::Diameter { value } => (short(value), "diameter", format!("of {}", parts.join(""))),
+        Kind::Distance { axis, value } => (
+            short(value.abs()),
+            match axis {
+                Axis::Horizontal => "horizontal distance",
+                Axis::Vertical => "vertical distance",
+                Axis::Aligned => "distance",
+            },
+            parts.join(" to "),
+        ),
+        _ => (String::new(), "", String::new()),
+    };
+    format!("{} = {value}: {what}, {between}", constraint.name)
 }

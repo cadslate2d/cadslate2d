@@ -260,6 +260,11 @@ function Conversation({
               {snapshot.consent.context.leftOut > 0 && (
                 <li>{snapshot.consent.context.leftOut} more selected are left out</li>
               )}
+              {snapshot.consent.context.parameters.map((parameter) => (
+                <li key={parameter}>
+                  <strong>parameter</strong> {parameter}
+                </li>
+              ))}
               <li>
                 <strong>layers</strong> {snapshot.consent.context.layers.join(", ")}
               </li>

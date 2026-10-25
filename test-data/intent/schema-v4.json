@@ -14,6 +14,38 @@
       ],
       "description": "A colour: an index of the 1–255 table, or a name the engine knows\n(`red`, `bylayer`, …)."
     },
+    "Measure": {
+      "description": "What a dimensional constraint measures.",
+      "oneOf": [
+        {
+          "enum": [
+            "radius",
+            "diameter"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "horizontal",
+          "description": "Along x.",
+          "type": "string"
+        },
+        {
+          "const": "vertical",
+          "description": "Along y.",
+          "type": "string"
+        },
+        {
+          "const": "aligned",
+          "description": "Point to point.",
+          "type": "string"
+        },
+        {
+          "const": "angular",
+          "description": "The angle between two lines, degrees.",
+          "type": "string"
+        }
+      ]
+    },
     "Operation": {
       "description": "One operation of the catalogue. Every length and coordinate is in the\ndocument's units; every angle is in degrees, counter-clockwise.",
       "oneOf": [
@@ -1396,6 +1428,133 @@
             "column_spacing"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A geometric constraint between parts of objects: the second comes to\nthe first. A point is meant by `near` at it.",
+          "properties": {
+            "first": {
+              "$ref": "#/$defs/Pick"
+            },
+            "op": {
+              "const": "constrain",
+              "type": "string"
+            },
+            "relation": {
+              "$ref": "#/$defs/Relation"
+            },
+            "second": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Pick"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "relation",
+            "first"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A dimensional constraint, a parameter named `d1`, `ang1`, `rad1`,\n`dia1` … that drives the geometry: between two `points` — ends,\ncentres, or vertices — or along the line `of`, end to end; of the\ncircle or arc `of`; or the angle from the line `of` to the line\n`and`. Shown with its dimension line through `at`; `value`, when\ngiven, is what it is made — the measured one otherwise.",
+          "properties": {
+            "and": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Pick"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "at": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "measure": {
+              "$ref": "#/$defs/Measure"
+            },
+            "of": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Pick"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "op": {
+              "const": "constrain_dimension",
+              "type": "string"
+            },
+            "points": {
+              "items": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "value": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "measure",
+            "at"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A parameter set to a new value — a length, or an angle in degrees\nfor an `ang` one — and the constrained geometry follows.",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "op": {
+              "const": "set_parameter",
+              "type": "string"
+            },
+            "value": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "op",
+            "name",
+            "value"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -1435,6 +1594,58 @@
         "id"
       ],
       "type": "object"
+    },
+    "Relation": {
+      "description": "A geometric constraint's kind (ADR-0038).",
+      "oneOf": [
+        {
+          "enum": [
+            "parallel",
+            "perpendicular"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "coincident",
+          "description": "Two points at one place: `first` and `second` each near an end, a\ncentre, or a vertex.",
+          "type": "string"
+        },
+        {
+          "const": "collinear",
+          "description": "Two lines on one line.",
+          "type": "string"
+        },
+        {
+          "const": "concentric",
+          "description": "Two circles or arcs about one centre.",
+          "type": "string"
+        },
+        {
+          "const": "fix",
+          "description": "A point kept where it is: `first` near an end, a centre, or a vertex.",
+          "type": "string"
+        },
+        {
+          "const": "horizontal",
+          "description": "A line level: `first` only.",
+          "type": "string"
+        },
+        {
+          "const": "vertical",
+          "description": "A line plumb: `first` only.",
+          "type": "string"
+        },
+        {
+          "const": "tangent",
+          "description": "A line or a circle touching a circle or an arc.",
+          "type": "string"
+        },
+        {
+          "const": "equal",
+          "description": "Two lines of one length, or two circles or arcs of one radius.",
+          "type": "string"
+        }
+      ]
     },
     "SelectionWord": {
       "description": "The one word [`Targets::Selection`] takes.",

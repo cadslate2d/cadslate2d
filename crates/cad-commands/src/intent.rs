@@ -1,7 +1,8 @@
 //! An intent document run through the session (ADR-0037, #253): each
 //! compiled operation is its command started and its answers typed, as a
 //! user would type them, through the one entry point every input takes.
-//! A pick is a click on the object's nearest point; a selection is made by
+//! A pick is a click on the object's nearest point — where a point is
+//! asked for, the point `near` typed; a selection is made by
 //! ID as a user's would be. What the engine refuses is reported typed,
 //! never guessed around.
 
@@ -9,6 +10,8 @@ use std::fmt;
 
 use cad_core::{EntityId, LengthUnit, Point2};
 use cad_intent::{Answer, Compiled, Intent, Pick, Step, Targets};
+
+use cad_input::InputKind;
 
 use crate::{Dirty, KeyAction, Modifiers, PointerButton, Session};
 
@@ -213,6 +216,19 @@ impl Session {
                     }
                     let text = format_answer(answer, scale);
                     self.submit_text(&text);
+                }
+                // Where an end, a centre, or a vertex is asked for, the
+                // pick is the point it is at: typed, as exact as a snap.
+                Step::Pick(pick) if self.expected().kind == InputKind::Point => {
+                    let at = match pick.near {
+                        Some(near) => Point2::new(near[0], near[1]),
+                        None => {
+                            let at = self.pick_point(operation, pick, scale)?;
+                            Point2::new(at.x / scale, at.y / scale)
+                        }
+                    };
+                    self.entity_id(operation, pick.id)?;
+                    self.submit_text(&format_answer(&Answer::Point(at), scale));
                 }
                 Step::Pick(pick) => {
                     let at = self.pick_point(operation, pick, scale)?;

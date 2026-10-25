@@ -201,8 +201,12 @@ export class AiAssistant {
     const consent = this.#snapshot.consent;
     if (!consent) return;
     this.#set({ consent: undefined });
-    const { layers, objects } = consent.context;
-    await this.#send(consent.prompt, { layers, objects });
+    const { layers, objects, parameters } = consent.context;
+    await this.#send(consent.prompt, {
+      layers,
+      objects,
+      ...(parameters.length > 0 ? { parameters } : {}),
+    });
   }
 
   /** The user declined: the request goes without the context. */
