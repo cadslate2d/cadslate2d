@@ -65,7 +65,7 @@ test.describe("CIRCLE", () => {
     const empty = await litPixels(canvas);
 
     await enter(page, "C");
-    await expect(prompt(page)).toHaveText("Specify center point for circle or [3P/2P]:");
+    await expect(prompt(page)).toHaveText("Specify center point for circle or [3P/2P/Ttr/TTT]:");
     await enter(page, "0,0");
     await expect(prompt(page)).toHaveText("Specify radius of circle or [Diameter]:");
     await enter(page, "100");

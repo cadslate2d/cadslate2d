@@ -16,7 +16,7 @@ test.describe("toolbar", () => {
     await openApp(page);
     await page.getByRole("button", { name: "Circle" }).click();
 
-    await expect(prompt(page)).toHaveText("Specify center point for circle or [3P/2P]:");
+    await expect(prompt(page)).toHaveText("Specify center point for circle or [3P/2P/Ttr/TTT]:");
     await expect(logLines(page).last()).toHaveText("Command: CIRCLE");
     await expect(commandInput(page)).toBeFocused();
 

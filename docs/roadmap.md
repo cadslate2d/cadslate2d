@@ -27,17 +27,37 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M18 — Classic Menu Bar | Complete and closed ([review](reviews/m18-exit-review.md)): the menu bar of DESIGN §5, after AutoCAD 2007/2008's classic workspace, with File › New, menu macros that pause (ADR-0034), and keyboard access. |
 | M19 — DWG | Complete and closed ([review](reviews/m19-exit-review.md)): DWG read and written in the AutoCAD 2000, 2004, and 2007/2008 formats by a crate of our own (ADR-0036). The check in AutoCAD needs a person (#321, M15). |
 | M20 — AI Foundations | Complete and closed ([review](reviews/m20-exit-review.md)): natural language as an optional input method (ADR-0037) — the intent IR, proposals, the AI panel, AI commands, and a corpus replayed in CI and asked live nightly; the service in its own private repository. Its nightly job's key and production need a person. |
+| M21 — Constraints and Constrained Generation | Complete and closed ([review](reviews/m21-exit-review.md)): geometric and dimensional constraints kept in the drawing and settled on every edit by a solver of our own (ADR-0038), shown on the canvas and round-tripped through DXF; parts and placements as constrained commands; the AI's second level, parametric edits through a part's parameters. |
 
 ## What is planned next
 
-Filed on 2026-10-18 and 2026-10-19; M21 is next. The order is the user's.
+Filed on 2026-10-18 and 2026-10-19; M22 is next. The order is the user's.
 
 | Milestone | What | Epic |
 | --- | --- | --- |
-| M21 — Constraints and Constrained Generation | Persistent geometric and dimensional constraints with a 2D solver (`GEOMCONSTRAINT`, `DIMCONSTRAINT`, constraint bars, re-solving on edit, DXF round trip); part generators — plates and hole patterns, bolt circles and flanges, arrays and grids, tangent and concentric placement — as commands and through the AI. | #264 |
 | M22 — Floor-Plan Generator | A deterministic layout solver from a terrain and room constraints to walls, doors, and labels; `FLOORPLAN` as a command with alternatives; briefs and revisions through the AI. | #276 |
 | M23 — AI Plans and Billing | In the service repository. The app's side is its account view (#289). | — |
 | Open Source Release | The main repository public under a licence decided by ADR (§44), with a trademark, a contributor agreement, audited history, dependencies, and assets, and the service kept private. Done before the repository goes public; independent of the milestones above. | #291 |
+
+## M21, Constraints and Constrained Generation
+
+Level 2 of the user's AI discussion (2026-10-19): simple, dimensioned geometry from specifications that stays consistent under edits. [ADR-0038](adr/0038-constraints.md) chose the representation and a solver of our own; accepted by the maintainer on 2026-10-25 after a review that asked for solving on constraint changes, benchmarks that assert outcomes, whole-constraint redundancy, a specified algorithm, and determinism. The epic is #264.
+
+### Order of work
+
+1. **The ADR and the solver's prototype** (#265): Levenberg–Marquardt with conjugate gradients per component; 1,000 constraints settle a long-range edit in 6.4 ms.
+2. **The constraint table** (#266): rows of the drawing, cascading with the entities they name.
+3. **Settling on commit, and GEOMCONSTRAINT** (#267): what an edit sets is held, the rest follows in the same undo, or the edit is refused with the constraints it would break.
+4. **DIMCONSTRAINT and -PARAMETERS** (#268): named parameters that drive the geometry.
+5. **Constraint bars and dimensions** (#269): overlay content in a colour of their own.
+6. **Edits keep constraints** (#270): every modify command and grip settles or is refused; a property test holds every constraint after any accepted edit.
+7. **DXF** (#271): CadSlate XRECORDs both ways; AutoCAD's associative network read and reported.
+8. **Parts** (#272): `PLATE`, `SLOT`, `HOLEPATTERN`, `BOLTCIRCLE`, `FLANGE`, constrained, and in the IR.
+9. **Placement** (#273): CIRCLE Tan, Tan, Radius and Tan, Tan, Tan, `TANARC`, `CONCENTRIC`, `ARRAYPATH`, `ARRAYGRID`, with a tangency corpus.
+10. **Level 2 through the AI** (#274): the IR's constraints and parameters (version 4), parameters in the consented context, and the L2 corpus — 48 requests, all made by the recorded model.
+11. **The exit** (#275): `web/e2e/m21-scenario.spec.ts` and [the review](reviews/m21-exit-review.md).
+
+M21 is closed.
 
 ## M20, AI Foundations
 
