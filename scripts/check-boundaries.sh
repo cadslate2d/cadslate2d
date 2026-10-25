@@ -12,6 +12,7 @@ declare -A ALLOWED=(
   [cad-text]="cad-core"
   [cad-document]="cad-core cad-geometry cad-text"
   [cad-intent]="cad-core"
+  [cad-layout]="cad-core"
   [cad-commands]="cad-core cad-geometry cad-input cad-document cad-intent"
   [cad-dxf]="cad-core cad-document"
   [cad-dwg]="cad-core cad-document cad-dxf"

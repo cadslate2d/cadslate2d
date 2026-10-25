@@ -201,6 +201,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cad-layout"
+version = "0.0.1"
+dependencies = [
+ "cad-core",
+ "proptest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cad-plot"
 version = "0.0.1"
 dependencies = [

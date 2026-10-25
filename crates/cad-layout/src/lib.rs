@@ -1,0 +1,166 @@
+//! Floor-plan layout synthesis (ADR-0039, #277, #278): rooms of given
+//! areas placed on a rectangular terrain, or the reasons none fits.
+//!
+//! A plan is a *slicing* of the building's footprint: cut it across or
+//! along, and each part again, until each part is a room. A slicing is
+//! written as a normalised Polish expression (Wong and Liu), and searched
+//! by simulated annealing from a seed. For a given slicing and footprint
+//! width the rooms' sizes follow: each cut divides its rectangle in the
+//! proportion of the floor areas on either side, the walls' thicknesses
+//! taken off, so every room's area is its target as nearly as the walls
+//! allow. The search moves the cuts and the width to meet the hard
+//! constraints — inside the buildable area, minimum widths, aspect ratios,
+//! adjacency with a door, every room reachable from the entrance — and to
+//! lower the soft terms:
+//!
+//! `E = w_a·E_area + w_r·E_ratio + w_c·E_connectivity + w_p·E_preferences`.
+//!
+//! The same brief and seed always make the same plan; other seeds make the
+//! alternatives. Everything is in metres, on wall centrelines: a room's
+//! rectangle runs to the middle of its walls, and its area is what lies
+//! inside them.
+
+mod search;
+mod spec;
+mod verify;
+
+use cad_core::tolerance::LinearTolerance;
+
+pub use search::{alternatives, solve};
+pub use spec::{MAX_ROOMS, Room, Setbacks, Spec, SpecError, Terrain};
+pub use verify::verify;
+
+/// An axis-aligned rectangle: its lower left corner and its size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rect {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+impl Rect {
+    pub const fn new(x: f64, y: f64, w: f64, h: f64) -> Self {
+        Self { x, y, w, h }
+    }
+    pub fn right(&self) -> f64 {
+        self.x + self.w
+    }
+    pub fn top(&self) -> f64 {
+        self.y + self.h
+    }
+    pub fn area(&self) -> f64 {
+        self.w.max(0.0) * self.h.max(0.0)
+    }
+    /// Its shorter side over its longer, 1 for a square; 0 when empty.
+    pub fn aspect(&self) -> f64 {
+        let (short, long) = (self.w.min(self.h), self.w.max(self.h));
+        if short <= 0.0 {
+            f64::INFINITY
+        } else {
+            long / short
+        }
+    }
+    /// Shrunk by `left`, `right`, `bottom`, `top`.
+    #[must_use]
+    pub fn inset(&self, left: f64, right: f64, bottom: f64, top: f64) -> Self {
+        Self::new(
+            self.x + left,
+            self.y + bottom,
+            self.w - left - right,
+            self.h - bottom - top,
+        )
+    }
+
+    /// How long a stretch of edge this and `other` share: they touch side
+    /// to side, and overlap along it. Zero when they do not.
+    pub fn shared(&self, other: &Rect, tolerance: LinearTolerance) -> f64 {
+        let overlap = |a0: f64, a1: f64, b0: f64, b1: f64| (a1.min(b1) - a0.max(b0)).max(0.0);
+        if tolerance.eq(self.right(), other.x) || tolerance.eq(other.right(), self.x) {
+            overlap(self.y, self.top(), other.y, other.top())
+        } else if tolerance.eq(self.top(), other.y) || tolerance.eq(other.top(), self.y) {
+            overlap(self.x, self.right(), other.x, other.right())
+        } else {
+            0.0
+        }
+    }
+
+    /// How much of its edge lies on `outline`'s.
+    pub fn on_outline(&self, outline: &Rect, tolerance: LinearTolerance) -> f64 {
+        let mut length = 0.0;
+        if tolerance.eq(self.x, outline.x) {
+            length += self.h;
+        }
+        if tolerance.eq(self.right(), outline.right()) {
+            length += self.h;
+        }
+        if tolerance.eq(self.y, outline.y) {
+            length += self.w;
+        }
+        if tolerance.eq(self.top(), outline.top()) {
+            length += self.w;
+        }
+        length
+    }
+}
+
+/// What the circulation space is called.
+pub const CIRCULATION: &str = "circulation";
+
+/// A room of a plan.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlacedRoom {
+    pub name: String,
+    /// To the middle of its walls.
+    pub rect: Rect,
+    /// Inside its walls: its floor.
+    pub inner: Rect,
+}
+
+impl PlacedRoom {
+    /// Its floor area.
+    pub fn area(&self) -> f64 {
+        self.inner.area()
+    }
+}
+
+/// A plan: the building's outline, its rooms, and the walls that take a
+/// door — the pairs asked to open onto each other, and enough others that
+/// every room is reached from the entrance.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Layout {
+    /// The outside faces of the exterior walls.
+    pub footprint: Rect,
+    /// The exterior walls' centreline: what the rooms tile.
+    pub outline: Rect,
+    /// The brief's rooms in its order, then the circulation space if the
+    /// plan has one.
+    pub rooms: Vec<PlacedRoom>,
+    /// The circulation space's index in `rooms`: a hall or passage the
+    /// search adds where the rooms alone cannot be shaped or reached.
+    pub circulation: Option<usize>,
+    pub entrance: usize,
+    /// Pairs of rooms, by index, with a door between them.
+    pub doors: Vec<(usize, usize)>,
+    /// The soft terms' sum: lower is better. The alternatives are ranked by it.
+    pub energy: f64,
+    /// The seed that made it.
+    pub seed: u64,
+}
+
+/// Why no plan was made: each a sentence, the most telling first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Infeasible {
+    pub reasons: Vec<String>,
+}
+
+impl std::fmt::Display for Infeasible {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.reasons.join(" "))
+    }
+}
+
+impl std::error::Error for Infeasible {}
+
+#[cfg(test)]
+mod tests;

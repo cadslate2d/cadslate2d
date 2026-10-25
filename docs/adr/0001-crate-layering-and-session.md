@@ -95,6 +95,10 @@ Every user action reaches the core as a method call on `Session`. `cad-wasm` wra
 
 ADR-0016 chose a stroke font for text and put the font, its metrics, and the layout of a string into a crate of their own, `cad-text`, which depends on `cad-core` only. `cad-document` depends on it for the bounds and primitives of a text entity; nothing above needs to, since text reaches the renderer as line segments like every other entity. `scripts/check-boundaries.sh` knows the crate.
 
+### 2026-10-25 — `cad-layout`
+
+ADR-0039 (proposed) puts floor-plan layout synthesis into a crate of its own, `cad-layout`, which depends on `cad-core` only: the brief, the search, and the check of a plan, pure and deterministic. `cad-commands` will depend on it for `FLOORPLAN` (#281). `scripts/check-boundaries.sh` knows the crate.
+
 ### 2026-10-13 — `cad-plot`
 
 ADR-0027 put the PDF plot into a crate of its own, `cad-plot`, which depends on `cad-render` for the one walk over the entity kinds (`walk_entity`) and on `cad-commands` for the plot settings; `cad-wasm` depends on it to hand the page to the host. `scripts/check-boundaries.sh` knows the crate.

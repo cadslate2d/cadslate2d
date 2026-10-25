@@ -39,6 +39,15 @@ Filed on 2026-10-18 and 2026-10-19; M22 is next. The order is the user's.
 | M23 — AI Plans and Billing | In the service repository. The app's side is its account view (#289). | — |
 | Open Source Release | The main repository public under a licence decided by ADR (§44), with a trademark, a contributor agreement, audited history, dependencies, and assets, and the service kept private. Done before the repository goes public; independent of the milestones above. | #291 |
 
+## M22, Floor-Plan Generator
+
+Level 3 of the user's AI discussion (2026-10-19), and the first domain generator: a terrain, rooms with target areas and adjacencies, and walls, in; walls, doors, labels, and areas, out; deterministic and testable, as a `FLOORPLAN` command first and through the AI second. The epic is #276.
+
+### Order of work
+
+1. **The ADR** (#277): [ADR-0039](adr/0039-layout-synthesis.md), proposed 2026-10-25 with its prototype, `cad-layout` — slicing trees searched by simulated annealing from a seed, sized by area, with an optional circulation space. All 30 briefs of `test-data/layout/briefs.jsonl` come out as expected, at 19 ms per brief at p50. Waiting for the maintainer's acceptance.
+2. The layout solver (#278), walls, labels, and areas (#279), doors (#280), `FLOORPLAN` (#281), the AI (#282), and the exit (#283), in that order.
+
 ## M21, Constraints and Constrained Generation
 
 Level 2 of the user's AI discussion (2026-10-19): simple, dimensioned geometry from specifications that stays consistent under edits. [ADR-0038](adr/0038-constraints.md) chose the representation and a solver of our own; accepted by the maintainer on 2026-10-25 after a review that asked for solving on constraint changes, benchmarks that assert outcomes, whole-constraint redundancy, a specified algorithm, and determinism. The epic is #264.

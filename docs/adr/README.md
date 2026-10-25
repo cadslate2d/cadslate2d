@@ -49,6 +49,7 @@ There are two kinds:
 | [0036](0036-dwg.md) | DWG is a crate of our own, `cad-dwg`, written from the Open Design Specification for `AC1015`, `AC1018`, and `AC1021`, feeding the records the DXF reader finishes; LibreDWG and acadrust are its test oracles, not dependencies | Accepted | Evidence (resolves §40) |
 | [0037](0037-ai-input-method.md) | Natural language is an optional input method: a hosted service in its own repository, a validated intent IR compiled to registered commands, every result a previewed proposal committed on Accept; drafting stays free, local, and account-free | Accepted | Product and architecture (amends §3, §4, §8, §43–§46) |
 | [0038](0038-constraints.md) | Constraints are a table of the drawing, solved by a numeric solver of our own in `cad-geometry` (decomposition, Levenberg–Marquardt over the sparse Jacobian, rank at a generic configuration), settled inside the transaction that changes them or their geometry | Accepted | Architecture (amends §19.2) |
+| [0039](0039-layout-synthesis.md) | Floor plans are laid out by a deterministic search over slicing trees (simulated annealing over normalised Polish expressions, sized by area, with an optional circulation space), in a pure crate of their own, `cad-layout` | Proposed | Evidence (amends ADR-0001) |
 
 ## Expected evidence ADRs
 

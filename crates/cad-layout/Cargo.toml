@@ -1,0 +1,19 @@
+[package]
+name = "cad-layout"
+description = "Floor-plan layout synthesis (ADR-0039): rooms placed on a terrain by a deterministic search, or the reasons none fits."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+cad-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
