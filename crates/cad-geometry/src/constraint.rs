@@ -7,18 +7,27 @@
 //!
 //! [`solve`] splits the system into independent components (unknowns joined
 //! by an equation), leaves alone every component already satisfied, and
-//! settles each of the others by damped Gauss–Newton (Levenberg–Marquardt):
-//! every step is the smallest change, in the least-squares sense, that
-//! reduces the residuals, so the geometry moves no more than it must. The
+//! settles each of the others by damped Gauss–Newton (Levenberg–Marquardt)
+//! from where the geometry is: every step is the minimum-norm change, in the
+//! least-squares sense, that reduces the residuals of the linearised
+//! equations — the nearest solution exactly when the equations are linear,
+//! a near one when they are not. The
 //! linear system of each step is solved by conjugate gradients over the
 //! sparse Jacobian, which is what keeps a thousand constraints interactive.
 //!
 //! A component that cannot be satisfied is reported with the equations left
-//! unsatisfied; nothing is half-applied. [`redundant`] tells whether a new
-//! equation adds nothing the others do not already fix — the over-
-//! constraint a constraint command refuses — and [`freedom`] counts the
-//! degrees of freedom left, both by one sparse elimination of the
-//! Jacobian.
+//! unsatisfied; nothing is half-applied. [`assess`] tells whether a new
+//! constraint fixes something the others leave free, adds nothing
+//! (redundant), or contradicts them (conflicting) — the over-constraint a
+//! constraint command refuses — and [`freedom`] counts the degrees of
+//! freedom left: both by a sparse elimination of the Jacobian, at a generic
+//! configuration near the current one so that a degenerate one (two points
+//! that happen to meet) is not taken for a redundant constraint.
+//!
+//! The result never depends on hashing: components are kept and pivots
+//! chosen in ordered maps, and perturbations come from a fixed seed.
+
+use std::collections::BTreeMap;
 
 use cad_core::tolerance::{AngularTolerance, LinearTolerance};
 
@@ -381,8 +390,7 @@ fn components(system: &System) -> Vec<(Vec<Param>, Vec<usize>)> {
             sets.join(pair[0], pair[1]);
         }
     }
-    let mut groups: std::collections::BTreeMap<Option<usize>, (Vec<Param>, Vec<usize>)> =
-        std::collections::BTreeMap::new();
+    let mut groups: BTreeMap<Option<usize>, (Vec<Param>, Vec<usize>)> = BTreeMap::new();
     for (index, equation) in system.equations.iter().enumerate() {
         let first = equation.params().into_iter().find(|&p| !system.is_held(p));
         let key = first.map(|p| sets.root(p));
@@ -419,7 +427,7 @@ fn holds(equation: &Equation, values: &[f64], linear: f64, angular: f64) -> bool
 struct Group<'a> {
     equations: Vec<&'a Equation>,
     /// Local column of each free unknown.
-    columns: std::collections::HashMap<Param, usize>,
+    columns: BTreeMap<Param, usize>,
     free: Vec<Param>,
     /// What an angle's residual is multiplied by: a length.
     scale: f64,
@@ -462,7 +470,9 @@ impl Group<'_> {
                     }
                     seen.push(param);
                     let x = values[param];
-                    let h = 1e-7 * x.abs().max(self.scale * 1e-3).max(1e-9);
+                    // About the cube root of the machine epsilon, relative:
+                    // the step that balances truncation against rounding.
+                    let h = 6e-6 * x.abs().max(self.scale);
                     values[param] = x + h;
                     let up = e.residual(values);
                     values[param] = x - h;
@@ -539,7 +549,28 @@ fn conjugate_gradients(rows: &[Vec<(usize, f64)>], mu: f64, b: &[f64]) -> Vec<f6
     x
 }
 
-/// Settles one group in place; the steps it took, or that it could not.
+/// Settles one group in place; the steps it took, and whether it holds.
+///
+/// Levenberg–Marquardt on the weighted residuals `r` — an angle's residual
+/// multiplied by the group's extent `L`, so `W` is 1 for lengths and `L²`
+/// for angles — from the current values:
+///
+/// - each step solves `(Jᵀ W J + μ I) Δ = −Jᵀ W r`, symmetric and positive
+///   definite since `μ > 0`, by conjugate gradients preconditioned by its
+///   diagonal, from `Δ = 0`, until the residual of that system is 10⁻¹⁴ of
+///   its right-hand side or after `2n` iterations; `μ = λ · max diag(Jᵀ W J)`;
+/// - a step is taken when it lowers `rᵀ W r`, and `λ` falls fourfold (to no
+///   less than 10⁻¹⁵); otherwise `λ` grows eightfold and the step is tried
+///   again;
+/// - it stops when every equation holds to its tolerance (solved), when `λ`
+///   passes 10¹⁰, or after [`MAX_STEPS`] steps (not solved: the caller
+///   keeps the values it started from).
+///
+/// `D = I` makes every step's displacement lie in the row space of `J`:
+/// for constraints linear in the unknowns the result is the solution
+/// nearest the start, the orthogonal projection onto them. For non-linear
+/// ones it is a solution reached by small steps from the start — near it,
+/// not provably the nearest.
 fn settle(group: &Group<'_>, values: &mut [f64], linear: f64, angular: f64) -> (usize, bool) {
     let satisfied = |values: &[f64]| {
         group
@@ -587,9 +618,13 @@ fn settle(group: &Group<'_>, values: &mut [f64], linear: f64, angular: f64) -> (
     (MAX_STEPS, satisfied(values))
 }
 
-/// Solves `system`: every component that does not hold is settled, moving
-/// its free unknowns as little as it can. A component that cannot be
-/// settled keeps its values, and its unsatisfied equations are reported.
+/// Solves `system`: every component that does not hold is settled from its
+/// current values by small least-squares steps ([`settle`]), its held
+/// unknowns unmoved. If any component cannot be settled, every value is
+/// returned as it was — nothing is half-applied — with the equations that
+/// component left unsatisfied at its least-squares compromise, the ones to
+/// blame. Components are independent, so the order they are found in
+/// changes nothing.
 pub fn solve(system: &System, tolerances: Tolerances) -> Solution {
     let mut values = system.values.clone();
     let mut unsatisfied = Vec::new();
@@ -631,6 +666,12 @@ pub fn solve(system: &System, tolerances: Tolerances) -> Solution {
         }
     }
     unsatisfied.sort_unstable();
+    // Nothing is half-applied: a held unknown can part one constraint
+    // graph into components, and one settling while another cannot would
+    // leave geometry half-moved.
+    if !unsatisfied.is_empty() {
+        values.clone_from(&system.values);
+    }
     Solution {
         values,
         unsatisfied,
@@ -642,6 +683,7 @@ pub fn solve(system: &System, tolerances: Tolerances) -> Solution {
 /// a 1 in its pivot column and no entry in the pivot column of any row
 /// before it. Reducing a row against them tells whether it is a
 /// combination of theirs; the pivots counted are the Jacobian's rank.
+/// Ordered maps throughout, so the pivots chosen never depend on hashing.
 struct Echelon {
     pivots: Vec<(usize, Vec<(usize, f64)>)>,
     /// Entries smaller than this are zero: a fraction of the largest.
@@ -657,8 +699,11 @@ impl Echelon {
     }
 
     /// `row` less its combination of the pivot rows.
-    fn reduce(&self, row: &[(usize, f64)]) -> std::collections::HashMap<usize, f64> {
-        let mut left: std::collections::HashMap<usize, f64> = row.iter().copied().collect();
+    fn reduce(&self, row: &[(usize, f64)]) -> BTreeMap<usize, f64> {
+        let mut left: BTreeMap<usize, f64> = BTreeMap::new();
+        for &(c, a) in row {
+            *left.entry(c).or_insert(0.0) += a;
+        }
         for (column, pivot) in &self.pivots {
             let Some(&factor) = left.get(column) else {
                 continue;
@@ -678,72 +723,162 @@ impl Echelon {
     /// Adds `row`; whether it raised the rank.
     fn push(&mut self, row: &[(usize, f64)]) -> bool {
         let left = self.reduce(row);
-        let Some((&column, &lead)) = left.iter().max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+        // The largest entry, the lowest column among equals.
+        let Some((&column, &lead)) = left
+            .iter()
+            .rev()
+            .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
         else {
             return false;
         };
-        let mut pivot: Vec<(usize, f64)> = left.into_iter().map(|(c, a)| (c, a / lead)).collect();
-        pivot.sort_unstable_by_key(|&(c, _)| c);
+        let pivot: Vec<(usize, f64)> = left.into_iter().map(|(c, a)| (c, a / lead)).collect();
         self.pivots.push((column, pivot));
         true
     }
 }
 
-/// The group of `system`'s free unknowns and all its equations, and its
-/// Jacobian with the threshold below which an entry is zero.
-fn jacobian_of(system: &System) -> (Vec<Vec<(usize, f64)>>, usize, f64) {
+/// The rank of the Jacobian of `equations` over the free unknowns of
+/// `system`, at `values`.
+fn rank(system: &System, equations: &[&Equation], values: &[f64]) -> usize {
     let free: Vec<Param> = (0..system.values.len())
         .filter(|&p| !system.is_held(p))
         .collect();
     let group = Group {
-        equations: system.equations.iter().collect(),
+        equations: equations.to_vec(),
         columns: free.iter().enumerate().map(|(c, &p)| (p, c)).collect(),
         free: free.clone(),
-        scale: magnitude(&system.values, &free),
+        scale: magnitude(values, &free),
     };
-    let mut values = system.values.clone();
-    let rows = group.jacobian(&mut values);
+    let mut at = values.to_vec();
+    let rows = group.jacobian(&mut at);
     let largest = rows
         .iter()
         .flatten()
         .fold(0.0_f64, |m, &(_, a)| m.max(a.abs()));
-    (rows, free.len(), 1e-9 * largest.max(f64::MIN_POSITIVE))
+    let mut echelon = Echelon::new(1e-9 * largest.max(f64::MIN_POSITIVE));
+    rows.iter().filter(|row| echelon.push(row)).count()
 }
 
-/// Whether `equation`, added to `system`, would fix nothing the system does
-/// not already fix: its gradient is a combination of theirs at the current
-/// values. Such a constraint over-constrains the geometry — redundant if it
-/// already holds, conflicting if not — and a command refuses it.
-pub fn redundant(system: &System, equation: &Equation) -> bool {
+/// SplitMix64: the same small numbers on every platform, for perturbing.
+fn splitmix(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// A generic configuration of `system` near its own: its free unknowns
+/// moved by small, fixed pseudo-random amounts and settled back onto its
+/// equations. Rank there is the constraints' rank, not an accident of
+/// where the geometry happens to be — two ends of a line that happen to
+/// meet give it no direction, though nothing makes them meet. Its own
+/// values when it cannot be settled from there.
+fn witness(system: &System, tolerances: Tolerances) -> Vec<f64> {
+    let free: Vec<Param> = (0..system.values.len())
+        .filter(|&p| !system.is_held(p))
+        .collect();
+    let scale = magnitude(&system.values, &free);
+    let mut moved = system.clone();
+    let mut state = 0x00C0_FFEE_u64;
+    for &param in &free {
+        let unit = (splitmix(&mut state) >> 11) as f64 / (1u64 << 53) as f64;
+        moved.values[param] += (unit - 0.5) * 2e-3 * scale;
+    }
+    let settled = solve(&moved, tolerances);
+    if settled.is_solved() {
+        settled.values
+    } else {
+        system.values.clone()
+    }
+}
+
+/// What a constraint would do to a system.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    /// It fixes what the others leave free: each of its equations raises
+    /// the rank. Solving then says whether it can be met.
+    Independent,
+    /// It adds nothing the others do not fix, and already holds: it over-
+    /// constrains the geometry, harmlessly, and is refused.
+    Redundant,
+    /// It adds nothing the others do not fix, and does not hold: it
+    /// contradicts them, and is refused.
+    Conflicting,
+}
+
+/// A constraint's verdict, and whether the geometry is where its equations
+/// lose rank though the constraints do not — a zero-length line, two
+/// circles that happen to share a centre — so that what the current
+/// configuration alone says would mislead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Assessment {
+    pub verdict: Verdict,
+    pub degenerate: bool,
+}
+
+/// What adding a whole constraint — every equation of it, together —
+/// would do to `system`. Rank is judged at a generic configuration
+/// ([`witness`]) near the current one, among the components the
+/// constraint touches only, so that a coincidence one of whose two
+/// equations is already implied is over-constraining, and a degenerate
+/// configuration is told apart from a redundant constraint.
+pub fn assess(system: &System, constraint: &[Equation], tolerances: Tolerances) -> Assessment {
+    let existing = system.equations.len();
     let mut with = system.clone();
-    with.equations.push(equation.clone());
-    // Only the new equation's component can hold a combination of it.
-    let new = with.equations.len() - 1;
-    if let Some((_, indices)) = components(&with)
+    with.equations.extend(constraint.iter().cloned());
+    // Only the components the new equations join can hold a combination
+    // of them.
+    let mut touched: Vec<usize> = components(&with)
         .into_iter()
-        .find(|(_, indices)| indices.contains(&new))
-    {
-        let equations = std::mem::take(&mut with.equations);
-        with.equations = indices.iter().map(|&i| equations[i].clone()).collect();
-    }
-    let (rows, _, threshold) = jacobian_of(&with);
-    let Some((new, others)) = rows.split_last() else {
-        return true;
+        .filter(|(_, indices)| indices.iter().any(|&i| i >= existing))
+        .flat_map(|(_, indices)| indices)
+        .collect();
+    touched.sort_unstable();
+    let old: Vec<&Equation> = touched
+        .iter()
+        .filter(|&&i| i < existing)
+        .map(|&i| &with.equations[i])
+        .collect();
+    let all: Vec<&Equation> = touched.iter().map(|&i| &with.equations[i]).collect();
+    let mut before = system.clone();
+    before.equations = old.iter().map(|&e| e.clone()).collect();
+    let generic = witness(&before, tolerances);
+    let rise = |values: &[f64]| rank(&with, &all, values) - rank(&with, &old, values);
+    let at_generic = rise(&generic);
+    let here = rise(&system.values);
+    let verdict = if at_generic == constraint.len() {
+        Verdict::Independent
+    } else {
+        let scale = magnitude(
+            &system.values,
+            &(0..system.values.len()).collect::<Vec<_>>(),
+        );
+        let linear = tolerances.linear.at_magnitude(scale).value();
+        let angular = tolerances.angular.value();
+        if constraint
+            .iter()
+            .all(|e| holds(e, &system.values, linear, angular))
+        {
+            Verdict::Redundant
+        } else {
+            Verdict::Conflicting
+        }
     };
-    let mut echelon = Echelon::new(threshold);
-    for row in others {
-        echelon.push(row);
+    Assessment {
+        verdict,
+        degenerate: here < at_generic,
     }
-    echelon.reduce(new).is_empty()
 }
 
 /// Degrees of freedom left in `system`: its free unknowns less the rank of
-/// its equations' Jacobian.
-pub fn freedom(system: &System) -> usize {
-    let (rows, free, threshold) = jacobian_of(system);
-    let mut echelon = Echelon::new(threshold);
-    let rank = rows.iter().filter(|row| echelon.push(row)).count();
-    free - rank
+/// its equations, at a generic configuration near its own.
+pub fn freedom(system: &System, tolerances: Tolerances) -> usize {
+    let free = (0..system.values.len())
+        .filter(|&p| !system.is_held(p))
+        .count();
+    let equations: Vec<&Equation> = system.equations.iter().collect();
+    free - rank(system, &equations, &witness(system, tolerances))
 }
 
 #[cfg(test)]
@@ -843,7 +978,7 @@ mod tests {
         assert!(near(v[r.corners[1].x], 140.0) && near(v[r.corners[2].x], 140.0));
         assert!(near(v[r.corners[2].y], 80.0) && near(v[r.corners[3].y], 80.0));
         assert!(near(v[r.corners[3].x], 0.0));
-        assert_eq!(freedom(&system), 0);
+        assert_eq!(freedom(&system, Tolerances::default()), 0);
     }
 
     #[test]
@@ -861,6 +996,39 @@ mod tests {
         assert_eq!((v[r.corners[2].x], v[r.corners[2].y]), (130.0, 70.0));
         assert!((v[r.corners[1].x] - 130.0).abs() < 1e-7);
         assert!((v[r.corners[3].y] - 70.0).abs() < 1e-7);
+    }
+
+    /// A grip holds the upper right corner of a fixed, dimensioned plate
+    /// 5 higher: the hold parts the plate's equations into components, the
+    /// top settles but the rest cannot, and nothing moves at all.
+    #[test]
+    fn a_held_unknown_that_cannot_be_met_moves_nothing() {
+        let mut system = System::default();
+        let r = rectangle(&mut system, 0.0, 0.0, 120.0, 80.0);
+        system.equations.extend([
+            Equation::Fixed {
+                param: r.corners[0].x,
+                value: 0.0,
+            },
+            Equation::Fixed {
+                param: r.corners[0].y,
+                value: 0.0,
+            },
+            Equation::Offset {
+                from: r.corners[1].y,
+                to: r.corners[2].y,
+                value: 80.0,
+            },
+        ]);
+        system.values[r.corners[2].y] = 85.0;
+        system.hold(r.corners[2].y);
+        let solution = solve(&system, Tolerances::default());
+        assert!(!solution.is_solved());
+        assert_eq!(solution.values, system.values);
+        assert!(
+            solution.unsatisfied.contains(&(system.equations.len() - 1)),
+            "{solution:?}"
+        );
     }
 
     #[test]
@@ -920,22 +1088,173 @@ mod tests {
         }
     }
 
+    fn assessed(system: &System, constraint: &[Equation]) -> Assessment {
+        assess(system, constraint, Tolerances::default())
+    }
+
     #[test]
     fn a_constraint_already_implied_is_redundant() {
         let mut system = System::default();
         let r = rectangle(&mut system, 0.0, 0.0, 120.0, 80.0);
         let s = sides(&r);
         // Opposite sides of a rectangle are already parallel.
-        assert!(redundant(&system, &Equation::Parallel { a: s[0], b: s[2] }));
+        let parallel = Equation::Parallel { a: s[0], b: s[2] };
+        assert_eq!(assessed(&system, &[parallel]).verdict, Verdict::Redundant);
         // A width is not implied.
-        assert!(!redundant(
+        let width = Equation::Offset {
+            from: r.corners[0].x,
+            to: r.corners[1].x,
+            value: 120.0,
+        };
+        assert_eq!(assessed(&system, &[width]).verdict, Verdict::Independent);
+        assert_eq!(freedom(&system, Tolerances::default()), 4);
+    }
+
+    #[test]
+    fn an_implied_constraint_that_does_not_hold_conflicts() {
+        let mut system = System::default();
+        let r = rectangle(&mut system, 0.0, 0.0, 120.0, 80.0);
+        let s = sides(&r);
+        // The bottom and top are already parallel: at 30 degrees they
+        // cannot be.
+        let angle = Equation::Angle {
+            a: s[0],
+            b: s[2],
+            value: 0.5,
+        };
+        assert_eq!(assessed(&system, &[angle]).verdict, Verdict::Conflicting);
+    }
+
+    /// A constraint is judged whole: a coincidence of two points already
+    /// on one horizontal has one of its equations implied, so it over-
+    /// constrains, though its other equation would fix something.
+    #[test]
+    fn a_constraint_is_judged_by_all_its_equations_together() {
+        let mut system = System::default();
+        let p = system.point(0.0, 5.0);
+        let q = system.point(0.0, 5.0);
+        system.equations.push(Equation::Equal { a: p.y, b: q.y });
+        let coincident = [
+            Equation::Equal { a: p.x, b: q.x },
+            Equation::Equal { a: p.y, b: q.y },
+        ];
+        assert_eq!(assessed(&system, &coincident).verdict, Verdict::Redundant);
+        assert_eq!(
+            assessed(&system, &coincident[..1]).verdict,
+            Verdict::Independent
+        );
+    }
+
+    /// Two points that happen to meet have no direction between them, so a
+    /// distance between them has no gradient there; nothing makes them
+    /// meet, so the distance is independent, and the configuration
+    /// degenerate.
+    #[test]
+    fn a_degenerate_configuration_is_not_taken_for_redundancy() {
+        let mut system = System::default();
+        let a = system.point(10.0, 10.0);
+        let b = system.point(10.0, 10.0);
+        let distance = Equation::Distance { a, b, value: 5.0 };
+        let assessment = assessed(&system, &[distance]);
+        assert_eq!(assessment.verdict, Verdict::Independent);
+        assert!(assessment.degenerate);
+        // Two points that are constrained to meet are not degenerate.
+        let mut held = System::default();
+        let p = held.point(1.0, 1.0);
+        let q = held.point(1.0, 1.0);
+        held.equations.extend([
+            Equation::Equal { a: p.x, b: q.x },
+            Equation::Equal { a: p.y, b: q.y },
+        ]);
+        let again = assessed(&held, &[Equation::Equal { a: p.x, b: q.x }]);
+        assert_eq!(again.verdict, Verdict::Redundant);
+        assert!(!again.degenerate);
+    }
+
+    /// For constraints that are linear in the unknowns, the solution is the
+    /// one nearest the start: changing a distance between two free points
+    /// moves both by half the change, not one by all of it.
+    #[test]
+    fn linear_constraints_settle_at_the_nearest_solution() {
+        let mut system = System::default();
+        let a = system.point(0.0, 0.0);
+        let b = system.point(10.0, 0.0);
+        system.equations.push(Equation::Offset {
+            from: a.x,
+            to: b.x,
+            value: 14.0,
+        });
+        let solution = solve(&system, Tolerances::default());
+        assert!(solution.is_solved());
+        assert!(
+            (solution.values[a.x] + 2.0).abs() < 1e-9,
+            "{:?}",
+            solution.values
+        );
+        assert!((solution.values[b.x] - 12.0).abs() < 1e-9);
+        assert_eq!((solution.values[a.y], solution.values[b.y]), (0.0, 0.0));
+    }
+
+    /// Solving is deterministic: the same system gives the same bits, and
+    /// the same equations in another order the same geometry within
+    /// tolerance.
+    #[test]
+    fn solving_is_deterministic() {
+        let mut system = System::default();
+        let r = rectangle(&mut system, 0.0, 0.0, 100.0, 50.0);
+        system.equations.extend([
+            Equation::Fixed {
+                param: r.corners[0].x,
+                value: 0.0,
+            },
+            Equation::Fixed {
+                param: r.corners[0].y,
+                value: 0.0,
+            },
+            Equation::Distance {
+                a: r.corners[0],
+                b: r.corners[2],
+                value: 130.0,
+            },
+            Equation::Angle {
+                a: LineVar {
+                    a: r.corners[0],
+                    b: r.corners[1],
+                },
+                b: LineVar {
+                    a: r.corners[0],
+                    b: r.corners[2],
+                },
+                value: 0.4,
+            },
+        ]);
+        let first = solve(&system, Tolerances::default());
+        assert!(first.is_solved());
+        assert_eq!(first, solve(&system, Tolerances::default()));
+        let mut reversed = system.clone();
+        reversed.equations.reverse();
+        let other = solve(&reversed, Tolerances::default());
+        for (a, b) in first.values.iter().zip(&other.values) {
+            assert!((a - b).abs() < 1e-7, "{a} {b}");
+        }
+        let assessment = assess(
             &system,
-            &Equation::Offset {
-                from: r.corners[0].x,
-                to: r.corners[1].x,
-                value: 120.0
-            }
-        ));
-        assert_eq!(freedom(&system), 4);
+            &[Equation::Parallel {
+                a: sides(&r)[0],
+                b: sides(&r)[2],
+            }],
+            Tolerances::default(),
+        );
+        assert_eq!(
+            assessment,
+            assess(
+                &system,
+                &[Equation::Parallel {
+                    a: sides(&r)[0],
+                    b: sides(&r)[2],
+                }],
+                Tolerances::default()
+            )
+        );
     }
 }

@@ -113,17 +113,20 @@ pub fn widened(plates: &Plates) -> System {
 }
 
 /// The plates with the last plate's upper right corner dragged 5 up and
-/// held there, as a grip leaves it: its plate grows taller.
-pub fn dragged(plates: &Plates) -> System {
+/// held there, as a grip leaves it — with that plate's height dimension
+/// dropped, so that the drag can be met: the plate grows taller, and
+/// nothing else moves (local deformation). With `keep_height`, the height
+/// stays and the drag cannot be met: the solver must report it.
+pub fn dragged(plates: &Plates, keep_height: bool) -> System {
     let mut system = plates.system.clone();
     let last = plates.lines.last().expect("a plate");
     let corner = last[1].b;
     system.values[corner.y] += 5.0;
     system.hold(corner.y);
-    // Its height is no longer 80: the drag drives it, as a grip on a
-    // dimensioned plate is refused otherwise; drop the height.
-    system
-        .equations
-        .retain(|e| !matches!(e, Equation::Offset { from, .. } if *from == last[1].a.y));
+    if !keep_height {
+        system
+            .equations
+            .retain(|e| !matches!(e, Equation::Offset { from, .. } if *from == last[1].a.y));
+    }
     system
 }
