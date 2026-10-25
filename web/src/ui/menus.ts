@@ -333,6 +333,14 @@ const PARAMETRIC: Menu = {
       command("&Radius", "DCRADIUS"),
       command("&Diameter", "DCDIAMETER"),
     ]),
+    // Constrained parts (#272), made as one.
+    cascade("Pa&rts", [
+      command("&Plate", "PLATE"),
+      command("&Slot", "SLOT"),
+      command("&Hole Pattern", "HOLEPATTERN"),
+      command("&Bolt Circle", "BOLTCIRCLE"),
+      command("&Flange", "FLANGE"),
+    ]),
     SEPARATOR,
     command("&Delete Constraints", "DELCONSTRAINT"),
     SEPARATOR,

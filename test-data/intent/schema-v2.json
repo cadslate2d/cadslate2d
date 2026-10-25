@@ -934,6 +934,302 @@
             "at"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A rectangular plate from its lower left corner, its sides and size\nconstrained: corners square, rounded by `fillet`, or bevelled by\n`chamfer`; with `hole_diameter`, a hole at each corner,\n`hole_offset` in from both edges.",
+          "properties": {
+            "chamfer": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "corner": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "fillet": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "height": {
+              "format": "double",
+              "type": "number"
+            },
+            "hole_diameter": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "hole_offset": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "op": {
+              "const": "plate",
+              "type": "string"
+            },
+            "width": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "op",
+            "corner",
+            "width",
+            "height"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A slot: its centres `length` apart along `angle`, `width` across.",
+          "properties": {
+            "angle": {
+              "default": 0.0,
+              "format": "double",
+              "type": "number"
+            },
+            "center": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "length": {
+              "format": "double",
+              "type": "number"
+            },
+            "op": {
+              "const": "slot",
+              "type": "string"
+            },
+            "width": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "op",
+            "center",
+            "length",
+            "width"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Holes in rows and columns from the first, lower left one; a\nnegative spacing goes the other way.",
+          "properties": {
+            "column_spacing": {
+              "default": 0.0,
+              "format": "double",
+              "type": "number"
+            },
+            "columns": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "diameter": {
+              "format": "double",
+              "type": "number"
+            },
+            "first": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "op": {
+              "const": "hole_pattern",
+              "type": "string"
+            },
+            "row_spacing": {
+              "default": 0.0,
+              "format": "double",
+              "type": "number"
+            },
+            "rows": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "op",
+            "first",
+            "diameter",
+            "rows",
+            "columns"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Holes equally spaced on a pitch circle, the first at `start_angle`.",
+          "properties": {
+            "center": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "count": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "hole_diameter": {
+              "format": "double",
+              "type": "number"
+            },
+            "op": {
+              "const": "bolt_circle",
+              "type": "string"
+            },
+            "pitch_diameter": {
+              "format": "double",
+              "type": "number"
+            },
+            "start_angle": {
+              "default": 0.0,
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "op",
+            "center",
+            "pitch_diameter",
+            "count",
+            "hole_diameter"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A round flange: an outer circle, a bore, and a bolt circle.",
+          "properties": {
+            "bore_diameter": {
+              "format": "double",
+              "type": "number"
+            },
+            "center": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "count": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "hole_diameter": {
+              "format": "double",
+              "type": "number"
+            },
+            "op": {
+              "const": "round_flange",
+              "type": "string"
+            },
+            "outer_diameter": {
+              "format": "double",
+              "type": "number"
+            },
+            "pitch_diameter": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "op",
+            "center",
+            "outer_diameter",
+            "bore_diameter",
+            "pitch_diameter",
+            "count",
+            "hole_diameter"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A rectangular flange about its centre: a bore, and a hole at each\ncorner `hole_offset` in from both edges.",
+          "properties": {
+            "bore_diameter": {
+              "format": "double",
+              "type": "number"
+            },
+            "center": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "height": {
+              "format": "double",
+              "type": "number"
+            },
+            "hole_diameter": {
+              "format": "double",
+              "type": "number"
+            },
+            "hole_offset": {
+              "format": "double",
+              "type": "number"
+            },
+            "op": {
+              "const": "rectangular_flange",
+              "type": "string"
+            },
+            "width": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "op",
+            "center",
+            "width",
+            "height",
+            "bore_diameter",
+            "hole_diameter",
+            "hole_offset"
+          ],
+          "type": "object"
         }
       ]
     },

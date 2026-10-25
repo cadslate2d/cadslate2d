@@ -19,6 +19,7 @@ mod drawing;
 mod editing;
 mod entity;
 mod exploding;
+pub mod generate;
 mod grips;
 mod group;
 mod hatch;

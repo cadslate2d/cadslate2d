@@ -31,6 +31,7 @@ mod edge;
 mod ellipse;
 mod far_from_origin;
 mod find;
+mod generators;
 mod geomconstraint;
 mod grid_snap;
 mod grips;

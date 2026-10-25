@@ -25,9 +25,14 @@ pub use validate::{IntentError, Reason, limits};
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
-/// The version of the document this crate reads. Bumped when the schema
-/// changes.
-pub const VERSION: u32 = 1;
+/// The version of the document this crate writes and reads. Bumped when
+/// the schema changes.
+pub const VERSION: u32 = 2;
+
+/// The versions this crate reads: each a subset of the next, so a
+/// document of an earlier one is read as it was meant. Version 2 added
+/// the parts (#272).
+pub const READS: [u32; 2] = [1, 2];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -323,6 +328,73 @@ pub enum Operation {
         second: Point,
         at: Point,
     },
+
+    // ── parts (#272): constrained geometry, made as one ──
+    /// A rectangular plate from its lower left corner, its sides and size
+    /// constrained: corners square, rounded by `fillet`, or bevelled by
+    /// `chamfer`; with `hole_diameter`, a hole at each corner,
+    /// `hole_offset` in from both edges.
+    Plate {
+        corner: Point,
+        width: f64,
+        height: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fillet: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        chamfer: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hole_diameter: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hole_offset: Option<f64>,
+    },
+    /// A slot: its centres `length` apart along `angle`, `width` across.
+    Slot {
+        center: Point,
+        length: f64,
+        width: f64,
+        #[serde(default)]
+        angle: f64,
+    },
+    /// Holes in rows and columns from the first, lower left one; a
+    /// negative spacing goes the other way.
+    HolePattern {
+        first: Point,
+        diameter: f64,
+        rows: u32,
+        columns: u32,
+        #[serde(default)]
+        row_spacing: f64,
+        #[serde(default)]
+        column_spacing: f64,
+    },
+    /// Holes equally spaced on a pitch circle, the first at `start_angle`.
+    BoltCircle {
+        center: Point,
+        pitch_diameter: f64,
+        count: u32,
+        hole_diameter: f64,
+        #[serde(default)]
+        start_angle: f64,
+    },
+    /// A round flange: an outer circle, a bore, and a bolt circle.
+    RoundFlange {
+        center: Point,
+        outer_diameter: f64,
+        bore_diameter: f64,
+        pitch_diameter: f64,
+        count: u32,
+        hole_diameter: f64,
+    },
+    /// A rectangular flange about its centre: a bore, and a hole at each
+    /// corner `hole_offset` in from both edges.
+    RectangularFlange {
+        center: Point,
+        width: f64,
+        height: f64,
+        bore_diameter: f64,
+        hole_diameter: f64,
+        hole_offset: f64,
+    },
 }
 
 fn default_true() -> bool {
@@ -363,6 +435,12 @@ impl Operation {
             Self::DimRadius { .. } => "dim_radius",
             Self::DimDiameter { .. } => "dim_diameter",
             Self::DimAngular { .. } => "dim_angular",
+            Self::Plate { .. } => "plate",
+            Self::Slot { .. } => "slot",
+            Self::HolePattern { .. } => "hole_pattern",
+            Self::BoltCircle { .. } => "bolt_circle",
+            Self::RoundFlange { .. } => "round_flange",
+            Self::RectangularFlange { .. } => "rectangular_flange",
         }
     }
 }

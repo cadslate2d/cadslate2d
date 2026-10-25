@@ -224,12 +224,25 @@ fn what_is_refused_says_where_and_why() {
         IntentError::Json { .. }
     ));
     assert!(matches!(
-        parse(r#"{"version": 2, "operations": []}"#).unwrap_err(),
+        parse(r#"{"version": 3, "operations": []}"#).unwrap_err(),
         IntentError::Version {
-            found: 2,
+            found: 3,
             expected: VERSION
         }
     ));
+    // A document of an earlier version is read as it was meant (#272).
+    assert!(
+        parse(r#"{"version": 1, "operations": [{"op": "circle", "center": [0, 0], "radius": 5}]}"#)
+            .is_ok()
+    );
+    // A part is version 2's: its checks hold for it.
+    assert_eq!(
+        refused(
+            r#"{"op": "plate", "corner": [0, 0], "width": 10, "height": 5, "hole_diameter": 2}"#
+        )
+        .to_string(),
+        "operation 0 (plate): hole_offset must be given"
+    );
     let many = (0..=limits::OPERATIONS)
         .map(|_| r#"{"op": "circle", "center": [0, 0], "radius": 1}"#)
         .collect::<Vec<_>>()
@@ -257,7 +270,7 @@ fn what_is_refused_says_where_and_why() {
 fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../test-data/intent/schema-v1.json"
+        "/../../test-data/intent/schema-v2.json"
     );
     let generated = serde_json::to_string_pretty(&schema()).unwrap() + "\n";
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
@@ -269,7 +282,7 @@ fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
         "the schema changed: bump cad_intent::VERSION, re-record with UPDATE_SNAPSHOTS=1, and name the file after the new version"
     );
     assert!(generated.contains(r#""version""#));
-    assert_eq!(VERSION, 1);
+    assert_eq!(VERSION, 2);
 }
 
 proptest! {
@@ -314,6 +327,6 @@ fn the_selection_word_and_an_intent_serialise_as_the_document_says() {
     };
     assert_eq!(
         serde_json::to_string(&intent).unwrap(),
-        r#"{"version":1,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
+        r#"{"version":2,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
     );
 }

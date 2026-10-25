@@ -11,23 +11,24 @@ use cad_input::{CommandAliases, DuplicateCommandName};
 use crate::Command;
 use crate::commands::{
     AliasEditCommand, AlignCommand, ArcCommand, AreaCommand, ArrayCommand, AttdefCommand,
-    AtteditCommand, BlockCommand, BoundaryCommand, BreakCommand, ChpropCommand, CircleCommand,
-    ColorCommand, ConstraintDisplayCommand, CopyClipCommand, CornerCommand, DelConstraintCommand,
-    DimAngularCommand, DimChainCommand, DimConstraintCommand, DimLinearCommand, DimOrdinateCommand,
-    DimRadialCommand, DimStyleCommand, DistCommand, DivideCommand, DonutCommand, DrawOrderCommand,
-    DxfOutCommand, EdgeCommand, EllipseCommand, EraseCommand, ExplodeCommand, ExportCommand,
-    FindCommand, Form, Geom, GeomConstraintCommand, GridCommand, GroupCommand, HatchCommand,
-    HatchEditCommand, IdCommand, InsertCommand, JoinCommand, LayIsoCommand, LayUnisoCommand,
-    LayerAllCommand, LayerCommand, LayerMergeCommand, LayerPickCommand, LayerStateCommand,
-    LayoutCommand, LeaderCommand, LengthenCommand, LineCommand, LinetypeCommand, ListCommand,
-    LtscaleCommand, LweightCommand, MLeaderCommand, MLeaderEditCommand, MLeaderStyleCommand,
-    MTextCommand, MatchpropCommand, MeasureCommand, MirrorCommand, ModelCommand, MspaceCommand,
-    MviewCommand, NewCommand, OffsetCommand, OpenCommand, OsnapCommand, OverkillCommand,
-    PanCommand, ParametersCommand, PasteClipCommand, PeditCommand, PickStyleCommand, PlineCommand,
-    PlotCommand, PointCommand, PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand,
-    PurgeCommand, QdimCommand, QselectCommand, RayCommand, RectangCommand, RedoCommand,
-    RenameCommand, RevCloudCommand, SaveCommand, SelectCommand, SettingsCommand, SnapCommand,
-    SplineCommand, SplineEditCommand, StretchCommand, StyleCommand, TextCommand, TextEditCommand,
+    AtteditCommand, BOLT_CIRCLE, BlockCommand, BoundaryCommand, BreakCommand, ChpropCommand,
+    CircleCommand, ColorCommand, ConstraintDisplayCommand, CopyClipCommand, CornerCommand,
+    DelConstraintCommand, DimAngularCommand, DimChainCommand, DimConstraintCommand,
+    DimLinearCommand, DimOrdinateCommand, DimRadialCommand, DimStyleCommand, DistCommand,
+    DivideCommand, DonutCommand, DrawOrderCommand, DxfOutCommand, EdgeCommand, EllipseCommand,
+    EraseCommand, ExplodeCommand, ExportCommand, FLANGE, FindCommand, Form, GeneratorCommand, Geom,
+    GeomConstraintCommand, GridCommand, GroupCommand, HOLE_PATTERN, HatchCommand, HatchEditCommand,
+    IdCommand, InsertCommand, JoinCommand, LayIsoCommand, LayUnisoCommand, LayerAllCommand,
+    LayerCommand, LayerMergeCommand, LayerPickCommand, LayerStateCommand, LayoutCommand,
+    LeaderCommand, LengthenCommand, LineCommand, LinetypeCommand, ListCommand, LtscaleCommand,
+    LweightCommand, MLeaderCommand, MLeaderEditCommand, MLeaderStyleCommand, MTextCommand,
+    MatchpropCommand, MeasureCommand, MirrorCommand, ModelCommand, MspaceCommand, MviewCommand,
+    NewCommand, OffsetCommand, OpenCommand, OsnapCommand, OverkillCommand, PLATE, PanCommand,
+    ParametersCommand, PasteClipCommand, PeditCommand, PickStyleCommand, PlineCommand, PlotCommand,
+    PointCommand, PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand,
+    QdimCommand, QselectCommand, RayCommand, RectangCommand, RedoCommand, RenameCommand,
+    RevCloudCommand, SLOT, SaveCommand, SelectCommand, SettingsCommand, SnapCommand, SplineCommand,
+    SplineEditCommand, StretchCommand, StyleCommand, TextCommand, TextEditCommand,
     TextToFrontCommand, TransformCommand, UndoCommand, UngroupCommand, UnitsCommand, ViewCommand,
     WBlockCommand, WipeoutCommand, XLineCommand, ZoomCommand,
 };
@@ -66,7 +67,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 155] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 160] = [
             ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
             ("RAY", &[], || Box::new(RayCommand::new())),
             ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
@@ -171,6 +172,15 @@ impl CommandRegistry {
             ("DCDISPLAY", &[], || {
                 Box::new(ConstraintDisplayCommand::dimensions())
             }),
+            ("PLATE", &[], || Box::new(GeneratorCommand::new(&PLATE))),
+            ("SLOT", &[], || Box::new(GeneratorCommand::new(&SLOT))),
+            ("HOLEPATTERN", &[], || {
+                Box::new(GeneratorCommand::new(&HOLE_PATTERN))
+            }),
+            ("BOLTCIRCLE", &[], || {
+                Box::new(GeneratorCommand::new(&BOLT_CIRCLE))
+            }),
+            ("FLANGE", &[], || Box::new(GeneratorCommand::new(&FLANGE))),
             ("DCLINEAR", &[], || {
                 Box::new(DimConstraintCommand::of(Form::Linear))
             }),

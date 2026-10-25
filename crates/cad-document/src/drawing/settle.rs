@@ -613,6 +613,32 @@ impl TransactionBuilder<'_> {
         ))
     }
 
+    /// How many constraints this transaction adds.
+    pub fn added_constraints(&self) -> usize {
+        self.others()
+            .filter(|change| {
+                matches!(
+                    change,
+                    Change::Constraint(crate::table::TableChange::Insert { .. })
+                )
+            })
+            .count()
+    }
+
+    /// The first `prefix` and number no constraint is called, counting
+    /// those this transaction adds: `d3`, `dia1`.
+    pub fn free_constraint_name(&self, prefix: &str) -> String {
+        let taken: Vec<String> = self
+            .constraints_now()
+            .into_iter()
+            .map(|(_, c)| c.name.to_lowercase())
+            .collect();
+        (1..)
+            .map(|n| format!("{prefix}{n}"))
+            .find(|name| !taken.contains(&name.to_lowercase()))
+            .expect("a free name")
+    }
+
     /// Holds every unknown of `id` when the transaction settles: a
     /// constraint drawn to it moves the other object, as AutoCAD's does.
     pub fn hold(&mut self, id: EntityId) {

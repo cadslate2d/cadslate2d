@@ -58,7 +58,7 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 25] = [
+pub const COMMANDS: [&str; 30] = [
     "LINE",
     "PLINE",
     "RECTANG",
@@ -84,6 +84,11 @@ pub const COMMANDS: [&str; 25] = [
     "DIMRADIUS",
     "DIMDIAMETER",
     "DIMANGULAR",
+    "PLATE",
+    "SLOT",
+    "HOLEPATTERN",
+    "BOLTCIRCLE",
+    "FLANGE",
 ];
 
 /// Compiles every operation of a validated document, in order.
@@ -399,6 +404,119 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
         } => (
             "DIMANGULAR",
             vec![enter(), at(*vertex), at(*first), at(*second), at(*place)],
+        ),
+        Operation::Plate {
+            corner,
+            width,
+            height,
+            fillet,
+            chamfer,
+            hole_diameter,
+            hole_offset,
+        } => {
+            let mut steps = vec![
+                at(*corner),
+                keyword("Dimensions"),
+                length(*width),
+                length(*height),
+            ];
+            match (fillet, chamfer) {
+                (Some(r), _) => steps.extend([keyword("Fillet"), length(*r)]),
+                (None, Some(d)) => steps.extend([keyword("Chamfer"), length(*d)]),
+                (None, None) => steps.push(keyword("Square")),
+            }
+            match (hole_diameter, hole_offset) {
+                (Some(d), Some(o)) => steps.extend([length(*d), length(*o)]),
+                _ => steps.push(keyword("None")),
+            }
+            ("PLATE", steps)
+        }
+        Operation::Slot {
+            center,
+            length: between,
+            width,
+            angle,
+        } => (
+            "SLOT",
+            vec![
+                at(*center),
+                length(*between),
+                length(*width),
+                answer(Answer::Angle(*angle)),
+            ],
+        ),
+        Operation::HolePattern {
+            first,
+            diameter,
+            rows,
+            columns,
+            row_spacing,
+            column_spacing,
+        } => (
+            "HOLEPATTERN",
+            vec![
+                at(*first),
+                length(*diameter),
+                answer(Answer::Number(f64::from(*rows))),
+                answer(Answer::Number(f64::from(*columns))),
+                // Asked only of more than one row, or column.
+                when("Specify row spacing", Answer::Length(*row_spacing)),
+                when("Specify column spacing", Answer::Length(*column_spacing)),
+            ],
+        ),
+        Operation::BoltCircle {
+            center,
+            pitch_diameter,
+            count,
+            hole_diameter,
+            start_angle,
+        } => (
+            "BOLTCIRCLE",
+            vec![
+                at(*center),
+                length(*pitch_diameter),
+                answer(Answer::Number(f64::from(*count))),
+                length(*hole_diameter),
+                answer(Answer::Angle(*start_angle)),
+            ],
+        ),
+        Operation::RoundFlange {
+            center,
+            outer_diameter,
+            bore_diameter,
+            pitch_diameter,
+            count,
+            hole_diameter,
+        } => (
+            "FLANGE",
+            vec![
+                keyword("Round"),
+                at(*center),
+                length(*outer_diameter),
+                length(*bore_diameter),
+                length(*pitch_diameter),
+                answer(Answer::Number(f64::from(*count))),
+                length(*hole_diameter),
+            ],
+        ),
+        Operation::RectangularFlange {
+            center,
+            width,
+            height,
+            bore_diameter,
+            hole_diameter,
+            hole_offset,
+        } => (
+            "FLANGE",
+            vec![
+                keyword("REctangular"),
+                at(*center),
+                length(*width),
+                length(*height),
+                length(*bore_diameter),
+                length(*hole_diameter),
+                length(*hole_offset),
+            ],
         ),
     }
 }

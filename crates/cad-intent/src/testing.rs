@@ -237,6 +237,107 @@ pub fn operation() -> impl Strategy<Value = Operation> {
                 at,
             }
         }),
+        part(),
+    ]
+}
+
+/// A part (#272), any of them; many are impossible as parts — holes too
+/// big for the plate — and the engine refuses those, as it should.
+fn part() -> impl Strategy<Value = Operation> {
+    prop_oneof![
+        (
+            point(),
+            positive(),
+            positive(),
+            proptest::option::of(positive()),
+            proptest::option::of((positive(), positive()))
+        )
+            .prop_map(|(corner, width, height, fillet, holes)| Operation::Plate {
+                corner,
+                width,
+                height,
+                fillet,
+                chamfer: None,
+                hole_diameter: holes.map(|(d, _)| d),
+                hole_offset: holes.map(|(_, o)| o),
+            }),
+        (point(), positive(), positive(), angle()).prop_map(|(center, length, width, angle)| {
+            Operation::Slot {
+                center,
+                length,
+                width,
+                angle,
+            }
+        }),
+        (
+            point(),
+            positive(),
+            1u32..4,
+            1u32..4,
+            positive(),
+            positive()
+        )
+            .prop_map(
+                |(first, diameter, rows, columns, row_spacing, column_spacing)| {
+                    Operation::HolePattern {
+                        first,
+                        diameter,
+                        rows,
+                        columns,
+                        row_spacing,
+                        column_spacing,
+                    }
+                }
+            ),
+        (point(), positive(), 2u32..12, positive(), angle()).prop_map(
+            |(center, pitch_diameter, count, hole_diameter, start_angle)| Operation::BoltCircle {
+                center,
+                pitch_diameter,
+                count,
+                hole_diameter,
+                start_angle,
+            }
+        ),
+        (
+            point(),
+            positive(),
+            positive(),
+            positive(),
+            2u32..12,
+            positive()
+        )
+            .prop_map(
+                |(center, outer_diameter, bore_diameter, pitch_diameter, count, hole_diameter)| {
+                    Operation::RoundFlange {
+                        center,
+                        outer_diameter,
+                        bore_diameter,
+                        pitch_diameter,
+                        count,
+                        hole_diameter,
+                    }
+                }
+            ),
+        (
+            point(),
+            positive(),
+            positive(),
+            positive(),
+            positive(),
+            positive()
+        )
+            .prop_map(
+                |(center, width, height, bore_diameter, hole_diameter, hole_offset)| {
+                    Operation::RectangularFlange {
+                        center,
+                        width,
+                        height,
+                        bore_diameter,
+                        hole_diameter,
+                        hole_offset,
+                    }
+                }
+            ),
     ]
 }
 

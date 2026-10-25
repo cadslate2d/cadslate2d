@@ -6,5 +6,7 @@ catalogue in `crates/cad-intent/src/lib.rs`.
 
 | File | What |
 | --- | --- |
-| `schema-v1.json` | The JSON Schema of version 1, generated from the Rust types by `cad_intent::schema()` and snapshot-tested (`the_schema_is_the_recorded_one_or_the_version_is_bumped()`). A change to the types changes the schema: bump `cad_intent::VERSION`, re-record with `UPDATE_SNAPSHOTS=1 cargo test -p cad-intent`, and name the file after the new version. |
+| `schema-v2.json` | The JSON Schema of version 2 (version 1 and the parts of #272), generated from the Rust types by `cad_intent::schema()` and snapshot-tested (`the_schema_is_the_recorded_one_or_the_version_is_bumped()`). A change to the types changes the schema: bump `cad_intent::VERSION`, re-record with `UPDATE_SNAPSHOTS=1 cargo test -p cad-intent`, and name the file after the new version. |
 | `example-plate.json` | A document of every kind of operation a plate needs, a seed for the `intent_parse` fuzzer. |
+
+A document of an earlier version is still read (`cad_intent::READS`): each version is a subset of the next.

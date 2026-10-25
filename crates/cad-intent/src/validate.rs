@@ -30,6 +30,8 @@ pub mod limits {
     pub const SIDES: u32 = 1024;
     /// Copies an array may make.
     pub const COPIES: u32 = 10_000;
+    /// Holes one part may have.
+    pub const HOLES: u32 = 1000;
 }
 
 /// Why a value is refused.
@@ -56,6 +58,9 @@ pub enum Reason {
     BadName,
     /// Nothing was asked for.
     Nothing,
+    /// A field another one needs was not given: a hole's offset with its
+    /// diameter.
+    Missing,
 }
 
 impl fmt::Display for Reason {
@@ -71,6 +76,7 @@ impl fmt::Display for Reason {
             Self::Coincident => write!(f, "repeats a point that must differ"),
             Self::BadName => write!(f, "holds a character a name cannot"),
             Self::Nothing => write!(f, "asks for nothing"),
+            Self::Missing => write!(f, "must be given"),
         }
     }
 }
@@ -130,7 +136,7 @@ impl fmt::Display for IntentError {
 impl std::error::Error for IntentError {}
 
 pub(crate) fn validate(intent: &Intent) -> Result<(), IntentError> {
-    if intent.version != VERSION {
+    if !crate::READS.contains(&intent.version) {
         return Err(IntentError::Version {
             found: intent.version,
             expected: VERSION,
@@ -190,6 +196,17 @@ impl Check {
         self.number(field, value)?;
         if value < 0.0 {
             return Err(self.refuse(field, Reason::NotPositive));
+        }
+        Ok(())
+    }
+
+    /// A count of holes, rows, or columns: one or more, within the limit.
+    fn count(&self, field: &'static str, count: u32) -> Result<(), IntentError> {
+        if count == 0 {
+            return Err(self.refuse(field, Reason::NotPositive));
+        }
+        if count > limits::HOLES {
+            return Err(self.refuse(field, Reason::TooMany(limits::HOLES as usize)));
         }
         Ok(())
     }
@@ -507,6 +524,109 @@ impl Check {
                 self.distinct("second", *vertex, *second)?;
                 self.distinct("second", *first, *second)?;
                 self.point("at", *at)
+            }
+            Operation::Plate {
+                corner,
+                width,
+                height,
+                fillet,
+                chamfer,
+                hole_diameter,
+                hole_offset,
+            } => {
+                self.point("corner", *corner)?;
+                self.positive("width", *width)?;
+                self.positive("height", *height)?;
+                if let Some(r) = fillet {
+                    self.positive("fillet", *r)?;
+                }
+                if let Some(d) = chamfer {
+                    self.positive("chamfer", *d)?;
+                    if fillet.is_some() {
+                        return Err(self.refuse("chamfer", Reason::TooMany(1)));
+                    }
+                }
+                match (hole_diameter, hole_offset) {
+                    (Some(d), Some(o)) => {
+                        self.positive("hole_diameter", *d)?;
+                        self.positive("hole_offset", *o)
+                    }
+                    (None, None) => Ok(()),
+                    (Some(_), None) => Err(self.refuse("hole_offset", Reason::Missing)),
+                    (None, Some(_)) => Err(self.refuse("hole_diameter", Reason::Missing)),
+                }
+            }
+            Operation::Slot {
+                center,
+                length,
+                width,
+                angle,
+            } => {
+                self.point("center", *center)?;
+                self.positive("length", *length)?;
+                self.positive("width", *width)?;
+                self.number("angle", *angle)
+            }
+            Operation::HolePattern {
+                first,
+                diameter,
+                rows,
+                columns,
+                row_spacing,
+                column_spacing,
+            } => {
+                self.point("first", *first)?;
+                self.positive("diameter", *diameter)?;
+                self.count("rows", *rows)?;
+                self.count("columns", *columns)?;
+                if rows.saturating_mul(*columns) > limits::HOLES {
+                    return Err(self.refuse("columns", Reason::TooMany(limits::HOLES as usize)));
+                }
+                self.number("row_spacing", *row_spacing)?;
+                self.number("column_spacing", *column_spacing)
+            }
+            Operation::BoltCircle {
+                center,
+                pitch_diameter,
+                count,
+                hole_diameter,
+                start_angle,
+            } => {
+                self.point("center", *center)?;
+                self.positive("pitch_diameter", *pitch_diameter)?;
+                self.count("count", *count)?;
+                self.positive("hole_diameter", *hole_diameter)?;
+                self.number("start_angle", *start_angle)
+            }
+            Operation::RoundFlange {
+                center,
+                outer_diameter,
+                bore_diameter,
+                pitch_diameter,
+                count,
+                hole_diameter,
+            } => {
+                self.point("center", *center)?;
+                self.positive("outer_diameter", *outer_diameter)?;
+                self.positive("bore_diameter", *bore_diameter)?;
+                self.positive("pitch_diameter", *pitch_diameter)?;
+                self.count("count", *count)?;
+                self.positive("hole_diameter", *hole_diameter)
+            }
+            Operation::RectangularFlange {
+                center,
+                width,
+                height,
+                bore_diameter,
+                hole_diameter,
+                hole_offset,
+            } => {
+                self.point("center", *center)?;
+                self.positive("width", *width)?;
+                self.positive("height", *height)?;
+                self.positive("bore_diameter", *bore_diameter)?;
+                self.positive("hole_diameter", *hole_diameter)?;
+                self.positive("hole_offset", *hole_offset)
             }
         }
     }
