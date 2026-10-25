@@ -17,7 +17,7 @@ use crate::{Command, CommandContext, CommandInput, Prompt, Step};
 
 /// The curve an entity is, run from its start; `None` for one that has
 /// no length to measure along.
-fn path_of(entity: &Entity) -> Option<Path> {
+pub(super) fn path_of(entity: &Entity) -> Option<Path> {
     let straight = |vertices: Vec<Point2>| Path {
         vertices,
         bulges: Vec::new(),
@@ -143,15 +143,20 @@ fn picked_curve(ctx: &mut CommandContext<'_>, entity: EntityId, at: Point2) -> O
         ctx.message("That object cannot be divided or measured: pick a line, arc, circle, ellipse, spline, or polyline.");
         return None;
     };
+    Some(from_end_nearest(path, at))
+}
+
+/// `path` run from its end nearest `at`; a closed one as it is.
+pub(super) fn from_end_nearest(path: Path, at: Point2) -> Path {
     if path.closed {
-        return Some(path);
+        return path;
     }
     let (first, last) = (path.vertices[0], path.vertices[path.vertices.len() - 1]);
-    Some(if at.distance_to(last) < at.distance_to(first) {
+    if at.distance_to(last) < at.distance_to(first) {
         path.reversed()
     } else {
         path
-    })
+    }
 }
 
 impl Command for DivideCommand {

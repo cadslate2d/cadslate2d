@@ -57,6 +57,7 @@ mod mtext;
 mod offset;
 mod overkill;
 mod pedit;
+mod placement;
 mod plot;
 mod points;
 mod polygon;

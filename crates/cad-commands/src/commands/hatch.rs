@@ -124,6 +124,27 @@ pub(crate) fn candidates(ctx: &CommandContext<'_>) -> Vec<Candidate> {
     loops_of(&shown).into_iter().map(Candidate::new).collect()
 }
 
+/// The loops what is shown makes, but for `skip`: a boundary its own
+/// contents are no part of.
+pub(crate) fn candidates_without(ctx: &CommandContext<'_>, skip: &[EntityId]) -> Vec<Candidate> {
+    let shown: Vec<&Entity> = ctx
+        .drawing
+        .shown_in(ctx.space)
+        .filter(|(id, _)| !skip.contains(id))
+        .map(|(_, entity)| entity)
+        .collect();
+    loops_of(&shown).into_iter().map(Candidate::new).collect()
+}
+
+/// The loops of a region as rings, arcs followed as finely as the tests
+/// of a picked point follow them.
+pub(crate) fn rings_of(loops: &[Path]) -> Vec<Vec<Point2>> {
+    loops
+        .iter()
+        .map(|path| flatten_path(path, CHORD_STEP))
+        .collect()
+}
+
 /// The region a point inside it bounds: the smallest loop around the
 /// point, then every loop inside that one — its islands.
 pub(crate) fn region_at(candidates: &[Candidate], point: Point2) -> Option<Vec<Path>> {

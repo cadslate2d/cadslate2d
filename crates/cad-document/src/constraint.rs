@@ -153,6 +153,64 @@ pub enum Touch {
     SecondInside,
 }
 
+impl Touch {
+    /// How two edges touch, as they lie: the side of a line a circle is
+    /// on; two circles outside or one inside the other. `None` unless one
+    /// is straight and the other circular, or both circular.
+    pub fn between(a: (&Entity, Part), b: (&Entity, Part)) -> Option<Touch> {
+        let circle = |(entity, _): (&Entity, Part)| -> Option<(Point2, f64)> {
+            match entity {
+                Entity::Circle(c) => Some((c.center, c.radius)),
+                Entity::Arc(a) => Some((a.center, a.radius)),
+                _ => None,
+            }
+        };
+        let line = |(entity, part): (&Entity, Part)| -> Option<(Point2, Point2)> {
+            match (entity, part) {
+                (Entity::Line(l), _) => Some((l.start, l.end)),
+                (Entity::Polyline(p), Part::Segment(n)) => {
+                    let n = n as usize;
+                    Some((p.vertices[n], p.vertices[(n + 1) % p.vertices.len()]))
+                }
+                _ => None,
+            }
+        };
+        let shape = |(entity, part): (&Entity, Part)| part.shape_on(entity);
+        match (shape(a)?, shape(b)?) {
+            (Shape::Straight, Shape::Circular) | (Shape::Circular, Shape::Straight) => {
+                let (l, c) = if shape(a)? == Shape::Straight {
+                    (a, b)
+                } else {
+                    (b, a)
+                };
+                let (start, end) = line(l)?;
+                let (center, _) = circle(c)?;
+                let d = end - start;
+                let side = d.x * (center.y - start.y) - d.y * (center.x - start.x);
+                Some(if side >= 0.0 {
+                    Touch::Left
+                } else {
+                    Touch::Right
+                })
+            }
+            (Shape::Circular, Shape::Circular) => {
+                let ((ca, ra), (cb, rb)) = (circle(a)?, circle(b)?);
+                let apart = ca.distance_to(cb);
+                Some(
+                    if (apart - (ra + rb)).abs() <= (apart - (ra - rb).abs()).abs() {
+                        Touch::Outside
+                    } else if ra < rb {
+                        Touch::FirstInside
+                    } else {
+                        Touch::SecondInside
+                    },
+                )
+            }
+            _ => None,
+        }
+    }
+}
+
 /// What a constraint holds, and what it needs to be met.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Kind {

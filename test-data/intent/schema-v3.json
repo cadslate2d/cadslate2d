@@ -1230,6 +1230,172 @@
             "hole_offset"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A circle tangent to two objects with a `radius`, or to three with\n`third` and no radius; of the circles there are, the one touching\nnearest the picks. Kept tangent to them.",
+          "properties": {
+            "first": {
+              "$ref": "#/$defs/Pick"
+            },
+            "op": {
+              "const": "tangent_circle",
+              "type": "string"
+            },
+            "radius": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "second": {
+              "$ref": "#/$defs/Pick"
+            },
+            "third": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Pick"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "first",
+            "second"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An arc of a radius tangent to two objects, between where it touches\nthem, the short way: a fillet that trims nothing. Kept tangent, its\nends on them.",
+          "properties": {
+            "first": {
+              "$ref": "#/$defs/Pick"
+            },
+            "op": {
+              "const": "tangent_arc",
+              "type": "string"
+            },
+            "radius": {
+              "format": "double",
+              "type": "number"
+            },
+            "second": {
+              "$ref": "#/$defs/Pick"
+            }
+          },
+          "required": [
+            "op",
+            "first",
+            "second",
+            "radius"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A circle about the centre of a circle or an arc, kept concentric.",
+          "properties": {
+            "of": {
+              "$ref": "#/$defs/Pick"
+            },
+            "op": {
+              "const": "concentric_circle",
+              "type": "string"
+            },
+            "radius": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "op",
+            "of",
+            "radius"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The targets along a curve, from its end nearest the pick: `count`\nof them from end to end — evenly round a closed curve — or one\nevery `spacing`. The targets move to the first place. A lone circle\nalong a line, an arc, or a circle is kept on it, and its copies its\nsize.",
+          "properties": {
+            "count": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "op": {
+              "const": "path_array",
+              "type": "string"
+            },
+            "path": {
+              "$ref": "#/$defs/Pick"
+            },
+            "spacing": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "targets": {
+              "$ref": "#/$defs/Targets"
+            }
+          },
+          "required": [
+            "op",
+            "targets",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Copies of the targets on a grid through them, `column_spacing`\nacross and `row_spacing` up — the same when absent — wherever a\ncopy lies wholly inside the closed boundary round `inside`, its\nislands left out.",
+          "properties": {
+            "column_spacing": {
+              "format": "double",
+              "type": "number"
+            },
+            "inside": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "op": {
+              "const": "grid_array",
+              "type": "string"
+            },
+            "row_spacing": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "targets": {
+              "$ref": "#/$defs/Targets"
+            }
+          },
+          "required": [
+            "op",
+            "targets",
+            "inside",
+            "column_spacing"
+          ],
+          "type": "object"
         }
       ]
     },

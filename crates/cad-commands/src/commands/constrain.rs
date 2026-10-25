@@ -13,7 +13,7 @@
 //! constraints cannot settle is refused, and the session says which.
 
 use cad_core::{EntityId, PixelTolerance, Point2};
-use cad_document::{Constraint, Entity, Kind, Part, Reference, Shape, Touch};
+use cad_document::{Constraint, Entity, Kind, Part, Reference, Touch};
 use cad_geometry::constraint::Verdict;
 use cad_input::{ExpectedInput, InputKind, Keyword};
 
@@ -215,59 +215,12 @@ fn position(ctx: &CommandContext<'_>, reference: Reference) -> Option<Point2> {
         .position_on(ctx.drawing.entity(reference.entity)?)
 }
 
-/// How two edges touch, as they are: the side of a line a circle is on;
-/// two circles outside or one inside the other.
+/// How two edges touch, as they are.
 fn touch(ctx: &CommandContext<'_>, a: Reference, b: Reference) -> Option<Touch> {
-    let shape = |r: Reference| r.part.shape_on(ctx.drawing.entity(r.entity)?);
-    let circle = |r: Reference| -> Option<(Point2, f64)> {
-        match ctx.drawing.entity(r.entity)? {
-            Entity::Circle(c) => Some((c.center, c.radius)),
-            Entity::Arc(a) => Some((a.center, a.radius)),
-            _ => None,
-        }
-    };
-    let line = |r: Reference| -> Option<(Point2, Point2)> {
-        match (ctx.drawing.entity(r.entity)?, r.part) {
-            (Entity::Line(l), _) => Some((l.start, l.end)),
-            (Entity::Polyline(p), Part::Segment(n)) => {
-                let n = n as usize;
-                Some((p.vertices[n], p.vertices[(n + 1) % p.vertices.len()]))
-            }
-            _ => None,
-        }
-    };
-    match (shape(a)?, shape(b)?) {
-        (Shape::Straight, Shape::Circular) | (Shape::Circular, Shape::Straight) => {
-            let (l, c) = if shape(a)? == Shape::Straight {
-                (a, b)
-            } else {
-                (b, a)
-            };
-            let (start, end) = line(l)?;
-            let (center, _) = circle(c)?;
-            let d = end - start;
-            let side = d.x * (center.y - start.y) - d.y * (center.x - start.x);
-            Some(if side >= 0.0 {
-                Touch::Left
-            } else {
-                Touch::Right
-            })
-        }
-        (Shape::Circular, Shape::Circular) => {
-            let ((ca, ra), (cb, rb)) = (circle(a)?, circle(b)?);
-            let apart = ca.distance_to(cb);
-            Some(
-                if (apart - (ra + rb)).abs() <= (apart - (ra - rb).abs()).abs() {
-                    Touch::Outside
-                } else if ra < rb {
-                    Touch::FirstInside
-                } else {
-                    Touch::SecondInside
-                },
-            )
-        }
-        _ => None,
-    }
+    Touch::between(
+        (ctx.drawing.entity(a.entity)?, a.part),
+        (ctx.drawing.entity(b.entity)?, b.part),
+    )
 }
 
 impl GeomConstraintCommand {

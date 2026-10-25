@@ -238,6 +238,62 @@ pub fn operation() -> impl Strategy<Value = Operation> {
             }
         }),
         part(),
+        placement(),
+    ]
+}
+
+/// A placement (#273); the picks are arbitrary, so many find nothing to
+/// touch, and the engine says so.
+fn placement() -> impl Strategy<Value = Operation> {
+    prop_oneof![
+        (pick(), pick(), positive()).prop_map(|(first, second, radius)| {
+            Operation::TangentCircle {
+                first,
+                second,
+                third: None,
+                radius: Some(radius),
+            }
+        }),
+        (pick(), pick(), pick()).prop_map(|(first, second, third)| Operation::TangentCircle {
+            first,
+            second,
+            third: Some(third),
+            radius: None,
+        }),
+        (pick(), pick(), positive()).prop_map(|(first, second, radius)| Operation::TangentArc {
+            first,
+            second,
+            radius
+        }),
+        (pick(), positive()).prop_map(|(of, radius)| Operation::ConcentricCircle { of, radius }),
+        (targets(), pick(), 2u32..=12).prop_map(|(targets, path, count)| Operation::PathArray {
+            targets,
+            path,
+            count: Some(count),
+            spacing: None,
+        }),
+        (targets(), pick(), positive()).prop_map(|(targets, path, spacing)| {
+            Operation::PathArray {
+                targets,
+                path,
+                count: None,
+                spacing: Some(spacing),
+            }
+        }),
+        (
+            targets(),
+            point(),
+            positive(),
+            proptest::option::of(positive())
+        )
+            .prop_map(|(targets, inside, column_spacing, row_spacing)| {
+                Operation::GridArray {
+                    targets,
+                    inside,
+                    column_spacing,
+                    row_spacing,
+                }
+            }),
     ]
 }
 

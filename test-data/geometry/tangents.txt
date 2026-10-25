@@ -1,0 +1,46 @@
+# Tangent circle regression corpus (#273): CIRCLE Tan, Tan, Radius and
+# Tan, Tan, Tan.
+#
+#   ttr <radius> : <primitive> @ <pick x y> | <primitive> @ <pick x y> => circle cx cy r
+#   ttt : <primitive> @ <pick x y> | <primitive> @ <pick x y> | <primitive> @ <pick x y> => circle cx cy r
+#   … => refused
+#
+# Primitives are written as in intersections.txt. A line counts as the
+# infinite line through it, an arc as its whole circle. Of the circles that
+# touch them all, the one whose touching points are nearest the picks is
+# the answer.
+#
+# The runner also checks, for every case, that the answer touches every
+# primitive, and for Tan, Tan, Radius that it has the radius asked for.
+#
+# Blank lines and lines starting with # are ignored. Every fixed bug adds a line.
+
+# ── tan, tan, radius ──
+# a right angle: the circle in the quadrant picked
+ttr 5 : segment 0 0 10 0 @ 4 0 | segment 0 0 0 10 @ 0 6 => circle 5 5 5
+ttr 5 : segment 0 0 10 0 @ -4 0 | segment 0 0 0 10 @ 0 -6 => circle -5 -5 5
+ttr 5 : segment 0 0 10 0 @ 4 0 | segment 0 0 0 10 @ 0 -6 => circle 5 -5 5
+# a line and a circle above it
+ttr 5 : segment -50 0 50 0 @ 10 0 | circle 0 16 10 @ 6 10 => circle 10.198039 5 5
+ttr 5 : segment -50 0 50 0 @ -10 0 | circle 0 16 10 @ -6 10 => circle -10.198039 5 5
+# two circles side by side: above or below
+ttr 10 : circle 0 0 10 @ 5 8 | circle 30 0 10 @ 25 8 => circle 15 13.228757 10
+ttr 10 : circle 0 0 10 @ 5 -8 | circle 30 0 10 @ 25 -8 => circle 15 -13.228757 10
+# an arc counts as its whole circle
+ttr 5 : arc 0 0 10 0 90 @ 7 7 | segment 20 -50 20 50 @ 20 0 => circle 15 0 5
+# a slanted line and a circle
+ttr 3 : segment 0 0 10 10 @ 8 8 | circle 10 0 3 @ 10 3 => circle 10.2379216 5.9952809 3
+# too far apart for so small a circle
+ttr 5 : circle 0 0 10 @ 10 0 | circle 100 0 10 @ 90 0 => refused
+ttr 2 : segment 0 0 10 0 @ 5 0 | segment 0 10 10 10 @ 5 10 => refused
+
+# ── tan, tan, tan ──
+# the 3-4-5 triangle: its incircle, and the excircle opposite the right angle
+ttt : segment 0 0 30 0 @ 10 0 | segment 30 0 0 40 @ 18 16 | segment 0 40 0 0 @ 0 10 => circle 10 10 10
+ttt : segment 0 0 30 0 @ 60 0 | segment 30 0 0 40 @ 12 24 | segment 0 40 0 0 @ 0 60 => circle 60 60 60
+# three equal circles: the one between them, and the one round them
+ttt : circle 0 20 5 @ 0 15 | circle 17.320508 -10 5 @ 12.990381 -7.5 | circle -17.320508 -10 5 @ -12.990381 -7.5 => circle 0 0 15
+ttt : circle 0 20 5 @ 0 25 | circle 17.320508 -10 5 @ 21.650635 -12.5 | circle -17.320508 -10 5 @ -21.650635 -12.5 => circle 0 0 25
+# between two parallel lines, beside a circle
+ttt : segment -50 0 50 0 @ 15 0 | segment -50 20 50 20 @ 15 20 | circle 0 10 5 @ 5 10 => circle 15 10 10
+ttt : segment -50 0 50 0 @ -15 0 | segment -50 20 50 20 @ -15 20 | circle 0 10 5 @ -5 10 => circle -15 10 10

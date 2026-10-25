@@ -830,6 +830,81 @@ fn corner_corpus() {
     run("fillets.txt", 14, &corner_case);
 }
 
+// ── tangent circles (#273) ──
+
+/// A primitive and where it was picked: `<primitive> @ <x y>`.
+fn picked(text: &str) -> Result<(Primitive, Point2), String> {
+    let (object, at) = split(text, "@")?;
+    Ok((primitive(object)?, point(at)?))
+}
+
+fn tangent_case(text: &str) -> Check {
+    use cad_geometry::tangent::{Curve, nearest_to_picks, tangent_to_three, tangent_to_two};
+    let (inputs, outcome) = split(text, "=>")?;
+    let (head, objects) = split(inputs, ":")?;
+    let objects: Vec<(Primitive, Point2)> = objects
+        .split('|')
+        .map(|part| picked(part.trim()))
+        .collect::<Result<_, _>>()?;
+    let curves: Vec<Curve> = objects.iter().map(|(p, _)| Curve::of(p)).collect();
+    let picks: Vec<Point2> = objects.iter().map(|(_, at)| *at).collect();
+    let (radius, candidates) = match (
+        head.split_whitespace().collect::<Vec<_>>().as_slice(),
+        curves.as_slice(),
+    ) {
+        (["ttr", radius], [a, b]) => {
+            let radius: f64 = radius.parse().map_err(|_| "a radius".to_owned())?;
+            (Some(radius), tangent_to_two(a, b, radius))
+        }
+        (["ttt"], [a, b, c]) => (None, tangent_to_three(a, b, c)),
+        _ => {
+            return Err(format!(
+                "cannot read `{head}` with {} objects",
+                curves.len()
+            ));
+        }
+    };
+    let got = nearest_to_picks(&candidates, &curves, &picks);
+    report(
+        text,
+        &got.map_or_else(
+            || "refused".to_owned(),
+            |c| format!("circle {:.7} {:.7} {:.7}", c.center.x, c.center.y, c.radius),
+        ),
+    );
+    let Some(got) = got else {
+        return expect(outcome == "refused", || "refused".to_owned());
+    };
+    for curve in &curves {
+        expect(curve.tangency_error(&got) < AGREEMENT, || {
+            format!("does not touch {curve:?}: {got:?}")
+        })?;
+    }
+    if let Some(radius) = radius {
+        expect((got.radius - radius).abs() < AGREEMENT, || {
+            format!("radius {}", got.radius)
+        })?;
+    }
+    match primitive(outcome)? {
+        Primitive::Circle(want) => expect(
+            want.center.distance_to(got.center) < AGREEMENT
+                && (want.radius - got.radius).abs() < AGREEMENT,
+            || {
+                format!(
+                    "gave circle {} {} {}",
+                    got.center.x, got.center.y, got.radius
+                )
+            },
+        ),
+        _ => Err("the outcome is a circle".to_owned()),
+    }
+}
+
+#[test]
+fn tangent_corpus() {
+    run("tangents.txt", 17, &tangent_case);
+}
+
 // ── the runner itself ──
 
 /// The acceptance criterion of #129: a failing case names its file and line.

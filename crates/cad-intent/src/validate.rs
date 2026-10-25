@@ -61,6 +61,9 @@ pub enum Reason {
     /// A field another one needs was not given: a hole's offset with its
     /// diameter.
     Missing,
+    /// A field given with another it excludes: a radius with a third
+    /// tangent.
+    Both(&'static str),
 }
 
 impl fmt::Display for Reason {
@@ -77,6 +80,7 @@ impl fmt::Display for Reason {
             Self::BadName => write!(f, "holds a character a name cannot"),
             Self::Nothing => write!(f, "asks for nothing"),
             Self::Missing => write!(f, "must be given"),
+            Self::Both(other) => write!(f, "cannot be given with {other}"),
         }
     }
 }
@@ -627,6 +631,73 @@ impl Check {
                 self.positive("bore_diameter", *bore_diameter)?;
                 self.positive("hole_diameter", *hole_diameter)?;
                 self.positive("hole_offset", *hole_offset)
+            }
+            Operation::TangentCircle {
+                first,
+                second,
+                third,
+                radius,
+            } => {
+                self.pick("first", first)?;
+                self.pick("second", second)?;
+                match (third, radius) {
+                    (Some(third), None) => self.pick("third", third),
+                    (None, Some(radius)) => self.positive("radius", *radius),
+                    (Some(_), Some(_)) => Err(self.refuse("radius", Reason::Both("third"))),
+                    (None, None) => Err(self.refuse("radius", Reason::Missing)),
+                }
+            }
+            Operation::TangentArc {
+                first,
+                second,
+                radius,
+            } => {
+                self.pick("first", first)?;
+                self.pick("second", second)?;
+                self.positive("radius", *radius)
+            }
+            Operation::ConcentricCircle { of, radius } => {
+                self.pick("of", of)?;
+                self.positive("radius", *radius)
+            }
+            Operation::PathArray {
+                targets,
+                path,
+                count,
+                spacing,
+            } => {
+                self.targets("targets", targets)?;
+                self.pick("path", path)?;
+                match (count, spacing) {
+                    (Some(count), None) => {
+                        if *count < 2 {
+                            return Err(self.refuse("count", Reason::TooFew(2)));
+                        }
+                        if *count > limits::COPIES {
+                            return Err(
+                                self.refuse("count", Reason::TooMany(limits::COPIES as usize))
+                            );
+                        }
+                        Ok(())
+                    }
+                    (None, Some(spacing)) => self.positive("spacing", *spacing),
+                    (Some(_), Some(_)) => Err(self.refuse("spacing", Reason::Both("count"))),
+                    (None, None) => Err(self.refuse("count", Reason::Missing)),
+                }
+            }
+            Operation::GridArray {
+                targets,
+                inside,
+                column_spacing,
+                row_spacing,
+            } => {
+                self.targets("targets", targets)?;
+                self.point("inside", *inside)?;
+                self.positive("column_spacing", *column_spacing)?;
+                if let Some(row_spacing) = row_spacing {
+                    self.positive("row_spacing", *row_spacing)?;
+                }
+                Ok(())
             }
         }
     }

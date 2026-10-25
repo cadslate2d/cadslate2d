@@ -1,16 +1,22 @@
-//! CIRCLE: by centre and radius, centre and diameter, two points, or three.
+//! CIRCLE: by centre and radius, centre and diameter, two points, or
+//! three; or tangent to two objects with a radius (`Ttr`), or to three
+//! (`TTT`) — kept tangent to them (#273, `placement`).
 
 use cad_core::Point2;
 use cad_core::tolerance::LinearTolerance;
 use cad_document::{CircleEntity, Entity};
 use cad_geometry::Circle;
+use cad_geometry::tangent::tangent_to_three;
 use cad_input::{ExpectedInput, Keyword};
 
+use super::placement::{Touched, commit_tangent, meant, tangent_of_radius, touched};
 use crate::{Command, CommandContext, CommandInput, OverlayItem, Prompt, Step};
 
 const THREE_POINT: Keyword = Keyword::new("3P");
 const TWO_POINT: Keyword = Keyword::new("2P");
 const DIAMETER: Keyword = Keyword::new("Diameter");
+const TAN_TAN_RADIUS: Keyword = Keyword::new("Ttr");
+const TAN_TAN_TAN: Keyword = Keyword::new("TTT");
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
 
 #[derive(Debug)]
@@ -31,6 +37,16 @@ enum State {
     ThreePoint {
         points: Vec<Point2>,
     },
+    /// The objects the circle touches, picked so far: two before the
+    /// radius, or three.
+    Tangents {
+        touched: Vec<Touched>,
+        of: usize,
+    },
+    /// The radius of a circle tangent to two objects.
+    TangentRadius {
+        touched: [Touched; 2],
+    },
 }
 
 #[derive(Debug)]
@@ -49,7 +65,10 @@ impl CircleCommand {
     /// `cursor`, when that is already determined.
     fn candidate(&self, cursor: Point2) -> Option<Circle> {
         match &self.state {
-            State::Center | State::TwoPoint { first: None } => None,
+            State::Center
+            | State::TwoPoint { first: None }
+            | State::Tangents { .. }
+            | State::TangentRadius { .. } => None,
             State::Radius { center } => Some(Circle::new(*center, center.distance_to(cursor))),
             State::Diameter { center } => {
                 Some(Circle::new(*center, center.distance_to(cursor) / 2.0))
@@ -83,6 +102,26 @@ fn create(circle: Circle, ctx: &mut CommandContext<'_>) -> Step {
     Step::Finished
 }
 
+/// Commits the tangent circle found, kept tangent to what it touches, and
+/// finishes; or says there is none and finishes.
+fn create_tangent(
+    found: Option<Circle>,
+    touched: &[Touched],
+    ctx: &mut CommandContext<'_>,
+) -> Step {
+    match found {
+        Some(circle) => {
+            commit_tangent(
+                ctx,
+                CircleEntity::new(circle.center, circle.radius).into(),
+                touched,
+            );
+        }
+        None => ctx.message("Circle does not exist."),
+    }
+    Step::Finished
+}
+
 impl Command for CircleCommand {
     fn prompt(&self) -> Prompt {
         Prompt::new(match &self.state {
@@ -96,17 +135,30 @@ impl Command for CircleCommand {
                 1 => "Specify second point on circle",
                 _ => "Specify third point on circle",
             },
+            State::Tangents { touched, .. } => match touched.len() {
+                0 => "Specify point on object for first tangent of circle",
+                1 => "Specify point on object for second tangent of circle",
+                _ => "Specify point on object for third tangent of circle",
+            },
+            State::TangentRadius { .. } => "Specify radius of circle",
         })
     }
 
     fn expected(&self) -> ExpectedInput {
         match &self.state {
-            State::Center => ExpectedInput::point().with_keywords(&[THREE_POINT, TWO_POINT]),
+            State::Center => ExpectedInput::point().with_keywords(&[
+                THREE_POINT,
+                TWO_POINT,
+                TAN_TAN_RADIUS,
+                TAN_TAN_TAN,
+            ]),
             State::Radius { .. } => ExpectedInput::distance().with_keywords(&[DIAMETER]),
             State::Diameter { .. } => ExpectedInput::distance(),
             State::TwoPoint { first: None } => ExpectedInput::point(),
             State::TwoPoint { first: Some(_) } => ExpectedInput::point().with_direct_distance(),
             State::ThreePoint { .. } => ExpectedInput::point(),
+            State::Tangents { .. } => ExpectedInput::object(),
+            State::TangentRadius { .. } => ExpectedInput::distance(),
         }
     }
 
@@ -120,6 +172,46 @@ impl Command for CircleCommand {
             }
             (State::Center, CommandInput::Keyword(keyword)) if keyword == TWO_POINT => {
                 self.state = State::TwoPoint { first: None };
+            }
+            (State::Center, CommandInput::Keyword(keyword)) if keyword == TAN_TAN_RADIUS => {
+                self.state = State::Tangents {
+                    touched: Vec::new(),
+                    of: 2,
+                };
+            }
+            (State::Center, CommandInput::Keyword(keyword)) if keyword == TAN_TAN_TAN => {
+                self.state = State::Tangents {
+                    touched: Vec::new(),
+                    of: 3,
+                };
+            }
+
+            (
+                State::Tangents {
+                    touched: so_far,
+                    of,
+                },
+                CommandInput::Pick { entity, at },
+            ) => {
+                let Some(t) = touched(ctx, entity, at) else {
+                    return Step::Continue;
+                };
+                so_far.push(t);
+                match (so_far.as_slice(), *of) {
+                    ([a, b], 2) => self.state = State::TangentRadius { touched: [*a, *b] },
+                    ([a, b, c], _) => {
+                        let found = tangent_to_three(&a.curve, &b.curve, &c.curve);
+                        return create_tangent(meant(&found, &[*a, *b, *c]), &[*a, *b, *c], ctx);
+                    }
+                    _ => {}
+                }
+            }
+            (State::TangentRadius { touched: [a, b] }, CommandInput::Distance(radius)) => {
+                if !radius.is_finite() || radius <= 0.0 {
+                    ctx.message("The radius must be greater than zero.");
+                    return Step::Continue;
+                }
+                return create_tangent(tangent_of_radius(a, b, radius), &[*a, *b], ctx);
             }
 
             (State::Radius { center }, CommandInput::Distance(radius)) => {
@@ -182,7 +274,7 @@ impl Command for CircleCommand {
             State::Radius { center } | State::Diameter { center } => Some(*center),
             State::TwoPoint { first } => *first,
             State::ThreePoint { points } => points.last().copied(),
-            State::Center => None,
+            State::Center | State::Tangents { .. } | State::TangentRadius { .. } => None,
         }
     }
 }
@@ -217,7 +309,10 @@ mod tests {
     fn center_and_typed_radius() {
         let mut h = Harness::new();
         h.enter("CIRCLE");
-        assert_eq!(h.prompt(), "Specify center point for circle or [3P/2P]:");
+        assert_eq!(
+            h.prompt(),
+            "Specify center point for circle or [3P/2P/Ttr/TTT]:"
+        );
         h.enter("10,20");
         assert_eq!(h.prompt(), "Specify radius of circle or [Diameter]:");
         h.enter("5");

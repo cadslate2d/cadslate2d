@@ -30,6 +30,7 @@ mod polyline;
 mod segment;
 mod select;
 pub mod spline;
+pub mod tangent;
 mod transform;
 mod trim;
 

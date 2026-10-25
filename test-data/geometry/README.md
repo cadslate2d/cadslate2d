@@ -11,12 +11,13 @@ Plain-text cases for the geometry underneath the modify commands, one case per l
 | `extends.txt` | An object, its boundaries, and a pick; the extended object | The other end has not moved; the result passes through the old end; the new end is on a boundary |
 | `lengthens.txt` | An object (or an open polyline), a pick, and a signed length; the lengthened object | The other end has not moved; the length changed by exactly that much; the old end is on the result (or the new end on the old object, when shorter) |
 | `fillets.txt` | A fillet radius or two chamfer distances, two picked objects; both objects as they become and the joint | The joint ends on both objects; a fillet arc has the radius asked for and is tangent to both |
+| `tangents.txt` | Two curves and a radius, or three curves, each with a pick; the tangent circle meant (#273) | It touches every curve; Tan, Tan, Radius has the radius asked for |
 
 **Rule (DESIGN §21.3):** every fixed geometry bug adds a permanent case here, in the same commit as the fix — or, when the bug is too fine for values typed to six places, a regression test beside the code.
 
 ## Running it
 
-All seven files go through one runner, `crates/cad-geometry/tests/regression.rs`:
+All eight files go through one runner, `crates/cad-geometry/tests/regression.rs`:
 
 ```bash
 cargo test -p cad-geometry --test regression

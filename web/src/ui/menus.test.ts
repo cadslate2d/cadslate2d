@@ -88,6 +88,35 @@ describe("the menus of the classic workspace (#247)", () => {
     engine.dispose();
   });
 
+  // #273: the circles tangent to what they touch, and the placements.
+  test("Draw › Circle › Tan, Tan, Radius and Tan, Tan, Tan ask for the objects to touch", () => {
+    for (const [label, keyword] of [
+      ["Tan, Tan, Radius", "Ttr"],
+      ["Tan, Tan, Tan", "TTT"],
+    ] as const) {
+      const entry = item("Draw", "Circle", label);
+      expect("macro" in entry.action && entry.action.macro).toEqual({
+        command: "CIRCLE",
+        steps: [keyword],
+      });
+      const engine = new CadEngine();
+      engine.resize(800, 600);
+      engine.invoke("CIRCLE");
+      engine.submitText(keyword);
+      expect(engine.uiState().prompt).toBe("Specify point on object for first tangent of circle:");
+      engine.dispose();
+    }
+    for (const [label, command] of [
+      ["Tangent Arc", "TANARC"],
+      ["Concentric Circle", "CONCENTRIC"],
+      ["Path Array", "ARRAYPATH"],
+      ["Grid Array", "ARRAYGRID"],
+    ] as const) {
+      const entry = item("Parametric", "Placement", label);
+      expect("macro" in entry.action && entry.action.macro).toEqual({ command });
+    }
+  });
+
   test("every list has a mnemonic per entry, none twice", () => {
     const check = (label: string, entries: readonly MenuEntry[]) => {
       const keys = entries.flatMap((entry) => {

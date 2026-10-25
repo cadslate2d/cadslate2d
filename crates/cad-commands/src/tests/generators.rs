@@ -208,7 +208,11 @@ fn the_same_part_by_command_and_by_intent_is_the_same_drawing() {
         by_command.enter_all(typed);
         made(&by_command);
         let mut by_intent = Harness::new();
-        let intent = parse(&format!(r#"{{"version": 2, "operations": [{operation}]}}"#)).unwrap();
+        let intent = parse(&format!(
+            r#"{{"version": {}, "operations": [{operation}]}}"#,
+            cad_intent::VERSION
+        ))
+        .unwrap();
         by_intent.session.run_intent(&intent).unwrap();
         made(&by_intent);
         assert_eq!(by_intent.entities(), by_command.entities(), "{operation}");

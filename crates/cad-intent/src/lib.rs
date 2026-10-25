@@ -27,12 +27,12 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
-/// the parts (#272).
-pub const READS: [u32; 2] = [1, 2];
+/// the parts (#272), version 3 the placements (#273).
+pub const READS: [u32; 3] = [1, 2, 3];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -395,6 +395,56 @@ pub enum Operation {
         hole_diameter: f64,
         hole_offset: f64,
     },
+
+    // ── placement (#273): placed against existing objects, kept so ──
+    /// A circle tangent to two objects with a `radius`, or to three with
+    /// `third` and no radius; of the circles there are, the one touching
+    /// nearest the picks. Kept tangent to them.
+    TangentCircle {
+        first: Pick,
+        second: Pick,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        third: Option<Pick>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        radius: Option<f64>,
+    },
+    /// An arc of a radius tangent to two objects, between where it touches
+    /// them, the short way: a fillet that trims nothing. Kept tangent, its
+    /// ends on them.
+    TangentArc {
+        first: Pick,
+        second: Pick,
+        radius: f64,
+    },
+    /// A circle about the centre of a circle or an arc, kept concentric.
+    ConcentricCircle {
+        of: Pick,
+        radius: f64,
+    },
+    /// The targets along a curve, from its end nearest the pick: `count`
+    /// of them from end to end — evenly round a closed curve — or one
+    /// every `spacing`. The targets move to the first place. A lone circle
+    /// along a line, an arc, or a circle is kept on it, and its copies its
+    /// size.
+    PathArray {
+        targets: Targets,
+        path: Pick,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        count: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        spacing: Option<f64>,
+    },
+    /// Copies of the targets on a grid through them, `column_spacing`
+    /// across and `row_spacing` up — the same when absent — wherever a
+    /// copy lies wholly inside the closed boundary round `inside`, its
+    /// islands left out.
+    GridArray {
+        targets: Targets,
+        inside: Point,
+        column_spacing: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        row_spacing: Option<f64>,
+    },
 }
 
 fn default_true() -> bool {
@@ -441,6 +491,11 @@ impl Operation {
             Self::BoltCircle { .. } => "bolt_circle",
             Self::RoundFlange { .. } => "round_flange",
             Self::RectangularFlange { .. } => "rectangular_flange",
+            Self::TangentCircle { .. } => "tangent_circle",
+            Self::TangentArc { .. } => "tangent_arc",
+            Self::ConcentricCircle { .. } => "concentric_circle",
+            Self::PathArray { .. } => "path_array",
+            Self::GridArray { .. } => "grid_array",
         }
     }
 }

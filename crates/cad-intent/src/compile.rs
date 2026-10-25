@@ -58,7 +58,7 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 30] = [
+pub const COMMANDS: [&str; 34] = [
     "LINE",
     "PLINE",
     "RECTANG",
@@ -89,6 +89,10 @@ pub const COMMANDS: [&str; 30] = [
     "HOLEPATTERN",
     "BOLTCIRCLE",
     "FLANGE",
+    "TANARC",
+    "CONCENTRIC",
+    "ARRAYPATH",
+    "ARRAYGRID",
 ];
 
 /// Compiles every operation of a validated document, in order.
@@ -516,6 +520,63 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
                 length(*bore_diameter),
                 length(*hole_diameter),
                 length(*hole_offset),
+            ],
+        ),
+        Operation::TangentCircle {
+            first,
+            second,
+            third,
+            radius,
+        } => {
+            let mut steps = Vec::with_capacity(4);
+            match (third, radius) {
+                (Some(third), _) => {
+                    steps.extend([keyword("TTT"), pick(first), pick(second), pick(third)]);
+                }
+                (None, radius) => steps.extend([
+                    keyword("Ttr"),
+                    pick(first),
+                    pick(second),
+                    length(radius.unwrap_or_default()),
+                ]),
+            }
+            ("CIRCLE", steps)
+        }
+        Operation::TangentArc {
+            first,
+            second,
+            radius,
+        } => ("TANARC", vec![pick(first), pick(second), length(*radius)]),
+        Operation::ConcentricCircle { of, radius } => {
+            ("CONCENTRIC", vec![pick(of), length(*radius)])
+        }
+        Operation::PathArray {
+            targets,
+            path,
+            count,
+            spacing,
+        } => {
+            let mut steps = vec![Step::Select(targets.clone()), pick(path)];
+            match (count, spacing) {
+                (Some(count), _) => steps.push(answer(Answer::Number(f64::from(*count)))),
+                (None, spacing) => {
+                    steps.extend([keyword("Measure"), length(spacing.unwrap_or_default())]);
+                }
+            }
+            ("ARRAYPATH", steps)
+        }
+        Operation::GridArray {
+            targets,
+            inside,
+            column_spacing,
+            row_spacing,
+        } => (
+            "ARRAYGRID",
+            vec![
+                Step::Select(targets.clone()),
+                at(*inside),
+                length(*column_spacing),
+                row_spacing.map_or_else(enter, length),
             ],
         ),
     }

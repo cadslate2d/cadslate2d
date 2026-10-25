@@ -219,6 +219,10 @@ const DRAW: Menu = {
       SEPARATOR,
       command("&2 Points", { command: "CIRCLE", steps: ["2P"] }),
       command("&3 Points", { command: "CIRCLE", steps: ["3P"] }),
+      SEPARATOR,
+      // Kept tangent to what they touch (#273).
+      command("&Tan, Tan, Radius", { command: "CIRCLE", steps: ["Ttr"] }),
+      command("T&an, Tan, Tan", { command: "CIRCLE", steps: ["TTT"] }),
     ]),
     command("&Donut", "DONUT"),
     command("&Spline", "SPLINE"),
@@ -340,6 +344,13 @@ const PARAMETRIC: Menu = {
       command("&Hole Pattern", "HOLEPATTERN"),
       command("&Bolt Circle", "BOLTCIRCLE"),
       command("&Flange", "FLANGE"),
+    ]),
+    // Placed against what is there, and kept so (#273).
+    cascade("Pl&acement", [
+      command("Tangent &Arc", "TANARC"),
+      command("&Concentric Circle", "CONCENTRIC"),
+      command("&Path Array", "ARRAYPATH"),
+      command("&Grid Array", "ARRAYGRID"),
     ]),
     SEPARATOR,
     command("&Delete Constraints", "DELCONSTRAINT"),
