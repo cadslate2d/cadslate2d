@@ -16,6 +16,26 @@ fn levels() -> Vec<Corpus> {
     levels
 }
 
+/// L2 is what #274 says: at least 40 requests for parts, placements,
+/// constraints, and parametric edits, in both languages, refusals the
+/// solver explains among them.
+#[test]
+fn l2_asks_for_parts_and_parametric_edits() {
+    let l2 = Corpus::read(&root().join("l2")).unwrap();
+    assert!(l2.cases.len() >= 40, "{} cases", l2.cases.len());
+    for language in ["en", "pt"] {
+        assert!(
+            l2.cases.iter().filter(|c| c.language == language).count() >= 20,
+            "{language}"
+        );
+    }
+    assert!(
+        l2.cases
+            .iter()
+            .any(|c| matches!(c.expected, Expected::Refused(_)))
+    );
+}
+
 /// L1 is what #261 says: at least 50 requests, in both languages, with
 /// requests the operations cannot do and refusals among them; and no case
 /// is wrong itself.
@@ -87,6 +107,15 @@ fn the_language_of_a_reply_is_told_by_its_common_words() {
     assert_eq!(
         language("Создам сетку из 12 окружностей радиусом 5 мм."),
         "other"
+    );
+    // A diameter's sign is a drafter's, in any language.
+    assert_eq!(
+        language("I’ll create six Ø10 holes on a 100 mm pitch circle."),
+        "en"
+    );
+    assert_eq!(
+        language("A proposta cria seis furos de Ø10 num círculo primitivo de 100 mm."),
+        "pt"
     );
 }
 

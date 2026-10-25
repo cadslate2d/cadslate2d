@@ -3,10 +3,10 @@
 // answers that address from here. It follows the service's routes and their
 // shapes (cadslate2d-ai-service's README) — sign-in links into a mail sink
 // the test reads, sessions, the monthly allowance, interpret and explain
-// answered from the L1 corpus's recordings of the real model
-// (test-data/ai/l1/recordings.jsonl, #261), outcomes — so the panel's tests
+// answered from the corpus's recordings of the real model
+// (test-data/ai/<level>/recordings.jsonl, #261, #274), outcomes — so the panel's tests
 // need nothing that is not in this repository.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import type { Page, Route } from "@playwright/test";
 
 export const AI_SERVICE = "https://ai-service.e2e.invalid";
@@ -18,10 +18,15 @@ interface Answer {
   explanation?: string;
 }
 
-/** The corpus's recorded answers, by prompt: the model's last attempt at each. */
+const CORPUS = new URL("../../test-data/ai/", import.meta.url);
+
+/** The corpus's recorded answers, every level's, by prompt: the model's last attempt at each. */
 const recorded: ReadonlyMap<string, Answer> = new Map(
-  readFileSync(new URL("../../test-data/ai/l1/recordings.jsonl", import.meta.url), "utf8")
-    .split("\n")
+  readdirSync(CORPUS, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .flatMap((entry) =>
+      readFileSync(new URL(`${entry.name}/recordings.jsonl`, CORPUS), "utf8").split("\n"),
+    )
     .filter((line) => line.trim())
     .map((line) => {
       const recording = JSON.parse(line) as {
@@ -40,7 +45,11 @@ const recorded: ReadonlyMap<string, Answer> = new Map(
 export interface Interpreted {
   prompt: string;
   unit?: string;
-  context?: { layers: string[]; objects: { id: number; kind: string; geometry: string }[] };
+  context?: {
+    layers: string[];
+    objects: { id: number; kind: string; geometry: string }[];
+    parameters?: string[];
+  };
   previous?: { prompt: string; intent: unknown };
 }
 

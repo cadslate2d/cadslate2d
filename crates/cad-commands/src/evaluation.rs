@@ -459,12 +459,12 @@ const LANGUAGES: [(&str, &[&str]); 3] = [
 ];
 
 /// The language `text` is most likely written in, by its common words;
-/// any other script is none of them.
+/// any other script is none of them. A drafter's `Ø` is no script.
 pub fn language(text: &str) -> &'static str {
     if text.chars().any(|c| {
         c.is_alphabetic()
             && !c.is_ascii()
-            && !"áâãàçéêíóôõúüñ".contains(c.to_lowercase().next().unwrap_or(c))
+            && !"áâãàçéêíóôõúüñø".contains(c.to_lowercase().next().unwrap_or(c))
     }) {
         return "other";
     }

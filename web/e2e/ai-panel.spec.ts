@@ -1,21 +1,13 @@
-// The AI panel (#260, #261), against the stand-in service of ai-fake.ts and
-// the L1 corpus's recorded model answers: signing in by an emailed link, a
-// request and its preview, Accept as one undo, Reject, Revise, the consent
-// for drawing context, a creation and a selection edit as they land in the
-// drawing, a refusal explained, the allowance, signing out and deleting the
-// account — and everything else working signed out.
+// The AI panel (#260, #261, #274), against the stand-in service of
+// ai-fake.ts and the corpus's recorded model answers: signing in by an
+// emailed link, a request and its preview, Accept as one undo, Reject,
+// Revise, the consent for drawing context, a creation and a selection edit
+// as they land in the drawing, a part made and then widened by its
+// parameter, a refusal explained, the allowance, signing out and deleting
+// the account — and everything else working signed out.
 import { expect, test, type Page } from "@playwright/test";
 import { fakeAiService, type FakeAiService } from "./ai-fake";
-import {
-  chooseMenu,
-  downloadFrom,
-  enter,
-  entities,
-  group,
-  num,
-  openApp,
-  rendererStats,
-} from "./support";
+import { chooseMenu, downloadFrom, enter, entities, num, openApp, rendererStats } from "./support";
 
 /** After a page load: the canvas, then its first frame. */
 async function loaded(page: Page) {
@@ -31,6 +23,15 @@ const PLATE =
   "A 120 by 80 rectangle with its lower left corner at the origin, and a hole of diameter 10 at each corner, 10 in from both edges";
 const HOLES = "Make these holes diameter 6";
 const TOO_BIG = "Fillet these lines with a radius of 50";
+const PART =
+  "Make a 120 × 80 mm plate with its lower left corner at the origin and four Ø8 holes 10 mm in from the corners";
+const WIDER = "Make this plate 20 mm wider without moving the holes relative to the edges";
+
+/** The lines of the drawing as DXFOUT writes them: the x of each end. */
+async function lineXs(page: Page): Promise<number[]> {
+  const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+  return entities(file.text, "LINE").flatMap((line) => [num(line, 10), num(line, 11)]);
+}
 
 /** The circles of the drawing as DXFOUT writes them: centre and radius. */
 async function circles(page: Page): Promise<[number, number, number][]> {
@@ -112,7 +113,7 @@ test("a request is previewed, accepted as one undo, rejected, and revised", asyn
     prompt: BIGGER,
     previous: {
       prompt: CIRCLE,
-      intent: { version: 1, operations: [{ op: "circle", center: [100, 100], radius: 25 }] },
+      intent: { operations: [{ op: "circle", center: [100, 100], radius: 25 }] },
     },
   });
   await proposal.getByRole("button", { name: "Accept" }).click();
@@ -177,21 +178,61 @@ test("a creation lands in the drawing as the model proposed it", async ({ page }
   const service = await fakeAiService(page);
   await openApp(page);
   await signIn(page, service);
+  // The model answers with the plate part: four sides and four holes.
   await ask(page, PLATE);
   const proposal = panel(page).getByTestId("ai-proposal");
-  await expect(proposal).toContainText("Adds 5 objects");
+  await expect(proposal).toContainText("Adds 8 objects");
   await proposal.getByRole("button", { name: "Accept" }).click();
-  expect(await contents(page)).toBe("5 objects: 4 circles, 1 polyline");
+  expect(await contents(page)).toBe("8 objects: 4 lines, 4 circles");
   expect(await circles(page)).toEqual([
     [10, 10, 5],
     [10, 70, 5],
     [110, 10, 5],
     [110, 70, 5],
   ]);
-  const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
-  const plate = entities(file.text, "LWPOLYLINE")[0];
-  expect(group(plate, 70)).toBe("1");
-  expect(entities(file.text, "LWPOLYLINE")).toHaveLength(1);
+});
+
+// #274: a part by prompt, then widened by prompt — the model sets its width
+// parameter from the context, and the holes keep their places from the edges.
+test("a plate made by prompt, then widened by prompt with its holes following", async ({
+  page,
+}) => {
+  const service = await fakeAiService(page);
+  await openApp(page);
+  await signIn(page, service);
+  await ask(page, PART);
+  const proposal = panel(page).getByTestId("ai-proposal");
+  await expect(proposal).toContainText("Adds 8 objects");
+  await proposal.getByRole("button", { name: "Accept" }).click();
+  await expect(proposal).toHaveCount(0);
+
+  await enter(page, "ALL");
+  await page.keyboard.press("Escape");
+  await ask(page, WIDER);
+  const consent = panel(page).getByTestId("ai-consent");
+  await expect(consent).toContainText("d1 = 120: horizontal distance");
+  await consent.getByRole("button", { name: "Send with these" }).click();
+  await expect.poll(() => service.interpreted.length).toBe(2);
+  expect(service.interpreted[1]?.context?.parameters).toContain(
+    "d1 = 120: horizontal distance, id 4 end to id 2 start",
+  );
+  await expect(proposal).toContainText("Changes");
+  await proposal.getByRole("button", { name: "Accept" }).click();
+  await expect(proposal).toHaveCount(0);
+
+  const xs = await lineXs(page);
+  const [left, right] = [Math.min(...xs), Math.max(...xs)];
+  expect(right - left).toBeCloseTo(140, 6);
+  const holes = await circles(page);
+  expect(holes).toHaveLength(4);
+  for (const [x, , r] of holes) {
+    expect(r).toBeCloseTo(4, 6);
+    expect(Math.min(x - left, right - x)).toBeCloseTo(10, 6);
+  }
+  // One U takes the widening back.
+  await enter(page, "U");
+  const back = await lineXs(page);
+  expect(Math.max(...back) - Math.min(...back)).toBeCloseTo(120, 6);
 });
 
 test("an edit of the selection, by the IDs the context gave out", async ({ page }) => {
