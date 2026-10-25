@@ -288,6 +288,29 @@ const MODIFY: Menu = {
   ],
 };
 
+// The Parametric menu came with constraints in AutoCAD 2010 (ADR-0038, #267),
+// between Modify and Window; it is placed there.
+const PARAMETRIC: Menu = {
+  label: "&Parametric",
+  items: [
+    cascade("&Geometric Constraints", [
+      command("&Coincident", "GCCOINCIDENT"),
+      command("Co&llinear", "GCCOLLINEAR"),
+      command("Co&ncentric", "GCCONCENTRIC"),
+      command("&Fix", "GCFIX"),
+      command("&Parallel", "GCPARALLEL"),
+      command("P&erpendicular", "GCPERPENDICULAR"),
+      command("&Horizontal", "GCHORIZONTAL"),
+      command("&Vertical", "GCVERTICAL"),
+      command("&Tangent", "GCTANGENT"),
+      command("&Symmetric", "GCSYMMETRIC"),
+      command("E&qual", "GCEQUAL"),
+    ]),
+    SEPARATOR,
+    command("&Delete Constraints", "DELCONSTRAINT"),
+  ],
+};
+
 const HELP: Menu = {
   label: "&Help",
   items: [{ kind: "item", label: "&About CadSlate2D...", action: { dialog: "about" } }],
@@ -304,5 +327,6 @@ export const MENUS: readonly Menu[] = [
   DRAW,
   DIMENSION,
   MODIFY,
+  PARAMETRIC,
   HELP,
 ];

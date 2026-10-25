@@ -1891,7 +1891,12 @@ impl Session {
             host_request: &mut self.host_request,
             space_request: &mut self.space_request,
         };
-        if run(active.command.as_mut(), &mut ctx) == Step::Continue {
+        let step = run(active.command.as_mut(), &mut ctx);
+        // An edit the constraints refused (ADR-0038) says so.
+        for why in self.drawing.take_refusals() {
+            self.log.push(why);
+        }
+        if step == Step::Continue {
             self.active = Some(active);
         } else {
             self.drawing.end_group();

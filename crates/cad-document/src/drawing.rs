@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 mod merge;
+mod settle;
 use std::fmt;
 use std::sync::Arc;
 
@@ -97,6 +98,9 @@ pub struct Drawing {
     views: NamedViewTable,
     /// Multileader styles (#240).
     mleader_styles: MLeaderStyleTable,
+    /// Why transactions were not applied since the session last asked
+    /// (ADR-0038): the edits the constraints refused.
+    refusals: Vec<String>,
 }
 
 /// How many changes the journal remembers; a scene further behind than
@@ -132,6 +136,7 @@ impl Clone for Drawing {
             layer_states: self.layer_states.clone(),
             views: self.views.clone(),
             mleader_styles: self.mleader_styles.clone(),
+            refusals: self.refusals.clone(),
         }
     }
 }
@@ -148,6 +153,9 @@ pub struct ApplyReport {
     pub replaced: Vec<EntityId>,
     /// Whether a row of any table changed: a layer made, renamed, removed.
     pub tables_changed: bool,
+    /// Why the transaction was not applied: it could not be settled with
+    /// the drawing's constraints (ADR-0038). Nothing changed.
+    pub refused: Option<String>,
 }
 
 /// Everything a drawing read from a file is made of (#240): the tables'
@@ -606,6 +614,7 @@ impl Drawing {
             layer_states: initial_layer_states(),
             views: initial_named_views(),
             mleader_styles: initial_mleader_styles(),
+            refusals: Vec::new(),
         }
     }
 
@@ -1180,6 +1189,13 @@ impl Drawing {
         Ok(id)
     }
 
+    /// Why transactions were refused since this was last asked, oldest
+    /// first: each an edit the constraints could not be settled with
+    /// (ADR-0038). The session writes them to the log.
+    pub fn take_refusals(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.refusals)
+    }
+
     /// The drawing's constraints (ADR-0038), in the order they were made.
     pub fn constraints(&self) -> &ConstraintTable {
         &self.constraints
@@ -1503,6 +1519,7 @@ impl Drawing {
             touched: HashSet::new(),
             others: Vec::new(),
             space: LayoutId::MODEL,
+            held: BTreeSet::new(),
         }
     }
 
@@ -1795,6 +1812,9 @@ pub struct TransactionBuilder<'d> {
     /// The space new entities go into (#191): the model, unless the
     /// transaction was made [`in_space`](Self::in_space).
     space: LayoutId,
+    /// Entities whose every unknown is held when the transaction settles
+    /// its constraints (ADR-0038).
+    held: BTreeSet<EntityId>,
 }
 
 impl TransactionBuilder<'_> {
@@ -3358,9 +3378,20 @@ impl TransactionBuilder<'_> {
 
     /// Applies the changes as one undo step and discards any redo branch.
     /// An empty transaction is a no-op: no history entry, no new revision.
-    pub fn commit(self) -> ApplyReport {
+    /// Applies the transaction and records it in the history. First the
+    /// constraints it reaches are settled, inside it (ADR-0038): an edit
+    /// that cannot be settled is not applied, and the report — and
+    /// [`Drawing::take_refusals`] — says why.
+    pub fn commit(mut self) -> ApplyReport {
         if self.changes.is_empty() {
             return ApplyReport::default();
+        }
+        if let Err(why) = self.settle() {
+            self.drawing.refusals.push(why.clone());
+            return ApplyReport {
+                refused: Some(why),
+                ..ApplyReport::default()
+            };
         }
         let transaction = Transaction::new(self.changes);
         let report = self.drawing.apply(&transaction);

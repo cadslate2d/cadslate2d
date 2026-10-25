@@ -79,6 +79,40 @@ impl Part {
     }
 }
 
+impl Part {
+    /// Where this point part of `entity` is; `None` for an edge, or a part
+    /// the entity does not have.
+    pub fn position_on(self, entity: &Entity) -> Option<Point2> {
+        match (entity, self) {
+            (Entity::Line(line), Part::Start) => Some(line.start),
+            (Entity::Line(line), Part::End) => Some(line.end),
+            (Entity::Circle(circle), Part::Center) => Some(circle.center),
+            (Entity::Arc(arc), Part::Center) => Some(arc.center),
+            (Entity::Arc(arc), Part::Start) => Some(arc.arc().start_point()),
+            (Entity::Arc(arc), Part::End) => Some(arc.arc().end_point()),
+            (Entity::Polyline(polyline), Part::Vertex(n)) => {
+                polyline.vertices.get(n as usize).copied()
+            }
+            (Entity::Point(point), Part::Point) => Some(point.position),
+            _ => None,
+        }
+    }
+
+    /// Every point part `entity` has, in a fixed order.
+    pub fn points_of(entity: &Entity) -> Vec<Part> {
+        match entity {
+            Entity::Line(_) => vec![Part::Start, Part::End],
+            Entity::Circle(_) => vec![Part::Center],
+            Entity::Arc(_) => vec![Part::Start, Part::End, Part::Center],
+            Entity::Polyline(polyline) => (0..polyline.vertices.len() as u32)
+                .map(Part::Vertex)
+                .collect(),
+            Entity::Point(_) => vec![Part::Point],
+            _ => Vec::new(),
+        }
+    }
+}
+
 /// A part of one entity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Reference {

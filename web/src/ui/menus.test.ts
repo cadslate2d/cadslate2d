@@ -35,6 +35,8 @@ describe("the menus of the classic workspace (#247)", () => {
       "Draw",
       "Dimension",
       "Modify",
+      // AutoCAD 2010's, for constraints (#267).
+      "Parametric",
       "Help",
     ]);
   });

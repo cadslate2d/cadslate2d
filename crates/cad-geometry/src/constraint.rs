@@ -332,7 +332,9 @@ impl Default for Tolerances {
 pub struct Solution {
     /// The settled unknowns; the system's own where it could not be solved.
     pub values: Vec<f64>,
-    /// The equations left unsatisfied, by index: empty when solved.
+    /// The equations left unsatisfied, by index, the most broken first —
+    /// residuals at the least-squares compromise, an angle's weighed as a
+    /// length — and by index among equals: empty when solved.
     pub unsatisfied: Vec<usize>,
     /// Gauss–Newton steps taken, over every component.
     pub iterations: usize,
@@ -639,8 +641,21 @@ pub fn solve(system: &System, tolerances: Tolerances) -> Solution {
         {
             continue;
         }
+        let broken = |values: &[f64], unsatisfied: &mut Vec<(usize, f64)>| {
+            for &i in &indices {
+                let equation = &system.equations[i];
+                if !holds(equation, values, linear, angular) {
+                    let weight = if equation.measure() == Measure::Angle {
+                        scale
+                    } else {
+                        1.0
+                    };
+                    unsatisfied.push((i, equation.residual(values).abs() * weight));
+                }
+            }
+        };
         if free.is_empty() {
-            unsatisfied.extend(indices);
+            broken(&values, &mut unsatisfied);
             continue;
         }
         let group = Group {
@@ -657,15 +672,11 @@ pub fn solve(system: &System, tolerances: Tolerances) -> Solution {
                 values[param] = settled[param];
             }
         } else {
-            unsatisfied.extend(
-                indices
-                    .iter()
-                    .copied()
-                    .filter(|&i| !holds(&system.equations[i], &settled, linear, angular)),
-            );
+            broken(&settled, &mut unsatisfied);
         }
     }
-    unsatisfied.sort_unstable();
+    unsatisfied.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+    let unsatisfied: Vec<usize> = unsatisfied.into_iter().map(|(i, _)| i).collect();
     // Nothing is half-applied: a held unknown can part one constraint
     // graph into components, and one settling while another cannot would
     // leave geometry half-moved.
