@@ -9,6 +9,10 @@ use std::sync::Arc;
 use cad_core::{Aabb, EntityId, LengthUnit, Vec2};
 
 use crate::block::{Block, BlockId, BlockTable, initial_blocks};
+use crate::constraint::{
+    Constraint, ConstraintError, ConstraintId, ConstraintTable, Reference, Shape,
+    initial_constraints,
+};
 use crate::dim_style::{DimStyle, DimStyleError, DimStyleId, DimStyleTable, initial_dim_styles};
 use crate::dimension::DimensionError;
 use crate::group::{Group, GroupId, GroupTable, initial_groups};
@@ -85,6 +89,8 @@ pub struct Drawing {
     layouts: LayoutTable,
     /// Named sets of objects picked together (#214).
     groups: GroupTable,
+    /// Geometric and dimensional constraints (ADR-0038).
+    constraints: ConstraintTable,
     /// Saved layer states (#228).
     layer_states: LayerStateTable,
     /// Named views (#235).
@@ -122,6 +128,7 @@ impl Clone for Drawing {
             journal: self.journal.clone(),
             layouts: self.layouts.clone(),
             groups: self.groups.clone(),
+            constraints: self.constraints.clone(),
             layer_states: self.layer_states.clone(),
             views: self.views.clone(),
             mleader_styles: self.mleader_styles.clone(),
@@ -197,6 +204,14 @@ pub enum TransactionError {
     DuplicateLayerStateName(LayerStateId),
     /// The group does not exist, in the drawing or after this transaction.
     UnknownGroup(GroupId),
+    /// The constraint does not exist, in the drawing or after this
+    /// transaction.
+    UnknownConstraint(ConstraintId),
+    /// The constraint cannot be a row of the drawing (ADR-0038).
+    BadConstraint(ConstraintError),
+    /// This dimensional constraint already has the name, give or take its
+    /// case.
+    DuplicateConstraintName(ConstraintId),
     /// The name cannot be a group's name.
     BadGroupName(NameError),
     /// This group already has the name, give or take its case.
@@ -339,6 +354,11 @@ impl fmt::Display for TransactionError {
                 write!(f, "layer state {id} already has that name")
             }
             Self::UnknownGroup(id) => write!(f, "group {id} does not exist"),
+            Self::UnknownConstraint(id) => write!(f, "constraint {id} does not exist"),
+            Self::BadConstraint(error) => write!(f, "bad constraint: {error}"),
+            Self::DuplicateConstraintName(id) => {
+                write!(f, "constraint {id} already has that name")
+            }
             Self::BadGroupName(error) => write!(f, "bad group name: {error:?}"),
             Self::DuplicateGroupName(id) => write!(f, "group {id} already has that name"),
             Self::EmptyGroup => write!(f, "a group needs a member"),
@@ -582,6 +602,7 @@ impl Drawing {
             journal: VecDeque::new(),
             layouts: initial_layouts(),
             groups: initial_groups(),
+            constraints: initial_constraints(),
             layer_states: initial_layer_states(),
             views: initial_named_views(),
             mleader_styles: initial_mleader_styles(),
@@ -1159,6 +1180,21 @@ impl Drawing {
         Ok(id)
     }
 
+    /// The drawing's constraints (ADR-0038), in the order they were made.
+    pub fn constraints(&self) -> &ConstraintTable {
+        &self.constraints
+    }
+
+    /// The constraints that refer to `id`.
+    pub fn constraints_of(
+        &self,
+        id: EntityId,
+    ) -> impl Iterator<Item = (ConstraintId, &Constraint)> {
+        self.constraints
+            .iter()
+            .filter(move |(_, constraint)| constraint.refers_to(id))
+    }
+
     /// The groups `id` is a member of.
     pub fn groups_of(&self, id: EntityId) -> impl Iterator<Item = (GroupId, &Group)> {
         self.groups
@@ -1543,6 +1579,8 @@ impl Drawing {
                 | Change::Layout(_)
                 // A group draws nothing (#214).
                 | Change::Group(_)
+                // Nor does a constraint: what it moves is an entity change.
+                | Change::Constraint(_)
                 // Nor does a saved layer state (#228): restoring one
                 // changes layers, which say so for themselves.
                 | Change::LayerState(_)
@@ -1616,6 +1654,10 @@ impl Drawing {
                 }
                 Change::Group(change) => {
                     self.groups.apply(change);
+                    report.tables_changed = true;
+                }
+                Change::Constraint(change) => {
+                    self.constraints.apply(change);
                     report.tables_changed = true;
                 }
                 Change::LayerState(change) => {
@@ -1878,6 +1920,23 @@ impl TransactionBuilder<'_> {
         let before = self.existing(id)?;
         viewport_placeable(&before.entity, space)?;
         let after = before.in_space(space);
+        // A constraint relates entities of one space (ADR-0038): one that
+        // relates this entity to another left behind goes.
+        for (constraint_id, constraint) in self.constraints_now() {
+            let parted = constraint.refers_to(id)
+                && constraint.references.iter().any(|r| {
+                    r.entity != id
+                        && self
+                            .record_now(r.entity)
+                            .is_some_and(|record| record.space != space)
+                });
+            if parted {
+                self.push_other(Change::Constraint(TableChange::Remove {
+                    id: constraint_id,
+                    row: constraint,
+                }));
+            }
+        }
         self.push(EntityChange::Replace { id, before, after });
         Ok(())
     }
@@ -2004,10 +2063,19 @@ impl TransactionBuilder<'_> {
     }
 
     /// Removes an existing entity. It leaves its groups in the same
-    /// transaction, and a group it leaves empty goes too (#214).
+    /// transaction, and a group it leaves empty goes too (#214); its
+    /// constraints go with it (ADR-0038).
     pub fn remove(&mut self, id: EntityId) -> Result<(), TransactionError> {
         let record = self.existing(id)?;
         self.push(EntityChange::Remove { id, record });
+        for (constraint_id, constraint) in self.constraints_now() {
+            if constraint.refers_to(id) {
+                self.push_other(Change::Constraint(TableChange::Remove {
+                    id: constraint_id,
+                    row: constraint,
+                }));
+            }
+        }
         for (group_id, group) in self.groups_now() {
             if group.contains(id) {
                 let mut after = group.clone();
@@ -2253,6 +2321,53 @@ impl TransactionBuilder<'_> {
         Ok(changed)
     }
 
+    /// Adds a constraint between parts of entities the drawing has and
+    /// keeps, and returns its ID (ADR-0038). Its parts must be what its
+    /// kind relates, of entities in one space; a dimensional constraint's
+    /// name must be allowed and not taken.
+    pub fn add_constraint(
+        &mut self,
+        constraint: Constraint,
+    ) -> Result<ConstraintId, TransactionError> {
+        self.check_constraint(&constraint, None)?;
+        let id = self.drawing.constraints.allocate();
+        self.push_other(Change::Constraint(TableChange::Insert {
+            id,
+            row: constraint,
+        }));
+        Ok(id)
+    }
+
+    /// Replaces a constraint by another: a new value, a new name. The same
+    /// rules hold as for [`add_constraint`](Self::add_constraint).
+    pub fn replace_constraint(
+        &mut self,
+        id: ConstraintId,
+        constraint: Constraint,
+    ) -> Result<(), TransactionError> {
+        let before = self
+            .constraint_now(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownConstraint(id))?;
+        self.check_constraint(&constraint, Some(id))?;
+        self.push_other(Change::Constraint(TableChange::Replace {
+            id,
+            before,
+            after: constraint,
+        }));
+        Ok(())
+    }
+
+    /// Removes a constraint; the geometry stays where it is.
+    pub fn remove_constraint(&mut self, id: ConstraintId) -> Result<(), TransactionError> {
+        let row = self
+            .constraint_now(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownConstraint(id))?;
+        self.push_other(Change::Constraint(TableChange::Remove { id, row }));
+        Ok(())
+    }
+
     /// Removes a group; its members stay.
     pub fn remove_group(&mut self, id: GroupId) -> Result<(), TransactionError> {
         let row = self
@@ -2276,6 +2391,29 @@ impl TransactionBuilder<'_> {
         let before = self.existing(id)?;
         viewport_placeable(&entity, before.space)?;
         let after = before.with_entity(entity);
+        // A constraint the new geometry no longer fits — a vertex taken
+        // away, a circle become a line under a concentric — goes
+        // (ADR-0038).
+        for (constraint_id, constraint) in self.constraints_now() {
+            if !constraint.refers_to(id) {
+                continue;
+            }
+            let lost = constraint
+                .check(|r| {
+                    if r.entity == id {
+                        r.part.shape_on(&after.entity)
+                    } else {
+                        r.part.shape_on(&self.record_now(r.entity)?.entity)
+                    }
+                })
+                .is_err();
+            if lost {
+                self.push_other(Change::Constraint(TableChange::Remove {
+                    id: constraint_id,
+                    row: constraint,
+                }));
+            }
+        }
         self.push(EntityChange::Replace { id, before, after });
         Ok(())
     }
@@ -2726,6 +2864,7 @@ impl TransactionBuilder<'_> {
             | Change::Block(_)
             | Change::Layout(_)
             | Change::Group(_)
+            | Change::Constraint(_)
             | Change::LayerState(_)
             | Change::View(_)
             | Change::MLeaderStyle(_)
@@ -3410,6 +3549,89 @@ impl TransactionBuilder<'_> {
             Some(TableChange::Replace { after, .. }) => Some(after),
             None => self.drawing.groups.get(id),
         }
+    }
+
+    /// The constraint `id` as it will be once this transaction commits.
+    fn constraint_now(&self, id: ConstraintId) -> Option<&Constraint> {
+        let change = self.others().rev().find_map(|change| match change {
+            Change::Constraint(change) if change.id() == id => Some(change),
+            _ => None,
+        });
+        match change {
+            Some(TableChange::Remove { .. }) => None,
+            Some(TableChange::Insert { row, .. }) => Some(row),
+            Some(TableChange::Replace { after, .. }) => Some(after),
+            None => self.drawing.constraints.get(id),
+        }
+    }
+
+    /// Every constraint as it will be once this transaction commits.
+    fn constraints_now(&self) -> Vec<(ConstraintId, Constraint)> {
+        let mut ids: BTreeSet<ConstraintId> =
+            self.drawing.constraints.iter().map(|(id, _)| id).collect();
+        ids.extend(self.others().filter_map(|change| match change {
+            Change::Constraint(change) => Some(change.id()),
+            _ => None,
+        }));
+        ids.into_iter()
+            .filter_map(|id| self.constraint_now(id).map(|c| (id, c.clone())))
+            .collect()
+    }
+
+    /// The record of `id` as it will be once this transaction commits.
+    fn record_now(&self, id: EntityId) -> Option<EntityRecord> {
+        if !self.touched.contains(&id) {
+            return self.drawing.entities.record(id).cloned();
+        }
+        self.changes.iter().rev().find_map(|change| match change {
+            Change::Entity(EntityChange::Insert { id: at, record })
+            | Change::Entity(EntityChange::Replace {
+                id: at,
+                after: record,
+                ..
+            }) if *at == id => Some(Some(record.clone())),
+            Change::Entity(EntityChange::Remove { id: at, .. }) if *at == id => Some(None),
+            _ => None,
+        })?
+    }
+
+    /// Refuses a constraint that cannot be a row: parts its entities do not
+    /// have, entities in different spaces, a name taken (`except` its own).
+    fn check_constraint(
+        &self,
+        constraint: &Constraint,
+        except: Option<ConstraintId>,
+    ) -> Result<(), TransactionError> {
+        let mut space = None;
+        for reference in &constraint.references {
+            let record =
+                self.record_now(reference.entity)
+                    .ok_or(TransactionError::BadConstraint(
+                        ConstraintError::UnknownEntity(reference.entity),
+                    ))?;
+            if space.is_some_and(|space| space != record.space) {
+                return Err(TransactionError::BadConstraint(
+                    ConstraintError::SpacesDiffer,
+                ));
+            }
+            space = Some(record.space);
+        }
+        let shape = |reference: Reference| -> Option<Shape> {
+            let record = self.record_now(reference.entity)?;
+            reference.part.shape_on(&record.entity)
+        };
+        constraint
+            .check(shape)
+            .map_err(TransactionError::BadConstraint)?;
+        if constraint.kind.is_dimensional() {
+            let taken = self.constraints_now().into_iter().find(|(id, other)| {
+                Some(*id) != except && other.name.eq_ignore_ascii_case(&constraint.name)
+            });
+            if let Some((id, _)) = taken {
+                return Err(TransactionError::DuplicateConstraintName(id));
+            }
+        }
+        Ok(())
     }
 
     /// Every group as it will be once this transaction commits.
@@ -4950,6 +5172,131 @@ mod tests {
         let imported = Drawing::new().with_unit(Some(LengthUnit::Inches));
         assert_eq!(imported.unit(), Some(LengthUnit::Inches));
         assert!(!imported.can_undo());
+    }
+
+    /// ADR-0038: a constraint is a row between parts its entities have, in
+    /// one space; a dimension has a name no other has; an entity removed
+    /// or reshaped out of a constraint's reach takes it along, and undo
+    /// brings both back.
+    #[test]
+    fn constraints_relate_parts_entities_have_and_go_with_them() {
+        use crate::constraint::{Axis, ConstraintError, Kind, Part, Reference};
+        let mut drawing = Drawing::new();
+        let a = create(&mut drawing, line(0.0, 0.0, 100.0, 0.0));
+        let b = create(&mut drawing, line(100.0, 0.0, 100.0, 50.0));
+        let at = |id, part| Reference::new(id, part);
+        let corner = Constraint::geometric(
+            crate::constraint::Kind::Coincident,
+            vec![at(a, Part::End), at(b, Part::Start)],
+        );
+        let width = Constraint::dimensional(
+            "d1",
+            Kind::Distance {
+                axis: Axis::Horizontal,
+                value: 100.0,
+            },
+            vec![at(a, Part::Start), at(a, Part::End)],
+        );
+        let mut tx = drawing.transaction();
+        let joined = tx.add_constraint(corner.clone()).unwrap();
+        let measured = tx.add_constraint(width.clone()).unwrap();
+        // The same name again, in any case, is refused.
+        let mut twice = width.clone();
+        twice.name = "D1".to_owned();
+        assert_eq!(
+            tx.add_constraint(twice),
+            Err(TransactionError::DuplicateConstraintName(measured))
+        );
+        // A line has no centre; a circle edge is not a straight one.
+        assert_eq!(
+            tx.add_constraint(Constraint::geometric(
+                Kind::Concentric,
+                vec![at(a, Part::Edge), at(b, Part::Edge)]
+            )),
+            Err(TransactionError::BadConstraint(ConstraintError::WrongParts))
+        );
+        assert_eq!(
+            tx.add_constraint(Constraint::geometric(
+                Kind::Fix { at: Point2::ORIGIN },
+                vec![at(a, Part::Center)]
+            )),
+            Err(TransactionError::BadConstraint(
+                ConstraintError::NoSuchPart(at(a, Part::Center))
+            ))
+        );
+        let gone = EntityId::from_raw(999);
+        assert_eq!(
+            tx.add_constraint(Constraint::geometric(
+                Kind::Horizontal,
+                vec![at(gone, Part::Edge)]
+            )),
+            Err(TransactionError::BadConstraint(
+                ConstraintError::UnknownEntity(gone)
+            ))
+        );
+        tx.commit();
+        assert_eq!(drawing.constraints().len(), 2);
+        assert_eq!(drawing.constraints_of(b).count(), 1);
+        assert_eq!(drawing.constraints().find("d1"), Some(measured));
+
+        // A new value is a replaced row, undone as one.
+        let mut wider = width.clone();
+        wider.kind = wider.kind.with_value(140.0);
+        let mut tx = drawing.transaction();
+        tx.replace_constraint(measured, wider).unwrap();
+        tx.commit();
+        assert_eq!(
+            drawing.constraints().get(measured).unwrap().kind.value(),
+            Some(140.0)
+        );
+        drawing.undo();
+        assert_eq!(
+            drawing.constraints().get(measured).unwrap().kind.value(),
+            Some(100.0)
+        );
+
+        // Removing the first line takes both constraints; undo returns
+        // the line and both.
+        let mut tx = drawing.transaction();
+        tx.remove(a).unwrap();
+        tx.commit();
+        assert!(drawing.constraints().is_empty());
+        drawing.undo();
+        assert_eq!(drawing.constraints().len(), 2);
+        assert_eq!(drawing.constraints().get(joined), Some(&corner));
+
+        // Replaced by a circle, the second line's start is gone, and the
+        // corner with it; the width, on the first line, stays.
+        let mut tx = drawing.transaction();
+        tx.replace(b, crate::CircleEntity::new(Point2::new(100.0, 0.0), 5.0))
+            .unwrap();
+        tx.commit();
+        assert_eq!(drawing.constraints().get(joined), None);
+        assert!(drawing.constraints().get(measured).is_some());
+        drawing.undo();
+        assert_eq!(drawing.constraints().len(), 2);
+
+        // Entities in different spaces are not constrained together.
+        let mut tx = drawing.transaction();
+        let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+        let there = tx.insert_in(sheet, line(0.0, 0.0, 1.0, 1.0)).unwrap();
+        assert_eq!(
+            tx.add_constraint(Constraint::geometric(
+                Kind::Parallel,
+                vec![at(a, Part::Edge), at(there, Part::Edge)]
+            )),
+            Err(TransactionError::BadConstraint(
+                ConstraintError::SpacesDiffer
+            ))
+        );
+        tx.commit();
+        // An entity moved to another space parts from what it was
+        // constrained to; a constraint of its own (the width) stays.
+        let mut tx = drawing.transaction();
+        tx.set_space(a, sheet).unwrap();
+        tx.commit();
+        assert_eq!(drawing.constraints().get(joined), None);
+        assert!(drawing.constraints().get(measured).is_some());
     }
 
     #[test]
@@ -7240,6 +7587,12 @@ mod tests {
         GroupAdd(usize, usize),
         GroupRemove(usize, usize),
         GroupRename(usize, u8),
+        /// A constraint between two entities by index, of a kind by
+        /// number (many are refused: wrong parts, a name taken); one
+        /// removed; one dimension given another value (ADR-0038).
+        Constrain(usize, usize, u8),
+        Unconstrain(usize),
+        Retune(usize, f64),
         /// A layout by name; one renamed; one removed with what is on it;
         /// a line drawn in a space by index; an entity moved to a space.
         AddLayout(u8),
@@ -7396,6 +7749,9 @@ mod tests {
             1 => (any::<usize>(), any::<usize>()).prop_map(|(g, e)| Op::GroupAdd(g, e)),
             1 => (any::<usize>(), any::<usize>()).prop_map(|(g, e)| Op::GroupRemove(g, e)),
             1 => (any::<usize>(), 0..6u8).prop_map(|(g, name)| Op::GroupRename(g, name)),
+            3 => (any::<usize>(), any::<usize>(), 0..12u8).prop_map(|(a, b, kind)| Op::Constrain(a, b, kind)),
+            1 => any::<usize>().prop_map(Op::Unconstrain),
+            1 => (any::<usize>(), -5.0..50.0f64).prop_map(|(i, value)| Op::Retune(i, value)),
             3 => Just(Op::Undo),
             2 => Just(Op::Redo),
         ]
@@ -7411,7 +7767,9 @@ mod tests {
         Vec<(DimStyleId, DimStyle)>,
         Vec<(BlockId, Block)>,
         Vec<(LayoutId, Layout)>,
-        Vec<(GroupId, Group)>,
+        // The rows that relate entities: groups and constraints (a tuple
+        // of more than twelve has no `Debug`).
+        (Vec<(GroupId, Group)>, Vec<(ConstraintId, Constraint)>),
         Vec<(LayerStateId, LayerState)>,
         Vec<(NamedViewId, NamedView)>,
         Vec<(MLeaderStyleId, MLeaderStyle)>,
@@ -7475,7 +7833,14 @@ mod tests {
             dim_styles,
             blocks,
             layouts,
-            groups,
+            (
+                groups,
+                drawing
+                    .constraints()
+                    .iter()
+                    .map(|(id, constraint)| (id, constraint.clone()))
+                    .collect(),
+            ),
             drawing
                 .layer_states()
                 .iter()
@@ -8273,8 +8638,67 @@ mod tests {
                         tx.commit();
                         prop_assert_eq!(renamed.is_ok(), !taken, "{:?}", renamed);
                     }
+                    Op::Constrain(a, b, kind) if !live.is_empty() => {
+                        use crate::constraint::{Axis, Kind, Part, Reference, Touch};
+                        let (a, b) = (live[a % live.len()], live[b % live.len()]);
+                        let at = |id, part| Reference::new(id, part);
+                        let constraint = match kind {
+                            0 => Constraint::geometric(Kind::Coincident, vec![at(a, Part::Start), at(b, Part::Start)]),
+                            1 => Constraint::geometric(Kind::Parallel, vec![at(a, Part::Edge), at(b, Part::Edge)]),
+                            2 => Constraint::geometric(Kind::Horizontal, vec![at(a, Part::Edge)]),
+                            3 => Constraint::geometric(Kind::Concentric, vec![at(a, Part::Edge), at(b, Part::Edge)]),
+                            4 => Constraint::geometric(Kind::Tangent { touch: Touch::Left }, vec![at(a, Part::Edge), at(b, Part::Edge)]),
+                            5 => Constraint::geometric(Kind::Coincident, vec![at(a, Part::Center), at(b, Part::End)]),
+                            6 => Constraint::geometric(Kind::Fix { at: Point2::ORIGIN }, vec![at(a, Part::End)]),
+                            7 | 8 => Constraint::dimensional(
+                                format!("d{}", kind - 6),
+                                Kind::Distance { axis: Axis::Aligned, value: 10.0 },
+                                vec![at(a, Part::Start), at(b, Part::End)],
+                            ),
+                            9 => Constraint::dimensional("d3", Kind::Radius { value: 9.0 }, vec![at(a, Part::Edge)]),
+                            10 => Constraint::geometric(Kind::Equal, vec![at(a, Part::Edge), at(b, Part::Edge)]),
+                            _ => Constraint::geometric(Kind::Coincident, vec![at(a, Part::Vertex(0)), at(b, Part::Start)]),
+                        };
+                        let mut tx = drawing.transaction();
+                        let added = tx.add_constraint(constraint.clone());
+                        tx.commit();
+                        // Added exactly when the parts fit, in one space,
+                        // under a name no other constraint has.
+                        let fits = constraint
+                            .check(|r| r.part.shape_on(drawing.entity(r.entity)?))
+                            .is_ok();
+                        let one_space = drawing.record(a).map(|r| r.space) == drawing.record(b).map(|r| r.space)
+                            || constraint.references.iter().all(|r| r.entity == a);
+                        let named_twice = constraint.kind.is_dimensional()
+                            && drawing.constraints().iter().filter(|(_, c)| c.name.eq_ignore_ascii_case(&constraint.name)).count()
+                                > usize::from(added.is_ok());
+                        prop_assert_eq!(added.is_ok(), fits && one_space && !named_twice, "{:?} {:?}", constraint, added);
+                    }
+                    Op::Unconstrain(pick) if !drawing.constraints().is_empty() => {
+                        let ids: Vec<ConstraintId> = drawing.constraints().iter().map(|(id, _)| id).collect();
+                        let mut tx = drawing.transaction();
+                        tx.remove_constraint(ids[pick % ids.len()]).unwrap();
+                        tx.commit();
+                    }
+                    Op::Retune(pick, value) if !drawing.constraints().is_empty() => {
+                        let rows: Vec<(ConstraintId, Constraint)> =
+                            drawing.constraints().iter().map(|(id, c)| (id, c.clone())).collect();
+                        let (id, mut constraint) = rows[pick % rows.len()].clone();
+                        constraint.kind = constraint.kind.with_value(value);
+                        // Refused exactly when the value is not one the
+                        // kind can have: a radius of zero or less, a
+                        // negative point-to-point distance.
+                        let fits = constraint
+                            .check(|r| r.part.shape_on(drawing.entity(r.entity)?))
+                            .is_ok();
+                        let mut tx = drawing.transaction();
+                        let retuned = tx.replace_constraint(id, constraint);
+                        tx.commit();
+                        prop_assert_eq!(retuned.is_ok(), fits, "{:?}", retuned);
+                    }
                     Op::Erase(_) | Op::Modify(..) | Op::Restyle(..) | Op::Dash(..) | Op::Group(..)
-                    | Op::GroupAdd(..) | Op::GroupRemove(..) | Op::GroupRename(..) => {}
+                    | Op::GroupAdd(..) | Op::GroupRemove(..) | Op::GroupRename(..)
+                    | Op::Constrain(..) | Op::Unconstrain(_) | Op::Retune(..) => {}
                     Op::Undo => { drawing.undo(); }
                     Op::Redo => { drawing.redo(); }
                 }
@@ -8290,6 +8714,23 @@ mod tests {
                 // Every named view is of a space the drawing has (#235).
                 for (id, view) in drawing.views().iter() {
                     prop_assert!(drawing.layouts().contains(view.space), "view {} is of a space that is gone", id);
+                }
+                // Every constraint refers to parts the drawing's entities
+                // have, in one space; no two dimensional constraints share
+                // a name (ADR-0038).
+                let mut constraint_names = HashSet::new();
+                for (id, constraint) in drawing.constraints().iter() {
+                    let fits = constraint.check(|r| r.part.shape_on(drawing.entity(r.entity)?));
+                    prop_assert!(fits.is_ok(), "constraint {} {:?}: {:?}", id, constraint, fits);
+                    let spaces: HashSet<LayoutId> = constraint
+                        .references
+                        .iter()
+                        .filter_map(|r| drawing.record(r.entity).map(|record| record.space))
+                        .collect();
+                    prop_assert_eq!(spaces.len(), 1, "constraint {} spans spaces", id);
+                    if constraint.kind.is_dimensional() {
+                        prop_assert!(constraint_names.insert(constraint.name.to_lowercase()), "two constraints are called {}", constraint.name);
+                    }
                 }
                 // Every group has members, each an entity of the drawing,
                 // once; no two groups share a name (#214).

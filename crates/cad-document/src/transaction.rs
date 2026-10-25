@@ -7,6 +7,7 @@
 use cad_core::EntityId;
 
 use crate::block::BlockChange;
+use crate::constraint::ConstraintChange;
 use crate::dim_style::DimStyleChange;
 use crate::group::GroupChange;
 use crate::layer::LayerChange;
@@ -76,6 +77,8 @@ pub enum Change {
     Block(BlockChange),
     Layout(LayoutChange),
     Group(GroupChange),
+    /// A constraint added, removed, or given another value (ADR-0038).
+    Constraint(ConstraintChange),
     LayerState(LayerStateChange),
     View(NamedViewChange),
     MLeaderStyle(MLeaderStyleChange),
@@ -93,6 +96,7 @@ impl Change {
             Change::Block(change) => Change::Block(change.inverse()),
             Change::Layout(change) => Change::Layout(change.inverse()),
             Change::Group(change) => Change::Group(change.inverse()),
+            Change::Constraint(change) => Change::Constraint(change.inverse()),
             Change::LayerState(change) => Change::LayerState(change.inverse()),
             Change::View(change) => Change::View(change.inverse()),
             Change::MLeaderStyle(change) => Change::MLeaderStyle(change.inverse()),
@@ -251,6 +255,7 @@ mod tests {
                 Change::Block(_) => "block",
                 Change::Layout(_) => "layout",
                 Change::Group(_) => "group",
+                Change::Constraint(_) => "constraint",
                 Change::LayerState(_) => "layer state",
                 Change::View(_) => "view",
                 Change::MLeaderStyle(_) => "multileader style",

@@ -10,6 +10,7 @@
 
 mod aci;
 mod block;
+mod constraint;
 mod construction;
 mod dim_style;
 mod dimension;
@@ -56,6 +57,10 @@ pub use aci::{FOREGROUND_INDEX, Paint, index_paint, nearest_index};
 pub use block::{Block, BlockChange, BlockId, BlockReferenceEntity, BlockTable, empty_blocks};
 /// A hatch's boundary loop: a closed path of straight and arc segments.
 pub use cad_geometry::{Path, Spline};
+pub use constraint::{
+    Axis, Constraint, ConstraintChange, ConstraintError, ConstraintId, ConstraintTable, Kind, Part,
+    Reference, Shape, Touch,
+};
 pub use construction::{CONSTRUCTION_REACH, RayEntity, XLineEntity};
 pub use dim_style::{DimStyle, DimStyleChange, DimStyleError, DimStyleId, DimStyleTable};
 pub use dimension::{Chain, DimensionEntity, DimensionError, DimensionLayout, Measure};

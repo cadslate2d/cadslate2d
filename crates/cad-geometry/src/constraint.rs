@@ -887,6 +887,7 @@ mod tests {
 
     /// A rectangle of four lines, its corners coincident, two sides
     /// horizontal and two vertical: four points shared, so 8 unknowns.
+    #[derive(Clone, Debug)]
     struct Rectangle {
         corners: [PointVar; 4],
     }
@@ -1256,5 +1257,151 @@ mod tests {
                 Tolerances::default()
             )
         );
+    }
+
+    use proptest::prelude::*;
+
+    /// Plates as `rectangle` makes them, each with its width and height
+    /// dimensioned and its lower-left corner fixed where it is: satisfied
+    /// as built.
+    fn plates() -> impl Strategy<Value = (System, Vec<Rectangle>)> {
+        prop::collection::vec(
+            (-1e3..1e3f64, -1e3..1e3f64, 1.0..500.0f64, 1.0..500.0f64),
+            1..5,
+        )
+        .prop_map(|specs| {
+            let mut system = System::default();
+            let mut plates = Vec::new();
+            for (x, y, w, h) in specs {
+                let r = rectangle(&mut system, x, y, w, h);
+                let v = &system.values;
+                let (width, height) = (
+                    v[r.corners[1].x] - v[r.corners[0].x],
+                    v[r.corners[3].y] - v[r.corners[0].y],
+                );
+                system.equations.extend([
+                    Equation::Fixed {
+                        param: r.corners[0].x,
+                        value: x,
+                    },
+                    Equation::Fixed {
+                        param: r.corners[0].y,
+                        value: y,
+                    },
+                    Equation::Offset {
+                        from: r.corners[0].x,
+                        to: r.corners[1].x,
+                        value: width,
+                    },
+                    Equation::Offset {
+                        from: r.corners[0].y,
+                        to: r.corners[3].y,
+                        value: height,
+                    },
+                ]);
+                plates.push(r);
+            }
+            (system, plates)
+        })
+    }
+
+    /// The index of the width equation of plate `i`.
+    fn width_of(system: &System, plate: &Rectangle) -> usize {
+        system
+            .equations
+            .iter()
+            .position(|e| matches!(e, Equation::Offset { from, to, .. } if *from == plate.corners[0].x && *to == plate.corners[1].x))
+            .expect("a width")
+    }
+
+    fn all_hold(system: &System, values: &[f64]) -> bool {
+        let scale = values.iter().fold(1.0_f64, |m, v| m.max(v.abs()));
+        let linear = LinearTolerance::DEFAULT.at_magnitude(scale).value();
+        system
+            .equations
+            .iter()
+            .all(|e| holds(e, values, linear, AngularTolerance::DEFAULT.value()))
+    }
+
+    proptest! {
+        /// A system that holds is left exactly as it is: no step taken,
+        /// not a bit moved.
+        #[test]
+        fn satisfied_constraints_stay_satisfied((system, _) in plates()) {
+            let solution = solve(&system, Tolerances::default());
+            prop_assert!(solution.is_solved());
+            prop_assert_eq!(solution.iterations, 0);
+            prop_assert_eq!(&solution.values, &system.values);
+        }
+
+        /// A width changed, a corner perhaps held where a grip put it: the
+        /// solution holds every equation, leaves held unknowns where they
+        /// are, and solving it again changes nothing; or, unsolved, it
+        /// moves nothing at all.
+        #[test]
+        fn a_solution_holds_everything_and_is_settled(
+            (mut system, plates) in plates(),
+            pick in any::<usize>(),
+            width in 1.0..600.0f64,
+            drag in prop::option::of((-50.0..50.0f64, -50.0..50.0f64)),
+        ) {
+            let plate = &plates[pick % plates.len()];
+            let index = width_of(&system, plate);
+            if let Equation::Offset { value, .. } = &mut system.equations[index] {
+                *value = width;
+            }
+            if let Some((dx, dy)) = drag {
+                let corner = plate.corners[2];
+                system.values[corner.x] += dx;
+                system.values[corner.y] += dy;
+                system.hold(corner.x);
+                system.hold(corner.y);
+            }
+            let solution = solve(&system, Tolerances::default());
+            if solution.is_solved() {
+                prop_assert!(all_hold(&system, &solution.values));
+                for (param, held) in system.held.iter().enumerate() {
+                    if *held {
+                        prop_assert_eq!(solution.values[param], system.values[param]);
+                    }
+                }
+                let mut again = system.clone();
+                again.values.clone_from(&solution.values);
+                prop_assert_eq!(&solve(&again, Tolerances::default()).values, &solution.values);
+            } else {
+                prop_assert_eq!(&solution.values, &system.values);
+                prop_assert!(!solution.unsatisfied.is_empty());
+            }
+            // Without a drag the plate is fixed at one corner and nothing
+            // contradicts the new width: it is always met.
+            if drag.is_none() {
+                prop_assert!(solution.is_solved());
+            }
+        }
+
+        /// A second width for a plate that already has one is a conflict:
+        /// assessed as one, and, forced in, unsolvable with nothing moved.
+        /// The same width again is redundant.
+        #[test]
+        fn conflicts_are_detected(
+            (system, plates) in plates(),
+            pick in any::<usize>(),
+            off in prop_oneof![-100.0..-0.01f64, 0.01..100.0f64],
+        ) {
+            let plate = &plates[pick % plates.len()];
+            let Equation::Offset { from, to, value } = system.equations[width_of(&system, plate)].clone() else {
+                unreachable!()
+            };
+            let same = Equation::Offset { from, to, value };
+            prop_assert_eq!(assess(&system, &[same], Tolerances::default()).verdict, Verdict::Redundant);
+            let other = Equation::Offset { from, to, value: value + off };
+            prop_assert_eq!(assess(&system, std::slice::from_ref(&other), Tolerances::default()).verdict, Verdict::Conflicting);
+            let mut forced = system.clone();
+            forced.equations.push(other);
+            let solution = solve(&forced, Tolerances::default());
+            prop_assert!(!solution.is_solved());
+            prop_assert_eq!(&solution.values, &forced.values);
+            prop_assert_eq!(freedom(&system, Tolerances::default()), 0);
+        }
     }
 }
