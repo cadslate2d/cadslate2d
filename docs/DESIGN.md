@@ -1133,7 +1133,10 @@ This includes:
 - linetypes;
 - text styles;
 - dimension styles;
-- drawing settings.
+- drawing settings;
+- constraints.
+
+> **Amended (2026-10-25, [ADR-0038](adr/0038-constraints.md)):** geometric and dimensional constraints are a table of the drawing, changed in transactions like every other. A transaction that edits constrained geometry, adds a constraint, or changes a constraint's value is settled by the solver before it commits, inside the same transaction: one edit is one undo, the geometry the solver moved included; an edit that cannot be settled is not applied.
 
 It does not include:
 

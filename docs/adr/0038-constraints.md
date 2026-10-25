@@ -1,6 +1,6 @@
 # ADR-0038: Constraints are a table of the drawing, solved by a numeric solver of our own in `cad-geometry`, settled inside the transaction that changes them or their geometry
 
-**Status:** Proposed (2026-10-25; revised the same day after the maintainer's review)  
+**Status:** Accepted (2026-10-25, by the maintainer, after a review and its revision)  
 **Date:** 2026-10-25  
 **Kind:** Evidence (a new subsystem; amends DESIGN §19.2's list of what a transaction changes)  
 **Design refs:** §15, §19, §21; ADR-0001, ADR-0012, ADR-0013, ADR-0017, ADR-0020, ADR-0037
