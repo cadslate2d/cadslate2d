@@ -9,6 +9,7 @@ mod arc;
 mod band;
 mod cloud;
 mod collinear;
+pub mod constraint;
 mod construct;
 mod corner;
 mod crossing;

@@ -7,6 +7,7 @@
 
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
+pub mod constraints;
 pub mod winding_offset;
 
 use std::collections::HashMap;

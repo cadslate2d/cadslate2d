@@ -60,3 +60,7 @@ harness = false
 [[bench]]
 name = "overlay"
 harness = false
+
+[[bench]]
+name = "constraints"
+harness = false
