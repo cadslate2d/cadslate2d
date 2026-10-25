@@ -50,8 +50,14 @@ describe("the menu model (ADR-0034)", () => {
     const view = MENUS.find((menu) => mnemonic(menu.label).text === "View");
     const checks = [...allItems(view ? [view] : [])]
       .filter(({ item }) => item.checked)
-      .map(({ path, item }) => [path.at(-1), item.checked?.(context())]);
+      .map(({ path, item }) => [
+        path.at(-1),
+        item.checked?.(context({ constraintBars: true, constraintDimensions: false })),
+      ]);
     expect(checks).toEqual([
+      // What shows the constraints (#269), checked while it shows.
+      ["Show Constraint Bars", true],
+      ["Show Dimensional Constraints", false],
       ["Toolbar", true],
       ["Layers Panel", false],
       ["Properties Panel", true],

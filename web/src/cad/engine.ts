@@ -131,6 +131,9 @@ export interface UiState {
   readonly canRedo: boolean;
   /** Whether the clipboard holds something to paste (#247). */
   readonly canPaste: boolean;
+  /** Whether constraint bars, and constraint dimensions, are shown (#269). */
+  readonly constraintBars: boolean;
+  readonly constraintDimensions: boolean;
   /** Drafting toggles that are on; test with `ToggleBit`. */
   readonly toggles: number;
   /** The drawing's unit as its suffix, or empty for unitless (#186). */
@@ -236,6 +239,8 @@ export const StyleRole = {
   Removal: 13,
   /** What a proposal would add, or the state it would give an object (#254). */
   Proposal: 14,
+  /** Constraint bars and constraint dimensions (ADR-0038, #269). */
+  Constraint: 15,
 } as const;
 export type StyleRole = (typeof StyleRole)[keyof typeof StyleRole];
 

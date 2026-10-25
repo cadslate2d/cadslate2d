@@ -564,6 +564,8 @@ impl Session {
             can_undo: self.drawing.can_undo(),
             can_redo: self.drawing.can_redo(),
             can_paste: self.clipboard.is_some(),
+            constraint_bars: self.settings.constraint_bars,
+            constraint_dimensions: self.settings.constraint_dimensions,
             toggles: self.toggles.bits(),
             unit: self.drawing.unit().map(LengthUnit::suffix),
             user_aliases: self.registry.aliases().user_aliases(),
@@ -667,6 +669,51 @@ impl Session {
         self.log.since(since).map(str::to_owned).collect()
     }
 
+    /// The constraints' display (#269): the dimensions of dimensional
+    /// constraints, the bars of the rest, and — under the pointer — a
+    /// glyph made hot and its constraint's objects highlighted.
+    fn constraint_overlay(&self, items: &mut Vec<OverlayItem>) {
+        if self.drawing.constraints().is_empty() {
+            return;
+        }
+        if self.settings.constraint_dimensions {
+            for (_, constraint) in self.drawing.constraints().iter() {
+                let shown = constraint
+                    .references
+                    .iter()
+                    .all(|r| self.drawing.is_shown_in(r.entity, self.space));
+                if shown
+                    && let Some(dimension) =
+                        crate::constraint_display::dimension_of(&self.drawing, constraint)
+                {
+                    items.push(OverlayItem::ConstraintDimension(dimension));
+                }
+            }
+        }
+        if !self.settings.constraint_bars {
+            return;
+        }
+        let bars = crate::constraint_display::bars(&self.drawing, self.space);
+        let hot = self
+            .cursor
+            .and_then(|at| crate::constraint_display::glyph_at(&self.view, &bars, at));
+        if let Some((b, g)) = hot
+            && let Some(constraint) = self.drawing.constraints().get(bars[b].glyphs[g].0)
+        {
+            let mut related: Vec<EntityId> =
+                constraint.references.iter().map(|r| r.entity).collect();
+            related.dedup();
+            items.extend(related.into_iter().map(OverlayItem::Hover));
+        }
+        for (b, bar) in bars.into_iter().enumerate() {
+            items.push(OverlayItem::ConstraintBar {
+                at: bar.at,
+                glyphs: bar.glyphs.into_iter().map(|(_, glyph)| glyph).collect(),
+                hot: hot.filter(|(hb, _)| *hb == b).map(|(_, g)| g),
+            });
+        }
+    }
+
     /// What should be drawn on top of the committed scene, in draw order.
     /// Purely descriptive; `cad-render` turns it into geometry.
     pub fn overlay(&self) -> Vec<OverlayItem> {
@@ -680,6 +727,7 @@ impl Session {
         if let Some(proposal) = &self.proposal {
             proposal.overlay(&mut items);
         }
+        self.constraint_overlay(&mut items);
         let grips = self.grips();
         if !grips.is_empty() {
             items.push(OverlayItem::Grips {

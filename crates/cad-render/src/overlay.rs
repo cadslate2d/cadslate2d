@@ -7,6 +7,7 @@
 
 use std::f64::consts::{PI, TAU};
 
+use cad_commands::constraint_display::{Glyph, glyph_square};
 use cad_commands::{OverlayItem, SnapMode};
 use cad_core::{Aabb, Point2, Vec2, View};
 use cad_document::{Drawing, Entity, LayoutId};
@@ -73,6 +74,85 @@ fn marker_strokes(mode: SnapMode) -> &'static [&'static [(f64, f64)]] {
         SnapMode::Tangent => &[BAR],
         SnapMode::Insertion => &[LOWER_LEFT, UPPER_RIGHT],
         SnapMode::Node => &[RISING, FALLING],
+    }
+}
+
+/// A constraint's sign inside its glyph's box, as pen strokes and circles
+/// in units of the box's half-size with +Y up.
+///
+/// | Constraint | Sign |
+/// | --- | --- |
+/// | Horizontal, vertical | a level, a plumb bar |
+/// | Parallel | two slanted bars |
+/// | Perpendicular | an upturned T |
+/// | Collinear | two dashes on one slant |
+/// | Concentric | two circles about one centre |
+/// | Coincident | a small square |
+/// | Tangent | a circle under a bar |
+/// | Symmetric | a pair of brackets |
+/// | Equal | an equals sign |
+/// | Fix | a padlock |
+type Strokes = &'static [&'static [(f64, f64)]];
+type Circles = &'static [((f64, f64), f64)];
+
+fn glyph_strokes(glyph: Glyph) -> (Strokes, Circles) {
+    match glyph {
+        Glyph::Horizontal => (&[&[(-0.6, 0.0), (0.6, 0.0)]], &[]),
+        Glyph::Vertical => (&[&[(0.0, -0.6), (0.0, 0.6)]], &[]),
+        Glyph::Parallel => (
+            &[
+                &[(-0.55, -0.55), (0.05, 0.55)],
+                &[(-0.05, -0.55), (0.55, 0.55)],
+            ],
+            &[],
+        ),
+        Glyph::Perpendicular => (
+            &[&[(-0.6, -0.5), (0.6, -0.5)], &[(0.0, -0.5), (0.0, 0.6)]],
+            &[],
+        ),
+        Glyph::Collinear => (
+            &[&[(-0.65, -0.4), (-0.2, -0.12)], &[(0.2, 0.12), (0.65, 0.4)]],
+            &[],
+        ),
+        Glyph::Concentric => (&[], &[((0.0, 0.0), 0.6), ((0.0, 0.0), 0.25)]),
+        Glyph::Coincident => (
+            &[&[
+                (-0.25, -0.25),
+                (0.25, -0.25),
+                (0.25, 0.25),
+                (-0.25, 0.25),
+                (-0.25, -0.25),
+            ]],
+            &[],
+        ),
+        Glyph::Tangent => (&[&[(-0.65, 0.35), (0.65, 0.35)]], &[((0.0, -0.15), 0.5)]),
+        Glyph::Symmetric => (
+            &[
+                &[(-0.2, -0.6), (-0.55, -0.6), (-0.55, 0.6), (-0.2, 0.6)],
+                &[(0.2, -0.6), (0.55, -0.6), (0.55, 0.6), (0.2, 0.6)],
+            ],
+            &[],
+        ),
+        Glyph::Equal => (
+            &[
+                &[(-0.55, 0.25), (0.55, 0.25)],
+                &[(-0.55, -0.25), (0.55, -0.25)],
+            ],
+            &[],
+        ),
+        Glyph::Fix => (
+            &[
+                &[
+                    (-0.45, -0.6),
+                    (0.45, -0.6),
+                    (0.45, 0.05),
+                    (-0.45, 0.05),
+                    (-0.45, -0.6),
+                ],
+                &[(-0.25, 0.05), (-0.25, 0.5), (0.25, 0.5), (0.25, 0.05)],
+            ],
+            &[],
+        ),
     }
 }
 
@@ -276,7 +356,62 @@ impl OverlayFrame {
                         );
                     }
                 }
+                OverlayItem::ConstraintBar { at, glyphs, hot } => {
+                    for (index, glyph) in glyphs.iter().enumerate() {
+                        let style = if *hot == Some(index) {
+                            StyleRole::GripHot
+                        } else {
+                            StyleRole::Constraint
+                        };
+                        self.push_glyph(*glyph, *at, index, style, view);
+                    }
+                }
+                OverlayItem::ConstraintDimension(entity) => {
+                    self.frame
+                        .push_entity(StyleRole::Constraint, entity, drawing.tables());
+                }
             }
+        }
+    }
+
+    /// Glyph `index` of a constraint bar anchored at `at` (#269): its box
+    /// and its sign, sized in pixels by `glyph_square`.
+    fn push_glyph(
+        &mut self,
+        glyph: Glyph,
+        at: Point2,
+        index: usize,
+        style: StyleRole,
+        view: &View,
+    ) {
+        let (low, high) = glyph_square(view, at, index);
+        let a = view.screen_to_world(low);
+        let b = view.screen_to_world(high);
+        let (left, right) = (a.x.min(b.x), a.x.max(b.x));
+        let (bottom, top) = (a.y.min(b.y), a.y.max(b.y));
+        let corners = [
+            Point2::new(left, bottom),
+            Point2::new(right, bottom),
+            Point2::new(right, top),
+            Point2::new(left, top),
+        ];
+        for (i, corner) in corners.iter().enumerate() {
+            self.frame
+                .push_segment(style, *corner, corners[(i + 1) % 4]);
+        }
+        let center = Point2::new((left + right) / 2.0, (bottom + top) / 2.0);
+        let half = (right - left) / 2.0;
+        let place = |(x, y): (f64, f64)| center + Vec2::new(x * half, y * half);
+        let (strokes, circles) = glyph_strokes(glyph);
+        for stroke in strokes {
+            for pair in stroke.windows(2) {
+                self.frame
+                    .push_segment(style, place(pair[0]), place(pair[1]));
+            }
+        }
+        for &((x, y), radius) in circles {
+            let circle = Arc::new(place((x, y)), radius * half, 0.0, TAU);
+            self.frame.push_arc(style, &circle);
         }
     }
 

@@ -125,7 +125,9 @@ pub(crate) use chprop::ChpropCommand;
 pub(crate) use circle::CircleCommand;
 pub(crate) use clipboard::{Clipboard, CopyClipCommand, PasteClipCommand};
 pub(crate) use color::ColorCommand;
-pub(crate) use constrain::{DelConstraintCommand, Geom, GeomConstraintCommand};
+pub(crate) use constrain::{
+    ConstraintDisplayCommand, DelConstraintCommand, Geom, GeomConstraintCommand,
+};
 pub(crate) use construction::{RayCommand, XLineCommand};
 pub(crate) use corner::CornerCommand;
 pub(crate) use dimchain::DimChainCommand;

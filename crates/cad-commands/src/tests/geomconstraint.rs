@@ -392,3 +392,57 @@ fn delconstraint_removes_every_constraint_of_the_selected_objects() {
         Some("The selected objects have no constraints.")
     );
 }
+
+/// #269: each constrained object has a bar of its geometric constraints'
+/// glyphs; a placed dimensional constraint shows as a dimension labelled
+/// with its name and value; CONSTRAINTBAR and DCDISPLAY hide them, and the
+/// UI state says so.
+#[test]
+fn the_overlay_shows_bars_and_constraint_dimensions_until_hidden() {
+    use crate::OverlayItem;
+    use crate::constraint_display::Glyph;
+    let mut h = lines(&[((0.0, 0.0), (100.0, 0.0)), ((100.0, 0.0), (100.0, 50.0))]);
+    h.enter_all(&["GCCOINCIDENT", "100,0", "100,0"]);
+    h.enter("GCHORIZONTAL");
+    h.click_world(Point2::new(50.0, 0.0));
+    h.enter_all(&["DCVERTICAL", "100,0", "100,50", "120,25", ""]);
+    let bars = |h: &Harness| -> Vec<Vec<Glyph>> {
+        h.session
+            .overlay()
+            .into_iter()
+            .filter_map(|item| match item {
+                OverlayItem::ConstraintBar { glyphs, .. } => Some(glyphs),
+                _ => None,
+            })
+            .collect()
+    };
+    let dimensions = |h: &Harness| -> Vec<Option<String>> {
+        h.session
+            .overlay()
+            .into_iter()
+            .filter_map(|item| match item {
+                OverlayItem::ConstraintDimension(Entity::Dimension(d)) => Some(d.text_override),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        bars(&h),
+        [
+            vec![Glyph::Coincident, Glyph::Horizontal],
+            vec![Glyph::Coincident]
+        ]
+    );
+    assert_eq!(dimensions(&h), [Some("d1=50".to_owned())]);
+    assert!(h.session.ui_state().constraint_bars);
+
+    h.enter_all(&["CBAR", "H"]);
+    assert!(bars(&h).is_empty());
+    assert!(!h.session.ui_state().constraint_bars);
+    assert_eq!(dimensions(&h).len(), 1);
+    h.enter_all(&["DCDISPLAY", "H"]);
+    assert!(dimensions(&h).is_empty());
+    h.enter_all(&["CBAR", "", "DCDISPLAY", "S"]);
+    assert_eq!(bars(&h).len(), 2);
+    assert_eq!(dimensions(&h).len(), 1);
+}

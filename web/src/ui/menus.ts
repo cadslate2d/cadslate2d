@@ -87,6 +87,24 @@ const VIEW: Menu = {
     command("&Model Space", "MSPACE", { enabled: onPaper }),
     command("&Paper Space", "PSPACE", { enabled: onPaper }),
     SEPARATOR,
+    // What shows the constraints (#269): the bars, and the dimensional
+    // ones as dimensions. Checked while they are shown.
+    cascade("Constraint&s", [
+      command(
+        "&Show Constraint Bars",
+        { command: "CONSTRAINTBAR", steps: ["S"] },
+        { checked: ({ ui }) => ui.constraintBars },
+      ),
+      command("&Hide Constraint Bars", { command: "CONSTRAINTBAR", steps: ["H"] }),
+      SEPARATOR,
+      command(
+        "Show &Dimensional Constraints",
+        { command: "DCDISPLAY", steps: ["S"] },
+        { checked: ({ ui }) => ui.constraintDimensions },
+      ),
+      command("H&ide Dimensional Constraints", { command: "DCDISPLAY", steps: ["H"] }),
+    ]),
+    SEPARATOR,
     panel("&Toolbar", "toolbar"),
     panel("&Layers Panel", "layers"),
     panel("Pr&operties Panel", "properties"),

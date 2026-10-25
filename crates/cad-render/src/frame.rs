@@ -66,10 +66,12 @@ pub enum StyleRole {
     /// What a proposal would add, or the state it would give an object
     /// (ADR-0037, #254).
     Proposal = 14,
+    /// Constraint bars and constraint dimensions (ADR-0038, #269).
+    Constraint = 15,
 }
 
 impl StyleRole {
-    const ALL: [Self; 15] = [
+    const ALL: [Self; 16] = [
         Self::Entity,
         Self::Selection,
         Self::Preview,
@@ -85,6 +87,7 @@ impl StyleRole {
         Self::Hover,
         Self::Removal,
         Self::Proposal,
+        Self::Constraint,
     ];
 
     fn from_word(word: u32) -> Option<Self> {

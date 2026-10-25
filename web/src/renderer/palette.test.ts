@@ -58,6 +58,8 @@ describe("readPalette", () => {
     "--canvas-lineweight-hover": "2.25",
     "--canvas-lineweight-removal": "2.25",
     "--canvas-lineweight-proposal": "1.75",
+    "--canvas-constraint": "#cc66ff",
+    "--canvas-lineweight-constraint": "1",
   };
   const read = (property: string) => tokens[property] ?? "";
 

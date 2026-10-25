@@ -12,6 +12,8 @@ class FakeSource implements UiSource {
     canUndo: false,
     canRedo: false,
     canPaste: false,
+    constraintBars: true,
+    constraintDimensions: true,
     toggles: 0,
     unit: "",
     userAliases: "",

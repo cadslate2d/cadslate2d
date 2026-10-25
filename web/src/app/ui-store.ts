@@ -38,6 +38,9 @@ export interface UiSnapshot {
   readonly canUndo: boolean;
   readonly canRedo: boolean;
   readonly canPaste: boolean;
+  /** Whether constraint bars, and constraint dimensions, are shown (#269). */
+  readonly constraintBars: boolean;
+  readonly constraintDimensions: boolean;
   /** Drafting toggles that are on; test with `ToggleBit`. */
   readonly toggles: number;
   /** The drawing's unit as its suffix, or empty for unitless. */
@@ -101,6 +104,8 @@ const INITIAL: UiSnapshot = {
   canUndo: false,
   canRedo: false,
   canPaste: false,
+  constraintBars: true,
+  constraintDimensions: true,
   toggles: 0,
   unit: "",
   userAliases: "",
@@ -184,6 +189,8 @@ export class UiStore {
       canUndo: state.canUndo,
       canRedo: state.canRedo,
       canPaste: state.canPaste,
+      constraintBars: state.constraintBars,
+      constraintDimensions: state.constraintDimensions,
       toggles: state.toggles,
       unit: state.unit,
       userAliases: state.userAliases,

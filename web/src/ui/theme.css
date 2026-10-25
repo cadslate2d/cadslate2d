@@ -46,6 +46,8 @@
   --canvas-removal: #ff6b5e;
   /* What a proposal would add or change (ADR-0037). */
   --canvas-proposal: #7ee787;
+  /* Constraint bars and constraint dimensions (ADR-0038). */
+  --canvas-constraint: #d2a8ff;
   /* The marker of the object snap under the cursor. */
   --canvas-snap-marker: #ffb224;
   /* The direction polar tracking has locked onto. */
@@ -63,6 +65,7 @@
   --canvas-lineweight-hover: 2.25;
   --canvas-lineweight-removal: 2.25;
   --canvas-lineweight-proposal: 1.75;
+  --canvas-lineweight-constraint: 1;
   --canvas-lineweight-snap-marker: 1.5;
   --canvas-lineweight-tracking: 1;
 
@@ -131,6 +134,7 @@
   --canvas-hover: #2a7fff;
   --canvas-removal: #d9442f;
   --canvas-proposal: #1a7f37;
+  --canvas-constraint: #8250df;
   --canvas-snap-marker: #b87400;
   --canvas-tracking: #1b7f78;
 }

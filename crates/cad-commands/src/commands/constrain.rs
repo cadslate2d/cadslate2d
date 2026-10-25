@@ -555,3 +555,64 @@ impl Command for DelConstraintCommand {
         }
     }
 }
+
+// ── CONSTRAINTBAR and DCDISPLAY ──
+
+const SHOWALL: Keyword = Keyword::new("Showall");
+const HIDEALL: Keyword = Keyword::new("Hideall");
+const SHOW: Keyword = Keyword::new("Show");
+const HIDE: Keyword = Keyword::new("Hide");
+
+/// CONSTRAINTBAR shows or hides every constraint bar; DCDISPLAY every
+/// dimensional constraint (#269). The display only: the constraints hold
+/// either way.
+#[derive(Debug)]
+pub(crate) struct ConstraintDisplayCommand {
+    dimensions: bool,
+}
+
+impl ConstraintDisplayCommand {
+    pub(crate) fn bars() -> Self {
+        Self { dimensions: false }
+    }
+
+    pub(crate) fn dimensions() -> Self {
+        Self { dimensions: true }
+    }
+
+    fn keywords(&self) -> [Keyword; 2] {
+        if self.dimensions {
+            [SHOW, HIDE]
+        } else {
+            [SHOWALL, HIDEALL]
+        }
+    }
+}
+
+impl Command for ConstraintDisplayCommand {
+    fn start(&mut self, _ctx: &mut CommandContext<'_>) -> Step {
+        Step::Continue
+    }
+
+    fn prompt(&self) -> Prompt {
+        Prompt::new("Enter an option").with_default(self.keywords()[0].name())
+    }
+
+    fn expected(&self) -> ExpectedInput {
+        ExpectedInput::new(InputKind::Nothing).with_keywords(&self.keywords())
+    }
+
+    fn step(&mut self, input: CommandInput, ctx: &mut CommandContext<'_>) -> Step {
+        let show = match input {
+            CommandInput::Accept => true,
+            CommandInput::Keyword(keyword) => keyword == self.keywords()[0],
+            _ => return Step::Continue,
+        };
+        if self.dimensions {
+            ctx.settings.constraint_dimensions = show;
+        } else {
+            ctx.settings.constraint_bars = show;
+        }
+        Step::Finished
+    }
+}

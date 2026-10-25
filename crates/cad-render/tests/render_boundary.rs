@@ -1361,3 +1361,48 @@ fn a_proposal_is_overlay_content_and_leaves_the_scene_alone() {
     assert_eq!(scenes.scene(h.session.drawing()).revision(), revision);
     assert_eq!(scenes.build_count(), 1, "the scene was built once");
 }
+
+/// #269: constraint bars and constraint dimensions are overlay content in
+/// their own style. Showing them, hovering a glyph, and hiding them never
+/// touch the committed scene or its revision.
+#[test]
+fn constraint_bars_and_dimensions_are_overlay_content() {
+    let mut h = Harness::with_entities([cad_document::Entity::Line(
+        cad_document::LineEntity::new(p(0.0, 0.0), p(100.0, 0.0)),
+    )]);
+    h.enter_all(&["GCFIX", "0,0"]);
+    h.enter("GCHORIZONTAL");
+    h.click_world(p(50.0, 0.0));
+    h.enter_all(&["DCHORIZONTAL", "0,0", "100,0", "50,-15", ""]);
+    let mut scenes = SceneCache::new();
+    let revision = scenes.scene(h.session.drawing()).revision();
+    let roles = |frame: &PackedFrame| -> Vec<StyleRole> {
+        frame
+            .batches()
+            .iter()
+            .chain(frame.arc_batches().iter())
+            .map(|batch| batch.style)
+            .collect()
+    };
+    let overlay = overlay_of(&h);
+    assert_frame_is_consistent(overlay.frame(), "constraint bars");
+    assert!(roles(overlay.frame()).contains(&StyleRole::Constraint));
+    // Over the line's bar's first glyph: it turns hot, the line is
+    // highlighted; still nothing committed changes.
+    let bar =
+        cad_commands::constraint_display::bars(h.session.drawing(), cad_document::LayoutId::MODEL);
+    let (low, high) =
+        cad_commands::constraint_display::glyph_square(h.session.view(), bar[0].at, 0);
+    let dirty = h.move_to((low.x + high.x) / 2.0, (low.y + high.y) / 2.0);
+    assert!(!dirty.contains(Dirty::SCENE));
+    let hot = roles(overlay_of(&h).frame());
+    assert!(
+        hot.contains(&StyleRole::GripHot) && hot.contains(&StyleRole::Hover),
+        "{hot:?}"
+    );
+    // Hidden, they are gone from the overlay; the scene is the same.
+    h.enter_all(&["CONSTRAINTBAR", "H", "DCDISPLAY", "H"]);
+    assert!(!roles(overlay_of(&h).frame()).contains(&StyleRole::Constraint));
+    assert_eq!(scenes.scene(h.session.drawing()).revision(), revision);
+    assert_eq!(scenes.build_count(), 1, "the scene was built once");
+}

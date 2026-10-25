@@ -7,6 +7,7 @@ use cad_core::{EntityId, Point2};
 use cad_document::Entity;
 use cad_geometry::Transform;
 
+use crate::constraint_display::Glyph;
 use crate::{GripId, SnapMode};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -74,4 +75,15 @@ pub enum OverlayItem {
     /// The frame of the viewport the model is worked through (#193), in
     /// the model's coordinates: where the paper's window is.
     ViewportFrame { corners: [Point2; 4] },
+    /// The constraint bar of an object (#269): its glyphs in a row beside
+    /// `at`, laid out in pixels by `constraint_display::glyph_square`;
+    /// `hot`, the one under the pointer.
+    ConstraintBar {
+        at: Point2,
+        glyphs: Vec<Glyph>,
+        hot: Option<usize>,
+    },
+    /// A dimensional constraint shown as a dimension, labelled with its
+    /// name and value (#269).
+    ConstraintDimension(Entity),
 }

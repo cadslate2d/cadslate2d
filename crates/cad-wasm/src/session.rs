@@ -144,6 +144,8 @@ struct UiStateDto {
     can_undo: bool,
     can_redo: bool,
     can_paste: bool,
+    constraint_bars: bool,
+    constraint_dimensions: bool,
     toggles: u32,
     /// The drawing's unit suffix, or empty for unitless (#186).
     unit: String,
@@ -264,6 +266,8 @@ impl From<UiState> for UiStateDto {
             can_undo: state.can_undo,
             can_redo: state.can_redo,
             can_paste: state.can_paste,
+            constraint_bars: state.constraint_bars,
+            constraint_dimensions: state.constraint_dimensions,
             toggles: state.toggles,
             document_name: state.document_name,
             document_format: match state.document_format {

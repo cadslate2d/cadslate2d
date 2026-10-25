@@ -10,6 +10,7 @@
 pub mod aids;
 mod command;
 mod commands;
+pub mod constraint_display;
 mod dirty;
 #[cfg(any(test, feature = "testing"))]
 pub mod evaluation;

@@ -40,6 +40,11 @@ pub struct DraftingSettings {
     /// Whether picking a member of a selectable group selects the whole
     /// group (#214): `PICKSTYLE`, flipped by Ctrl+Shift+A.
     pub group_selection: bool,
+    /// Whether constraint bars are shown (#269): CONSTRAINTBAR.
+    pub constraint_bars: bool,
+    /// Whether dimensional constraints are shown as dimensions (#269):
+    /// DCDISPLAY.
+    pub constraint_dimensions: bool,
     /// The shortest and longest arc of a revision cloud (#215).
     pub cloud_arcs: [f64; 2],
     /// The snap grid's spacing across and up (#219), from the origin.
@@ -171,6 +176,8 @@ impl Default for DraftingSettings {
             hatch_angle: 0.0,
             hatch_scale: 1.0,
             group_selection: true,
+            constraint_bars: true,
+            constraint_dimensions: true,
             cloud_arcs: [7.5, 15.0],
             snap_spacing: [DEFAULT_GRID_SPACING, DEFAULT_GRID_SPACING],
             grid_follows_snap: false,
