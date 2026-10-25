@@ -21,7 +21,7 @@ use cad_geometry::constraint::{
     Assessment, CircleVar, Equation, LineVar, PointVar, System, Tangency, Tolerances,
 };
 
-use super::TransactionBuilder;
+use super::{Drawing, TransactionBuilder};
 use crate::constraint::{Axis, Constraint, ConstraintId, Kind, Part, Touch};
 use crate::transaction::{Change, EntityChange};
 use crate::{ArcEntity, CircleEntity, Entity, LineEntity, PointEntity, PolylineEntity};
@@ -358,36 +358,44 @@ pub(crate) struct Constrained {
     constraints: BTreeMap<ConstraintId, Constraint>,
 }
 
-impl TransactionBuilder<'_> {
-    /// What adding `constraint` would do (ADR-0038 §4): fix something the
-    /// constraints it reaches leave free, add nothing (redundant), or
-    /// contradict them — judged with the drawing as this transaction
-    /// leaves it. `None` when its parts cannot be read.
-    pub fn assess(&self, constraint: &Constraint) -> Option<Assessment> {
-        let entities = constraint.references.iter().map(|r| r.entity).collect();
-        let part = self.part(self.reach(entities));
-        let equations = equations_of(constraint, &part.vars)?;
-        Some(cad_geometry::constraint::assess(
-            &part.system,
-            &equations,
-            Tolerances::default(),
-        ))
+/// The drawing as it will be: some entities replaced, made, or gone, and
+/// the constraint rows as they will be. A transaction's, before it
+/// commits; a grip's preview's, while it is dragged.
+pub(crate) struct Prospect<'a> {
+    drawing: &'a Drawing,
+    /// Entities other than the drawing's: replaced or made (`Some`), or
+    /// gone (`None`).
+    entities: BTreeMap<EntityId, Option<Entity>>,
+    constraints: Vec<(ConstraintId, Constraint)>,
+}
+
+impl<'a> Prospect<'a> {
+    /// The drawing with `entities` in place of its own.
+    pub(crate) fn of(drawing: &'a Drawing, entities: BTreeMap<EntityId, Option<Entity>>) -> Self {
+        Self {
+            drawing,
+            entities,
+            constraints: drawing
+                .constraints
+                .iter()
+                .map(|(id, c)| (id, c.clone()))
+                .collect(),
+        }
     }
 
-    /// Holds every unknown of `id` when the transaction settles: a
-    /// constraint drawn to it moves the other object, as AutoCAD's does.
-    pub fn hold(&mut self, id: EntityId) {
-        self.held.insert(id);
+    fn entity(&self, id: EntityId) -> Option<&Entity> {
+        match self.entities.get(&id) {
+            Some(entity) => entity.as_ref(),
+            None => self.drawing.entity(id),
+        }
     }
 
-    /// The constraints `entities` reach, and their entities, as they will
-    /// be once this transaction commits.
+    /// The constraints `entities` reach, and their entities.
     fn reach(&self, mut entities: BTreeSet<EntityId>) -> Reach {
-        let all = self.constraints_now();
         let mut taken: BTreeSet<ConstraintId> = BTreeSet::new();
         loop {
             let mut grew = false;
-            for (id, constraint) in &all {
+            for (id, constraint) in &self.constraints {
                 if !taken.contains(id)
                     && constraint
                         .references
@@ -404,9 +412,11 @@ impl TransactionBuilder<'_> {
                 break;
             }
         }
-        let constraints = all
-            .into_iter()
+        let constraints = self
+            .constraints
+            .iter()
             .filter(|(id, _)| taken.contains(id))
+            .cloned()
             .collect();
         (entities, constraints)
     }
@@ -416,8 +426,8 @@ impl TransactionBuilder<'_> {
         let mut system = System::default();
         let mut vars = BTreeMap::new();
         for id in entities {
-            if let Some(record) = self.record_now(id)
-                && let Some(v) = vars_of(&mut system, &record.entity)
+            if let Some(entity) = self.entity(id)
+                && let Some(v) = vars_of(&mut system, entity)
             {
                 vars.insert(id, v);
             }
@@ -441,6 +451,172 @@ impl TransactionBuilder<'_> {
             owners,
             constraints: constraints.into_iter().collect(),
         }
+    }
+
+    /// Settles what `triggers` reach: the unknowns of `moved` entities
+    /// that differ from the drawing's are held, and every unknown of
+    /// `held` ones. The other entities that move, with their new geometry;
+    /// or why it cannot be settled.
+    fn settle(
+        &self,
+        triggers: BTreeSet<EntityId>,
+        moved: &BTreeSet<EntityId>,
+        held: &BTreeSet<EntityId>,
+    ) -> Result<Vec<(EntityId, Entity)>, String> {
+        let reach = self.reach(triggers);
+        if reach.1.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut part = self.part(reach);
+        for (id, v) in &part.vars {
+            let params = v.params();
+            if held.contains(id) {
+                for &p in &params {
+                    part.system.hold(p);
+                }
+            } else if moved.contains(id) {
+                // The entity as it was, read the same way: an unknown
+                // whose value differs is one the edit set.
+                let mut was = System::default();
+                let before: Vec<f64> = self
+                    .drawing
+                    .entity(*id)
+                    .and_then(|entity| vars_of(&mut was, entity))
+                    .map(|b| b.params().iter().map(|&q| was.values[q]).collect())
+                    .unwrap_or_default();
+                for (i, &p) in params.iter().enumerate() {
+                    // Exactly: the same bits are an unknown the edit left alone.
+                    if before.len() != params.len()
+                        || before[i].to_bits() != part.system.values[p].to_bits()
+                    {
+                        part.system.hold(p);
+                    }
+                }
+            }
+        }
+        let solution = cad_geometry::constraint::solve(&part.system, Tolerances::default());
+        if !solution.is_solved() {
+            // The constraints most broken at the solver's best compromise,
+            // up to three.
+            let mut blamed: Vec<ConstraintId> = Vec::new();
+            for id in solution.unsatisfied.iter().filter_map(|&i| part.owners[i]) {
+                if !blamed.contains(&id) && blamed.len() < 3 {
+                    blamed.push(id);
+                }
+            }
+            let names: Vec<String> = blamed
+                .iter()
+                .filter_map(|id| part.constraints.get(id))
+                .map(describe)
+                .collect();
+            return Err(match names.as_slice() {
+                [] => "The edit cannot keep the constraints.".to_owned(),
+                [one] => format!("The edit would break {one}."),
+                [first @ .., last] => {
+                    format!("The edit would break {} and {last}.", first.join(", "))
+                }
+            });
+        }
+        Ok(part
+            .vars
+            .iter()
+            .filter(|(_, v)| {
+                v.params()
+                    .iter()
+                    .any(|&p| solution.values[p].to_bits() != part.system.values[p].to_bits())
+            })
+            .filter_map(|(id, v)| {
+                let entity = self.entity(*id)?;
+                Some((*id, v.write_back(entity, &solution.values)))
+            })
+            .collect())
+    }
+}
+
+impl Drawing {
+    /// What the rest of the constrained parts would become were `replaced`
+    /// put in place (ADR-0038 §5): the other entities that would move, with
+    /// their geometry — what a grip's preview draws as it is dragged — or
+    /// why the edit would be refused.
+    pub fn settled_with(
+        &self,
+        replaced: &[(EntityId, Entity)],
+    ) -> Result<Vec<(EntityId, Entity)>, String> {
+        if self.constraints.is_empty() {
+            return Ok(Vec::new());
+        }
+        let entities = replaced
+            .iter()
+            .map(|(id, entity)| (*id, Some(entity.clone())))
+            .collect();
+        let ids: BTreeSet<EntityId> = replaced.iter().map(|(id, _)| *id).collect();
+        Prospect::of(self, entities).settle(ids.clone(), &ids, &BTreeSet::new())
+    }
+
+    /// The constraints that do not hold as the drawing is, in ID order:
+    /// none, when every edit went through a transaction (ADR-0038). A
+    /// drawing read from a file may hold some.
+    pub fn unsatisfied_constraints(&self) -> Vec<ConstraintId> {
+        let prospect = Prospect::of(self, BTreeMap::new());
+        let mut unsatisfied = Vec::new();
+        for (id, constraint) in &prospect.constraints {
+            let entities = constraint.references.iter().map(|r| r.entity).collect();
+            let mut part = prospect.part((entities, vec![(*id, constraint.clone())]));
+            // Every unknown held: solving only checks.
+            for p in 0..part.system.values.len() {
+                part.system.hold(p);
+            }
+            let fits = equations_of(constraint, &part.vars).is_some();
+            if !fits
+                || !cad_geometry::constraint::solve(&part.system, Tolerances::default()).is_solved()
+            {
+                unsatisfied.push(*id);
+            }
+        }
+        unsatisfied
+    }
+}
+
+impl TransactionBuilder<'_> {
+    /// The drawing as this transaction leaves it.
+    fn prospect(&self) -> Prospect<'_> {
+        let entities = self
+            .touched
+            .iter()
+            .map(|&id| {
+                (
+                    id,
+                    self.record_now(id).map(|record| (*record.entity).clone()),
+                )
+            })
+            .collect();
+        Prospect {
+            drawing: self.drawing,
+            entities,
+            constraints: self.constraints_now(),
+        }
+    }
+
+    /// What adding `constraint` would do (ADR-0038 §4): fix something the
+    /// constraints it reaches leave free, add nothing (redundant), or
+    /// contradict them — judged with the drawing as this transaction
+    /// leaves it. `None` when its parts cannot be read.
+    pub fn assess(&self, constraint: &Constraint) -> Option<Assessment> {
+        let entities = constraint.references.iter().map(|r| r.entity).collect();
+        let prospect = self.prospect();
+        let part = prospect.part(prospect.reach(entities));
+        let equations = equations_of(constraint, &part.vars)?;
+        Some(cad_geometry::constraint::assess(
+            &part.system,
+            &equations,
+            Tolerances::default(),
+        ))
+    }
+
+    /// Holds every unknown of `id` when the transaction settles: a
+    /// constraint drawn to it moves the other object, as AutoCAD's does.
+    pub fn hold(&mut self, id: EntityId) {
+        self.held.insert(id);
     }
 
     /// Settles what this transaction reaches; why not, when it cannot be.
@@ -484,74 +660,9 @@ impl TransactionBuilder<'_> {
                 }
             }
         }
-        let reach = self.reach(triggers);
-        if reach.1.is_empty() {
-            return Ok(());
-        }
-        let mut part = self.part(reach);
-        // Held: what this transaction set, unknown by unknown, and every
-        // unknown of an entity a command holds.
-        for (id, v) in &part.vars {
-            let params = v.params();
-            if self.held.contains(id) {
-                for &p in &params {
-                    part.system.hold(p);
-                }
-            } else if moved.contains(id) {
-                // The entity as it was, read the same way: an unknown
-                // whose value differs is one the transaction set.
-                let mut was = System::default();
-                let before: Vec<f64> = self
-                    .drawing
-                    .entities
-                    .record(*id)
-                    .and_then(|record| vars_of(&mut was, &record.entity))
-                    .map(|b| b.params().iter().map(|&q| was.values[q]).collect())
-                    .unwrap_or_default();
-                for (i, &p) in params.iter().enumerate() {
-                    // Exactly: the same bits are an unknown the edit left alone.
-                    if before.len() != params.len()
-                        || before[i].to_bits() != part.system.values[p].to_bits()
-                    {
-                        part.system.hold(p);
-                    }
-                }
-            }
-        }
-        let solution = cad_geometry::constraint::solve(&part.system, Tolerances::default());
-        if !solution.is_solved() {
-            // The constraints most broken at the solver's best compromise,
-            // up to three.
-            let mut blamed: Vec<ConstraintId> = Vec::new();
-            for id in solution.unsatisfied.iter().filter_map(|&i| part.owners[i]) {
-                if !blamed.contains(&id) && blamed.len() < 3 {
-                    blamed.push(id);
-                }
-            }
-            let names: Vec<String> = blamed
-                .iter()
-                .filter_map(|id| part.constraints.get(id))
-                .map(describe)
-                .collect();
-            return Err(match names.as_slice() {
-                [] => "The edit cannot keep the constraints.".to_owned(),
-                [one] => format!("The edit would break {one}."),
-                [first @ .., last] => {
-                    format!("The edit would break {} and {last}.", first.join(", "))
-                }
-            });
-        }
-        for (id, v) in &part.vars {
-            let moved = v
-                .params()
-                .iter()
-                .any(|&p| solution.values[p].to_bits() != part.system.values[p].to_bits());
-            if !moved {
-                continue;
-            }
-            let record = self.record_now(*id).expect("an entity it reached");
-            let entity = v.write_back(&record.entity, &solution.values);
-            self.settle_entity(*id, entity);
+        let settled = self.prospect().settle(triggers, &moved, &self.held)?;
+        for (id, entity) in settled {
+            self.settle_entity(id, entity);
         }
         Ok(())
     }

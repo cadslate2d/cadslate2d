@@ -15,6 +15,7 @@ mod bulged;
 mod chprop;
 mod clipboard;
 mod color;
+mod constrained_edits;
 mod construction;
 mod corner;
 mod corpus;

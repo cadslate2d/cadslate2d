@@ -281,6 +281,20 @@ impl OverlayFrame {
                         self.frame
                             .push_entity(StyleRole::Preview, &preview, drawing.tables());
                     }
+                    // The rest of a constrained part, where it would
+                    // settle (ADR-0038 §5); nothing when the drag would
+                    // be refused, or nothing is constrained.
+                    let moved = drawing
+                        .entity(id.entity)
+                        .and_then(|entity| entity.grip_moved(id.index, *to));
+                    if let Some(moved) = moved
+                        && let Ok(settled) = drawing.settled_with(&[(id.entity, moved)])
+                    {
+                        for (_, entity) in settled {
+                            self.frame
+                                .push_entity(StyleRole::Preview, &entity, drawing.tables());
+                        }
+                    }
                 }
                 OverlayItem::PreviewSegment { start, end } => {
                     self.frame.push_segment(StyleRole::Preview, *start, *end);
