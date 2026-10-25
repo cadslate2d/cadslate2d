@@ -447,7 +447,8 @@ const LANGUAGES: [(&str, &[&str]); 3] = [
         "pt",
         &[
             "o", "os", "a", "as", "um", "uma", "com", "em", "não", "vou", "do", "da", "dos", "das",
-            "e", "até", "para", "você", "será", "ao", "na", "é",
+            "e", "até", "para", "você", "será", "ao", "na", "é", "têm", "duas", "dois", "essas",
+            "esses", "estas", "estes", "também", "mais", "pelo", "pela",
         ],
     ),
     (

@@ -108,6 +108,14 @@ fn the_language_of_a_reply_is_told_by_its_common_words() {
         language("Создам сетку из 12 окружностей радиусом 5 мм."),
         "other"
     );
+    // Words Spanish shares — "que" — do not outweigh Portuguese's own (the
+    // live run of 2026-10-25).
+    assert_eq!(
+        language(
+            "As duas linhas têm outras relações definidas no desenho que impedem que fiquem perpendiculares ao mesmo tempo. Ajuste essas relações conflitantes e tente deixá-las perpendiculares novamente."
+        ),
+        "pt"
+    );
     // A diameter's sign is a drafter's, in any language.
     assert_eq!(
         language("I’ll create six Ø10 holes on a 100 mm pitch circle."),
