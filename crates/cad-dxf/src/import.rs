@@ -16,14 +16,14 @@ use std::collections::HashMap;
 
 use cad_core::{EntityId, LengthUnit, Point2, Vec2};
 use cad_document::{
-    ArcEntity, AttributeDefinitionEntity, Block, BlockId, BlockReferenceEntity, BlockTable,
-    CircleEntity, Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingParts,
+    ArcEntity, AttributeDefinitionEntity, Axis, Block, BlockId, BlockReferenceEntity, BlockTable,
+    CircleEntity, Color, Constraint, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingParts,
     DrawingSettings, EllipseEntity, Entity, EntityRecord, HatchEntity, HatchStyle, Justification,
-    Layer, LayerId, LayerState, Layout, LayoutId, LeaderEntity, LineEntity, Linetype, LinetypeDef,
-    LinetypeId, Lineweight, MLeaderContent, MLeaderStyle, MLeaderStyleId, MTextEntity, Measure,
-    PointEntity, PointStyle, PolylineEntity, Properties, RawEntity, RawGroup, RayEntity,
-    SavedLayer, TextEntity, TextStyle, TextStyleId, ViewportEntity, XLineEntity, check_name,
-    nearest_index, same_name,
+    Kind, Layer, LayerId, LayerState, Layout, LayoutId, LeaderEntity, LineEntity, Linetype,
+    LinetypeDef, LinetypeId, Lineweight, MLeaderContent, MLeaderStyle, MLeaderStyleId, MTextEntity,
+    Measure, Part, PointEntity, PointStyle, PolylineEntity, Properties, RawEntity, RawGroup,
+    RayEntity, Reference, SavedLayer, TextEntity, TextStyle, TextStyleId, Touch, ViewportEntity,
+    XLineEntity, check_name, nearest_index, same_name,
 };
 
 use crate::export::insunits_code;
@@ -76,6 +76,12 @@ const BAD_BLOCK_NAME: &str = "(block name)";
 const BAD_GROUP: &str = "(group)";
 /// A GROUP none of whose objects the drawing holds (#214).
 const EMPTY_GROUP: &str = "(group without objects)";
+/// One of our constraints the drawing cannot hold: an object it refers
+/// to is not there, or not the part it names (#271).
+const BAD_CONSTRAINT: &str = "(constraint)";
+/// AutoCAD's constraints, an associative network the drawing does not
+/// read (#271): the geometry is read, the constraints are not.
+const ASSOC_CONSTRAINTS: &str = "ACDBASSOC2DCONSTRAINTGROUP";
 /// Report key for a layer whose colour is a true colour: the drawing holds
 /// the index palette, so the layer takes the nearest index (ADR-0018).
 const LAYER_TRUE_COLOUR: &str = "(layer true colour)";
@@ -1077,6 +1083,7 @@ impl<'a> Reader<'a> {
                 ("GROUP", Some(raw)) => self.group_records.push(raw.clone()),
                 ("SORTENTSTABLE", Some(raw)) => self.sort_tables.push(raw.clone()),
                 ("XRECORD", Some(raw)) => self.xrecords.push(raw.clone()),
+                (ASSOC_CONSTRAINTS, _) => self.report.count_unsupported(ASSOC_CONSTRAINTS),
                 ("MLEADERSTYLE", Some(raw)) => self.mleader_style_records.push(raw.clone()),
                 ("WIPEOUTVARIABLES", Some(raw)) => {
                     self.wipeout_frame = crate::spline::Groups(raw).int(70).map(|frame| frame != 0);
@@ -2184,6 +2191,31 @@ impl<'a> Reader<'a> {
     /// SORTENTSTABLE gives an entity, or by the entity's own handle, which
     /// is the order a reader without one paints in. A space with an entity
     /// that has no handle is painted in the order of its records.
+    /// Our constraints (#271): each XRECORD of the `CADSLATE_CONSTRAINTS`
+    /// dictionary, in the file's order — as the writer puts them — read
+    /// back to a constraint (`export::constraint_objects` says the groups);
+    /// `None` for one naming an entity the drawing does not hold, or a
+    /// kind or part it does not know.
+    fn constraints(&self, ids_by_handle: &HashMap<String, EntityId>) -> Vec<Option<Constraint>> {
+        let Some(dictionary) = self
+            .entry_names
+            .iter()
+            .find(|(_, name)| name.eq_ignore_ascii_case(crate::export::CONSTRAINTS_DICTIONARY))
+            .map(|(handle, _)| handle.clone())
+        else {
+            return Vec::new();
+        };
+        self.xrecords
+            .iter()
+            .filter(|raw| {
+                raw.iter()
+                    .find(|(code, _)| *code == 330)
+                    .is_some_and(|(_, owner)| owner.trim().eq_ignore_ascii_case(&dictionary))
+            })
+            .map(|raw| constraint_of(raw, ids_by_handle))
+            .collect()
+    }
+
     /// The layer states the file keeps (#228): each XRECORD of the
     /// `ACAD_LAYERSTATES` dictionary, named by its entry there. A state's
     /// layers are named by handle (330) or by name (8), each followed by
@@ -2493,6 +2525,12 @@ impl<'a> Reader<'a> {
                 Some(Ok(_)) => self.report.groups += 1,
                 Some(Err(_)) => self.report.count_unsupported(BAD_GROUP),
                 None => self.report.count_unsupported(EMPTY_GROUP),
+            }
+        }
+        for constraint in self.constraints(&ids_by_handle) {
+            match constraint.map(|c| drawing.import_constraint(c)) {
+                Some(Ok(_)) => self.report.constraints += 1,
+                _ => self.report.count_unsupported(BAD_CONSTRAINT),
             }
         }
         self.draw_order(&mut drawing, &ids_by_handle);
@@ -3124,6 +3162,122 @@ fn kind_name(kind: &str) -> String {
     } else {
         clean.to_ascii_uppercase()
     }
+}
+
+/// One of our constraints from its XRECORD's groups (#271).
+fn constraint_of(
+    raw: &[RawGroup],
+    ids_by_handle: &HashMap<String, EntityId>,
+) -> Option<Constraint> {
+    let start = raw
+        .iter()
+        .position(|(code, value)| *code == 100 && value.trim() == "AcDbXrecord")
+        .map_or(raw.len(), |at| at + 1);
+    let mut word = None;
+    let mut name = String::new();
+    let mut code70 = None;
+    let mut value = None;
+    let (mut fix_x, mut fix_y, mut place_x, mut place_y) = (None, None, None, None);
+    let mut references: Vec<Reference> = Vec::new();
+    let mut entity: Option<EntityId> = None;
+    let mut part_kind: Option<i64> = None;
+    let real = |text: &str| text.trim().parse::<f64>().ok();
+    let int = |text: &str| text.trim().parse::<i64>().ok();
+    // A reference is complete at its part (71) and, for a vertex or a
+    // segment, its index (91).
+    let mut finish = |entity: &mut Option<EntityId>, kind: &mut Option<i64>, index: Option<i64>| {
+        let (Some(id), Some(k)) = (entity.take(), kind.take()) else {
+            return false;
+        };
+        let index = index.and_then(|i| u32::try_from(i).ok());
+        let part = match (k, index) {
+            (0, _) => Part::Start,
+            (1, _) => Part::End,
+            (2, _) => Part::Center,
+            (3, Some(n)) => Part::Vertex(n),
+            (4, _) => Part::Point,
+            (5, _) => Part::Edge,
+            (6, Some(n)) => Part::Segment(n),
+            _ => return false,
+        };
+        references.push(Reference::new(id, part));
+        true
+    };
+    for (code, text) in &raw[start..] {
+        match code {
+            1 => word = Some(text.trim().to_owned()),
+            2 => name = text.trim().to_owned(),
+            70 => code70 = int(text),
+            40 => value = real(text),
+            10 => fix_x = real(text),
+            20 => fix_y = real(text),
+            11 => place_x = real(text),
+            21 => place_y = real(text),
+            // A new reference while the last is unfinished: malformed.
+            340 if entity.is_some() || part_kind.is_some() => return None,
+            340 => entity = Some(*ids_by_handle.get(&text.trim().to_uppercase())?),
+            71 => {
+                part_kind = int(text);
+                // A part with no index ends its reference here.
+                if !matches!(part_kind, Some(3 | 6)) && !finish(&mut entity, &mut part_kind, None) {
+                    return None;
+                }
+            }
+            91 if !finish(&mut entity, &mut part_kind, int(text)) => return None,
+            _ => {}
+        }
+    }
+    if entity.is_some() || part_kind.is_some() {
+        return None;
+    }
+    let touch = |code: Option<i64>| match code {
+        Some(1) => Some(Touch::Right),
+        Some(2) => Some(Touch::Outside),
+        Some(3) => Some(Touch::FirstInside),
+        Some(4) => Some(Touch::SecondInside),
+        Some(0) => Some(Touch::Left),
+        _ => None,
+    };
+    let kind = match word?.as_str() {
+        "Coincident" => Kind::Coincident,
+        "Collinear" => Kind::Collinear,
+        "Concentric" => Kind::Concentric,
+        "Fix" => Kind::Fix {
+            at: Point2::new(fix_x?, fix_y?),
+        },
+        "Parallel" => Kind::Parallel,
+        "Perpendicular" => Kind::Perpendicular,
+        "Horizontal" => Kind::Horizontal,
+        "Vertical" => Kind::Vertical,
+        "Tangent" => Kind::Tangent {
+            touch: touch(code70)?,
+        },
+        "Symmetric" => Kind::Symmetric,
+        "Equal" => Kind::Equal,
+        "Distance" => Kind::Distance {
+            axis: match code70? {
+                0 => Axis::Horizontal,
+                1 => Axis::Vertical,
+                2 => Axis::Aligned,
+                _ => return None,
+            },
+            value: value?,
+        },
+        "Angle" => Kind::Angle { value: value? },
+        "Radius" => Kind::Radius { value: value? },
+        "Diameter" => Kind::Diameter { value: value? },
+        _ => return None,
+    };
+    let mut constraint = Constraint {
+        kind,
+        references,
+        name,
+        place: None,
+    };
+    if let (Some(x), Some(y)) = (place_x, place_y) {
+        constraint = constraint.placed(Point2::new(x, y));
+    }
+    Some(constraint)
 }
 
 #[cfg(test)]

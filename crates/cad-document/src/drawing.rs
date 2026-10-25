@@ -1236,6 +1236,27 @@ impl Drawing {
         Ok(id)
     }
 
+    /// Adds a constraint without history and without settling: the import
+    /// path (#271), after the entities it refers to. It is checked as
+    /// [`TransactionBuilder::add_constraint`] checks it; a file's
+    /// constraints are kept as the file has them, held or not —
+    /// [`unsatisfied_constraints`](Self::unsatisfied_constraints) says.
+    pub fn import_constraint(
+        &mut self,
+        constraint: Constraint,
+    ) -> Result<ConstraintId, TransactionError> {
+        let mut tx = self.transaction();
+        let id = tx.add_constraint(constraint)?;
+        let changes = std::mem::take(&mut tx.changes);
+        drop(tx);
+        for change in &changes {
+            if let Change::Constraint(change) = change {
+                self.constraints.apply(change);
+            }
+        }
+        Ok(id)
+    }
+
     /// Puts entities in tiers of the drawing order without history (#226):
     /// the import path, after [`from_spaces`](Self::from_spaces), from the
     /// order a file kept. An ID the drawing does not hold is passed over.

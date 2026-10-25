@@ -16,13 +16,14 @@ use std::fmt::Write;
 
 use cad_core::{Aabb, EntityId, LengthUnit, Point2, Vec2};
 use cad_document::{
-    ArcEntity, AttributeDefinitionEntity, BlockId, BlockReferenceEntity, BlockTable, CircleEntity,
-    Color, DimStyle, DimStyleId, DimensionEntity, Drawing, DrawingSettings, EllipseEntity, Entity,
-    EntityRecord, Group, HatchEntity, HatchStyle, Justification, Layer, LayerState, Layout,
-    LayoutArea, LayoutId, LayoutPlot, LayoutTable, LeaderEntity, LineEntity, Linetype, LinetypeDef,
-    LinetypeTable, Lineweight, MLeaderContent, MLeaderEntity, MLeaderStyle, MLeaderStyleId,
-    MTextEntity, Measure, PointEntity, PolylineEntity, Properties, Revision, SplineEntity,
-    TextEntity, TextStyle, TextStyleId, TextStyleTable, ViewportEntity, WipeoutEntity, draw_order,
+    ArcEntity, AttributeDefinitionEntity, Axis, BlockId, BlockReferenceEntity, BlockTable,
+    CircleEntity, Color, Constraint, DimStyle, DimStyleId, DimensionEntity, Drawing,
+    DrawingSettings, EllipseEntity, Entity, EntityRecord, Group, HatchEntity, HatchStyle,
+    Justification, Kind, Layer, LayerState, Layout, LayoutArea, LayoutId, LayoutPlot, LayoutTable,
+    LeaderEntity, LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight, MLeaderContent,
+    MLeaderEntity, MLeaderStyle, MLeaderStyleId, MTextEntity, Measure, Part, PointEntity,
+    PolylineEntity, Properties, Reference, Revision, SplineEntity, TextEntity, TextStyle,
+    TextStyleId, TextStyleTable, Touch, ViewportEntity, WipeoutEntity, draw_order,
 };
 
 use crate::import::{Record, Section};
@@ -364,10 +365,18 @@ impl Export {
                 .zip(block_records.iter().copied())
                 .collect(),
         };
+        // Entities a group holds or a constraint refers to: the objects
+        // name them by handle (#214, #271).
         body.grouped = drawing
             .groups()
             .iter()
             .flat_map(|(_, group)| group.members.iter().copied())
+            .chain(
+                drawing
+                    .constraints()
+                    .iter()
+                    .flat_map(|(_, c)| c.references.iter().map(|r| r.entity)),
+            )
             .collect();
         body.group(0, "SECTION");
         body.group(2, "CLASSES");
@@ -2090,6 +2099,13 @@ impl Writer {
             self.group(3, "ACAD_WIPEOUT_VARS");
             self.handle(350, handle);
         }
+        // The drawing's constraints, ours (#271): other readers keep the
+        // geometry and pass over the rest.
+        let constraints = (!drawing.constraints().is_empty()).then(|| self.handles.take());
+        if let Some(handle) = constraints {
+            self.group(3, CONSTRAINTS_DICTIONARY);
+            self.handle(350, handle);
+        }
 
         self.dictionary(structure.groups, structure.root);
         // Each group by name, then its GROUP object (#214).
@@ -2176,6 +2192,9 @@ impl Writer {
 
         self.layer_state_objects(drawing);
         self.mleader_style_objects(structure.root, drawing);
+        if let Some(handle) = constraints {
+            self.constraint_objects(handle, structure.root, drawing);
+        }
         if let Some(handle) = wipeout_variables {
             self.group(0, "WIPEOUTVARIABLES");
             self.handle(5, handle);
@@ -2452,6 +2471,66 @@ impl Writer {
         }
     }
 
+    /// The drawing's constraints (#271, ADR-0038): the
+    /// `CADSLATE_CONSTRAINTS` dictionary naming an XRECORD per constraint,
+    /// `C1`, `C2`, … in the order they were made. A record holds the kind
+    /// (1), a dimensional constraint's name (2) and value (40), an axis or
+    /// a tangent's touch (70), a fix's place (10, 20), where a dimension
+    /// is shown (11, 21), and per reference the entity by handle (340), the
+    /// part (71: 0 start, 1 end, 2 centre, 3 vertex, 4 point, 5 edge, 6
+    /// segment), and a vertex's or segment's index (91).
+    fn constraint_objects(&mut self, dictionary: Handle, root: Handle, drawing: &Drawing) {
+        let rows: Vec<(Handle, &Constraint)> = drawing
+            .constraints()
+            .iter()
+            .map(|(_, c)| (self.handles.take(), c))
+            .collect();
+        self.dictionary(dictionary, root);
+        for (index, (handle, _)) in rows.iter().enumerate() {
+            self.group(3, &format!("C{}", index + 1));
+            self.handle(350, *handle);
+        }
+        for (handle, constraint) in rows {
+            let references: Vec<(Handle, &Reference)> = constraint
+                .references
+                .iter()
+                .filter_map(|r| Some((*self.member_handles.get(&r.entity)?, r)))
+                .collect();
+            self.group(0, "XRECORD");
+            self.handle(5, handle);
+            self.handle(330, dictionary);
+            self.group(100, "AcDbXrecord");
+            self.int(280, 1);
+            let (word, code, value) = constraint_kind_to_dxf(&constraint.kind);
+            self.group(1, word);
+            if !constraint.name.is_empty() {
+                self.group(2, &constraint.name);
+            }
+            if let Some(code) = code {
+                self.int(70, code);
+            }
+            if let Some(value) = value {
+                self.real(40, value);
+            }
+            if let Kind::Fix { at } = constraint.kind {
+                self.real(10, at.x);
+                self.real(20, at.y);
+            }
+            if let Some(place) = constraint.place {
+                self.real(11, place.x);
+                self.real(21, place.y);
+            }
+            for (entity, reference) in references {
+                self.handle(340, entity);
+                let (part, index) = part_to_dxf(reference.part);
+                self.int(71, part);
+                if let Some(index) = index {
+                    self.int(91, i64::from(index));
+                }
+            }
+        }
+    }
+
     fn dictionary(&mut self, handle: Handle, owner: Handle) {
         self.group(0, "DICTIONARY");
         self.handle(5, handle);
@@ -2605,6 +2684,63 @@ fn format_real(value: f64) -> String {
         text.push_str(".0");
     }
     text
+}
+
+/// The named-object dictionary entry our constraints are kept under
+/// (#271).
+pub const CONSTRAINTS_DICTIONARY: &str = "CADSLATE_CONSTRAINTS";
+
+/// A constraint's kind as its XRECORD writes it: the word (1), an axis or
+/// a touch (70), a value (40).
+fn constraint_kind_to_dxf(kind: &Kind) -> (&'static str, Option<i64>, Option<f64>) {
+    match *kind {
+        Kind::Coincident => ("Coincident", None, None),
+        Kind::Collinear => ("Collinear", None, None),
+        Kind::Concentric => ("Concentric", None, None),
+        Kind::Fix { .. } => ("Fix", None, None),
+        Kind::Parallel => ("Parallel", None, None),
+        Kind::Perpendicular => ("Perpendicular", None, None),
+        Kind::Horizontal => ("Horizontal", None, None),
+        Kind::Vertical => ("Vertical", None, None),
+        Kind::Tangent { touch } => (
+            "Tangent",
+            Some(match touch {
+                Touch::Left => 0,
+                Touch::Right => 1,
+                Touch::Outside => 2,
+                Touch::FirstInside => 3,
+                Touch::SecondInside => 4,
+            }),
+            None,
+        ),
+        Kind::Symmetric => ("Symmetric", None, None),
+        Kind::Equal => ("Equal", None, None),
+        Kind::Distance { axis, value } => (
+            "Distance",
+            Some(match axis {
+                Axis::Horizontal => 0,
+                Axis::Vertical => 1,
+                Axis::Aligned => 2,
+            }),
+            Some(value),
+        ),
+        Kind::Angle { value } => ("Angle", None, Some(value)),
+        Kind::Radius { value } => ("Radius", None, Some(value)),
+        Kind::Diameter { value } => ("Diameter", None, Some(value)),
+    }
+}
+
+/// A part as a constraint's XRECORD writes it: its kind (71) and index (91).
+fn part_to_dxf(part: Part) -> (i64, Option<u32>) {
+    match part {
+        Part::Start => (0, None),
+        Part::End => (1, None),
+        Part::Center => (2, None),
+        Part::Vertex(n) => (3, Some(n)),
+        Part::Point => (4, None),
+        Part::Edge => (5, None),
+        Part::Segment(n) => (6, Some(n)),
+    }
 }
 
 #[cfg(test)]

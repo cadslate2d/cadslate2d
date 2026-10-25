@@ -83,6 +83,8 @@ pub struct ImportReport {
     pub blocks: usize,
     /// Groups read (#214).
     pub groups: usize,
+    /// Constraints read: ours, from their XRECORDs (#271).
+    pub constraints: usize,
     /// MTEXT entities whose formatting — fonts, heights, colours,
     /// stacking — was dropped, their words and breaks kept.
     pub formatting_dropped: usize,
@@ -198,6 +200,7 @@ impl ImportReport {
             + self.mleader_styles
             + self.blocks
             + self.groups
+            + self.constraints
             + self.layer_states
             + self.views
             > 0
@@ -214,6 +217,7 @@ impl ImportReport {
                 ),
                 (self.blocks, "block", "blocks"),
                 (self.groups, "group", "groups"),
+                (self.constraints, "constraint", "constraints"),
                 (self.layer_states, "layer state", "layer states"),
                 (self.views, "named view", "named views"),
             ]

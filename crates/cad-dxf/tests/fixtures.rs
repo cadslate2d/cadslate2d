@@ -2675,3 +2675,201 @@ fn a_saved_layer_without_a_linetype_keeps_none_and_round_trips() {
     let back = cad_dxf::import(text.as_bytes()).unwrap();
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }
+
+/// #271: our constraints survive a save — every kind, every part, a
+/// dimension's name, value, and place, a fix's place, a tangent's touch —
+/// in XRECORDs of the `CADSLATE_CONSTRAINTS` dictionary, naming their
+/// entities by handle; export → import → export is byte-identical.
+#[test]
+fn constraints_round_trip_through_their_xrecords() {
+    use cad_document::{
+        ArcEntity, Axis, CircleEntity, Constraint, Kind, LineEntity, Part, PointEntity,
+        PolylineEntity, Reference, Touch,
+    };
+    let mut drawing = cad_document::Drawing::new();
+    let mut tx = drawing.transaction();
+    let a = tx
+        .insert(LineEntity::new(
+            Point2::new(0.0, 0.0),
+            Point2::new(100.0, 0.0),
+        ))
+        .unwrap();
+    let b = tx
+        .insert(LineEntity::new(
+            Point2::new(100.0, 0.0),
+            Point2::new(100.0, 50.0),
+        ))
+        .unwrap();
+    let c = tx
+        .insert(CircleEntity::new(Point2::new(50.0, 25.0), 10.0))
+        .unwrap();
+    let d = tx
+        .insert(ArcEntity::new(Point2::new(50.0, 25.0), 20.0, 0.0, 2.0))
+        .unwrap();
+    let e = tx
+        .insert(PolylineEntity::new(
+            vec![
+                Point2::new(0.0, 80.0),
+                Point2::new(40.0, 80.0),
+                Point2::new(40.0, 120.0),
+            ],
+            false,
+        ))
+        .unwrap();
+    let f = tx
+        .insert(PointEntity::new(Point2::new(-20.0, -20.0)))
+        .unwrap();
+    tx.commit();
+    let at = Reference::new;
+    let constraints = [
+        Constraint::geometric(Kind::Coincident, vec![at(a, Part::End), at(b, Part::Start)]),
+        Constraint::geometric(Kind::Horizontal, vec![at(a, Part::Edge)]),
+        Constraint::geometric(Kind::Vertical, vec![at(b, Part::Edge)]),
+        Constraint::geometric(Kind::Concentric, vec![at(c, Part::Edge), at(d, Part::Edge)]),
+        Constraint::geometric(Kind::Horizontal, vec![at(e, Part::Segment(0))]),
+        Constraint::geometric(
+            Kind::Vertical,
+            vec![at(e, Part::Vertex(1)), at(e, Part::Vertex(2))],
+        ),
+        Constraint::geometric(
+            Kind::Fix {
+                at: Point2::new(-20.0, -20.0),
+            },
+            vec![at(f, Part::Point)],
+        ),
+        Constraint::geometric(
+            Kind::Tangent { touch: Touch::Left },
+            vec![at(a, Part::Edge), at(c, Part::Edge)],
+        )
+        .placed(Point2::new(1.0, 2.0)),
+        Constraint::dimensional(
+            "d1",
+            Kind::Distance {
+                axis: Axis::Horizontal,
+                value: 100.0,
+            },
+            vec![at(a, Part::Start), at(a, Part::End)],
+        )
+        .placed(Point2::new(50.0, -15.25)),
+        Constraint::dimensional(
+            "rad1",
+            Kind::Radius { value: 10.0 },
+            vec![at(c, Part::Edge)],
+        ),
+        Constraint::dimensional(
+            "ang1",
+            Kind::Angle { value: 0.5 },
+            vec![at(a, Part::Edge), at(e, Part::Segment(1))],
+        ),
+    ];
+    for constraint in constraints {
+        drawing.import_constraint(constraint).unwrap();
+    }
+
+    let text = export(&drawing);
+    // Kept as a golden file, so the DWG writer and every fixture test
+    // carry constraints too. Regenerate with `UPDATE_GOLDEN=1`.
+    let golden = fixtures("valid").join("cadslate-constraints.dxf");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        fs::write(&golden, &text).unwrap();
+    }
+    assert_eq!(text, fs::read_to_string(&golden).unwrap(), "export changed");
+    assert!(text.contains("\n  3\nCADSLATE_CONSTRAINTS\n350\n"));
+    assert!(
+        text.contains("\n100\nAcDbXrecord\n280\n1\n  1\nDistance\n  2\nd1\n 70\n0\n 40\n100.0\n")
+    );
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    assert_eq!(back.report.constraints, 11);
+    assert!(
+        back.report
+            .summary()
+            .iter()
+            .any(|line| line.contains("11 constraints"))
+    );
+    let rows = |drawing: &cad_document::Drawing| -> Vec<Constraint> {
+        drawing
+            .constraints()
+            .iter()
+            .map(|(_, c)| c.clone())
+            .collect()
+    };
+    // The entities keep their IDs in a fresh import: the rows come back whole.
+    assert_eq!(rows(&back.drawing), rows(&drawing));
+    assert_eq!(export(&back.drawing), text, "export → import → export");
+
+    // A reader that does not know them keeps the geometry: removing the
+    // dictionary entry leaves the drawing as it was, without constraints.
+    let stripped = text.replacen("CADSLATE_CONSTRAINTS", "SOMEONE_ELSES", 1);
+    let other = cad_dxf::import(stripped.as_bytes()).unwrap();
+    assert!(other.drawing.constraints().is_empty());
+    assert_eq!(other.drawing.len(), drawing.len());
+}
+
+/// #271: a constraint naming an entity the file does not hold is reported,
+/// and the rest are read.
+#[test]
+fn a_constraint_naming_an_entity_that_is_not_there_is_reported() {
+    use cad_document::{Constraint, Kind, LineEntity, Part, Reference};
+    let mut drawing = cad_document::Drawing::new();
+    let mut tx = drawing.transaction();
+    let a = tx
+        .insert(LineEntity::new(
+            Point2::new(0.0, 0.0),
+            Point2::new(100.0, 0.0),
+        ))
+        .unwrap();
+    tx.commit();
+    drawing
+        .import_constraint(Constraint::geometric(
+            Kind::Horizontal,
+            vec![Reference::new(a, Part::Edge)],
+        ))
+        .unwrap();
+    let text = export(&drawing);
+    // The line's handle, in the constraint's record, made one no entity has.
+    let record = text
+        .find("\n  1\nHorizontal\n")
+        .expect("the constraint's record");
+    let at = record + text[record..].find("\n340\n").expect("a reference");
+    let end = text[at + 5..].find('\n').unwrap() + at + 5;
+    let broken = format!("{}\n340\nFFFFF{}", &text[..at], &text[end..]);
+    let back = cad_dxf::import(broken.as_bytes()).unwrap();
+    assert!(back.drawing.constraints().is_empty());
+    assert_eq!(back.report.unsupported.get("(constraint)"), Some(&1));
+    assert_eq!(back.drawing.len(), 1);
+}
+
+/// #271: AutoCAD's own constraints — an associative network — are
+/// reported, not read; the geometry they hold is read as it is.
+#[test]
+fn autocad_constraints_are_reported_and_their_geometry_read() {
+    let import = load("valid", "libdxf-autocad2010-constraints.dxf").unwrap();
+    let report = &import.report;
+    assert_eq!(
+        report.unsupported.get("ACDBASSOC2DCONSTRAINTGROUP"),
+        Some(&1)
+    );
+    assert_eq!(report.lines, 1);
+    assert_eq!(report.constraints, 0);
+    let drawing = &import.drawing;
+    assert!(drawing.constraints().is_empty());
+    let line = drawing
+        .entities()
+        .next()
+        .unwrap()
+        .1
+        .as_line()
+        .copied()
+        .unwrap();
+    // AutoCAD left it level, as its constraint holds it.
+    assert_eq!(line.start.y, line.end.y);
+    assert!((line.start.x - 12.839_004_921_216_47).abs() < 1e-12);
+    assert!(
+        report
+            .summary()
+            .iter()
+            .any(|line| line.contains("1 ACDBASSOC2DCONSTRAINTGROUP")),
+        "{:?}",
+        report.summary()
+    );
+}
