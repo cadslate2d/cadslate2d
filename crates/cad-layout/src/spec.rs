@@ -28,6 +28,11 @@ pub struct Spec {
     /// share of the rooms' floor. Zero forbids it.
     #[serde(default = "Spec::default_max_circulation")]
     pub max_circulation: f64,
+    /// The windows' width (#324): with it, a window on each outside wall
+    /// of each room; without it, one of the default width in each room
+    /// that asks for an outside wall.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub windows: Option<f64>,
     /// The search's seed: the same brief and seed make the same plan.
     #[serde(default)]
     pub seed: u64,
@@ -148,6 +153,9 @@ impl Spec {
         positive("The exterior wall's thickness".into(), self.exterior_wall)?;
         positive("The interior wall's thickness".into(), self.interior_wall)?;
         positive("The door's width".into(), self.door)?;
+        if let Some(width) = self.windows {
+            positive("The windows' width".into(), width)?;
+        }
         if !(self.max_circulation.is_finite() && (0.0..=1.0).contains(&self.max_circulation)) {
             return Err(SpecError(
                 "The circulation's share must be between 0 and 1".into(),

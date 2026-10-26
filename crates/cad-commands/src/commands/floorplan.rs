@@ -69,6 +69,7 @@ impl FloorPlanCommand {
                 interior_wall: 0.15,
                 door: 0.9,
                 max_circulation: 0.15,
+                windows: None,
                 seed: 0,
             },
             origin: Point2::ORIGIN,

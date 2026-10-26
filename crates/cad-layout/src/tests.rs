@@ -22,6 +22,7 @@ fn brief(width: f64, depth: f64, rooms: &[(&str, f64)]) -> Spec {
         interior_wall: 0.15,
         door: 0.9,
         max_circulation: 0.15,
+        windows: None,
         seed: 0,
     }
 }
@@ -545,9 +546,10 @@ fn drafting_faults(spec: &Spec, layout: &Layout) -> Vec<String> {
     let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
     let faces: Vec<Face> = w.exterior.iter().chain(&w.interior).copied().collect();
     let all_doors = doors(spec, layout);
+    let all_windows = crate::windows(spec, layout);
     for (index, room) in layout.rooms.iter().enumerate() {
         let own: Vec<Face> = faces.iter().filter(|f| f.room == index).copied().collect();
-        // Closed but for its doors: its faces and the openings in them make
+        // Closed but for its doors and windows: its faces and the openings in them make
         // up the floor's perimeter, every face on it.
         let inner = room.inner;
         let length = |f: &Face| f.start.distance_to(f.end);
@@ -555,7 +557,12 @@ fn drafting_faults(spec: &Spec, layout: &Layout) -> Vec<String> {
             .iter()
             .filter(|d| d.rooms.0 == index || d.rooms.1 == Some(index))
             .map(|d| d.from.distance_to(d.to))
-            .sum();
+            .sum::<f64>()
+            + all_windows
+                .iter()
+                .filter(|w| w.room == index)
+                .map(|w| w.from.distance_to(w.to))
+                .sum::<f64>();
         let perimeter = 2.0 * (inner.w + inner.h);
         if (own.iter().map(length).sum::<f64>() + openings - perimeter).abs() > 1e-9 {
             faults.push(format!("the {}'s faces and doors do not close", room.name));
@@ -874,18 +881,22 @@ fn door_faults(spec: &Spec, layout: &Layout) -> Vec<String> {
             faults.push("a swing that is not a quarter turn".into());
         }
     }
-    // The outer face open at the way in, between its jambs.
+    // The outer face open at the way in and each window, between their
+    // jambs: every piece ends where an exterior jamb does.
     if let Some(way_in) = ways_in.first() {
-        let ends = [w.outside[0], w.outside[w.outside.len() - 1]];
         let jamb_ends: Vec<Point2> = w
             .exterior_jambs
             .iter()
             .flat_map(|(p, q)| [*p, *q])
             .collect();
+        let ends = w
+            .outside
+            .iter()
+            .flat_map(|piece| [piece[0], piece[piece.len() - 1]]);
         if w.outside_closed
             || !ends
-                .iter()
-                .all(|e| jamb_ends.iter().any(|j| j.distance_to(*e) < 1e-9))
+                .clone()
+                .all(|e| jamb_ends.iter().any(|j| j.distance_to(e) < 1e-9))
         {
             faults.push("the outer face is not open at the way in".into());
         }
@@ -958,4 +969,125 @@ proptest::proptest! {
             proptest::prop_assert_eq!(labels(&plans[0]).len(), plans[0].rooms.len());
         }
     }
+}
+
+/// #324: every window is on the outline, along its room's floor, clear of
+/// the room's corners and of the way in, no wider than asked and no
+/// narrower than the least; and a room asking for an outside wall gets
+/// one when no width is given.
+#[test]
+fn windows_are_on_outside_walls_clear_of_corners_and_the_way_in() {
+    let briefs = [
+        brief(
+            12.0,
+            20.0,
+            &[
+                ("living", 25.0),
+                ("kitchen", 10.0),
+                ("bed 1", 12.0),
+                ("bed 2", 10.0),
+                ("bath", 5.0),
+            ],
+        ),
+        brief(
+            10.0,
+            25.0,
+            &[
+                ("living", 30.0),
+                ("kitchen", 12.0),
+                ("suite", 16.0),
+                ("bath", 5.0),
+                ("bed", 11.0),
+                ("office", 8.0),
+            ],
+        ),
+        brief(8.0, 12.0, &[("studio", 25.0), ("bath", 5.0)]),
+    ];
+    for mut spec in briefs {
+        spec.windows = Some(1.5);
+        let layout = crate::solve(&spec).unwrap();
+        let tolerance = cad_core::tolerance::LinearTolerance::DEFAULT.at_magnitude(30.0);
+        let doors = crate::doors(&spec, &layout);
+        let way_in = doors.iter().find(|d| d.rooms.1.is_none()).unwrap();
+        let windows = crate::windows(&spec, &layout);
+        assert!(!windows.is_empty());
+        for w in &windows {
+            let width = w.from.distance_to(w.to);
+            assert!(
+                (crate::WINDOW_MIN - 1e-9..=1.5 + 1e-9).contains(&width),
+                "{width}"
+            );
+            let o = layout.outline;
+            let on_outline = |p: Point2| {
+                tolerance.eq(p.x, o.x)
+                    || tolerance.eq(p.x, o.right())
+                    || tolerance.eq(p.y, o.y)
+                    || tolerance.eq(p.y, o.top())
+            };
+            assert!(on_outline(w.from) && on_outline(w.to), "on an outside wall");
+            let floor = layout.rooms[w.room].inner;
+            for p in [w.from, w.to] {
+                let along_ok = if tolerance.eq(w.from.x, w.to.x) {
+                    p.y >= floor.y + crate::WINDOW_CLEARANCE - 1e-9
+                        && p.y <= floor.top() - crate::WINDOW_CLEARANCE + 1e-9
+                } else {
+                    p.x >= floor.x + crate::WINDOW_CLEARANCE - 1e-9
+                        && p.x <= floor.right() - crate::WINDOW_CLEARANCE + 1e-9
+                };
+                assert!(along_ok, "clear of {}'s corners", layout.rooms[w.room].name);
+            }
+            // Clear of the way in, where it is on the same wall.
+            let same_line = (tolerance.eq(w.from.x, w.to.x)
+                && tolerance.eq(way_in.from.x, way_in.to.x)
+                && tolerance.eq(w.from.x, way_in.from.x))
+                || (tolerance.eq(w.from.y, w.to.y)
+                    && tolerance.eq(way_in.from.y, way_in.to.y)
+                    && tolerance.eq(w.from.y, way_in.from.y));
+            if same_line {
+                let span = |a: Point2, b: Point2| {
+                    if tolerance.eq(a.x, b.x) {
+                        (a.y.min(b.y), a.y.max(b.y))
+                    } else {
+                        (a.x.min(b.x), a.x.max(b.x))
+                    }
+                };
+                let (wl, wh) = span(w.from, w.to);
+                let (dl, dh) = span(way_in.from, way_in.to);
+                assert!(
+                    wh <= dl - crate::WINDOW_CLEARANCE + 1e-9
+                        || wl >= dh + crate::WINDOW_CLEARANCE - 1e-9,
+                    "clear of the way in"
+                );
+            }
+        }
+        // Every room with an outside wall long enough has a window.
+        for (i, room) in layout.rooms.iter().enumerate() {
+            let longest = room.rect.longest_outside(&layout.outline, tolerance);
+            let floor = room.inner;
+            if longest > 0.0
+                && floor.w.min(floor.h)
+                    >= crate::WINDOW_MIN + 2.0 * crate::WINDOW_CLEARANCE + spec.door + 1.0
+            {
+                assert!(
+                    windows.iter().any(|w| w.room == i),
+                    "{} has none",
+                    room.name
+                );
+            }
+        }
+        // The walls still check out with the openings cut.
+        let mut faults = drafting_faults(&spec, &layout);
+        faults.extend(door_faults(&spec, &layout));
+        assert!(faults.is_empty(), "{faults:?}");
+    }
+    // No width given: only the rooms asking for an outside wall, one each.
+    let mut spec = brief(
+        12.0,
+        20.0,
+        &[("living", 25.0), ("kitchen", 10.0), ("bed 1", 12.0)],
+    );
+    spec.rooms[2].exterior = true;
+    let layout = crate::solve(&spec).unwrap();
+    let windows = crate::windows(&spec, &layout);
+    assert!(windows.iter().all(|w| w.room == 2) && windows.len() <= 1);
 }

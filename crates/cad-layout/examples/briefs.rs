@@ -136,16 +136,18 @@ fn svg(spec: &Spec, plan: &cad_layout::Layout) -> String {
         d * k
     ));
     let walls = cad_layout::walls(spec, plan);
-    let ring: Vec<String> = walls.outside.iter().map(|q| p(*q)).collect();
-    out.push_str(&format!(
-        "<{} points='{}' style='fill:none;stroke:#000;stroke-width:1.5'/>",
-        if walls.outside_closed {
-            "polygon"
-        } else {
-            "polyline"
-        },
-        ring.join(" ")
-    ));
+    for piece in &walls.outside {
+        let ring: Vec<String> = piece.iter().map(|q| p(*q)).collect();
+        out.push_str(&format!(
+            "<{} points='{}' style='fill:none;stroke:#000;stroke-width:1.5'/>",
+            if walls.outside_closed {
+                "polygon"
+            } else {
+                "polyline"
+            },
+            ring.join(" ")
+        ));
+    }
     for f in walls.exterior.iter().chain(&walls.interior) {
         out.push_str(&line(f.start, f.end, "stroke:#000;stroke-width:1"));
     }
