@@ -10,9 +10,11 @@
 //!
 //! The font is Hershey's Simplex, the sans-serif single-stroke face that
 //! classic drafting programs ship as their default; see
-//! `fonts/LICENSE.md`. Its glyphs cover printable ASCII. A character it
-//! does not have is drawn as a box the size of a digit, so a string is
-//! never silently shorter than it is.
+//! `fonts/LICENSE.md`. Its glyphs cover printable ASCII; the accented
+//! letters of the Latin languages — `á`, `ç`, `ã`, `ü`, … — are composed
+//! from them, the letter and its mark. A character it does not have is
+//! drawn as a box the size of a digit, so a string is never silently
+//! shorter than it is.
 //!
 //! # What a layout engine may rely on (DESIGN §34)
 //!
@@ -158,6 +160,179 @@ fn synthesized(glyphs: &[Glyph]) -> Vec<(char, Glyph)> {
     extras
 }
 
+/// A diacritical mark, drawn in a unit box — x across, y up — that is
+/// laid over the letter's ink (or, for the cedilla, under it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mark {
+    Acute,
+    Grave,
+    Circumflex,
+    Tilde,
+    Diaeresis,
+    Ring,
+    Cedilla,
+}
+
+impl Mark {
+    fn strokes(self) -> Vec<Vec<Vec2>> {
+        let line = |points: &[(f64, f64)]| points.iter().map(|&(x, y)| Vec2::new(x, y)).collect();
+        let dot = |x: f64| {
+            line(&[
+                (x - 0.08, 0.4),
+                (x + 0.08, 0.4),
+                (x + 0.08, 0.6),
+                (x - 0.08, 0.6),
+                (x - 0.08, 0.4),
+            ])
+        };
+        match self {
+            Self::Acute => vec![line(&[(0.3, 0.0), (0.7, 1.0)])],
+            Self::Grave => vec![line(&[(0.3, 1.0), (0.7, 0.0)])],
+            Self::Circumflex => vec![line(&[(0.1, 0.0), (0.5, 1.0), (0.9, 0.0)])],
+            Self::Tilde => vec![line(&[
+                (0.0, 0.2),
+                (0.25, 0.8),
+                (0.5, 0.5),
+                (0.75, 0.2),
+                (1.0, 0.8),
+            ])],
+            Self::Diaeresis => vec![dot(0.2), dot(0.8)],
+            Self::Ring => vec![
+                (0..=12)
+                    .map(|step| {
+                        let angle = f64::from(step) / 12.0 * std::f64::consts::TAU;
+                        Vec2::new(0.5 + 0.3 * angle.cos(), 0.5 + 0.5 * angle.sin())
+                    })
+                    .collect(),
+            ],
+            // Under the letter, from the baseline down: y from 0 to −1.
+            Self::Cedilla => vec![line(&[
+                (0.5, 0.0),
+                (0.5, -0.3),
+                (0.85, -0.5),
+                (0.5, -1.0),
+                (0.15, -0.9),
+            ])],
+        }
+    }
+}
+
+/// The accented letters, as the letter and its mark.
+const ACCENTED: &[(char, char, Mark)] = &[
+    ('á', 'a', Mark::Acute),
+    ('à', 'a', Mark::Grave),
+    ('â', 'a', Mark::Circumflex),
+    ('ã', 'a', Mark::Tilde),
+    ('ä', 'a', Mark::Diaeresis),
+    ('å', 'a', Mark::Ring),
+    ('é', 'e', Mark::Acute),
+    ('è', 'e', Mark::Grave),
+    ('ê', 'e', Mark::Circumflex),
+    ('ë', 'e', Mark::Diaeresis),
+    ('í', 'i', Mark::Acute),
+    ('ì', 'i', Mark::Grave),
+    ('î', 'i', Mark::Circumflex),
+    ('ï', 'i', Mark::Diaeresis),
+    ('ó', 'o', Mark::Acute),
+    ('ò', 'o', Mark::Grave),
+    ('ô', 'o', Mark::Circumflex),
+    ('õ', 'o', Mark::Tilde),
+    ('ö', 'o', Mark::Diaeresis),
+    ('ú', 'u', Mark::Acute),
+    ('ù', 'u', Mark::Grave),
+    ('û', 'u', Mark::Circumflex),
+    ('ü', 'u', Mark::Diaeresis),
+    ('ý', 'y', Mark::Acute),
+    ('ÿ', 'y', Mark::Diaeresis),
+    ('ñ', 'n', Mark::Tilde),
+    ('ç', 'c', Mark::Cedilla),
+    ('Á', 'A', Mark::Acute),
+    ('À', 'A', Mark::Grave),
+    ('Â', 'A', Mark::Circumflex),
+    ('Ã', 'A', Mark::Tilde),
+    ('Ä', 'A', Mark::Diaeresis),
+    ('Å', 'A', Mark::Ring),
+    ('É', 'E', Mark::Acute),
+    ('È', 'E', Mark::Grave),
+    ('Ê', 'E', Mark::Circumflex),
+    ('Ë', 'E', Mark::Diaeresis),
+    ('Í', 'I', Mark::Acute),
+    ('Ì', 'I', Mark::Grave),
+    ('Î', 'I', Mark::Circumflex),
+    ('Ï', 'I', Mark::Diaeresis),
+    ('Ó', 'O', Mark::Acute),
+    ('Ò', 'O', Mark::Grave),
+    ('Ô', 'O', Mark::Circumflex),
+    ('Õ', 'O', Mark::Tilde),
+    ('Ö', 'O', Mark::Diaeresis),
+    ('Ú', 'U', Mark::Acute),
+    ('Ù', 'U', Mark::Grave),
+    ('Û', 'U', Mark::Circumflex),
+    ('Ü', 'U', Mark::Diaeresis),
+    ('Ý', 'Y', Mark::Acute),
+    ('Ñ', 'N', Mark::Tilde),
+    ('Ç', 'C', Mark::Cedilla),
+];
+
+/// Where a small letter's mark goes, in cap heights: above its x-height
+/// and below the capitals' top.
+const SMALL_MARK: (f64, f64) = (0.8, 0.98);
+/// A mark's width, in cap heights.
+const MARK_WIDTH: f64 = 0.32;
+
+/// The accented letters, composed: the letter's strokes — an `i` without
+/// its dot — and the mark over its ink, between its x-height and the cap
+/// height for a small letter, between the cap height and the font's
+/// ascent for a capital; a cedilla hangs from the baseline into the
+/// descent. Each keeps its letter's advance, and nothing reaches past the
+/// font's ascent or descent, so a layout from the metrics still holds.
+fn accented(glyphs: &[Glyph], ascent: f64, descent: f64) -> Vec<(char, Glyph)> {
+    let of = |c: char| glyphs.get((c as u32 - FIRST_CHAR) as usize);
+    let capital = (1.04, (ascent - 0.02).min(1.2));
+    let mut extras = Vec::new();
+    for &(accented, letter, mark) in ACCENTED {
+        let Some(base) = of(letter) else { continue };
+        let mut strokes: Vec<Vec<Vec2>> = base.strokes.clone();
+        if letter == 'i' {
+            // The dot gives way to the mark.
+            strokes.retain(|stroke| stroke.iter().any(|p| p.y < 0.75));
+        }
+        let xs = || strokes.iter().flatten().map(|p| p.x);
+        let middle = (xs().fold(f64::MAX, f64::min) + xs().fold(f64::MIN, f64::max)) / 2.0;
+        let place = |p: &Vec2, bottom: f64, top: f64| {
+            Vec2::new(
+                middle + (p.x - 0.5) * MARK_WIDTH,
+                bottom + p.y * (top - bottom),
+            )
+        };
+        let (bottom, top) = if letter.is_uppercase() {
+            capital
+        } else {
+            SMALL_MARK
+        };
+        for stroke in mark.strokes() {
+            strokes.push(
+                stroke
+                    .iter()
+                    .map(|p| match mark {
+                        // From the baseline down, two thirds of the descent.
+                        Mark::Cedilla => place(p, 0.0, descent * 2.0 / 3.0),
+                        _ => place(p, bottom, top),
+                    })
+                    .collect(),
+            );
+        }
+        extras.push((
+            accented,
+            Glyph {
+                strokes,
+                advance: base.advance,
+            },
+        ));
+    }
+    extras
+}
+
 /// A superscript's size, as a share of the digit it is made from.
 const SUPERSCRIPT: f64 = 0.6;
 
@@ -193,7 +368,8 @@ impl Font {
         };
         let ascent = ys().fold(1.0_f64, f64::max);
         let descent = -ys().fold(0.0_f64, f64::min);
-        let extras = synthesized(&glyphs);
+        let mut extras = synthesized(&glyphs);
+        extras.extend(accented(&glyphs, ascent, descent));
         Ok(Font {
             glyphs,
             extras,
@@ -421,7 +597,7 @@ mod tests {
             assert!(font.glyph(c).is_some(), "{c:?}");
         }
         assert!(font.glyph('\u{7f}').is_none());
-        assert!(font.glyph('é').is_none());
+        assert!(font.glyph('€').is_none(), "neither ASCII nor composed");
         assert!(font.glyph('\n').is_none());
     }
 
@@ -503,6 +679,63 @@ mod tests {
         }
         let area = font.metrics("12.50 m²", 1.0);
         assert!(close(area.ascent, font.ascent()));
+    }
+
+    #[test]
+    fn accented_letters_are_the_letter_and_its_mark_within_the_font() {
+        let font = Font::simplex();
+        for &(accented, letter, _) in ACCENTED {
+            let glyph = font.glyph(accented).expect("composed");
+            let base = font.glyph(letter).unwrap();
+            assert!(
+                close(glyph.advance, base.advance),
+                "{accented} keeps {letter}'s advance"
+            );
+            assert!(glyph.strokes.len() > base.strokes.len() - usize::from(letter == 'i'));
+            for point in glyph.strokes.iter().flatten() {
+                assert!(
+                    point.y <= font.ascent() + 1e-9 && point.y >= -font.descent() - 1e-9,
+                    "{accented}: {point:?}"
+                );
+            }
+        }
+        // A small letter's mark is above its x-height, a capital's above
+        // the cap height; a cedilla below the baseline.
+        let top = |c: char| {
+            font.glyph(c)
+                .unwrap()
+                .strokes
+                .iter()
+                .flatten()
+                .map(|p| p.y)
+                .fold(f64::MIN, f64::max)
+        };
+        let bottom = |c: char| {
+            font.glyph(c)
+                .unwrap()
+                .strokes
+                .iter()
+                .flatten()
+                .map(|p| p.y)
+                .fold(f64::MAX, f64::min)
+        };
+        assert!(top('ó') > top('o') + 0.1 && top('ó') <= 1.0);
+        assert!(top('Ó') > 1.0);
+        assert!(bottom('ç') < -0.1);
+        // An í has no dot under its accent.
+        assert!(font.glyph('í').unwrap().strokes.len() == font.glyph('i').unwrap().strokes.len());
+        // Portuguese room names are drawn with no box.
+        for word in [
+            "Escritório",
+            "Suíte",
+            "Área de serviço",
+            "Cozinha e lavanderia",
+            "Ático",
+        ] {
+            for c in word.chars() {
+                assert!(font.glyph(c).is_some(), "{c} in {word}");
+            }
+        }
     }
 
     #[test]
