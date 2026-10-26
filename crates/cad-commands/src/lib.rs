@@ -15,6 +15,7 @@ mod dirty;
 #[cfg(any(test, feature = "testing"))]
 pub mod evaluation;
 mod events;
+pub mod floorplan;
 pub mod grips;
 mod history;
 pub mod intent;

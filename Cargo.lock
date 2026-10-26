@@ -129,6 +129,7 @@ dependencies = [
  "cad-geometry",
  "cad-input",
  "cad-intent",
+ "cad-layout",
  "proptest",
  "serde_json",
 ]
