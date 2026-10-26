@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { CadApp } from "../app/cad-app";
 import { CadEngine, coreVersion, loadEngine } from "../cad/engine";
 import { CanvasView } from "./CanvasView";
@@ -10,6 +10,7 @@ import { ImportReport } from "./ImportReport";
 import { Recovery } from "./Recovery";
 import { LayersPanel } from "./LayersPanel";
 import { About } from "./About";
+import { AccountButton, AccountDialog } from "./AccountDialog";
 import { MenuBar } from "./MenuBar";
 import type { MenuAction, Panel } from "./menu-model";
 import { MENUS } from "./menus";
@@ -72,6 +73,8 @@ function useVisibilityPreference(key: string, shownAtFirst = true): Visibility {
 export function App() {
   const [core, setCore] = useState<CoreState>({ status: "loading" });
   const [about, setAbout] = useState(false);
+  const [account, setAccount] = useState(false);
+  const closeAccount = useCallback(() => setAccount(false), []);
   const toolbar = useVisibilityPreference("cadslate2d.toolbar");
   const layers = useVisibilityPreference("cadslate2d.layers");
   const properties = useVisibilityPreference("cadslate2d.properties");
@@ -168,7 +171,10 @@ export function App() {
     .join(" ");
   return (
     <div className={shell}>
-      <Header coreVersion={core.version} />
+      <Header
+        coreVersion={core.version}
+        account={<AccountButton assistant={core.assistant} onOpen={() => setAccount(true)} />}
+      />
       <MenuBar
         app={core.app}
         menus={MENUS}
@@ -187,6 +193,14 @@ export function App() {
       <Recovery app={core.app} />
       <Failure app={core.app} />
       {about && <About version={core.version} onClose={() => setAbout(false)} />}
+      {account && (
+        <AccountDialog
+          assistant={core.assistant}
+          privacyUrl={AI_SERVICE_URL ? new URL("privacy", AI_SERVICE_URL).href : undefined}
+          pricingUrl={AI_SERVICE_URL ? new URL("pricing", AI_SERVICE_URL).href : undefined}
+          onClose={closeAccount}
+        />
+      )}
       <TextEditor app={core.app} />
       <SettingsPanel app={core.app} />
       <CommandLine app={core.app} />

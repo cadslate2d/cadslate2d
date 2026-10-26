@@ -75,7 +75,7 @@ test("the M21 scenario: constrain, generate by command and by request, edit, sav
   await page.goto(`./?debug#ai-sign-in=${service.tokenFor("scenario@example.com")}`);
   await expect(canvas).toBeVisible();
   await expect.poll(async () => (await rendererStats(page)).frames).toBeGreaterThan(0);
-  await expect(panel(page).getByTestId("ai-email")).toHaveText("scenario@example.com");
+  await expect(page.getByTestId("ai-email")).toHaveText("scenario@example.com");
 
   // 1. A sketch, constrained by hand: an L of two lines, their corner
   //    coincident, the first level, the second plumb, its start fixed.

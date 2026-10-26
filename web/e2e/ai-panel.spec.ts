@@ -76,7 +76,7 @@ async function signIn(page: Page, service: FakeAiService, email = "drafter@examp
   await page.goto("about:blank");
   await page.goto(`./?debug#ai-sign-in=${service.tokenFor(email)}`);
   await loaded(page);
-  await expect(panel(page).getByTestId("ai-email")).toHaveText(email);
+  await expect(page.getByTestId("ai-email")).toHaveText(email);
   // The token is spent and taken off the address bar.
   expect(page.url()).not.toContain("ai-sign-in");
 }
@@ -367,18 +367,19 @@ test("signing out and deleting the account; everything else works signed out", a
   // Signed in, then out.
   await chooseMenu(page, "View", "AI Assistant");
   await signIn(page, service);
-  await expect(panel(page).getByTestId("ai-privacy")).toBeVisible();
-  await panel(page).getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: /^Account, / }).click();
+  await expect(page.getByTestId("ai-account").getByTestId("ai-privacy")).toBeVisible();
+  await page.getByTestId("ai-account").getByRole("button", { name: "Sign out" }).click();
   await expect(panel(page).getByTestId("ai-sign-in")).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem("cadslate2d.ai.session"))).toBeNull();
 
   // Signed in again, and the account deleted after a second click.
   await signIn(page, service);
   expect(service.accounts.has("drafter@example.com")).toBe(true);
-  await panel(page).getByRole("button", { name: "Account" }).click();
-  await panel(page).getByRole("button", { name: "Delete account" }).click();
-  await expect(panel(page).getByTestId("ai-delete-confirm")).toBeVisible();
-  await panel(page).getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("button", { name: /^Account, / }).click();
+  await page.getByTestId("ai-account").getByRole("button", { name: "Delete account" }).click();
+  await expect(page.getByTestId("ai-delete-confirm")).toBeVisible();
+  await page.getByTestId("ai-account").getByRole("button", { name: "Delete", exact: true }).click();
   await expect(panel(page).getByTestId("ai-sign-in")).toBeVisible();
   expect(service.accounts.has("drafter@example.com")).toBe(false);
   // The drawing never noticed.
@@ -472,9 +473,9 @@ test("the panel's account view, on Pro", async ({ page, browserName }) => {
   await chooseMenu(page, "View", "Layers Panel");
   await chooseMenu(page, "View", "Properties Panel");
   await signIn(page, service);
-  await panel(page).getByRole("button", { name: "Account" }).click();
-  await expect(panel(page).getByTestId("ai-plan")).toContainText("renews");
-  await expect(panel(page)).toHaveScreenshot("ai-panel-account.png");
+  await page.getByRole("button", { name: /^Account, / }).click();
+  await expect(page.getByTestId("ai-plan")).toContainText("renews");
+  await expect(page.getByTestId("ai-account")).toHaveScreenshot("ai-panel-account.png");
 });
 
 // #289: the account in the panel — the plan, the month's actions, the way
@@ -485,8 +486,8 @@ test("the account: upgrade, manage, and delete", async ({ page }) => {
   await signIn(page, service);
   await ask(page, CIRCLE);
   await expect(panel(page).getByTestId("ai-proposal")).toBeVisible();
-  await panel(page).getByRole("button", { name: "Account" }).click();
-  const account = panel(page).getByTestId("ai-account");
+  await page.getByRole("button", { name: /^Account, / }).click();
+  const account = page.getByTestId("ai-account");
   await expect(account.getByTestId("ai-plan")).toHaveText("Free");
   await expect(account.getByTestId("ai-usage")).toContainText("1 of 100 AI actions used");
   await expect(account.getByRole("button", { name: "Manage billing" })).toHaveCount(0);
@@ -520,7 +521,7 @@ test("the account: upgrade, manage, and delete", async ({ page }) => {
 
   // Delete: the subscription is cancelled first, then the account goes.
   await account.getByRole("button", { name: "Delete account" }).click();
-  const confirm = panel(page).getByTestId("ai-delete-confirm");
+  const confirm = page.getByTestId("ai-delete-confirm");
   await expect(confirm).toContainText("Its subscription is cancelled first.");
   await confirm.getByRole("button", { name: "Delete" }).click();
   await expect(panel(page).getByTestId("ai-sign-in")).toBeVisible();

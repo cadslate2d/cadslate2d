@@ -74,7 +74,7 @@ test("the M20 scenario: drawing and editing by request, accepted, undone, to the
   await page.goto(`./?debug#ai-sign-in=${token}`);
   await expect(page.getByRole("region", { name: "Model space" }).locator("canvas")).toBeVisible();
   await expect.poll(async () => (await rendererStats(page)).frames).toBeGreaterThan(0);
-  await expect(panel(page).getByTestId("ai-email")).toHaveText(EMAIL);
+  await expect(page.getByTestId("ai-email")).toHaveText(EMAIL);
   await expect(panel(page).getByTestId("ai-allowance")).toContainText("3 of 3 left");
 
   // Drafting by hand, as ever.
@@ -123,7 +123,8 @@ test("the M20 scenario: drawing and editing by request, accepted, undone, to the
   expect(await contents(page)).toBe("3 objects: 1 line, 2 circles");
 
   // 6. Signed out: the panel offers sign-in again, and drafting goes on.
-  await panel(page).getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: /^Account, / }).click();
+  await page.getByTestId("ai-account").getByRole("button", { name: "Sign out" }).click();
   await expect(panel(page).getByTestId("ai-sign-in")).toBeVisible();
   await enter(page, "L", "0,50", "200,50", "");
   expect(await contents(page)).toBe("4 objects: 2 lines, 2 circles");

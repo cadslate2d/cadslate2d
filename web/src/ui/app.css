@@ -657,6 +657,60 @@ body {
   font-size: var(--font-size-sm);
 }
 
+/* The AI account (#289), at the row's right where it is always seen. */
+.header__end {
+  margin-left: auto;
+}
+
+.header__account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.header__account:hover {
+  background: var(--color-surface-raised);
+}
+
+.header__plan {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+/* The account dialog, over the canvas as About is. */
+.account {
+  grid-area: canvas;
+  align-self: center;
+  justify-self: center;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: min(440px, calc(100% - 2 * var(--space-4)));
+  padding: var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-panel);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+  font-size: var(--font-size-sm);
+}
+
+.account__foot {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
 .canvas-region {
   position: relative;
   min-height: 0;
