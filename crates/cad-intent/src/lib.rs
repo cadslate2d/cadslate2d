@@ -27,14 +27,15 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
 /// the parts (#272), version 3 the placements (#273), version 4 the
 /// constraints and parameters (#274), version 5 floor plans (#282),
-/// version 6 their windows (#324), version 7 `erase` (#325).
-pub const READS: [u32; 7] = [1, 2, 3, 4, 5, 6, 7];
+/// version 6 their windows (#324), version 7 `erase` (#325), version 8
+/// `dim_scale` (#327).
+pub const READS: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -337,6 +338,12 @@ pub enum Operation {
     },
 
     // ── layers and properties ──
+    /// The scale the current dimension style draws every size at — its
+    /// text, arrowheads, gaps — and never the value (DIMSCALE, #327): text
+    /// 2.5 high at 1, 10 high at 4.
+    DimScale {
+        scale: f64,
+    },
     /// A layer by name, made if it does not exist, and made current when
     /// asked.
     Layer {
@@ -661,6 +668,7 @@ impl Operation {
             Self::Chamfer { .. } => "chamfer",
             Self::Array { .. } => "array",
             Self::PolarArray { .. } => "polar_array",
+            Self::DimScale { .. } => "dim_scale",
             Self::Layer { .. } => "layer",
             Self::SetProperties { .. } => "set_properties",
             Self::DimLinear { .. } => "dim_linear",

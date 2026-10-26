@@ -8,6 +8,12 @@
 //! text style, and the one the drawing is set to is what new dimensions
 //! take. Changing a style is one row changing, however many dimensions it
 //! draws (§19.6).
+//!
+//! A style's `scale` (classic CAD's DIMSCALE, #327) multiplies every size
+//! it gives — text, arrowheads, gaps, extension lines, baseline spacing —
+//! and never the value measured: a style made for millimetres reads on a
+//! drawing in centimetres 1200 units across with a scale of 4. What lays a
+//! dimension or a leader out reads the style through [`DimStyle::scaled`].
 
 use crate::names::Named;
 use crate::table::{Table, TableChange, TableId};
@@ -34,6 +40,9 @@ pub struct DimStyle {
     pub decimals: u8,
     /// What follows the value: a unit, a note; nothing by default.
     pub suffix: String,
+    /// What every size above is multiplied by when a dimension is drawn
+    /// (DIMSCALE). Positive; 1 by default.
+    pub scale: f64,
 }
 
 /// Why a style cannot be as given.
@@ -81,6 +90,24 @@ impl DimStyle {
             baseline_spacing: 3.75,
             decimals: 2,
             suffix: String::new(),
+            scale: 1.0,
+        }
+    }
+
+    /// The style as a dimension is drawn by it: every size multiplied by
+    /// its scale, and the scale 1.
+    #[must_use]
+    pub fn scaled(&self) -> Self {
+        let k = self.scale;
+        Self {
+            text_height: self.text_height * k,
+            arrow_size: self.arrow_size * k,
+            text_gap: self.text_gap * k,
+            extension_offset: self.extension_offset * k,
+            extension_overshoot: self.extension_overshoot * k,
+            baseline_spacing: self.baseline_spacing * k,
+            scale: 1.0,
+            ..self.clone()
         }
     }
 
@@ -107,6 +134,7 @@ impl DimStyle {
                 .ok_or(DimStyleError::Negative(what))
         };
         positive(self.text_height, "text height")?;
+        positive(self.scale, "dimension scale")?;
         positive(self.arrow_size, "arrow size")?;
         not_negative(self.text_gap, "text gap")?;
         not_negative(self.extension_offset, "extension line offset")?;

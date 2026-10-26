@@ -1641,8 +1641,9 @@ impl<'a> Reader<'a> {
     }
 
     /// A row of the DIMSTYLE table: the name and the variables the drawing
-    /// holds — text height (140), arrow size (41), text gap (147), extension
-    /// offset (42) and overshoot (44), decimals (271), and the suffix
+    /// holds — the scale, DIMSCALE (40, #327), text height (140), arrow
+    /// size (41), text gap (147), extension offset (42) and overshoot (44),
+    /// decimals (271), and the suffix
     /// (DIMPOST, 3, where `<>` stands for the value). A value a dimension
     /// cannot be drawn by is reported and the default stands.
     fn table_dim_style(&mut self, body: &RecordBody) -> Result<(), DxfError> {
@@ -1678,6 +1679,8 @@ impl<'a> Reader<'a> {
             true,
         );
         take(&mut style.arrow_size, body.width, defaults.arrow_size, true);
+        // DIMSCALE: group 40, which an entity's record reads as a radius.
+        take(&mut style.scale, body.radius, defaults.scale, true);
         take(&mut style.text_gap, body.dim_gap, defaults.text_gap, false);
         take(
             &mut style.extension_offset,

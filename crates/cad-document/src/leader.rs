@@ -150,6 +150,8 @@ impl LeaderEntity {
     /// and the note after the style's gap, its baseline the text's half
     /// height below the landing.
     pub fn layout(&self, style: &DimStyle) -> LeaderLayout {
+        // Every size at the style's scale (#327).
+        let style = &style.scaled();
         let mut lines: Vec<Segment> = self
             .vertices
             .windows(2)

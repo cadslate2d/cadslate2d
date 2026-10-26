@@ -135,7 +135,7 @@ impl DimChainCommand {
                 .drawing
                 .dim_styles()
                 .get(dimension.style)
-                .map_or(0.0, |style| style.baseline_spacing),
+                .map_or(0.0, |style| style.scaled().baseline_spacing),
         });
         self.state = State::Next;
         Ok(())

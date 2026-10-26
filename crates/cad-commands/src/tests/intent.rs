@@ -509,6 +509,35 @@ fn erase_removes_objects_and_a_drawn_plan_is_revised_from_its_groups_brief() {
     assert!(!kinds(&h).contains(&"circle"), "the selection was erased");
 }
 
+/// #327: `dim_scale` sets the current style's scale, so the dimension that
+/// follows is legible at a drawing 1200 units across: text 10, value 1200.
+#[test]
+fn dim_scale_draws_the_dimensions_that_follow_legibly() {
+    let h = run(r#"
+        {"op": "dim_scale", "scale": 4},
+        {"op": "line", "points": [[0, 0], [1200, 0]]},
+        {"op": "dim_linear", "from": [0, 0], "to": [1200, 0], "at": [600, -60]}
+    "#);
+    let drawing = h.session.drawing();
+    assert_eq!(
+        drawing
+            .tables()
+            .dim_style(drawing.current_dim_style())
+            .scale,
+        4.0
+    );
+    let dimension = drawing
+        .entities()
+        .find_map(|(_, e)| match e {
+            Entity::Dimension(d) => Some(d),
+            _ => None,
+        })
+        .unwrap();
+    let layout = dimension.layout(drawing.tables().dim_style(dimension.style));
+    assert_eq!(layout.text.height, 10.0);
+    assert!((layout.value - 1200.0).abs() < 1e-9);
+}
+
 /// #274: a plate made, its parameters in the context the AI is sent, then
 /// widened by its width parameter with its holes keeping their places from
 /// the edges; a parameter that is not there refused with the reason.

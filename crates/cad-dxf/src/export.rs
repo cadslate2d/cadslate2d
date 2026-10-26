@@ -1106,9 +1106,10 @@ impl Writer {
 
     /// A DIMSTYLE row — whose handle is group 105, alone among the tables —
     /// with the variables the drawing holds: the suffix as DIMPOST (3), with
-    /// `<>` standing for the value; arrow size (41); extension offset (42)
-    /// and overshoot (44); baseline spacing (43); text height (140); text
-    /// gap (147); decimals (271).
+    /// `<>` standing for the value; the scale, DIMSCALE (40, #327), when
+    /// not 1; arrow
+    /// size (41); extension offset (42) and overshoot (44); baseline spacing
+    /// (43); text height (140); text gap (147); decimals (271).
     fn dim_style(&mut self, table: Handle, style: &DimStyle) {
         let handle = self.handles.take();
         self.group(0, "DIMSTYLE");
@@ -1120,6 +1121,11 @@ impl Writer {
         self.group(70, "0");
         if !style.suffix.is_empty() {
             self.group(3, &format!("<>{}", style.suffix));
+        }
+        // Written when it is not exactly 1, which a reader takes it to be:
+        // the default stored, not a value near it.
+        if style.scale.to_bits() != 1.0_f64.to_bits() {
+            self.real(40, style.scale);
         }
         self.real(41, style.arrow_size);
         self.real(42, style.extension_offset);

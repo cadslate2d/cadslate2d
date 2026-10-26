@@ -735,9 +735,14 @@ pub fn describe(h: &Harness) -> Vec<String> {
                 ),
                 // Where its text and line are placed is the drawer's
                 // choice; what it measures is not.
-                Entity::Dimension(d) => {
-                    format!("dimension {} {}", d.measure.kind(), n(d.value()))
-                }
+                // Its text height too, as drawn: legible at the drawing's
+                // size or not (#327).
+                Entity::Dimension(d) => format!(
+                    "dimension {} {} text {}",
+                    d.measure.kind(),
+                    n(d.value()),
+                    n(d.layout(drawing.tables().dim_style(d.style)).text.height)
+                ),
                 other => format!("{other:?}"),
             };
             let properties = drawing.properties(id).unwrap_or_default();

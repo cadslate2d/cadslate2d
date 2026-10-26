@@ -187,6 +187,7 @@ pub fn operation() -> impl Strategy<Value = Operation> {
                 }
             ),
         (name(), any::<bool>()).prop_map(|(name, current)| Operation::Layer { name, current }),
+        (0.1f64..20.0).prop_map(|scale| Operation::DimScale { scale }),
         (
             targets(),
             proptest::option::of(name()),

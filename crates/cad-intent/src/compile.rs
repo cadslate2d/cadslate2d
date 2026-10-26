@@ -58,7 +58,7 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 39] = [
+pub const COMMANDS: [&str; 40] = [
     "LINE",
     "PLINE",
     "RECTANG",
@@ -78,6 +78,7 @@ pub const COMMANDS: [&str; 39] = [
     "CHAMFER",
     "ARRAY",
     "LAYER",
+    "DIMSTYLE",
     "CHPROP",
     "DIMLINEAR",
     "DIMALIGNED",
@@ -342,6 +343,10 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
                 answer(Answer::Angle(*angle)),
                 keyword(if *rotate { "Yes" } else { "No" }),
             ],
+        ),
+        Operation::DimScale { scale } => (
+            "DIMSTYLE",
+            vec![keyword("SCale"), answer(Answer::Number(*scale)), enter()],
         ),
         Operation::Layer { name, current } => {
             let mut steps = vec![keyword("New"), answer(Answer::Text(name.clone()))];

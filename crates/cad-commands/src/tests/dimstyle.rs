@@ -5,7 +5,7 @@ use cad_document::{DimStyle, DimStyleId};
 
 use crate::testing::Harness;
 
-const OPTIONS: &str = "Press Enter to finish or [?/New/Set/Rename/Delete/Height/Arrow/Gap/Offset/Extension/Baseline/Precision/SUffix]:";
+const OPTIONS: &str = "Press Enter to finish or [?/New/Set/Rename/Delete/Height/Arrow/Gap/Offset/Extension/Baseline/Precision/SUffix/SCale]:";
 
 fn last(h: &Harness) -> String {
     h.log().last().cloned().unwrap_or_default()
@@ -245,4 +245,60 @@ fn a_style_change_is_one_row_and_the_current_style_survives_undo() {
         2.5,
         "Standard is untouched"
     );
+}
+
+/// #327: the scale every size is drawn at — classic CAD's DIMSCALE. A
+/// 1200-unit dimension's text, 2.5 at scale 1, is 10 at scale 4; the value
+/// is not scaled; a plain number, not a length; one undo.
+#[test]
+fn the_scale_draws_every_size_larger_and_never_the_value() {
+    let mut h = Harness::new();
+    h.enter_all(&[
+        "LINE",
+        "0,0",
+        "1200,0",
+        "",
+        "DIMLINEAR",
+        "0,0",
+        "1200,0",
+        "600,-60",
+    ]);
+    let dimension = || {
+        h.session
+            .drawing()
+            .entities()
+            .find_map(|(_, e)| match e {
+                cad_document::Entity::Dimension(d) => Some(d.clone()),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let layout = |h: &Harness, d: &cad_document::DimensionEntity| {
+        d.layout(h.session.drawing().tables().dim_style(d.style))
+    };
+    let d = dimension();
+    assert_eq!(layout(&h, &d).text.height, 2.5);
+    h.enter_all(&["DIMSTYLE", "SC"]);
+    assert_eq!(h.prompt(), "Enter the scale every size is drawn at <1>:");
+    h.enter("0");
+    assert_eq!(last(&h), "The dimension scale must be greater than zero.");
+    h.enter_all(&["SC", "4"]);
+    assert_eq!(last(&h), "\"Standard\": sizes drawn at 4.");
+    h.enter("");
+    let scaled = layout(&h, &d);
+    assert_eq!(scaled.text.height, 10.0);
+    assert!(
+        (scaled.value - 1200.0).abs() < 1e-9,
+        "the value is not scaled"
+    );
+    assert_eq!(
+        current(&h).text_height,
+        2.5,
+        "the style's own sizes are kept"
+    );
+    h.undo();
+    assert_eq!(layout(&h, &d).text.height, 2.5);
+    // A plain number: a unit suffix is refused.
+    h.enter_all(&["UNITS", "MM", "DIMSTYLE", "SC", "2mm"]);
+    assert_eq!(current(&h).scale, 1.0);
 }

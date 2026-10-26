@@ -362,7 +362,11 @@ impl Command for QdimCommand {
         let style = ctx.drawing.current_dim_style();
         self.style = (
             style,
-            ctx.drawing.tables().dim_style(style).baseline_spacing,
+            ctx.drawing
+                .tables()
+                .dim_style(style)
+                .scaled()
+                .baseline_spacing,
         );
         self.ordinate_datum = ctx.settings.ordinate_datum;
         if ctx.selection.is_empty() {

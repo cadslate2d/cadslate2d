@@ -494,6 +494,7 @@ impl Check {
                 }
                 Ok(())
             }
+            Operation::DimScale { scale } => self.positive("scale", *scale),
             Operation::Layer { name, .. } => self.name("name", name),
             Operation::SetProperties {
                 targets,

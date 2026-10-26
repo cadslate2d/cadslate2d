@@ -856,6 +856,25 @@
         },
         {
           "additionalProperties": false,
+          "description": "The scale the current dimension style draws every size at — its\ntext, arrowheads, gaps — and never the value (DIMSCALE, #327): text\n2.5 high at 1, 10 high at 4.",
+          "properties": {
+            "op": {
+              "const": "dim_scale",
+              "type": "string"
+            },
+            "scale": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "op",
+            "scale"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "A layer by name, made if it does not exist, and made current when\nasked.",
           "properties": {
             "current": {

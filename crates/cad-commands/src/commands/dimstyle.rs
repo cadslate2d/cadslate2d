@@ -5,7 +5,8 @@
 //! LINETYPE. `New` copies the current style under a new name and makes it
 //! current; `Set` chooses the current one; the variables — text height,
 //! arrow size, text gap, extension offset and overshoot, baseline spacing,
-//! decimals, suffix
+//! decimals, suffix, and the scale every size is drawn at (`SCale`,
+//! DIMSCALE, #327)
 //! — each ask with the current style's value as the default and change the
 //! current style, which redraws every dimension drawn by it (§19.6). What
 //! the table allows is decided by `cad-document`; this is the conversation.
@@ -30,9 +31,10 @@ const EXTENSION: Keyword = Keyword::new("Extension");
 const PRECISION: Keyword = Keyword::new("Precision");
 const SUFFIX: Keyword = Keyword::new("SUffix");
 const BASELINE: Keyword = Keyword::new("Baseline");
-const OPTIONS: [Keyword; 13] = [
+const SCALE: Keyword = Keyword::new("SCale");
+const OPTIONS: [Keyword; 14] = [
     LIST, NEW, SET, RENAME, DELETE, HEIGHT, ARROW, GAP, OFFSET, EXTENSION, BASELINE, PRECISION,
-    SUFFIX,
+    SUFFIX, SCALE,
 ];
 /// Typed at the suffix prompt, clears the suffix.
 const NO_SUFFIX: &str = ".";
@@ -107,6 +109,8 @@ enum State {
     Length(Length),
     Precision,
     Suffix,
+    /// What every size is multiplied by: a plain number, not a length.
+    Scale,
 }
 
 #[derive(Debug)]
@@ -331,6 +335,8 @@ impl Command for DimStyleCommand {
             }
             State::Precision => Prompt::new("Enter number of decimals (0 to 8)")
                 .with_default(self.current.decimals.to_string()),
+            State::Scale => Prompt::new("Enter the scale every size is drawn at")
+                .with_default(display(self.current.scale)),
             State::Suffix => {
                 let prompt = Prompt::new(format!(
                     "Enter text after the value (\"{NO_SUFFIX}\" for none)"
@@ -348,7 +354,7 @@ impl Command for DimStyleCommand {
         match &self.state {
             State::Option => ExpectedInput::new(InputKind::Nothing).with_keywords(&OPTIONS),
             State::Length(_) => ExpectedInput::distance(),
-            State::Precision => ExpectedInput::factor(),
+            State::Precision | State::Scale => ExpectedInput::factor(),
             _ => ExpectedInput::text(),
         }
     }
@@ -370,6 +376,7 @@ impl Command for DimStyleCommand {
                     EXTENSION => State::Length(Length::Extension),
                     BASELINE => State::Length(Length::Baseline),
                     PRECISION => State::Precision,
+                    SCALE => State::Scale,
                     SUFFIX => State::Suffix,
                     _ => {
                         Self::list(ctx);
@@ -422,6 +429,14 @@ impl Command for DimStyleCommand {
                     ctx,
                     |style| style.decimals = decimals,
                     |style| format!("\"{}\": {} decimals.", style.name, decimals),
+                );
+                self.state = State::Option;
+            }
+            (State::Scale, CommandInput::Distance(scale)) => {
+                Self::restyle(
+                    ctx,
+                    |style| style.scale = scale,
+                    |style| format!("\"{}\": sizes drawn at {}.", style.name, display(scale)),
                 );
                 self.state = State::Option;
             }

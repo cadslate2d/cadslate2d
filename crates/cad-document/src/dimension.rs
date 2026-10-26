@@ -594,6 +594,8 @@ impl DimensionEntity {
 
     /// The dimension drawn by `style`.
     pub fn layout(&self, style: &DimStyle) -> DimensionLayout {
+        // Every size at the style's scale (#327).
+        let style = &style.scaled();
         let content = self.content(style);
         match self.measure {
             Measure::Linear { a, b, rotation } => {
@@ -1716,6 +1718,7 @@ mod tests {
                     } else {
                         String::new()
                     },
+                    scale: 1.0,
                 },
             )
     }
@@ -1778,6 +1781,27 @@ mod tests {
     }
 
     proptest! {
+        /// #327: a style's scale draws a dimension exactly as the same
+        /// style with every size multiplied — text, arrows, gaps, lines —
+        /// and measures the same value.
+        #[test]
+        fn a_styles_scale_lays_out_as_its_sizes_multiplied(
+            dim in dimension(), style in style(), k in 0.1f64..20.0,
+        ) {
+            let scaled = DimStyle { scale: k, ..style.clone() };
+            let multiplied = DimStyle {
+                text_height: style.text_height * k,
+                arrow_size: style.arrow_size * k,
+                text_gap: style.text_gap * k,
+                extension_offset: style.extension_offset * k,
+                extension_overshoot: style.extension_overshoot * k,
+                baseline_spacing: style.baseline_spacing * k,
+                ..style.clone()
+            };
+            prop_assert_eq!(dim.layout(&scaled), dim.layout(&multiplied));
+            prop_assert_eq!(dim.layout(&scaled).value, dim.layout(&style).value);
+        }
+
         #[test]
         fn the_value_is_what_the_points_measure_whatever_the_style(
             dim in dimension(), style in style(),

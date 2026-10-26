@@ -1933,6 +1933,42 @@ fn dimension_styles_from_another_writer() {
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }
 
+/// DIMSCALE from another writer (#327): ezdxf's `CM` style scales its
+/// sizes by 4, so a 1200-unit dimension's text is 10 high, not 2.5; the
+/// value measured is not scaled; written back and read the same.
+#[test]
+fn a_dimension_style_scale_from_another_writer_scales_its_sizes() {
+    let import = load("valid", "ezdxf-r2010-dimscale.dxf").unwrap();
+    let drawing = &import.drawing;
+    let styles = drawing.dim_styles();
+    let cm = styles.get(styles.find("CM").unwrap()).unwrap();
+    assert_eq!((cm.scale, cm.text_height, cm.arrow_size), (4.0, 2.5, 2.5));
+    assert_eq!(styles.get(DimStyleId::FIRST).unwrap().scale, 1.0);
+    let dimension = drawing
+        .entities()
+        .find_map(|(_, entity)| match entity {
+            cad_document::Entity::Dimension(dimension) => Some(dimension),
+            _ => None,
+        })
+        .expect("the dimension");
+    let layout = dimension.layout(drawing.tables().dim_style(dimension.style));
+    assert_eq!(layout.text.height, 10.0);
+    assert!(
+        (layout.value - 1200.0).abs() < 1e-9,
+        "the value is not scaled"
+    );
+    assert_eq!(import.report.dim_styles, 1, "CM: Standard restyles ours");
+    let text = export(drawing);
+    assert!(
+        text.contains("  2\nCM\n 70\n0\n 40\n4.0\n"),
+        "DIMSCALE written as group 40"
+    );
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    let again = back.drawing.dim_styles();
+    assert_eq!(again.get(again.find("CM").unwrap()).unwrap().scale, 4.0);
+    assert_eq!(export(&back.drawing), text, "export → import → export");
+}
+
 /// DIMENSION from another writer (ADR-0020, #166): every kind the drawing
 /// has a measure for, read from its points; its style, made when the file
 /// did not define it; the drafter's text and turned text; the anonymous
