@@ -241,3 +241,89 @@ fn a_window_goes_through_a_generated_plans_exterior_wall() {
     h.undo();
     assert_eq!(on(&h, EXTERIOR_WALLS).len(), outer_before);
 }
+
+/// A door through a plan's interior wall: its faces are two rooms' sides,
+/// on WALL-INT; the leaf stands into the room the point is in.
+#[test]
+fn a_door_goes_through_a_generated_plans_interior_wall() {
+    let spec = Spec {
+        terrain: Terrain {
+            width: 12.0,
+            depth: 20.0,
+        },
+        setbacks: Setbacks::default(),
+        rooms: vec![
+            Room::new("living", 25.0),
+            Room::new("kitchen", 10.0),
+            Room::new("bedroom", 12.0),
+        ],
+        adjacent: Vec::new(),
+        exterior_wall: 0.25,
+        interior_wall: 0.15,
+        door: 0.9,
+        max_circulation: 0.15,
+        windows: None,
+        seed: 0,
+    };
+    let layout = cad_layout::solve(&spec).unwrap();
+    let walls = cad_layout::walls(&spec, &layout);
+    // The longest interior face: its middle is clear of the plan's doors
+    // on one side or the other, and the face across is the next room's.
+    let face = walls
+        .interior
+        .iter()
+        .max_by(|a, b| {
+            a.start
+                .distance_to(a.end)
+                .total_cmp(&b.start.distance_to(b.end))
+        })
+        .unwrap();
+    assert!(face.start.distance_to(face.end) > 1.5);
+    let middle = Point2::new(
+        (face.start.x + face.end.x) / 2.0,
+        (face.start.y + face.end.y) / 2.0,
+    );
+    let room = layout.rooms[face.room].inner;
+    let inside = Point2::new(room.x + room.w / 2.0, room.y + room.h / 2.0);
+    let mut h = Harness::new();
+    h.enter_all(&["FLOORPLAN", "B", &spec.to_json(), "", ""]);
+    let interior_before = on(&h, crate::floorplan::INTERIOR_WALLS).len();
+    let doors_before = on(&h, DOORS).len();
+    h.enter("DOOR");
+    h.click_world(middle);
+    assert_eq!(
+        h.prompt(),
+        "Specify the door's centre on the wall:",
+        "{:?}",
+        h.log()
+    );
+    h.enter(&format!("{},{}", middle.x, middle.y));
+    h.enter("0.8");
+    h.enter(&format!("{},{}", inside.x, inside.y));
+    assert_eq!(h.prompt(), "Command:", "{:?}", h.log());
+    assert_eq!(on(&h, DOORS).len(), doors_before + 2);
+    // Both faces cut in two, and two jambs: four more on WALL-INT.
+    assert_eq!(
+        on(&h, crate::floorplan::INTERIOR_WALLS).len(),
+        interior_before + 4
+    );
+    // The leaf stands into the room the point is in.
+    let leaf = on(&h, DOORS)
+        .into_iter()
+        .filter_map(|e| match e {
+            Entity::Polyline(p) => Some(p),
+            _ => None,
+        })
+        .last()
+        .unwrap();
+    let tip = leaf.vertices[1];
+    assert!(
+        tip.x >= room.x - 1e-9
+            && tip.x <= room.right() + 1e-9
+            && tip.y >= room.y - 1e-9
+            && tip.y <= room.top() + 1e-9,
+        "{tip:?} in {room:?}"
+    );
+    h.undo();
+    assert_eq!(on(&h, DOORS).len(), doors_before);
+}
