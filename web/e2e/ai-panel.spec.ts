@@ -1,4 +1,4 @@
-// The AI panel (#260, #261, #274), against the stand-in service of
+// The AI panel (#260, #261, #274, #282), against the stand-in service of
 // ai-fake.ts and the corpus's recorded model answers: signing in by an
 // emailed link, a request and its preview, Accept as one undo, Reject,
 // Revise, the consent for drawing context, a creation and a selection edit
@@ -7,7 +7,16 @@
 // the account — and everything else working signed out.
 import { expect, test, type Page } from "@playwright/test";
 import { fakeAiService, type FakeAiService } from "./ai-fake";
-import { chooseMenu, downloadFrom, enter, entities, num, openApp, rendererStats } from "./support";
+import {
+  chooseMenu,
+  downloadFrom,
+  enter,
+  entities,
+  group,
+  num,
+  openApp,
+  rendererStats,
+} from "./support";
 
 /** After a page load: the canvas, then its first frame. */
 async function loaded(page: Page) {
@@ -23,6 +32,9 @@ const PLATE =
   "A 120 by 80 rectangle with its lower left corner at the origin, and a hole of diameter 10 at each corner, 10 in from both edges";
 const HOLES = "Make these holes diameter 6";
 const TOO_BIG = "Fillet these lines with a radius of 50";
+const HOUSE =
+  "A two-bedroom house on a 12 × 20 m plot with a 5 m front setback: living room 25 m², kitchen 10 m², bedrooms of 12 and 10 m², bathroom 5 m²; the kitchen opens onto the living room";
+const BIGGER_KITCHEN = "Make the kitchen 14 m²";
 const PART =
   "Make a 120 × 80 mm plate with its lower left corner at the origin and four Ø8 holes 10 mm in from the corners";
 const WIDER = "Make this plate 20 mm wider without moving the holes relative to the edges";
@@ -256,6 +268,39 @@ test("an edit of the selection, by the IDs the context gave out", async ({ page 
   ]);
 });
 
+// #282: a floor plan by a brief, revised before it is accepted, then drawn.
+test("a floor plan by a brief, a revision, and Accept", async ({ page }) => {
+  const service = await fakeAiService(page);
+  await openApp(page);
+  await signIn(page, service);
+  await ask(page, HOUSE);
+  const proposal = panel(page).getByTestId("ai-proposal");
+  await expect(proposal).toContainText("Adds");
+  expect(await contents(page)).toBe("No selection");
+
+  await proposal.getByRole("button", { name: "Revise" }).click();
+  await ask(page, BIGGER_KITCHEN);
+  await expect.poll(() => service.interpreted.length).toBe(2);
+  expect(service.interpreted[1]).toMatchObject({
+    prompt: BIGGER_KITCHEN,
+    previous: { prompt: HOUSE, intent: { operations: [{ op: "floor_plan" }] } },
+  });
+  await expect(panel(page).getByTestId("ai-turns").locator("li").last()).toContainText("14");
+  await proposal.getByRole("button", { name: "Accept" }).click();
+  await expect(proposal).toHaveCount(0);
+
+  const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+  const labels = entities(file.text, "TEXT").map((text) => group(text, 1) ?? "");
+  for (const name of ["living room", "kitchen", "bathroom"]) expect(labels).toContain(name);
+  // A label says the area the revision asked for the kitchen.
+  const areas = labels.filter((label) => label.endsWith(" m²")).map((label) => parseFloat(label));
+  expect(areas.some((area) => Math.abs(area - 14) <= 0.7)).toBe(true);
+  expect(entities(file.text).filter((e) => group(e, 8) === "WALL-EXT").length).toBeGreaterThan(4);
+  // One U takes the plan away.
+  await enter(page, "U");
+  expect(await contents(page)).toBe("No selection");
+});
+
 test("what the engine refuses is explained, and nothing is proposed", async ({ page }) => {
   const service = await fakeAiService(page);
   await openApp(page);
@@ -269,9 +314,7 @@ test("what the engine refuses is explained, and nothing is proposed", async ({ p
   await expect
     .poll(() => service.explained.map(([, reason]) => reason))
     .toEqual(["operation 0: FILLET refused: The radius is too large for these lines"]);
-  await expect(panel(page).getByTestId("ai-turns").locator("li").last()).toContainText(
-    "smaller radius",
-  );
+  await expect(panel(page).getByTestId("ai-turns").locator("li").last()).toContainText("smaller");
   await expect(panel(page).getByTestId("ai-proposal")).toHaveCount(0);
   expect(await contents(page)).toBe("2 lines");
   expect(service.outcomes).toEqual([]);

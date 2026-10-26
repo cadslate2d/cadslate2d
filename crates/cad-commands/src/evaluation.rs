@@ -55,6 +55,10 @@ pub struct PlanWanted {
     pub terrain: Option<(f64, f64)>,
     /// How many rooms match each pattern.
     pub rooms: Vec<(String, usize)>,
+    /// How many rooms in all, and how many pairs asked to open onto each
+    /// other: a chain of three is three and two, whatever their names.
+    pub count: Option<usize>,
+    pub pairs: Option<usize>,
     /// The rooms' floor together, from and to.
     pub total: Option<(f64, f64)>,
     /// A room matching the pattern with its area from and to.
@@ -94,6 +98,8 @@ impl PlanWanted {
                 .and_then(Value::as_u64)
                 .map(|n| n as u32),
             keeps_previous: value["keeps_previous"].as_bool().unwrap_or(false),
+            count: value["count"].as_u64().map(|n| n as usize),
+            pairs: value["pairs"].as_u64().map(|n| n as usize),
             ..Self::default()
         };
         if let Some(rooms) = value["rooms"].as_object() {
@@ -159,6 +165,16 @@ impl PlanWanted {
             if found != *count {
                 return Some(format!("{found} rooms like {pattern}, not {count}"));
             }
+        }
+        if let Some(count) = self.count
+            && brief.rooms.len() != count
+        {
+            return Some(format!("{} rooms, not {count}", brief.rooms.len()));
+        }
+        if let Some(pairs) = self.pairs
+            && brief.adjacent.len() != pairs
+        {
+            return Some(format!("{} pairings, not {pairs}", brief.adjacent.len()));
         }
         let total: f64 = brief.rooms.iter().map(|r| r.area).sum();
         if let Some((lo, hi)) = self.total
