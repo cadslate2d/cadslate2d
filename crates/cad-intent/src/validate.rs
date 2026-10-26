@@ -34,6 +34,8 @@ pub mod limits {
     pub const HOLES: u32 = 1000;
     /// Rooms in a floor plan's brief (ADR-0039).
     pub const ROOMS: usize = 24;
+    /// Groups of members of one width (#329).
+    pub const MEMBER_GROUPS: usize = 16;
     /// The plans a floor plan may choose among.
     pub const ALTERNATIVES: u32 = 3;
 }
@@ -382,6 +384,19 @@ impl Check {
                 Ok(())
             }
             Operation::Erase { targets } => self.targets("targets", targets),
+            Operation::Members { groups, .. } => {
+                if groups.is_empty() {
+                    return Err(self.refuse("groups", Reason::TooFew(1)));
+                }
+                if groups.len() > limits::MEMBER_GROUPS {
+                    return Err(self.refuse("groups", Reason::TooMany(limits::MEMBER_GROUPS)));
+                }
+                for group in groups {
+                    self.targets("groups.targets", &group.targets)?;
+                    self.positive("groups.width", group.width)?;
+                }
+                Ok(())
+            }
             Operation::Move {
                 targets,
                 displacement,

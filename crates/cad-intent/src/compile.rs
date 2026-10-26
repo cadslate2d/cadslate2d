@@ -58,7 +58,7 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 40] = [
+pub const COMMANDS: [&str; 41] = [
     "LINE",
     "PLINE",
     "RECTANG",
@@ -99,6 +99,7 @@ pub const COMMANDS: [&str; 40] = [
     "-PARAMETERS",
     "FLOORPLAN",
     "ERASE",
+    "MEMBERS",
 ];
 
 /// Compiles every operation of a validated document, in order.
@@ -206,6 +207,25 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
             ],
         ),
         Operation::Erase { targets } => ("ERASE", vec![Step::Select(targets.clone())]),
+        Operation::Members {
+            groups,
+            keep_centrelines,
+        } => {
+            // The first group is the selection the command starts with;
+            // each further one is chosen at its prompt and ended by Enter;
+            // Enter with none ends the groups.
+            let mut steps = Vec::new();
+            for (index, group) in groups.iter().enumerate() {
+                steps.push(Step::Select(group.targets.clone()));
+                if index > 0 {
+                    steps.push(enter());
+                }
+                steps.push(length(group.width));
+            }
+            steps.push(enter());
+            steps.push(keyword(if *keep_centrelines { "Yes" } else { "No" }));
+            ("MEMBERS", steps)
+        }
         Operation::Move {
             targets,
             displacement,

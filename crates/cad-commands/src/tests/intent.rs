@@ -538,6 +538,33 @@ fn dim_scale_draws_the_dimensions_that_follow_legibly() {
     assert!((layout.value - 1200.0).abs() < 1e-9);
 }
 
+/// #329: `members` makes a truss's centrelines into members, chords 10
+/// wide and webs 5, as the command does; the centrelines go.
+#[test]
+fn members_make_a_truss_of_its_centrelines() {
+    let h = run(r#"
+        {"op": "line", "points": [[0, 0], [1200, 0]]},
+        {"op": "line", "points": [[0, 0], [600, 200]]},
+        {"op": "line", "points": [[600, 200], [1200, 0]]},
+        {"op": "line", "points": [[150, 50], [300, 0]]},
+        {"op": "line", "points": [[300, 0], [450, 150]]},
+        {"op": "line", "points": [[450, 150], [600, 0]]},
+        {"op": "line", "points": [[600, 0], [750, 150]]},
+        {"op": "line", "points": [[750, 150], [900, 0]]},
+        {"op": "line", "points": [[900, 0], [1050, 50]]},
+        {"op": "members", "groups": [
+            {"targets": [1, 2, 3], "width": 10},
+            {"targets": [4, 5, 6, 7, 8, 9], "width": 5}
+        ]}
+    "#);
+    assert_eq!(kinds(&h), ["polyline"; 9]);
+    assert!(
+        h.entities()
+            .iter()
+            .all(|e| matches!(e, Entity::Polyline(p) if p.closed))
+    );
+}
+
 /// #274: a plate made, its parameters in the context the AI is sent, then
 /// widened by its width parameter with its holes keeping their places from
 /// the edges; a parameter that is not there refused with the reason.

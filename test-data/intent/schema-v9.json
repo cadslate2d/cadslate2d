@@ -192,6 +192,24 @@
         }
       ]
     },
+    "MemberGroup": {
+      "additionalProperties": false,
+      "description": "Lines of one width, made members together (#329).",
+      "properties": {
+        "targets": {
+          "$ref": "#/$defs/Targets"
+        },
+        "width": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "targets",
+        "width"
+      ],
+      "type": "object"
+    },
     "Operation": {
       "description": "One operation of the catalogue. Every length and coordinate is in the\ndocument's units; every angle is in degrees, counter-clockwise.",
       "oneOf": [
@@ -437,6 +455,30 @@
             "op",
             "at",
             "text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Lines made into members with a width (#329): each group's lines as\nwide as its `width`, meeting every other group's — continuous\nthrough a joint along them, butted against another's face, mitred\nwhere they end together — as closed outlines; the centrelines go\nunless `keep_centrelines`.",
+          "properties": {
+            "groups": {
+              "items": {
+                "$ref": "#/$defs/MemberGroup"
+              },
+              "type": "array"
+            },
+            "keep_centrelines": {
+              "type": "boolean"
+            },
+            "op": {
+              "const": "members",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "groups"
           ],
           "type": "object"
         },

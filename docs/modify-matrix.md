@@ -290,6 +290,22 @@ Rules:
 
 Tests: `cad-geometry/src/trim.rs` (`break_*`), `cad-geometry/src/path.rs` (`Path::broken`), `cad-document/src/editing.rs`, `cad-commands/src/tests/break_.rs`, `cad-input/src/point.rs` (the bare `@`), `web/e2e/break.spec.ts`.
 
+## MEMBERS
+
+Centrelines made into members with a width (#329): the lines are chosen in groups, each with its width, and joined together by `cad_geometry::members`.
+
+| Where members meet | What is drawn |
+| --- | --- |
+| Collinear, of one width, end to end | One member |
+| A member ends on another's side | Cut by that member's face; two ending at one point there are also cut where they meet |
+| Members end at one point, none through it | Mitred round the point, every outline running through it, so they fill the joint; a mitre longer than four widths is cut square at the point |
+| An end that meets nothing | Square |
+| Members crossing without a joint | Not resolved: each keeps its outline |
+
+Only lines are made members; anything else selected is left out and said. Each outline is a closed polyline with its first centreline's properties; the centrelines are removed unless `Yes` keeps them. One invocation is one transaction.
+
+Tests: `cad-geometry/src/members.rs` (a rectangle, joining, an L that fills its joint exactly, a post on a beam, a sharp mitre, the maintainer's Warren truss with no overlap and symmetric), `cad-commands/src/tests/members.rs`, `cad-commands/src/tests/intent.rs`.
+
 ## WINDOW, DOOR
 
 An opening through a wall drawn as two parallel faces — a plan's (`FLOORPLAN`), or two lines drawn by hand (#325). One face is picked; the face across from it is found among the shown objects within a metre; the opening is centred where asked, as wide as asked (1.2 m for a window, 0.9 m for a door, in the drawing's units), and must lie where both faces are. Both faces are cut as `BREAK` cuts them; a jamb across the wall closes each end, with the picked face's properties; a window's glass — two lines along the wall's middle — goes on `WINDOW`; a door's leaf, a rectangle 5 cm thick hinged at the end nearer the point that says which room it opens into, and its quarter-turn swing go on `DOOR`. The layers are made if the drawing has none. One opening is one transaction.

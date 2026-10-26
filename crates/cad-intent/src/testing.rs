@@ -5,8 +5,8 @@ use proptest::prelude::*;
 
 use crate::validate::same_point;
 use crate::{
-    Brief, BriefRoom, BriefTerrain, Color, Intent, Measure, Operation, Orientation, Pick, Point,
-    Relation, SelectionWord, Targets, Unit, VERSION,
+    Brief, BriefRoom, BriefTerrain, Color, Intent, Measure, MemberGroup, Operation, Orientation,
+    Pick, Point, Relation, SelectionWord, Targets, Unit, VERSION,
 };
 
 fn differ(a: Point, b: Point) -> bool {
@@ -244,6 +244,17 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         constraint(),
         floor_plan(),
         targets().prop_map(|targets| Operation::Erase { targets }),
+        (
+            proptest::collection::vec((targets(), 0.5f64..50.0), 1..4),
+            any::<bool>(),
+        )
+            .prop_map(|(groups, keep_centrelines)| Operation::Members {
+                groups: groups
+                    .into_iter()
+                    .map(|(targets, width)| MemberGroup { targets, width })
+                    .collect(),
+                keep_centrelines,
+            }),
     ]
 }
 

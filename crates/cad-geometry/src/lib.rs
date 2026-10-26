@@ -20,6 +20,7 @@ mod extend;
 pub mod intersect;
 mod join;
 mod lengthen;
+pub mod members;
 mod offset;
 pub mod opening;
 mod path;
@@ -50,6 +51,7 @@ pub use join::{
     ArcJoinError, Chain, JoinedArcs, chain_paths, cocircular, join_arcs, join_segments,
 };
 pub use lengthen::{lengthen_arc, lengthen_segment, polygon_from_edge, regular_polygon};
+pub use members::{Member, MembersError, Outline};
 pub use offset::{distance_to_line, offset_arc, offset_circle, offset_segment};
 pub use opening::{Leaf, Opening, OpeningError};
 pub use path::{Location, Path, PathTrimError};

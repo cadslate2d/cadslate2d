@@ -27,15 +27,15 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 8;
+pub const VERSION: u32 = 9;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
 /// the parts (#272), version 3 the placements (#273), version 4 the
 /// constraints and parameters (#274), version 5 floor plans (#282),
 /// version 6 their windows (#324), version 7 `erase` (#325), version 8
-/// `dim_scale` (#327).
-pub const READS: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+/// `dim_scale` (#327), version 9 `members` (#329).
+pub const READS: [u32; 9] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -247,6 +247,16 @@ pub enum Operation {
     },
 
     // ── modify ──
+    /// Lines made into members with a width (#329): each group's lines as
+    /// wide as its `width`, meeting every other group's — continuous
+    /// through a joint along them, butted against another's face, mitred
+    /// where they end together — as closed outlines; the centrelines go
+    /// unless `keep_centrelines`.
+    Members {
+        groups: Vec<MemberGroup>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        keep_centrelines: bool,
+    },
     /// Removes the targets from the drawing: what a plan drawn earlier
     /// is, before it is drawn again revised (#325).
     Erase {
@@ -615,6 +625,15 @@ pub struct BriefSetbacks {
     pub right: f64,
 }
 
+/// Lines of one width, made members together (#329).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct MemberGroup {
+    pub targets: Targets,
+    pub width: f64,
+}
+
 /// A room: its name and its floor area inside its walls, m².
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -655,6 +674,7 @@ impl Operation {
             Self::Arc { .. } => "arc",
             Self::Polygon { .. } => "polygon",
             Self::Text { .. } => "text",
+            Self::Members { .. } => "members",
             Self::Erase { .. } => "erase",
             Self::Move { .. } => "move",
             Self::Copy { .. } => "copy",

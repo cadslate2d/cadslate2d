@@ -312,6 +312,8 @@ const MODIFY: Menu = {
     SEPARATOR,
     command("Alig&n", "ALIGN"),
     command("E&xplode", "EXPLODE"),
+    // Centrelines made into members with a width (#329).
+    command("Mem&bers", "MEMBERS"),
     command("Delete D&uplicate Objects", "OVERKILL"),
   ],
 };
