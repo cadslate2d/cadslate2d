@@ -35,12 +35,18 @@ const keep = (event: KeyboardEvent) => {
   if (target.closest("input, textarea, select")) event.stopPropagation();
 };
 
+/** A plan's name as the panel shows it. */
+const planName = (plan: string) => (plan === "pro" ? "Pro" : plan === "free" ? "Free" : plan);
+
 export function AiPanel({
   assistant,
   privacyUrl,
+  pricingUrl,
 }: {
   assistant: AiAssistant;
   privacyUrl?: string;
+  /** The service's page of the plans and their prices (ADR-0002). */
+  pricingUrl?: string;
 }) {
   const snapshot = useSyncExternalStore(assistant.subscribe, assistant.getSnapshot);
   return (
@@ -49,13 +55,18 @@ export function AiPanel({
         <h2 className="ai__title">AI Assistant</h2>
         {snapshot.status === "signed-in" && snapshot.allowance && (
           <span className="ai__allowance" data-testid="ai-allowance">
-            {snapshot.allowance.remaining} of {snapshot.allowance.allowance} left · resets{" "}
-            {resetDate(snapshot.allowance.resetsAt)}
+            {planName(snapshot.allowance.plan)} · {snapshot.allowance.remaining} of{" "}
+            {snapshot.allowance.allowance} left · resets {resetDate(snapshot.allowance.resetsAt)}
           </span>
         )}
       </div>
       <div className="ai__body">
-        <Body assistant={assistant} snapshot={snapshot} privacyUrl={privacyUrl} />
+        <Body
+          assistant={assistant}
+          snapshot={snapshot}
+          privacyUrl={privacyUrl}
+          pricingUrl={pricingUrl}
+        />
       </div>
     </aside>
   );
@@ -65,10 +76,12 @@ function Body({
   assistant,
   snapshot,
   privacyUrl,
+  pricingUrl,
 }: {
   assistant: AiAssistant;
   snapshot: AiSnapshot;
   privacyUrl?: string;
+  pricingUrl?: string;
 }) {
   const privacy = privacyUrl && (
     <a
@@ -106,7 +119,14 @@ function Body({
         </div>
       );
     case "signed-in":
-      return <Conversation assistant={assistant} snapshot={snapshot} privacy={privacy} />;
+      return (
+        <Conversation
+          assistant={assistant}
+          snapshot={snapshot}
+          privacy={privacy}
+          pricingUrl={pricingUrl}
+        />
+      );
   }
 }
 
@@ -145,25 +165,86 @@ function SignIn({
       <button type="submit" className="ai__button ai__button--primary" disabled={snapshot.busy}>
         Email me a sign-in link
       </button>
-      <Problem snapshot={snapshot} />
+      <Problem assistant={assistant} snapshot={snapshot} />
       {privacy}
     </form>
   );
 }
 
-function Problem({ snapshot }: { snapshot: AiSnapshot }) {
+function Problem({
+  assistant,
+  snapshot,
+  pricingUrl,
+}: {
+  assistant: AiAssistant;
+  snapshot: AiSnapshot;
+  pricingUrl?: string;
+}) {
   if (!snapshot.error) return null;
+  const onFree = snapshot.allowance?.plan === "free";
   return (
-    <p className="ai__error" role="alert" data-testid="ai-error" data-kind={snapshot.error.kind}>
-      {snapshot.error.message}
-      {snapshot.error.kind === "limit" && snapshot.allowance && (
-        <>
-          {" "}
-          More actions come with a paid plan, when plans exist; until then, they come back on{" "}
-          {resetDate(snapshot.allowance.resetsAt)}.
-        </>
+    <div className="ai__error" role="alert" data-testid="ai-error" data-kind={snapshot.error.kind}>
+      <p className="ai__error-text">
+        {snapshot.error.message}
+        {snapshot.error.kind === "limit" && snapshot.allowance && (
+          <>
+            {" "}
+            They come back on {resetDate(snapshot.allowance.resetsAt)}
+            {onFree ? "; Pro has more each month." : "."}
+          </>
+        )}
+      </p>
+      {(snapshot.error.kind === "plan" || (snapshot.error.kind === "limit" && onFree)) && (
+        <Upgrade assistant={assistant} snapshot={snapshot} pricingUrl={pricingUrl} />
       )}
-    </p>
+    </div>
+  );
+}
+
+/** The way to Pro: Stripe Checkout, opened beside the app (ADR-0002). */
+function Upgrade({
+  assistant,
+  snapshot,
+  pricingUrl,
+}: {
+  assistant: AiAssistant;
+  snapshot: AiSnapshot;
+  pricingUrl?: string;
+}) {
+  const plans = pricingUrl && (
+    <a className="ai__link" href={pricingUrl} target="_blank" rel="noreferrer">
+      Plans and prices
+    </a>
+  );
+  if (snapshot.billing && !snapshot.billing.available) {
+    return (
+      <p className="ai__note" data-testid="ai-upgrade">
+        Pro cannot be bought here yet. {plans}
+      </p>
+    );
+  }
+  return (
+    <div className="ai__upgrade" data-testid="ai-upgrade">
+      <div className="ai__actions">
+        <button
+          type="button"
+          className="ai__button ai__button--primary"
+          disabled={snapshot.busy}
+          onClick={() => void assistant.upgrade("month")}
+        >
+          Upgrade to Pro, monthly
+        </button>
+        <button
+          type="button"
+          className="ai__button"
+          disabled={snapshot.busy}
+          onClick={() => void assistant.upgrade("year")}
+        >
+          Yearly
+        </button>
+      </div>
+      <p className="ai__note">Payment opens in a new tab; your drawing stays here. {plans}</p>
+    </div>
   );
 }
 
@@ -171,10 +252,12 @@ function Conversation({
   assistant,
   snapshot,
   privacy,
+  pricingUrl,
 }: {
   assistant: AiAssistant;
   snapshot: AiSnapshot;
   privacy: ReactNode;
+  pricingUrl?: string;
 }) {
   const [text, setText] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -295,13 +378,19 @@ function Conversation({
           </section>
         )}
 
-        <Problem snapshot={snapshot} />
+        <Problem assistant={assistant} snapshot={snapshot} pricingUrl={pricingUrl} />
         {atLimit && !snapshot.error && snapshot.allowance && (
-          <p className="ai__error" role="status" data-testid="ai-limit">
-            You have used this month&apos;s {snapshot.allowance.allowance} AI actions. They come
-            back on {resetDate(snapshot.allowance.resetsAt)}; more come with a paid plan, when plans
-            exist. Drafting is unaffected.
-          </p>
+          <div className="ai__error" role="status" data-testid="ai-limit">
+            <p className="ai__error-text">
+              You have used this month&apos;s {snapshot.allowance.allowance} AI actions. They come
+              back on {resetDate(snapshot.allowance.resetsAt)}
+              {snapshot.allowance.plan === "free" ? "; Pro has more each month" : ""}. Drafting is
+              unaffected.
+            </p>
+            {snapshot.allowance.plan === "free" && (
+              <Upgrade assistant={assistant} snapshot={snapshot} pricingUrl={pricingUrl} />
+            )}
+          </div>
         )}
       </div>
       <div className="ai__footer">

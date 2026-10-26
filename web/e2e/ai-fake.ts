@@ -4,8 +4,9 @@
 // shapes (cadslate2d-ai-service's README) — sign-in links into a mail sink
 // the test reads, sessions, the monthly allowance, interpret and explain
 // answered from the corpus's recordings of the real model
-// (test-data/ai/<level>/recordings.jsonl, #261, #274), outcomes — so the panel's tests
-// need nothing that is not in this repository.
+// (test-data/ai/<level>/recordings.jsonl, #261, #274), outcomes, the plans'
+// gates and Stripe's pages (ADR-0002, #9) — so the panel's tests need nothing
+// that is not in this repository.
 import { readdirSync, readFileSync } from "node:fs";
 import type { Page, Route } from "@playwright/test";
 
@@ -67,8 +68,17 @@ export class FakeAiService {
   readonly explained: [number, string][] = [];
   /** Each answered request's prompt, by its record. */
   readonly #requests = new Map<number, string>();
+  /** Free's allowance, and Pro's. */
   allowance = 100;
+  proAllowance = 2000;
   used = 0;
+  /** The plan a new account starts on; `plans` holds each account's. */
+  plan: "free" | "pro" = "free";
+  readonly plans = new Map<string, "free" | "pro">();
+  /** Whether plans can be bought here (the service has Stripe). */
+  billingAvailable = true;
+  /** Each Stripe page opened: Checkout with its interval, or the portal. */
+  readonly stripePages: string[] = [];
   #next = 1;
 
   /** The sign-in link last emailed to `email`: its token. */
@@ -78,13 +88,31 @@ export class FakeAiService {
     return link.slice(link.indexOf("#ai-sign-in=") + "#ai-sign-in=".length);
   }
 
-  #allowance() {
+  planOf(email: string): "free" | "pro" {
+    return this.plans.get(email) ?? this.plan;
+  }
+
+  #allowance(email: string) {
+    const plan = this.planOf(email);
+    const allowance = plan === "pro" ? this.proAllowance : this.allowance;
     return {
-      plan: "free",
+      plan,
       used: this.used,
-      allowance: this.allowance,
-      remaining: Math.max(0, this.allowance - this.used),
+      allowance,
+      remaining: Math.max(0, allowance - this.used),
       resets_at: "2026-11-01T00:00:00Z",
+    };
+  }
+
+  #billing(email: string) {
+    const pro = this.planOf(email) === "pro";
+    return {
+      available: this.billingAvailable,
+      status: pro ? "active" : null,
+      period_end: pro ? "2026-11-26T00:00:00Z" : null,
+      cancel_at_period_end: false,
+      payment_failed: false,
+      manageable: pro,
     };
   }
 
@@ -110,6 +138,19 @@ export class FakeAiService {
     const signedOut = () => reply(401, { error: "Sign in to use the AI." });
     const path = `${request.method()} ${url.pathname}`;
 
+    // Stripe's pages, as the stand-in serves them: opening Checkout's pays.
+    if (path === "GET /stripe/checkout" || path === "GET /stripe/portal") {
+      const email = url.searchParams.get("account") ?? "";
+      if (path === "GET /stripe/checkout") this.plans.set(email, "pro");
+      return route.fulfill({
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+        body:
+          path === "GET /stripe/checkout"
+            ? "<h1>Checkout (stand-in): paid</h1>"
+            : "<h1>Billing portal (stand-in)</h1>",
+      });
+    }
     if (path === "GET /privacy") {
       return route.fulfill({
         status: 200,
@@ -135,11 +176,21 @@ export class FakeAiService {
       this.accounts.add(email);
       const session = `session-${this.#next++}`;
       this.#sessions.set(session, email);
-      return reply(200, { session, email, plan: "free", expires_at: "2999-01-01T00:00:00Z" });
+      return reply(200, {
+        session,
+        email,
+        plan: this.planOf(email),
+        expires_at: "2999-01-01T00:00:00Z",
+      });
     }
     if (path === "GET /v1/account") {
       if (!account) return signedOut();
-      return reply(200, { email: account, plan: "free", allowance: this.#allowance() });
+      return reply(200, {
+        email: account,
+        plan: this.planOf(account),
+        allowance: this.#allowance(account),
+        billing: this.#billing(account),
+      });
     }
     if (path === "POST /v1/auth/sign-out") {
       if (token) this.#sessions.delete(token);
@@ -148,6 +199,7 @@ export class FakeAiService {
     if (path === "DELETE /v1/account") {
       if (!account || !token) return signedOut();
       this.accounts.delete(account);
+      this.plans.delete(account);
       for (const [session, email] of this.#sessions) {
         if (email === account) this.#sessions.delete(session);
       }
@@ -155,16 +207,32 @@ export class FakeAiService {
     }
     if (path === "POST /v1/interpret") {
       if (!account) return signedOut();
-      if (this.used >= this.allowance) {
+      const pro = this.planOf(account) === "pro";
+      if (body["previous"] && !pro) {
+        return reply(403, {
+          error: "Revising a proposal is part of Pro.",
+          needs: { plan: "pro", feature: "revisions" },
+        });
+      }
+      const allowance = this.#allowance(account);
+      if (allowance.remaining === 0) {
         return reply(429, {
-          error: `You have used this month's ${this.allowance} AI actions. They reset on 2026-11-01.`,
-          allowance: this.#allowance(),
+          error: `You have used this month's ${allowance.allowance} AI actions. They reset on 2026-11-01.`,
+          allowance,
         });
       }
       this.interpreted.push(body as unknown as Interpreted);
       const prompt = String(body["prompt"]);
       const answer = recorded.get(prompt);
       if (!answer) return reply(503, { error: "The AI is not available right now." });
+      const operations = (answer.intent as { operations?: { op: string }[] } | null)?.operations;
+      if (!pro && operations?.some((operation) => operation.op === "floor_plan")) {
+        // Answered by the model, refused for the plan, and not counted.
+        return reply(403, {
+          error: "Floor plans through the AI are part of Pro.",
+          needs: { plan: "pro", feature: "floor_plans" },
+        });
+      }
       this.used += 1;
       const request = this.#next++;
       this.#requests.set(request, prompt);
@@ -172,8 +240,23 @@ export class FakeAiService {
         request,
         reply: answer.reply,
         intent: answer.intent ?? null,
-        allowance: this.#allowance(),
+        allowance: this.#allowance(account),
       });
+    }
+    if (path === "POST /v1/billing/checkout" || path === "POST /v1/billing/portal") {
+      if (!account) return signedOut();
+      if (!this.billingAvailable) return reply(503, { error: "Plans cannot be bought here yet." });
+      const pro = this.planOf(account) === "pro";
+      const query = `account=${encodeURIComponent(account)}`;
+      if (path === "POST /v1/billing/checkout") {
+        if (pro) return reply(409, { error: "This account is on Pro already." });
+        const interval = String(body["interval"]);
+        this.stripePages.push(`checkout ${interval}`);
+        return reply(200, { url: `${AI_SERVICE}/stripe/checkout?${query}&interval=${interval}` });
+      }
+      if (!pro) return reply(409, { error: "There is no subscription to manage." });
+      this.stripePages.push("portal");
+      return reply(200, { url: `${AI_SERVICE}/stripe/portal?${query}` });
     }
     const explain = /^POST \/v1\/requests\/(\d+)\/explain$/.exec(path);
     if (explain) {
@@ -194,9 +277,9 @@ export class FakeAiService {
   }
 }
 
-/** Puts the stand-in at the service's address for `page`. */
+/** Puts the stand-in at the service's address for `page` and the tabs it opens. */
 export async function fakeAiService(page: Page): Promise<FakeAiService> {
   const service = new FakeAiService();
-  await page.route(`${AI_SERVICE}/**`, (route) => service.handle(route));
+  await page.context().route(`${AI_SERVICE}/**`, (route) => service.handle(route));
   return service;
 }

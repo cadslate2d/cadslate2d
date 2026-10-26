@@ -41,6 +41,8 @@ function assistantFor(app: CadApp): AiAssistant {
       acceptProposal: () => app.acceptProposal(),
       rejectProposal: () => app.rejectProposal(),
       proposalSummary: () => app.engine.proposalSummary(),
+      // Beside the app, so the drawing in this tab is not left (ADR-0002).
+      openPage: (url) => void window.open(url, "_blank", "noopener"),
     },
     AI_SERVICE_URL ? httpAiClient(AI_SERVICE_URL) : undefined,
     browserSessionStore,
@@ -79,6 +81,8 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     let app: CadApp | undefined;
+    // Back from Checkout or the billing portal, the plan may have changed.
+    let comeBack: (() => void) | undefined;
     loadEngine().then(
       () => {
         if (cancelled) return;
@@ -87,6 +91,8 @@ export function App() {
         setCore({ status: "ready", app, assistant, version: coreVersion() });
         // A drawing kept by a tab that closed before exporting is offered back.
         void app.start();
+        comeBack = () => void assistant.refresh();
+        window.addEventListener("focus", comeBack);
         // A sign-in link's token is spent, and taken off the address bar.
         void assistant.start(window.location.hash).then((rest) => {
           if (rest !== window.location.hash) {
@@ -102,6 +108,7 @@ export function App() {
     );
     return () => {
       cancelled = true;
+      if (comeBack) window.removeEventListener("focus", comeBack);
       app?.dispose();
     };
   }, []);
@@ -190,6 +197,7 @@ export function App() {
             <AiPanel
               assistant={core.assistant}
               privacyUrl={AI_SERVICE_URL ? new URL("privacy", AI_SERVICE_URL).href : undefined}
+              pricingUrl={AI_SERVICE_URL ? new URL("pricing", AI_SERVICE_URL).href : undefined}
             />
           )}
         </div>

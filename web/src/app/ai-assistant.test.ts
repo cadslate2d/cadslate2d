@@ -33,9 +33,31 @@ class FakeClient implements AiClient {
     if (!this.valid.has(token)) throw new AiError("signed-out", "That sign-in link has expired.");
     return { session: "s1", email: "me@example.com", expiresAt: "2999-01-01T00:00:00Z" };
   }
+  plan = "free";
   async account(session: string) {
     if (session !== "s1") throw new AiError("signed-out", "Sign in to use the AI.");
-    return { email: "me@example.com", plan: "free", allowance: allowance(100) };
+    return {
+      email: "me@example.com",
+      plan: this.plan,
+      allowance: { ...allowance(100), plan: this.plan },
+      billing: {
+        available: true,
+        cancelAtPeriodEnd: false,
+        paymentFailed: false,
+        manageable: this.plan === "pro",
+      },
+    };
+  }
+  pages: string[] = [];
+  async checkout(_session: string, interval: "month" | "year") {
+    if (this.plan === "pro") throw new AiError("invalid", "This account is on Pro already.");
+    this.pages.push(`checkout ${interval}`);
+    return `https://checkout.stripe.test/${interval}`;
+  }
+  async portal() {
+    if (this.plan !== "pro") throw new AiError("invalid", "There is no subscription to manage.");
+    this.pages.push("portal");
+    return "https://billing.stripe.test/p";
   }
   async signOut() {
     this.signedOut += 1;
@@ -79,6 +101,10 @@ class FakeHost implements AssistantHost {
   }
   rejectProposal() {
     this.rejected += 1;
+  }
+  opened: string[] = [];
+  openPage(url: string) {
+    this.opened.push(url);
   }
   stopped: string | undefined;
   proposalSummary(): ProposalSummary {
@@ -341,5 +367,61 @@ describe("the AI assistant (#260)", () => {
     await second.assistant.deleteAccount();
     expect(second.client.deleted).toBe(1);
     expect(second.assistant.getSnapshot().status).toBe("signed-out");
+  });
+});
+
+describe("plans (#9, ADR-0002)", () => {
+  const needsPro = (feature: string) =>
+    new AiError("plan", "Floor plans through the AI are part of Pro.", undefined, {
+      plan: "pro",
+      feature,
+    });
+
+  test("a feature the plan does not hold is refused with the plan it needs", async () => {
+    const { assistant, client, host } = await signedIn();
+    client.answer = needsPro("floor_plans");
+    await assistant.ask("a two-bedroom house on a 12 × 20 m plot");
+    expect(assistant.getSnapshot().error).toEqual({
+      kind: "plan",
+      message: "Floor plans through the AI are part of Pro.",
+      needs: { plan: "pro", feature: "floor_plans" },
+    });
+    expect(host.proposed).toEqual([]);
+    expect(assistant.getSnapshot().busy).toBe(false);
+  });
+
+  test("upgrade opens Checkout beside the app; coming back on Pro clears the refusal", async () => {
+    const { assistant, client, host } = await signedIn();
+    client.answer = needsPro("floor_plans");
+    await assistant.ask("a two-bedroom house");
+    await assistant.upgrade("year");
+    expect(host.opened).toEqual(["https://checkout.stripe.test/year"]);
+    // Back before paying: still Free, the refusal stays.
+    await assistant.refresh();
+    expect(assistant.getSnapshot().error?.kind).toBe("plan");
+    // Paid: Pro, and the refusal goes.
+    client.plan = "pro";
+    await assistant.refresh();
+    expect(assistant.getSnapshot()).toMatchObject({
+      allowance: { plan: "pro" },
+      billing: { manageable: true },
+    });
+    expect(assistant.getSnapshot().error).toBeUndefined();
+    await assistant.manage();
+    expect(host.opened.at(-1)).toBe("https://billing.stripe.test/p");
+  });
+
+  test("a refresh keeps a problem that is not the plan's, and a failed checkout says why", async () => {
+    const { assistant, client, host } = await signedIn();
+    client.answer = new AiError("unavailable", "The AI is not available right now.");
+    await assistant.ask("a circle");
+    await assistant.refresh();
+    expect(assistant.getSnapshot().error?.kind).toBe("unavailable");
+    await assistant.manage();
+    expect(host.opened).toEqual([]);
+    expect(assistant.getSnapshot().error).toMatchObject({
+      kind: "invalid",
+      message: "There is no subscription to manage.",
+    });
   });
 });

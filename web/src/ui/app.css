@@ -1073,6 +1073,19 @@ body {
   color: var(--color-danger);
 }
 
+.ai__error-text {
+  margin: 0;
+}
+
+/* The way to Pro, under a refusal or the limit: the panel's own colours. */
+.ai__upgrade {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  color: var(--color-text);
+}
+
 .ai__label {
   color: var(--color-text-muted);
 }

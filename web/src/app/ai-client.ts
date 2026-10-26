@@ -12,10 +12,32 @@ export interface Allowance {
   readonly resetsAt: string;
 }
 
+/** The account's subscription, as the service learned it from Stripe (ADR-0002). */
+export interface Billing {
+  /** Whether plans can be bought from this service. */
+  readonly available: boolean;
+  /** Stripe's status of the subscription, if there was one: `active`, `past_due`, `canceled`, … */
+  readonly status?: string;
+  /** ISO 8601: when the period paid for ends. */
+  readonly periodEnd?: string;
+  /** Whether the subscription ends then. */
+  readonly cancelAtPeriodEnd: boolean;
+  readonly paymentFailed: boolean;
+  /** Whether there is a subscription to manage in the billing portal. */
+  readonly manageable: boolean;
+}
+
 export interface AiAccount {
   readonly email: string;
   readonly plan: string;
   readonly allowance: Allowance;
+  readonly billing: Billing;
+}
+
+/** What a refused feature needs: the plan, and the feature's name. */
+export interface PlanNeed {
+  readonly plan: string;
+  readonly feature: string;
 }
 
 /** A signed-in session: the token the service gave, kept by the browser. */
@@ -60,6 +82,7 @@ export interface AiAnswer {
 export type AiErrorKind =
   | "signed-out" // the session ended or was never there
   | "limit" // the month's allowance is spent
+  | "plan" // the account's plan does not hold the feature
   | "offline" // the service could not be reached
   | "unavailable" // the service or the model is not available right now
   | "invalid"; // the service refused what was sent
@@ -69,6 +92,7 @@ export class AiError extends Error {
     readonly kind: AiErrorKind,
     message: string,
     readonly allowance?: Allowance,
+    readonly needs?: PlanNeed,
   ) {
     super(message);
     this.name = "AiError";
@@ -85,6 +109,10 @@ export interface AiClient {
   reportOutcome(session: string, request: number, outcome: "accepted" | "rejected"): Promise<void>;
   /** Why the engine stopped the proposal of `request`, in the request's language (#261). */
   explain(session: string, request: number, reason: string): Promise<string>;
+  /** Stripe Checkout's address for Pro, paid each `interval`. */
+  checkout(session: string, interval: "month" | "year"): Promise<string>;
+  /** Stripe's billing portal's address, for the card, invoices, and cancelling. */
+  portal(session: string): Promise<string>;
 }
 
 interface WireAllowance {
@@ -94,6 +122,24 @@ interface WireAllowance {
   remaining: number;
   resets_at: string;
 }
+
+interface WireBilling {
+  available: boolean;
+  status?: string | null;
+  period_end?: string | null;
+  cancel_at_period_end?: boolean;
+  payment_failed?: boolean;
+  manageable?: boolean;
+}
+
+const billingOf = (wire: WireBilling | undefined): Billing => ({
+  available: wire?.available ?? false,
+  ...(wire?.status ? { status: wire.status } : {}),
+  ...(wire?.period_end ? { periodEnd: wire.period_end } : {}),
+  cancelAtPeriodEnd: wire?.cancel_at_period_end ?? false,
+  paymentFailed: wire?.payment_failed ?? false,
+  manageable: wire?.manageable ?? false,
+});
 
 const allowanceOf = (wire: WireAllowance): Allowance => ({
   plan: wire.plan,
@@ -127,7 +173,7 @@ export function httpAiClient(service: URL, fetcher: typeof fetch = globalThis.fe
     const text = await response.text();
     const json: unknown = text ? (JSON.parse(text) as unknown) : undefined;
     if (response.ok) return json;
-    const body = (json ?? {}) as { error?: string; allowance?: WireAllowance };
+    const body = (json ?? {}) as { error?: string; allowance?: WireAllowance; needs?: PlanNeed };
     const message = body.error ?? `The AI service answered ${response.status}.`;
     switch (response.status) {
       case 401:
@@ -138,8 +184,11 @@ export function httpAiClient(service: URL, fetcher: typeof fetch = globalThis.fe
           message,
           body.allowance ? allowanceOf(body.allowance) : undefined,
         );
+      case 403:
+        throw new AiError("plan", message, undefined, body.needs ?? { plan: "pro", feature: "" });
       case 400:
       case 404:
+      case 409:
       case 422:
         throw new AiError("invalid", message);
       default:
@@ -163,11 +212,13 @@ export function httpAiClient(service: URL, fetcher: typeof fetch = globalThis.fe
         email: string;
         plan: string;
         allowance: WireAllowance;
+        billing?: WireBilling;
       };
       return {
         email: account.email,
         plan: account.plan,
         allowance: allowanceOf(account.allowance),
+        billing: billingOf(account.billing),
       };
     },
     async signOut(session) {
@@ -200,6 +251,20 @@ export function httpAiClient(service: URL, fetcher: typeof fetch = globalThis.fe
         body: { reason },
       })) as { reply: string };
       return explained.reply;
+    },
+    async checkout(session, interval) {
+      const opened = (await call("/v1/billing/checkout", {
+        method: "POST",
+        session,
+        body: { interval },
+      })) as { url: string };
+      return opened.url;
+    },
+    async portal(session) {
+      const opened = (await call("/v1/billing/portal", { method: "POST", session, body: {} })) as {
+        url: string;
+      };
+      return opened.url;
     },
   };
 }

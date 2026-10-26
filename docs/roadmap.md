@@ -36,7 +36,7 @@ Filed on 2026-10-18 and 2026-10-19. M21 and M22 are done; what remains is the se
 
 | Milestone | What | Epic |
 | --- | --- | --- |
-| M23 — AI Plans and Billing | In the service repository. The app's side is its account view (#289). | — |
+| M23 — AI Plans and Billing | In the service repository (Stripe, the plans' gates). The app's side: the way to Pro where a refusal names it (cadslate2d-ai-service#9), and its account view (#289). | — |
 | Open Source Release | The main repository public under a licence decided by ADR (§44), with a trademark, a contributor agreement, audited history, dependencies, and assets, and the service kept private. Done before the repository goes public; independent of the milestones above. | #291 |
 
 ## M22, Floor-Plan Generator

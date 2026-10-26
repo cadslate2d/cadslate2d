@@ -89,16 +89,17 @@ async function ask(page: Page, prompt: string) {
 
 test("a request is previewed, accepted as one undo, rejected, and revised", async ({ page }) => {
   const service = await fakeAiService(page);
+  service.plan = "pro"; // revisions and floor plans through the AI are Pro (ADR-0002)
   await openApp(page);
   await signIn(page, service);
-  await expect(panel(page).getByTestId("ai-allowance")).toContainText("100 of 100 left");
+  await expect(panel(page).getByTestId("ai-allowance")).toContainText("Pro · 2000 of 2000 left");
 
   // The proposal is on the canvas; the drawing is unchanged until Accept.
   await ask(page, CIRCLE);
   const proposal = panel(page).getByTestId("ai-proposal");
   await expect(proposal).toContainText("Adds 1 object");
   await expect(panel(page).getByTestId("ai-turns")).toContainText("circle of radius 25");
-  await expect(panel(page).getByTestId("ai-allowance")).toContainText("99 of 100 left");
+  await expect(panel(page).getByTestId("ai-allowance")).toContainText("1999 of 2000 left");
   expect(await contents(page)).toBe("No selection");
   await proposal.getByRole("button", { name: "Accept" }).click();
   await expect(proposal).toHaveCount(0);
@@ -271,6 +272,7 @@ test("an edit of the selection, by the IDs the context gave out", async ({ page 
 // #282: a floor plan by a brief, revised before it is accepted, then drawn.
 test("a floor plan by a brief, a revision, and Accept", async ({ page }) => {
   const service = await fakeAiService(page);
+  service.plan = "pro"; // revisions and floor plans through the AI are Pro (ADR-0002)
   await openApp(page);
   await signIn(page, service);
   await ask(page, HOUSE);
@@ -393,4 +395,70 @@ test("the panel with a proposal", async ({ page, browserName }) => {
   await ask(page, CIRCLE);
   await expect(panel(page).getByTestId("ai-proposal")).toBeVisible();
   await expect(panel(page)).toHaveScreenshot("ai-panel-proposal.png");
+});
+
+test("the panel with the way to Pro", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "visual baselines are compared in Chromium only");
+  const service = await fakeAiService(page);
+  await openApp(page);
+  await chooseMenu(page, "View", "Layers Panel");
+  await chooseMenu(page, "View", "Properties Panel");
+  await signIn(page, service);
+  await ask(page, HOUSE);
+  await expect(panel(page).getByTestId("ai-upgrade")).toBeVisible();
+  await expect(panel(page)).toHaveScreenshot("ai-panel-upgrade.png");
+});
+
+// #9 (ADR-0002): what Free does not hold is refused with the way to Pro;
+// paid for in Checkout's tab, the same requests are Pro's.
+test("Free sees the way to Pro; after paying, the floor plan and the revision come", async ({
+  page,
+}) => {
+  const service = await fakeAiService(page);
+  await openApp(page);
+  await signIn(page, service);
+  const allowance = panel(page).getByTestId("ai-allowance");
+  await expect(allowance).toContainText("Free · 100 of 100 left");
+
+  // A floor plan through the AI: refused, not counted, nothing proposed.
+  await ask(page, HOUSE);
+  const error = panel(page).getByTestId("ai-error");
+  await expect(error).toHaveAttribute("data-kind", "plan");
+  await expect(error).toContainText("Floor plans through the AI are part of Pro.");
+  await expect(panel(page).getByTestId("ai-upgrade")).toBeVisible();
+  await expect(panel(page).getByTestId("ai-proposal")).toHaveCount(0);
+  await expect(allowance).toContainText("100 of 100 left");
+
+  // A command is Free; revising it is not, and the model is not asked.
+  await ask(page, CIRCLE);
+  const proposal = panel(page).getByTestId("ai-proposal");
+  await expect(proposal).toContainText("Adds 1 object");
+  await proposal.getByRole("button", { name: "Revise" }).click();
+  await ask(page, BIGGER);
+  await expect(error).toContainText("Revising a proposal is part of Pro.");
+  expect(service.interpreted.map((request) => request.prompt)).toEqual([HOUSE, CIRCLE]);
+
+  // Upgrade: Checkout opens in a tab of its own, and the drawing stays here.
+  const [checkout] = await Promise.all([
+    page.waitForEvent("popup"),
+    panel(page).getByRole("button", { name: "Upgrade to Pro, monthly" }).click(),
+  ]);
+  await expect(checkout.locator("h1")).toContainText("paid");
+  expect(new URL(checkout.url()).searchParams.get("interval")).toBe("month");
+  expect(service.stripePages).toEqual(["checkout month"]);
+  await checkout.close();
+  // Back in the app's tab, the account is read again: Pro, the refusal gone.
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(allowance).toContainText("Pro · 1999 of 2000 left");
+  await expect(error).toHaveCount(0);
+  await expect(proposal).toContainText("Adds 1 object");
+
+  // Pro: the revision and the floor plan.
+  await ask(page, BIGGER);
+  await expect.poll(() => service.interpreted.length).toBe(3);
+  expect(service.interpreted[2]).toMatchObject({ prompt: BIGGER, previous: { prompt: CIRCLE } });
+  await ask(page, HOUSE);
+  await expect(proposal).toContainText("Adds");
+  await expect(error).toHaveCount(0);
+  await expect(allowance).toContainText("1997 of 2000 left");
 });

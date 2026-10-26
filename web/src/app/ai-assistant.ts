@@ -13,6 +13,8 @@ import {
   type AiErrorKind,
   type AiRequest,
   type Allowance,
+  type Billing,
+  type PlanNeed,
 } from "./ai-client";
 
 /** What the assistant needs of the app. */
@@ -24,6 +26,8 @@ export interface AssistantHost {
   acceptProposal(): void;
   rejectProposal(): void;
   proposalSummary(): ProposalSummary | undefined;
+  /** Opens a page of the service's payment provider — Checkout, the billing portal — beside the app. */
+  openPage(url: string): void;
 }
 
 /** Somewhere to keep the session between visits: `localStorage`, or a map in tests. */
@@ -48,6 +52,8 @@ export interface AiSnapshot {
   readonly status: AiStatus;
   readonly email?: string;
   readonly allowance?: Allowance;
+  /** The account's subscription (ADR-0002). */
+  readonly billing?: Billing;
   readonly turns: readonly Turn[];
   readonly busy: boolean;
   /** A request waiting for the user to send its context or not. */
@@ -57,7 +63,12 @@ export interface AiSnapshot {
   /** The request Revise will refine. */
   readonly revising?: string;
   /** Why the last call failed, and what kind of failure it was. */
-  readonly error?: { readonly kind: AiErrorKind; readonly message: string };
+  readonly error?: {
+    readonly kind: AiErrorKind;
+    readonly message: string;
+    /** For a feature the plan does not hold: the plan it needs. */
+    readonly needs?: PlanNeed;
+  };
 }
 
 interface Kept {
@@ -103,11 +114,20 @@ export class AiAssistant {
         : new AiError("unavailable", "Something went wrong with the AI. Try again.");
     if (failure.kind === "signed-out") {
       this.#forget();
-      this.#set({ status: "signed-out", email: undefined, allowance: undefined });
+      this.#set({
+        status: "signed-out",
+        email: undefined,
+        allowance: undefined,
+        billing: undefined,
+      });
     }
     this.#set({
       busy: false,
-      error: { kind: failure.kind, message: failure.message },
+      error: {
+        kind: failure.kind,
+        message: failure.message,
+        ...(failure.needs ? { needs: failure.needs } : {}),
+      },
       ...(failure.allowance ? { allowance: failure.allowance } : {}),
     });
   }
@@ -160,8 +180,53 @@ export class AiAssistant {
       status: "signed-in",
       email: account.email,
       allowance: account.allowance,
+      billing: account.billing,
       error: undefined,
     });
+  }
+
+  /**
+   * Reads the account again — when the user comes back from paying, say.
+   * A refusal for the plan goes once the plan holds it; other problems stay.
+   */
+  async refresh(): Promise<void> {
+    if (!this.client || !this.#kept || this.#snapshot.status !== "signed-in") return;
+    const error = this.#snapshot.error;
+    try {
+      await this.#refreshAccount();
+    } catch (failure) {
+      this.#fail(failure);
+      return;
+    }
+    const plan = this.#snapshot.allowance?.plan;
+    if (error && !(error.kind === "plan" && plan === error.needs?.plan)) this.#set({ error });
+  }
+
+  /** Opens Stripe Checkout for Pro, paid each `interval`, beside the app. */
+  async upgrade(interval: "month" | "year"): Promise<void> {
+    const { client } = this;
+    if (!client || !this.#kept) return;
+    const session = this.#kept.session;
+    await this.#openPage(() => client.checkout(session, interval));
+  }
+
+  /** Opens the billing portal — the card, invoices, cancelling — beside the app. */
+  async manage(): Promise<void> {
+    const { client } = this;
+    if (!client || !this.#kept) return;
+    const session = this.#kept.session;
+    await this.#openPage(() => client.portal(session));
+  }
+
+  async #openPage(address: () => Promise<string>): Promise<void> {
+    this.#set({ busy: true });
+    try {
+      const url = await address();
+      this.host.openPage(url);
+      this.#set({ busy: false });
+    } catch (error) {
+      this.#fail(error);
+    }
   }
 
   /** Emails a sign-in link to `email`. */
@@ -351,6 +416,7 @@ export class AiAssistant {
       status: "signed-out",
       email: undefined,
       allowance: undefined,
+      billing: undefined,
       turns: [],
       error: undefined,
     });
@@ -369,6 +435,7 @@ export class AiAssistant {
         status: "signed-out",
         email: undefined,
         allowance: undefined,
+        billing: undefined,
         turns: [],
         busy: false,
       });
