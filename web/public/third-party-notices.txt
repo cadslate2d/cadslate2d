@@ -551,7 +551,7 @@ Used by:
   serde 1.0.229
   serde_core 1.0.229
   serde_derive 1.0.229
-  serde_json 1.0.151
+  serde_json 1.0.154
   syn 3.0.6
   unicode-ident 1.0.26
   zmij 1.0.23
