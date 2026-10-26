@@ -1061,8 +1061,8 @@ body {
 
 .ai {
   display: flex;
-  /* The conversation needs room: twice a table panel's share. */
-  flex: 2 1 0;
+  /* The conversation needs room: three times a table panel's share. */
+  flex: 3 1 0;
   flex-direction: column;
   min-height: 0;
   border: 1px solid var(--color-border);
@@ -1109,7 +1109,7 @@ body {
   flex: 1 0 0;
   flex-direction: column;
   gap: var(--space-2);
-  min-height: 8rem;
+  min-height: 6rem;
   overflow: auto;
 }
 
