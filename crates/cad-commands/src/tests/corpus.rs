@@ -166,7 +166,7 @@ fn the_recorded_answers_make_the_expected_drawings() {
 
 /// A model that does worse than the baseline is a regression when a
 /// language's rate falls by more than the tolerance; one stray miss in
-/// thirty-five is not.
+/// thirty-six is not.
 #[test]
 fn a_regression_is_a_language_falling_below_the_baseline() {
     let l1 = Corpus::read(&root().join("l1")).unwrap();
@@ -179,13 +179,14 @@ fn a_regression_is_a_language_falling_below_the_baseline() {
         result.miss = Some("made something else".to_owned());
     };
     missed(&mut worse, "circle-pt");
-    assert!(worse.regressions(&baseline).is_empty(), "one miss in 35");
+    assert!(worse.regressions(&baseline).is_empty(), "one miss in 36");
     missed(&mut worse, "line-pt");
     missed(&mut worse, "rectangle-pt");
     let regressions = worse.regressions(&baseline);
     assert_eq!(regressions.len(), 1);
     assert_eq!(regressions[0].0, "pt");
-    assert_eq!(worse.passed(), 67);
+    // Three missed of every case the level has.
+    assert_eq!(worse.passed(), l1.cases.len() - 3);
     assert_eq!(worse.to_json()["misses"].as_array().unwrap().len(), 3);
     // Nothing recorded at all is every case missed.
     assert_eq!(l1.score("").passed(), 0);
