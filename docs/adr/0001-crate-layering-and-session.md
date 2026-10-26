@@ -97,7 +97,7 @@ ADR-0016 chose a stroke font for text and put the font, its metrics, and the lay
 
 ### 2026-10-25 — `cad-layout`
 
-ADR-0039 (proposed) puts floor-plan layout synthesis into a crate of its own, `cad-layout`, which depends on `cad-core` only: the brief, the search, and the check of a plan, pure and deterministic. `cad-commands` will depend on it for `FLOORPLAN` (#281). `scripts/check-boundaries.sh` knows the crate.
+ADR-0039 puts floor-plan layout synthesis into a crate of its own, `cad-layout`, which depends on `cad-core` only: the brief, the search, and the check of a plan, pure and deterministic. `cad-commands` will depend on it for `FLOORPLAN` (#281). `scripts/check-boundaries.sh` knows the crate.
 
 ### 2026-10-13 — `cad-plot`
 

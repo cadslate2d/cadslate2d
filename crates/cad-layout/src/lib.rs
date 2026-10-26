@@ -26,7 +26,7 @@ mod verify;
 
 use cad_core::tolerance::LinearTolerance;
 
-pub use search::{alternatives, solve};
+pub use search::{alternatives, alternatives_within, searches_for, solve};
 pub use spec::{MAX_ROOMS, Room, Setbacks, Spec, SpecError, Terrain};
 pub use verify::verify;
 
@@ -85,22 +85,24 @@ impl Rect {
         }
     }
 
-    /// How much of its edge lies on `outline`'s.
-    pub fn on_outline(&self, outline: &Rect, tolerance: LinearTolerance) -> f64 {
-        let mut length = 0.0;
-        if tolerance.eq(self.x, outline.x) {
-            length += self.h;
-        }
-        if tolerance.eq(self.right(), outline.right()) {
-            length += self.h;
-        }
-        if tolerance.eq(self.y, outline.y) {
-            length += self.w;
-        }
-        if tolerance.eq(self.top(), outline.top()) {
-            length += self.w;
-        }
-        length
+    /// The length of each of its sides — left, right, bottom, top — that
+    /// lies on `outline`'s edge; zero for a side inside it.
+    pub fn outside_sides(&self, outline: &Rect, tolerance: LinearTolerance) -> [f64; 4] {
+        let on = |a: f64, b: f64, length: f64| if tolerance.eq(a, b) { length } else { 0.0 };
+        [
+            on(self.x, outline.x, self.h),
+            on(self.right(), outline.right(), self.h),
+            on(self.y, outline.y, self.w),
+            on(self.top(), outline.top(), self.w),
+        ]
+    }
+
+    /// The longest of its sides on `outline`'s edge: where a door or a
+    /// window to the outside can go.
+    pub fn longest_outside(&self, outline: &Rect, tolerance: LinearTolerance) -> f64 {
+        self.outside_sides(outline, tolerance)
+            .into_iter()
+            .fold(0.0, f64::max)
     }
 }
 
@@ -148,19 +150,49 @@ pub struct Layout {
     pub seed: u64,
 }
 
-/// Why no plan was made: each a sentence, the most telling first.
+/// Why no plan was made. A refusal says which of three things happened,
+/// and the AI and the command say it as they are told: a brief that
+/// cannot be read, one that has no plan, and one whose plan the search
+/// did not find.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Infeasible {
-    pub reasons: Vec<String>,
+pub enum Refusal {
+    /// The brief cannot be read: a size that is not one, a name twice.
+    Invalid(String),
+    /// No plan exists, whatever the search: a necessary condition fails.
+    /// Each reason a sentence.
+    Infeasible { reasons: Vec<String> },
+    /// None was found in the search's budget, though one may exist: the
+    /// constraints the nearest attempt broke, each a sentence.
+    Exhausted {
+        reasons: Vec<String>,
+        searches: usize,
+    },
 }
 
-impl std::fmt::Display for Infeasible {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.reasons.join(" "))
+impl Refusal {
+    /// What it says, a sentence each.
+    pub fn reasons(&self) -> Vec<String> {
+        match self {
+            Self::Invalid(reason) => vec![reason.clone()],
+            Self::Infeasible { reasons } => reasons.clone(),
+            Self::Exhausted { reasons, searches } => {
+                let mut said = vec![format!(
+                    "No plan was found in {searches} searches, though one may exist; the nearest broke these:"
+                )];
+                said.extend(reasons.iter().cloned());
+                said
+            }
+        }
     }
 }
 
-impl std::error::Error for Infeasible {}
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.reasons().join(" "))
+    }
+}
+
+impl std::error::Error for Refusal {}
 
 #[cfg(test)]
 mod tests;

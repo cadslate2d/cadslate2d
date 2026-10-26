@@ -40,7 +40,7 @@ fn main() {
                         .expect("the SVG");
                 }
                 let broken: Vec<String> = plans.iter().flat_map(|p| verify(&spec, p)).collect();
-                let ok = expect == "feasible" && broken.is_empty();
+                let ok = (expect == "feasible" || expect == "hard") && broken.is_empty();
                 (
                     ok,
                     format!(
@@ -55,11 +55,16 @@ fn main() {
                     ),
                 )
             }
-            Err(infeasible) => {
+            Err(refusal) => {
                 let reason = brief["reason"].as_str().unwrap_or("");
-                let ok =
-                    expect == "infeasible" && infeasible.reasons.iter().any(|r| r.contains(reason));
-                (ok, format!("refused: {infeasible}"))
+                let kind = match refusal {
+                    cad_layout::Refusal::Infeasible { .. } => "infeasible",
+                    cad_layout::Refusal::Exhausted { .. } => "exhausted",
+                    cad_layout::Refusal::Invalid(_) => "invalid",
+                };
+                let ok = (expect == kind || (expect == "hard" && kind == "exhausted"))
+                    && refusal.reasons().iter().any(|r| r.contains(reason));
+                (ok, format!("{kind}: {refusal}"))
             }
         };
         if verdict {
@@ -85,7 +90,8 @@ fn main() {
             for seed in 0..seeds {
                 spec.seed = seed;
                 runs += 1;
-                if cad_layout::solve(&spec).is_ok_and(|plan| verify(&spec, &plan).is_empty()) {
+                let one = cad_layout::alternatives_within(&spec, 1, 1);
+                if one.is_ok_and(|plans| verify(&spec, &plans[0]).is_empty()) {
                     found += 1;
                     here += 1;
                 }

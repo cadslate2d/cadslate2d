@@ -45,7 +45,7 @@ Level 3 of the user's AI discussion (2026-10-19), and the first domain generator
 
 ### Order of work
 
-1. **The ADR** (#277): [ADR-0039](adr/0039-layout-synthesis.md), proposed 2026-10-25 with its prototype, `cad-layout` — slicing trees searched by simulated annealing from a seed, sized by area, with an optional circulation space. All 30 briefs of `test-data/layout/briefs.jsonl` come out as expected, at 19 ms per brief at p50. Waiting for the maintainer's acceptance.
+1. **The ADR** (#277): [ADR-0039](adr/0039-layout-synthesis.md), proposed 2026-10-25 with its prototype, `cad-layout`, and accepted provisionally on 2026-10-26 after a review. The review asked for reliability from many seeds, lexicographic ranking, refusals that tell a proof from a failed search, a circulation contract, and an adversarial verifier. From 100 starting seeds, every feasible brief of the 32 is made every time but one brief at the edge, made 71 times; the median plan takes 11 ms.
 2. The layout solver (#278), walls, labels, and areas (#279), doors (#280), `FLOORPLAN` (#281), the AI (#282), and the exit (#283), in that order.
 
 ## M21, Constraints and Constrained Generation

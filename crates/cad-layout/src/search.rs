@@ -3,11 +3,13 @@
 
 use cad_core::tolerance::LinearTolerance;
 
-use crate::{CIRCULATION, Infeasible, Layout, PlacedRoom, Rect, Spec};
+use crate::{CIRCULATION, Layout, PlacedRoom, Rect, Refusal, Spec};
 
-/// The weight of a hard constraint's violation, per metre or per room:
-/// far above any soft term, so a plan that keeps them always wins.
-const HARD: f64 = 100.0;
+/// The weight of a hard constraint's violation, per metre or per room, in
+/// the energy the annealing descends. Low, so the search crosses
+/// infeasible plans on its way (measured: 100 found plans half as often);
+/// which plan wins is decided lexicographically, never by this weight.
+const HARD: f64 = 3.0;
 const W_AREA: f64 = 10.0;
 const W_RATIO: f64 = 1.0;
 const W_CONNECTIVITY: f64 = 0.5;
@@ -17,7 +19,7 @@ pub const AREA_TOLERANCE: f64 = 0.05;
 /// A door keeps this far from the walls at either end of its wall.
 pub const DOOR_CLEARANCE: f64 = 0.15;
 /// Steps of the search per room.
-const STEPS_PER_ROOM: usize = 3000;
+const STEPS_PER_ROOM: usize = 1500;
 const T_START: f64 = 10.0;
 const T_END: f64 = 0.005;
 /// How many times the sizes are corrected for the walls.
@@ -27,8 +29,16 @@ const SIZING_PASSES: usize = 6;
 const W_SPARE: f64 = 5.0;
 /// The least floor of a circulation space, when there is one.
 const SPARE_LEAST: f64 = 1.5;
-/// The most, as a share of the rooms' floor.
-const SPARE_MOST: f64 = 0.3;
+/// The search's budget for every plan asked for, in steps: the searches
+/// it makes, each from a seed of its own, before a brief that may have a
+/// plan is called exhausted. Forty searches of six rooms; fewer of more,
+/// so an exhausted search takes about as long whatever the brief's size.
+const STEP_BUDGET: usize = 40 * 6 * STEPS_PER_ROOM;
+/// The fewest and the most searches for a plan.
+const SEARCHES: (usize, usize) = (8, 40);
+/// Of them, the share made without a circulation space: one is added only
+/// when the rooms alone gave no plan.
+const WITHOUT_CIRCULATION: f64 = 0.25;
 
 /// A token of a Polish expression: a room, or a cut of the two
 /// rectangles before it — side by side (`V`, a vertical cut) or one above
@@ -44,6 +54,15 @@ impl Tok {
     fn is_cut(self) -> bool {
         !matches!(self, Tok::Room(_))
     }
+}
+
+/// Where the search is: the slicing, the outline's width, and the
+/// circulation space's floor on centrelines (none at zero).
+#[derive(Clone, Debug)]
+struct State {
+    expr: Vec<Tok>,
+    width: f64,
+    spare: f64,
 }
 
 /// A small, fast, seeded generator (SplitMix64): the same seed, the same
@@ -84,6 +103,8 @@ struct Problem<'a> {
     tolerance: LinearTolerance,
     /// The rooms' floor, together.
     floor: f64,
+    /// The most circulation the brief allows.
+    spare_most: f64,
 }
 
 /// A hard constraint not met, and by how much.
@@ -113,16 +134,25 @@ struct Eval {
 }
 
 impl Eval {
+    /// What the annealing descends: the hard violations weighed far above
+    /// the soft terms, so the search can cross infeasible plans on its way.
     fn energy(&self) -> f64 {
         HARD * self.hard + self.soft
+    }
+
+    /// Whether this is the better plan, lexicographically: fewer hard
+    /// violations first, then lower soft energy. Any plan that keeps every
+    /// hard constraint beats any that does not, whatever their soft terms.
+    fn better_than(&self, other: &Eval) -> bool {
+        (self.hard, self.soft) < (other.hard, other.soft)
     }
 }
 
 impl<'a> Problem<'a> {
-    fn new(spec: &'a Spec) -> Result<Self, Infeasible> {
-        spec.check().map_err(|e| Infeasible {
-            reasons: vec![e.to_string()],
-        })?;
+    /// The problem a brief poses; or its refusal, when it cannot be read or
+    /// a necessary condition proves it has no plan.
+    fn new(spec: &'a Spec) -> Result<Self, Refusal> {
+        spec.check().map_err(|e| Refusal::Invalid(e.to_string()))?;
         let s = spec.setbacks;
         let buildable = Rect::new(
             s.left,
@@ -131,32 +161,9 @@ impl<'a> Problem<'a> {
             spec.terrain.depth - s.front - s.back,
         );
         let te = spec.exterior_wall;
-        let mut reasons = Vec::new();
-        if buildable.w <= 2.0 * te || buildable.h <= 2.0 * te {
-            reasons.push("The setbacks leave no room to build.".to_owned());
-        } else {
-            let needed: f64 = spec.rooms.iter().map(|r| r.area).sum();
-            let room = (buildable.w - 2.0 * te) * (buildable.h - 2.0 * te);
-            if needed > room {
-                reasons.push(format!(
-                    "The rooms need {} m² inside their walls; the buildable area holds at most {} m².",
-                    short(needed),
-                    short(room)
-                ));
-            }
-        }
-        for room in &spec.rooms {
-            if room.area < room.min_width * room.min_width {
-                reasons.push(format!(
-                    "The {}'s {} m² cannot be {} m wide both ways.",
-                    room.name,
-                    short(room.area),
-                    short(room.min_width)
-                ));
-            }
-        }
+        let reasons = necessary(spec, buildable);
         if !reasons.is_empty() {
-            return Err(Infeasible { reasons });
+            return Err(Refusal::Infeasible { reasons });
         }
         Ok(Self {
             spec,
@@ -168,6 +175,7 @@ impl<'a> Problem<'a> {
             entrance: spec.entrance(),
             pairs: spec.adjacent_pairs(),
             floor: spec.rooms.iter().map(|r| r.area).sum(),
+            spare_most: spec.max_circulation * spec.rooms.iter().map(|r| r.area).sum::<f64>(),
             tolerance: LinearTolerance::DEFAULT
                 .at_magnitude(spec.terrain.width.max(spec.terrain.depth)),
         })
@@ -181,24 +189,23 @@ impl<'a> Problem<'a> {
         (lo, hi)
     }
 
-    /// The slicing `expr` with its outline `width` wide and a circulation
-    /// space of `spare` on centrelines (none at zero), sized so each room's
-    /// floor is its area as nearly as the walls allow, and judged.
-    fn evaluate(&self, expr: &[Tok], width: f64, spare: f64) -> Eval {
-        let tree = Tree::of(expr);
+    /// A state of the search sized so each room's floor is its area as
+    /// nearly as the walls allow, and judged.
+    fn evaluate(&self, state: &State) -> Eval {
+        let tree = Tree::of(&state.expr);
         let targets: Vec<f64> = self.spec.rooms.iter().map(|r| r.area).collect();
         let mut gross: Vec<f64> = targets.iter().map(|a| a * 1.15).collect();
-        gross.push(spare);
-        let mut placed = self.place(&tree, &gross, width);
+        gross.push(state.spare);
+        let mut placed = self.place(&tree, &gross, state.width);
         for _ in 0..SIZING_PASSES {
             for (i, target) in targets.iter().enumerate() {
                 let floor = placed.1[i].area();
                 gross[i] = (gross[i] + target - floor).max(target * 0.5);
             }
-            placed = self.place(&tree, &gross, width);
+            placed = self.place(&tree, &gross, state.width);
         }
         let (outline, inner, rects) = (placed.0, placed.1, placed.2);
-        self.judge(outline, rects, inner, spare > 0.0)
+        self.judge(outline, rects, inner, state.spare > 0.0)
     }
 
     /// The outline and each room's rectangle and floor, for these gross
@@ -257,7 +264,7 @@ impl<'a> Problem<'a> {
             if aspect.is_finite() {
                 soft += W_RATIO * aspect.ln();
             }
-            if room.exterior && rects[i].on_outline(&outline, t) < self.door_span {
+            if room.exterior && rects[i].longest_outside(&outline, t) < self.door_span {
                 soft += W_PREFERENCES;
             }
         }
@@ -288,7 +295,7 @@ impl<'a> Problem<'a> {
                 doors.push((a.min(b), a.max(b)));
             }
         }
-        let outside = rects[self.entrance].on_outline(&outline, t);
+        let outside = rects[self.entrance].longest_outside(&outline, t);
         if outside < self.door_span {
             violations.push(Violation::NoEntrance(self.door_span - outside));
         }
@@ -349,8 +356,9 @@ impl<'a> Problem<'a> {
         }
     }
 
-    /// One annealing run from `seed`: the best slicing it met, sized.
-    fn anneal(&self, seed: u64) -> Eval {
+    /// One annealing run from `seed`: the best state it met, sized —
+    /// best lexicographically, its hard violations first.
+    fn anneal(&self, seed: u64, circulation: bool) -> Eval {
         let mut rng = Rng(seed ^ 0x5EED_CAD5_1A7E_0000);
         let mut order: Vec<usize> = (0..self.n).collect();
         for i in (1..self.n).rev() {
@@ -367,54 +375,51 @@ impl<'a> Problem<'a> {
                 cut = if cut == Tok::V { Tok::H } else { Tok::V };
             }
         }
-        let floor: f64 = self.spec.rooms.iter().map(|r| r.area).sum::<f64>() * 1.2;
+        let floor: f64 = self.floor * 1.2;
         let (lo, hi) = self.widths(floor);
-        let mut width = if lo <= hi {
+        let width = if lo <= hi {
             (floor * self.buildable.w / self.buildable.h)
                 .sqrt()
                 .clamp(lo, hi)
         } else {
             hi
         };
-        let mut spare = 0.0;
-        let mut current = self.evaluate(&expr, width, spare);
-        let mut best = (current.energy(), current.clone());
+        let mut state = State {
+            expr,
+            width,
+            spare: 0.0,
+        };
+        let mut current = self.evaluate(&state);
+        let mut best = current.clone();
         let steps = STEPS_PER_ROOM * self.n.max(2);
         for step in 0..steps {
             let temperature = T_START * (T_END / T_START).powf(step as f64 / steps as f64);
-            let mut candidate = expr.clone();
-            let mut candidate_width = width;
-            let mut candidate_spare = spare;
-            if !self.perturb(
-                &mut candidate,
-                &mut candidate_width,
-                &mut candidate_spare,
-                &mut rng,
-            ) {
+            let mut candidate = state.clone();
+            if !self.perturb(&mut candidate, circulation, &mut rng) {
                 continue;
             }
-            let judged = self.evaluate(&candidate, candidate_width, candidate_spare);
+            let judged = self.evaluate(&candidate);
             let delta = judged.energy() - current.energy();
             if delta <= 0.0 || rng.unit() < (-delta / temperature).exp() {
-                expr = candidate;
-                width = candidate_width;
-                spare = candidate_spare;
+                state = candidate;
                 current = judged;
-                if current.energy() < best.0 {
-                    best = (current.energy(), current.clone());
+                if current.better_than(&best) {
+                    best = current.clone();
                 }
             }
         }
-        best.1
+        best
     }
 
     /// One move of the search; false when it would break the expression's
     /// form, and nothing changed.
-    fn perturb(&self, expr: &mut [Tok], width: &mut f64, spare: &mut f64, rng: &mut Rng) -> bool {
+    fn perturb(&self, state: &mut State, circulation: bool, rng: &mut Rng) -> bool {
+        let expr = &mut state.expr;
         let operands: Vec<usize> = (0..expr.len()).filter(|&i| !expr[i].is_cut()).collect();
         match rng.below(12) {
             // The circulation space made, grown, shrunk, or taken away.
-            10 | 11 => {
+            10 | 11 if circulation && self.spare_most >= SPARE_LEAST => {
+                let spare = &mut state.spare;
                 *spare = if *spare == 0.0 {
                     SPARE_LEAST + rng.unit() * self.floor * 0.1
                 } else if rng.unit() < 0.25 {
@@ -425,7 +430,7 @@ impl<'a> Problem<'a> {
                 if *spare < SPARE_LEAST {
                     *spare = 0.0;
                 }
-                *spare = spare.min(self.floor * SPARE_MOST);
+                *spare = spare.min(self.spare_most);
                 true
             }
             // M1: two neighbouring rooms swapped.
@@ -471,8 +476,7 @@ impl<'a> Problem<'a> {
             }
             // M4: the outline wider or narrower.
             _ => {
-                let factor = (0.15 * (rng.unit() * 2.0 - 1.0)).exp();
-                *width *= factor;
+                state.width *= (0.15 * (rng.unit() * 2.0 - 1.0)).exp();
                 true
             }
         }
@@ -516,8 +520,8 @@ impl<'a> Problem<'a> {
         }
     }
 
-    /// The violations of the best plan found, in words.
-    fn explain(&self, eval: &Eval) -> Infeasible {
+    /// The violations of the nearest plan found, in words.
+    fn explain(&self, eval: &Eval) -> Vec<String> {
         let name = |i: usize| {
             self.spec
                 .rooms
@@ -569,7 +573,7 @@ impl<'a> Problem<'a> {
                 reasons.push(reason);
             }
         }
-        Infeasible { reasons }
+        reasons
     }
 }
 
@@ -672,46 +676,163 @@ fn short(value: f64) -> String {
     text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
-/// The plan for `spec` from its seed, or why there is none.
-pub fn solve(spec: &Spec) -> Result<Layout, Infeasible> {
-    let problem = Problem::new(spec)?;
-    let eval = problem.anneal(spec.seed);
-    if eval.violations.is_empty() {
-        Ok(problem.layout(eval, spec.seed))
-    } else {
-        Err(problem.explain(&eval))
-    }
+/// The searches a plan of `rooms` rooms is given: forty for up to six
+/// rooms, then fewer, down to eight.
+pub fn searches_for(rooms: usize) -> usize {
+    (STEP_BUDGET / (STEPS_PER_ROOM * rooms.max(1))).clamp(SEARCHES.0, SEARCHES.1)
+}
+
+/// The best plan for `spec`, from its seed and the ones after it, within
+/// [`searches_for`] its rooms; or why there is none.
+pub fn solve(spec: &Spec) -> Result<Layout, Refusal> {
+    alternatives(spec, 1).map(|mut plans| plans.swap_remove(0))
+}
+
+/// Up to `count` different plans, best first, within `count ×`
+/// [`searches_for`] its rooms; or why there is none.
+pub fn alternatives(spec: &Spec, count: usize) -> Result<Vec<Layout>, Refusal> {
+    alternatives_within(spec, count, count.max(1) * searches_for(spec.rooms.len()))
 }
 
 /// Up to `count` different plans, best first, from the brief's seed and
-/// those after it; or why there is none.
-pub fn alternatives(spec: &Spec, count: usize) -> Result<Vec<Layout>, Infeasible> {
+/// those after it, stopping when `count` are found or after `searches`.
+/// The first quarter of the searches make no circulation space; the rest
+/// may, within the brief's budget, if the rooms alone gave too few plans.
+/// Ranked lexicographically: a plan is kept only when it keeps every hard
+/// constraint; plans without circulation come before plans with it; then
+/// by soft energy.
+pub fn alternatives_within(
+    spec: &Spec,
+    count: usize,
+    searches: usize,
+) -> Result<Vec<Layout>, Refusal> {
     let problem = Problem::new(spec)?;
-    let tries = (count * 3).max(4) as u64;
+    let searches = searches.max(1);
     let mut found: Vec<Layout> = Vec::new();
     let mut nearest: Option<Eval> = None;
-    for k in 0..tries {
-        let seed = spec.seed.wrapping_add(k);
-        let eval = problem.anneal(seed);
+    for k in 0..searches {
+        let seed = spec.seed.wrapping_add(k as u64);
+        let rooms_alone = (k as f64) < (searches as f64 * WITHOUT_CIRCULATION).ceil();
+        let eval = problem.anneal(seed, !rooms_alone);
         if eval.violations.is_empty() {
             let layout = problem.layout(eval, seed);
             if !found.iter().any(|other| same_plan(other, &layout)) {
                 found.push(layout);
             }
-        } else if nearest.as_ref().is_none_or(|n| eval.energy() < n.energy()) {
+        } else if nearest.as_ref().is_none_or(|n| eval.better_than(n)) {
             nearest = Some(eval);
         }
-        if found.len() >= count {
+        if found.len() >= count.max(1) {
             break;
         }
     }
     if found.is_empty() {
-        let eval = nearest.expect("a try at least");
-        return Err(problem.explain(&eval));
+        let eval = nearest.expect("a search at least");
+        return Err(Refusal::Exhausted {
+            reasons: problem.explain(&eval),
+            searches,
+        });
     }
-    found.sort_by(|a, b| a.energy.total_cmp(&b.energy));
-    found.truncate(count);
+    found.sort_by(|a, b| {
+        (a.circulation.is_some(), a.energy)
+            .partial_cmp(&(b.circulation.is_some(), b.energy))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    found.truncate(count.max(1));
     Ok(found)
+}
+
+/// What a brief needs of any plan, proved before a search: each sentence a
+/// condition no plan can meet. Every bound allows the ±5% a room's area may
+/// be off, and the most wall a room's rectangle can have.
+fn necessary(spec: &Spec, buildable: Rect) -> Vec<String> {
+    let te = spec.exterior_wall;
+    // The outline's inside: what every room's floor lies in.
+    let (wide, deep) = (buildable.w - 2.0 * te, buildable.h - 2.0 * te);
+    if wide <= 0.0 || deep <= 0.0 {
+        return vec!["The setbacks leave no room to build.".to_owned()];
+    }
+    let (narrow, long) = (wide.min(deep), wide.max(deep));
+    let mut reasons = Vec::new();
+    let least: f64 = spec
+        .rooms
+        .iter()
+        .map(|r| r.area * (1.0 - AREA_TOLERANCE))
+        .sum();
+    if least > wide * deep {
+        reasons.push(format!(
+            "The rooms need at least {} m² inside their walls; the buildable area holds at most {} m².",
+            short(least),
+            short(wide * deep)
+        ));
+    }
+    // A room's rectangle is its floor and at least the thinner wall's half
+    // on every side, so it covers at least (√floor + t)², and the rooms
+    // together at least the sum: more than the outline can be is too much.
+    let thinner = te.min(spec.interior_wall);
+    let walled: f64 = spec
+        .rooms
+        .iter()
+        .map(|r| ((r.area * (1.0 - AREA_TOLERANCE)).sqrt() + thinner).powi(2))
+        .sum();
+    let outline = (buildable.w - te) * (buildable.h - te);
+    if least <= wide * deep && walled > outline {
+        reasons.push(format!(
+            "With their walls the rooms cover at least {} m²; the building can cover at most {} m².",
+            short(walled),
+            short(outline)
+        ));
+    }
+    let span = spec.door + 2.0 * DOOR_CLEARANCE + te;
+    let pairs = spec.adjacent_pairs();
+    for (i, room) in spec.rooms.iter().enumerate() {
+        let most = room.area * (1.0 + AREA_TOLERANCE);
+        if most < room.min_width * room.min_width {
+            reasons.push(format!(
+                "The {}'s {} m² cannot be {} m wide both ways.",
+                room.name,
+                short(room.area),
+                short(room.min_width)
+            ));
+            continue;
+        }
+        if room.min_width > narrow {
+            reasons.push(format!(
+                "The {} cannot be {} m wide: the buildable area is {} m across inside its walls.",
+                room.name,
+                short(room.min_width),
+                short(narrow)
+            ));
+            continue;
+        }
+        // The largest floor a rectangle of this aspect has inside the
+        // outline's inside.
+        let largest = narrow * long.min(room.max_aspect * narrow);
+        if room.area * (1.0 - AREA_TOLERANCE) > largest {
+            reasons.push(format!(
+                "The {} cannot have {} m² within its aspect ratio of {} on the buildable area.",
+                room.name,
+                short(room.area),
+                short(room.max_aspect)
+            ));
+            continue;
+        }
+        // Each door, and the entrance's, takes a stretch of its walls of
+        // its own; a rectangle's edge is longest at its narrowest.
+        let doors = pairs.iter().filter(|(a, b)| *a == i || *b == i).count()
+            + usize::from(i == spec.entrance());
+        let short_side = room.min_width.max((most / room.max_aspect).sqrt());
+        let edge = 2.0 * (short_side + most / short_side + 2.0 * te);
+        if doors as f64 * span > edge {
+            reasons.push(format!(
+                "The {} has too little wall for its {} doors: each needs {} m.",
+                room.name,
+                doors,
+                short(span)
+            ));
+        }
+    }
+    reasons
 }
 
 /// Plans whose rooms are all within this of each other are the same plan:

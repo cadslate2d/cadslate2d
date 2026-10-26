@@ -23,6 +23,11 @@ pub struct Spec {
     /// The clear width of a door.
     #[serde(default = "Spec::default_door")]
     pub door: f64,
+    /// The most floor the search may add as circulation — a hall or
+    /// passage the rooms alone cannot be shaped or reached without — as a
+    /// share of the rooms' floor. Zero forbids it.
+    #[serde(default = "Spec::default_max_circulation")]
+    pub max_circulation: f64,
     /// The search's seed: the same brief and seed make the same plan.
     #[serde(default)]
     pub seed: u64,
@@ -81,6 +86,9 @@ impl Spec {
     fn default_door() -> f64 {
         0.9
     }
+    pub(crate) fn default_max_circulation() -> f64 {
+        0.15
+    }
 
     /// The index of the way in.
     pub fn entrance(&self) -> usize {
@@ -126,6 +134,11 @@ impl Spec {
         positive("The exterior wall's thickness".into(), self.exterior_wall)?;
         positive("The interior wall's thickness".into(), self.interior_wall)?;
         positive("The door's width".into(), self.door)?;
+        if !(self.max_circulation.is_finite() && (0.0..=1.0).contains(&self.max_circulation)) {
+            return Err(SpecError(
+                "The circulation's share must be between 0 and 1".into(),
+            ));
+        }
         if self.rooms.is_empty() {
             return Err(SpecError("The brief has no rooms".into()));
         }
