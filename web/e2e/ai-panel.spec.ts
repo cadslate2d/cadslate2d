@@ -67,7 +67,8 @@ async function contents(page: Page): Promise<string> {
 
 /** Asks for a link, then opens the app at it, as the email's link does. */
 async function signIn(page: Page, service: FakeAiService, email = "drafter@example.com") {
-  await chooseMenu(page, "View", "AI Assistant");
+  // Open from the start in a build with the service.
+  await expect(panel(page)).toBeVisible();
   await panel(page).getByLabel("Email").fill(email);
   await panel(page).getByRole("button", { name: "Email me a sign-in link" }).click();
   await expect(panel(page).getByTestId("ai-link-sent")).toContainText(email);
@@ -349,8 +350,7 @@ test("signing out and deleting the account; everything else works signed out", a
   await openApp(page);
 
   // Signed out, the panel offers sign-in and says what is sent and kept;
-  // drafting is untouched.
-  await chooseMenu(page, "View", "AI Assistant");
+  // drafting is untouched. The panel is open from the start.
   await expect(panel(page).getByTestId("ai-sign-in")).toBeVisible();
   await expect(panel(page).getByTestId("ai-privacy")).toHaveAttribute(
     "href",
@@ -365,6 +365,7 @@ test("signing out and deleting the account; everything else works signed out", a
   expect(service.interpreted).toEqual([]);
 
   // Signed in, then out.
+  await chooseMenu(page, "View", "AI Assistant");
   await signIn(page, service);
   await expect(panel(page).getByTestId("ai-privacy")).toBeVisible();
   await panel(page).getByRole("button", { name: "Sign out" }).click();
@@ -372,7 +373,6 @@ test("signing out and deleting the account; everything else works signed out", a
   expect(await page.evaluate(() => localStorage.getItem("cadslate2d.ai.session"))).toBeNull();
 
   // Signed in again, and the account deleted after a second click.
-  await chooseMenu(page, "View", "AI Assistant");
   await signIn(page, service);
   expect(service.accounts.has("drafter@example.com")).toBe(true);
   await panel(page).getByRole("button", { name: "Account" }).click();
@@ -578,4 +578,23 @@ test("options: Pro steps through them and accepts one; Free gets one with the no
   const more = proposal.getByTestId("ai-more");
   await expect(more).toContainText("Pro shows 2 more options for this request.");
   await expect(more.getByRole("button", { name: "Upgrade to Pro, monthly" })).toBeVisible();
+});
+
+// The AI Assistant is open from the start, and one button away when closed.
+test("the AI Assistant button beside the quick actions shows and hides the panel", async ({
+  page,
+}) => {
+  await fakeAiService(page);
+  await openApp(page);
+  await expect(panel(page)).toBeVisible();
+  const button = page.getByRole("button", { name: "AI Assistant" });
+  await expect(button).toHaveAttribute("aria-pressed", "true");
+  await button.click();
+  await expect(panel(page)).toHaveCount(0);
+  await expect(button).toHaveAttribute("aria-pressed", "false");
+  await button.click();
+  await expect(panel(page)).toBeVisible();
+  // Kept for the next visit.
+  await page.reload();
+  await expect(panel(page)).toBeVisible();
 });

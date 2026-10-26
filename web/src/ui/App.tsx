@@ -76,7 +76,8 @@ export function App() {
   const layers = useVisibilityPreference("cadslate2d.layers");
   const properties = useVisibilityPreference("cadslate2d.properties");
   // Off until the user opens it (ADR-0037), or comes back from a sign-in link.
-  const ai = useVisibilityPreference("cadslate2d.ai", SIGNING_IN);
+  // The AI panel is open from the start in a build that has the service.
+  const ai = useVisibilityPreference("cadslate2d.ai", SIGNING_IN || AI_SERVICE_URL !== undefined);
 
   useEffect(() => {
     let cancelled = false;

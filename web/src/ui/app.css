@@ -964,6 +964,16 @@ body {
   color: var(--color-text);
 }
 
+/* The AI Assistant, where it is seen first (ADR-0037). */
+.menubar__quick-button--ai {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.menubar__quick-button--ai[aria-pressed="true"] {
+  background: var(--color-surface-raised);
+}
+
 /* Help › About (#247): narrow, over the canvas, as the export warning is. */
 .about {
   grid-area: canvas;

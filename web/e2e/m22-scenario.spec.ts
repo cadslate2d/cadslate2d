@@ -7,7 +7,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { fakeAiService } from "./ai-fake";
 import {
-  chooseMenu,
   downloadFrom,
   enter,
   entities,
@@ -48,7 +47,7 @@ test("the M22 scenario: a plan by a brief, revised, another chosen, edited, dime
   const service = await fakeAiService(page);
   service.plan = "pro"; // revisions and floor plans through the AI are Pro (ADR-0002)
   const canvas = await openApp(page);
-  await chooseMenu(page, "View", "AI Assistant");
+  await expect(panel(page)).toBeVisible(); // open from the start
   await panel(page).getByLabel("Email").fill("scenario@example.com");
   await panel(page).getByRole("button", { name: "Email me a sign-in link" }).click();
   await page.goto("about:blank");

@@ -11,7 +11,6 @@ import { expect, test, type Page } from "@playwright/test";
 import { fakeAiService } from "./ai-fake";
 import {
   chooseFile,
-  chooseMenu,
   clickWorld,
   downloadFrom,
   enter,
@@ -69,7 +68,7 @@ test("the M21 scenario: constrain, generate by command and by request, edit, sav
   const service = await fakeAiService(page);
   const canvas = await openApp(page);
   // Signed in first, by an emailed link: the link opens the app afresh.
-  await chooseMenu(page, "View", "AI Assistant");
+  await expect(panel(page)).toBeVisible(); // open from the start
   await panel(page).getByLabel("Email").fill("scenario@example.com");
   await panel(page).getByRole("button", { name: "Email me a sign-in link" }).click();
   await page.goto("about:blank");

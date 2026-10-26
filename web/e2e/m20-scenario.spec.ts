@@ -11,7 +11,7 @@
 // instead, reading the sign-in link from the service's test mailbox.
 import { expect, test, type Page } from "@playwright/test";
 import { fakeAiService } from "./ai-fake";
-import { chooseMenu, downloadFrom, enter, entities, num, openApp, rendererStats } from "./support";
+import { downloadFrom, enter, entities, num, openApp, rendererStats } from "./support";
 
 const LIVE = process.env["AI_SERVICE_LIVE"];
 // A new account each run against a service that keeps its database.
@@ -65,7 +65,7 @@ test("the M20 scenario: drawing and editing by request, accepted, undone, to the
   await openApp(page);
 
   // 1. Sign in: a link by email, opened in this browser.
-  await chooseMenu(page, "View", "AI Assistant");
+  await expect(panel(page)).toBeVisible(); // open from the start
   await panel(page).getByLabel("Email").fill(EMAIL);
   await panel(page).getByRole("button", { name: "Email me a sign-in link" }).click();
   await expect(panel(page).getByTestId("ai-link-sent")).toContainText(EMAIL);

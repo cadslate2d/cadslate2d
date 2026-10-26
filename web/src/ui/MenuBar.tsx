@@ -1,3 +1,4 @@
+import { AI_SERVICE_URL } from "../app/ai-service";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { CadApp } from "../app/cad-app";
 import { classifyMenuKey, menuShortcut } from "../app/key-routing";
@@ -298,6 +299,21 @@ export function MenuBar({ app, menus, panels, onAction }: MenuBarProps) {
       </div>
       <span className="menubar__spacer" />
       <div className="menubar__quick" role="group" aria-label="Quick actions">
+        {AI_SERVICE_URL && (
+          <button
+            type="button"
+            className="menubar__quick-button menubar__quick-button--ai"
+            aria-pressed={panels.ai}
+            title="Show or hide the AI Assistant"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onAction({ panel: "ai" })}
+          >
+            {quickIcon(
+              <path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8zM18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z" />,
+            )}
+            <span>AI Assistant</span>
+          </button>
+        )}
         {QUICK.map((quick) => (
           <button
             key={quick.command}
