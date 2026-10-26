@@ -115,58 +115,69 @@ fn main() {
     );
 }
 
-/// A plan drawn: the terrain, the footprint, each room's centreline
-/// rectangle and floor with its name and area, and a mark on each wall
-/// that takes a door. A metre is 20 units.
+/// A plan drawn as it will be drafted: the terrain, the walls' faces and
+/// jambs, each door's leaf and swing, and each room's name and area. A
+/// metre is 20 units.
 fn svg(spec: &Spec, plan: &cad_layout::Layout) -> String {
     let k = 20.0;
     let (w, d) = (spec.terrain.width, spec.terrain.depth);
-    let y = |v: f64| (d - v) * k;
-    let rect = |r: &cad_layout::Rect, style: &str| {
-        format!(
-            "<rect x='{:.2}' y='{:.2}' width='{:.2}' height='{:.2}' style='{style}'/>",
-            r.x * k,
-            y(r.top()),
-            r.w * k,
-            r.h * k
-        )
+    let p = |q: cad_core::Point2| format!("{:.2},{:.2}", q.x * k, (d - q.y) * k);
+    let line = |a: cad_core::Point2, b: cad_core::Point2, style: &str| {
+        format!("<polyline points='{} {}' style='{style}'/>", p(a), p(b))
     };
     let mut out = format!(
-        "<svg xmlns='http://www.w3.org/2000/svg' width='{:.0}' height='{:.0}' font-family='sans-serif' font-size='11'>",
+        "<svg xmlns='http://www.w3.org/2000/svg' width='{:.0}' height='{:.0}' font-family='sans-serif' font-size='10'>",
         w * k,
         d * k
     );
-    out.push_str(&rect(
-        &cad_layout::Rect::new(0.0, 0.0, w, d),
-        "fill:#eef4e8;stroke:#999",
+    out.push_str(&format!(
+        "<rect width='{:.0}' height='{:.0}' style='fill:#f4f7f0;stroke:#999'/>",
+        w * k,
+        d * k
     ));
-    out.push_str(&rect(&plan.footprint, "fill:#555"));
-    for room in &plan.rooms {
-        out.push_str(&rect(&room.inner, "fill:#fff"));
-        out.push_str(&rect(
-            &room.rect,
-            "fill:none;stroke:#c33;stroke-width:0.5;stroke-dasharray:2",
-        ));
-        let (cx, cy) = (
-            room.inner.x + room.inner.w / 2.0,
-            room.inner.y + room.inner.h / 2.0,
-        );
+    let walls = cad_layout::walls(spec, plan);
+    let ring: Vec<String> = walls.outside.iter().map(|q| p(*q)).collect();
+    out.push_str(&format!(
+        "<{} points='{}' style='fill:none;stroke:#000;stroke-width:1.5'/>",
+        if walls.outside_closed {
+            "polygon"
+        } else {
+            "polyline"
+        },
+        ring.join(" ")
+    ));
+    for f in walls.exterior.iter().chain(&walls.interior) {
+        out.push_str(&line(f.start, f.end, "stroke:#000;stroke-width:1"));
+    }
+    for (a, b) in walls.exterior_jambs.iter().chain(&walls.interior_jambs) {
+        out.push_str(&line(*a, *b, "stroke:#000;stroke-width:1"));
+    }
+    for door in cad_layout::doors(spec, plan) {
+        out.push_str(&line(door.hinge, door.leaf, "stroke:#26a;stroke-width:1"));
+        let r = door.hinge.distance_to(door.leaf);
+        let at = |angle: f64| {
+            cad_core::Point2::new(
+                door.hinge.x + r * angle.cos(),
+                door.hinge.y + r * angle.sin(),
+            )
+        };
         out.push_str(&format!(
-            "<text x='{:.1}' y='{:.1}' text-anchor='middle'>{} {:.1} m²</text>",
-            cx * k,
-            y(cy),
-            room.name,
-            room.area()
+            "<path d='M {} A {:.2} {:.2} 0 0 0 {}' style='fill:none;stroke:#26a;stroke-width:0.6'/>",
+            p(at(door.swing.0)),
+            r * k,
+            r * k,
+            p(at(door.swing.1))
         ));
     }
-    for &(a, b) in &plan.doors {
-        let (p, q) = (plan.rooms[a].rect, plan.rooms[b].rect);
-        let (x0, x1) = (p.x.max(q.x), p.right().min(q.right()));
-        let (y0, y1) = (p.y.max(q.y), p.top().min(q.top()));
+    for label in cad_layout::labels(plan) {
         out.push_str(&format!(
-            "<circle cx='{:.1}' cy='{:.1}' r='4' fill='#28a'/>",
-            (x0 + x1) / 2.0 * k,
-            y((y0 + y1) / 2.0)
+            "<text x='{:.1}' y='{:.1}' text-anchor='middle'>{}</text><text x='{:.1}' y='{:.1}' text-anchor='middle'>{:.2} m²</text>",
+            label.at.x * k,
+            (d - label.at.y) * k - 2.0,
+            label.name,
+            label.at.x * k,
+            (d - label.at.y) * k + 10.0,
+            label.area
         ));
     }
     out.push_str("</svg>");

@@ -1,22 +1,26 @@
-//! A floor plan drawn (#279, ADR-0039): a layout's walls and labels as
-//! ordinary entities, in one transaction, on their own layers — the
-//! building's outer face a closed polyline and each floor's sides lines on
-//! `WALL-EXT` where they face an exterior wall and `WALL-INT` otherwise,
-//! each room's name and area centred in it on `ROOM-TEXT`. The layers are
-//! made if the drawing has none of those names. Nothing is a wall object:
-//! the plan is edited with the normal tools (DESIGN §4).
+//! A floor plan drawn (#279, #280, ADR-0039): a layout's walls, doors,
+//! and labels as ordinary entities, in one transaction, on their own
+//! layers — the building's outer face a polyline, open at the way in, and
+//! each floor's sides lines on `WALL-EXT` where they face an exterior wall
+//! and `WALL-INT` otherwise, cut where a door goes through and closed by
+//! its jambs; each door's leaf and swing on `DOOR`; each room's name and
+//! area centred in it on `ROOM-TEXT`. The layers are made if the drawing
+//! has none of those names. Nothing is a wall or door object: the plan is
+//! edited with the normal tools (DESIGN §4).
 
 use cad_core::{EntityId, Point2};
 use cad_document::{
-    Drawing, Justification, Layer, LayoutId, LineEntity, PolylineEntity, Properties, TextEntity,
-    TransactionError,
+    ArcEntity, Drawing, Justification, Layer, LayoutId, LineEntity, PolylineEntity, Properties,
+    TextEntity, TransactionError,
 };
-use cad_layout::{Layout, Spec, labels, walls};
+use cad_layout::{Layout, Spec, doors, labels, walls};
 
 /// The layers a plan is drawn on.
 pub const EXTERIOR_WALLS: &str = "WALL-EXT";
 pub const INTERIOR_WALLS: &str = "WALL-INT";
 pub const ROOM_TEXT: &str = "ROOM-TEXT";
+pub const DOORS: &str = "DOOR";
+const LAYERS: [&str; 4] = [EXTERIOR_WALLS, INTERIOR_WALLS, ROOM_TEXT, DOORS];
 
 /// The labels' cap height, in metres.
 const LABEL_HEIGHT: f64 = 0.25;
@@ -37,15 +41,12 @@ pub fn draw(
     origin: Point2,
     scale: f64,
 ) -> Result<Vec<EntityId>, TransactionError> {
-    let found = [EXTERIOR_WALLS, INTERIOR_WALLS, ROOM_TEXT].map(|name| drawing.layers().find(name));
+    let found = LAYERS.map(|name| drawing.layers().find(name));
     let at = |p: Point2| Point2::new(origin.x + p.x * scale, origin.y + p.y * scale);
     let w = walls(spec, layout);
     let mut transaction = drawing.transaction().in_space(space);
-    let mut layer = [None; 3];
-    for (i, name) in [EXTERIOR_WALLS, INTERIOR_WALLS, ROOM_TEXT]
-        .iter()
-        .enumerate()
-    {
+    let mut layer = [None; 4];
+    for (i, name) in LAYERS.iter().enumerate() {
         layer[i] = Some(match found[i] {
             Some(id) => id,
             None => transaction.add_layer(Layer::named(*name))?,
@@ -57,7 +58,7 @@ pub fn draw(
     };
     let mut made = Vec::new();
     made.push(transaction.insert_with(
-        PolylineEntity::new(w.outside.iter().map(|p| at(*p)).collect(), true),
+        PolylineEntity::new(w.outside.iter().map(|p| at(*p)).collect(), w.outside_closed),
         on(0),
     )?);
     for (faces, i) in [(&w.exterior, 0), (&w.interior, 1)] {
@@ -66,6 +67,23 @@ pub fn draw(
                 transaction.insert_with(LineEntity::new(at(face.start), at(face.end)), on(i))?,
             );
         }
+    }
+    for (jambs, i) in [(&w.exterior_jambs, 0), (&w.interior_jambs, 1)] {
+        for (a, b) in jambs {
+            made.push(transaction.insert_with(LineEntity::new(at(*a), at(*b)), on(i))?);
+        }
+    }
+    for door in doors(spec, layout) {
+        made.push(transaction.insert_with(LineEntity::new(at(door.hinge), at(door.leaf)), on(3))?);
+        made.push(transaction.insert_with(
+            ArcEntity::new(
+                at(door.hinge),
+                spec.door * scale,
+                door.swing.0,
+                door.swing.1,
+            ),
+            on(3),
+        )?);
     }
     let height = LABEL_HEIGHT * scale;
     for label in labels(layout) {
@@ -139,12 +157,36 @@ mod tests {
         )
         .unwrap();
         let w = walls(&spec, &layout);
+        let all_doors = doors(&spec, &layout);
         let rooms = layout.rooms.len();
-        assert_eq!(made.len(), 1 + 4 * rooms + 2 * rooms);
+        assert_eq!(
+            made.len(),
+            1 + w.exterior.len()
+                + w.interior.len()
+                + w.exterior_jambs.len()
+                + w.interior_jambs.len()
+                + 2 * all_doors.len()
+                + 2 * rooms
+        );
         let outside = on(&drawing, EXTERIOR_WALLS);
-        assert_eq!(outside.len(), 1 + w.exterior.len());
-        assert!(matches!(&outside[0], Entity::Polyline(p) if p.closed && p.vertices.len() == 4));
-        assert_eq!(on(&drawing, INTERIOR_WALLS).len(), w.interior.len());
+        assert_eq!(outside.len(), 1 + w.exterior.len() + w.exterior_jambs.len());
+        // Open at the way in: four corners and the two jambs' ends.
+        assert!(matches!(&outside[0], Entity::Polyline(p) if !p.closed && p.vertices.len() == 6));
+        assert_eq!(
+            on(&drawing, INTERIOR_WALLS).len(),
+            w.interior.len() + w.interior_jambs.len()
+        );
+        // A leaf and a swing for every door, the way in among them.
+        let door_layer = on(&drawing, DOORS);
+        assert_eq!(door_layer.len(), 2 * all_doors.len());
+        assert_eq!(
+            door_layer
+                .iter()
+                .filter(|e| matches!(e, Entity::Arc(_)))
+                .count(),
+            all_doors.len()
+        );
+        assert!(all_doors.iter().any(|d| d.rooms.1.is_none()));
         let texts: Vec<String> = on(&drawing, ROOM_TEXT)
             .into_iter()
             .filter_map(|e| match e {
@@ -180,8 +222,8 @@ mod tests {
             1000.0,
         )
         .unwrap();
-        // Only the two missing layers were made.
-        assert_eq!(drawing.layers().len(), layers + 2);
+        // Only the three missing layers were made.
+        assert_eq!(drawing.layers().len(), layers + 3);
         let outline = on(&drawing, EXTERIOR_WALLS)
             .into_iter()
             .find_map(|e| match e {
@@ -190,9 +232,10 @@ mod tests {
             })
             .unwrap();
         let f = layout.footprint;
-        assert_eq!(
-            outline.vertices[0],
-            Point2::new(100.0 + f.x * 1000.0, 50.0 + f.y * 1000.0)
+        assert!(
+            outline
+                .vertices
+                .contains(&Point2::new(100.0 + f.x * 1000.0, 50.0 + f.y * 1000.0))
         );
     }
 }

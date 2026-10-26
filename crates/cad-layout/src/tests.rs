@@ -1,4 +1,6 @@
 use super::*;
+use crate::search::DOOR_CLEARANCE;
+use cad_core::Point2;
 
 /// `default` cases, or `PROPTEST_CASES` when it is set: the search is too
 /// slow for proptest's 256 in the check, and the stress run asks for more.
@@ -542,30 +544,50 @@ fn drafting_faults(spec: &Spec, layout: &Layout) -> Vec<String> {
     let mut faults = Vec::new();
     let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
     let faces: Vec<Face> = w.exterior.iter().chain(&w.interior).copied().collect();
+    let all_doors = doors(spec, layout);
     for (index, room) in layout.rooms.iter().enumerate() {
-        let mut own: Vec<Face> = faces.iter().filter(|f| f.room == index).copied().collect();
-        own.sort_by(|a, b| {
-            (a.start.x, a.start.y)
-                .partial_cmp(&(b.start.x, b.start.y))
-                .unwrap()
-        });
-        if own.len() != 4 {
-            faults.push(format!("the {} has {} faces", room.name, own.len()));
-            continue;
+        let own: Vec<Face> = faces.iter().filter(|f| f.room == index).copied().collect();
+        // Closed but for its doors: its faces and the openings in them make
+        // up the floor's perimeter, every face on it.
+        let inner = room.inner;
+        let length = |f: &Face| f.start.distance_to(f.end);
+        let openings: f64 = all_doors
+            .iter()
+            .filter(|d| d.rooms.0 == index || d.rooms.1 == Some(index))
+            .map(|d| d.from.distance_to(d.to))
+            .sum();
+        let perimeter = 2.0 * (inner.w + inner.h);
+        if (own.iter().map(length).sum::<f64>() + openings - perimeter).abs() > 1e-9 {
+            faults.push(format!("the {}'s faces and doors do not close", room.name));
         }
-        // Closed: every end is another face's start.
+        let o = layout.outline;
+        let r = room.rect;
         for f in &own {
-            if !own
-                .iter()
-                .any(|g| near(g.start.x, f.end.x) && near(g.start.y, f.end.y))
-            {
-                faults.push(format!("the {}'s faces do not close", room.name));
+            let side = if near(f.start.x, f.end.x) {
+                if near(f.start.x, inner.x) {
+                    Some(near(r.x, o.x))
+                } else if near(f.start.x, inner.right()) {
+                    Some(near(r.right(), o.right()))
+                } else {
+                    None
+                }
+            } else if near(f.start.y, inner.y) {
+                Some(near(r.y, o.y))
+            } else if near(f.start.y, inner.top()) {
+                Some(near(r.top(), o.top()))
+            } else {
+                None
+            };
+            match side {
+                None => faults.push(format!("a face of the {} is off its floor", room.name)),
+                Some(outside) => {
+                    if outside != w.exterior.contains(f) {
+                        faults.push(format!("a face of the {} is on the wrong layer", room.name));
+                    }
+                }
             }
         }
         // Half a wall from the centreline: exterior or interior.
-        let r = room.rect;
-        let inner = room.inner;
-        let o = layout.outline;
         for (face_at, line_at, on_outline) in [
             (inner.x, r.x, near(r.x, o.x)),
             (inner.right(), r.right(), near(r.right(), o.right())),
@@ -579,19 +601,6 @@ fn drafting_faults(spec: &Spec, layout: &Layout) -> Vec<String> {
                     room.name
                 ));
             }
-        }
-        let on_ext = w.exterior.iter().filter(|f| f.room == index).count();
-        let expected = [
-            near(r.x, o.x),
-            near(r.right(), o.right()),
-            near(r.y, o.y),
-            near(r.top(), o.top()),
-        ]
-        .iter()
-        .filter(|b| **b)
-        .count();
-        if on_ext != expected {
-            faults.push(format!("the {}'s faces are on the wrong layer", room.name));
         }
     }
     // The outer face is the outline's, half an exterior wall out.
@@ -667,7 +676,22 @@ fn drafting_faults(spec: &Spec, layout: &Layout) -> Vec<String> {
                     x > r.inner.x && x < r.inner.right() && y > r.inner.y && y < r.inner.top()
                 })
                 .count();
-            if floors > 1 || (floors == 1) == wall_at(x, y) {
+            let opening = all_doors.iter().any(|d| {
+                let (x0, x1) = (d.from.x.min(d.to.x), d.from.x.max(d.to.x));
+                let (y0, y1) = (d.from.y.min(d.to.y), d.from.y.max(d.to.y));
+                let t = d.thickness / 2.0;
+                if near(x0, x1) {
+                    (x - x0).abs() < t && y > y0 && y < y1
+                } else {
+                    (y - y0).abs() < t && x > x0 && x < x1
+                }
+            });
+            if opening {
+                if floors > 0 {
+                    faults.push(format!("at ({x:.3}, {y:.3}) a door's opening is floor"));
+                    break 'sample;
+                }
+            } else if floors > 1 || (floors == 1) == wall_at(x, y) {
                 faults.push(format!(
                     "at ({x:.3}, {y:.3}) floor {floors}, wall {}",
                     wall_at(x, y)
@@ -699,12 +723,202 @@ fn walls_are_their_thickness_and_meet_cleanly_at_l_t_and_x() {
     );
     assert_eq!(drafting_faults(&spec, &layout), Vec::<String>::new());
     let w = walls(&spec, &layout);
-    // Each corner room has two faces on the outside, two inside.
-    assert_eq!((w.exterior.len(), w.interior.len()), (8, 8));
+    // Each corner room has two sides on the outside and two inside; the
+    // doors cut three interior walls in two faces each and the way in one.
+    assert_eq!((w.exterior.len(), w.interior.len()), (9, 14));
     // A floor that forgets its wall is caught here too.
     let mut broken = layout.clone();
     broken.rooms[0].inner = broken.rooms[0].rect;
     assert!(!drafting_faults(&spec, &broken).is_empty());
+}
+
+/// Whatever is wrong with `layout`'s doors: a room no door reaches, an
+/// opening off its wall's centreline, too near a junction, or the wrong
+/// width, a face left across an opening, a missing jamb, a leaf or swing
+/// that is not a door's, or an outer face not open at the way in.
+fn door_faults(spec: &Spec, layout: &Layout) -> Vec<String> {
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    let all = doors(spec, layout);
+    let w = walls(spec, layout);
+    let mut faults = Vec::new();
+    let ways_in: Vec<&Door> = all.iter().filter(|d| d.rooms.1.is_none()).collect();
+    if ways_in.len() != 1 || ways_in[0].rooms.0 != layout.entrance {
+        faults.push(format!("{} ways in", ways_in.len()));
+    }
+    // Every room reached through the doors.
+    let mut reached = vec![false; layout.rooms.len()];
+    reached[layout.entrance] = true;
+    for _ in 0..layout.rooms.len() {
+        for d in &all {
+            if let (a, Some(b)) = d.rooms
+                && reached[a] != reached[b]
+            {
+                reached[a] = true;
+                reached[b] = true;
+            }
+        }
+    }
+    for (i, r) in reached.iter().enumerate() {
+        if !r {
+            faults.push(format!("no door reaches the {}", layout.rooms[i].name));
+        }
+    }
+    let o = layout.outline;
+    let keep_clear = DOOR_CLEARANCE + spec.exterior_wall / 2.0;
+    for d in &all {
+        let vertical = near(d.from.x, d.to.x);
+        let along = |p: Point2| if vertical { p.y } else { p.x };
+        let across = |p: Point2| if vertical { p.x } else { p.y };
+        let (lo, hi) = (along(d.from), along(d.to));
+        let line = across(d.from);
+        if !near(hi - lo, spec.door) {
+            faults.push(format!("an opening {:.3} wide", hi - lo));
+        }
+        // The stretch of wall it may be in: shared by its rooms, or the
+        // way in's side on the outline.
+        let a = layout.rooms[d.rooms.0].rect;
+        let stretch = match d.rooms.1 {
+            Some(b) => {
+                let b = layout.rooms[b].rect;
+                if vertical {
+                    (near(a.right(), line) || near(a.x, line))
+                        && (near(b.right(), line) || near(b.x, line))
+                } else {
+                    (near(a.top(), line) || near(a.y, line))
+                        && (near(b.top(), line) || near(b.y, line))
+                }
+                .then(|| {
+                    if vertical {
+                        (a.y.max(b.y), a.top().min(b.top()))
+                    } else {
+                        (a.x.max(b.x), a.right().min(b.right()))
+                    }
+                })
+            }
+            None => {
+                let on = if vertical {
+                    near(line, o.x) || near(line, o.right())
+                } else {
+                    near(line, o.y) || near(line, o.top())
+                };
+                let mine = if vertical {
+                    near(a.x, line) || near(a.right(), line)
+                } else {
+                    near(a.y, line) || near(a.top(), line)
+                };
+                (on && mine).then(|| {
+                    if vertical {
+                        (a.y, a.top())
+                    } else {
+                        (a.x, a.right())
+                    }
+                })
+            }
+        };
+        match stretch {
+            None => faults.push("an opening off its wall".into()),
+            Some((s0, s1)) => {
+                if lo < s0 + keep_clear - 1e-9 || hi > s1 - keep_clear + 1e-9 {
+                    faults.push("an opening too near a junction".into());
+                }
+            }
+        }
+        // No face across the opening, on either face of the wall.
+        for f in w.exterior.iter().chain(&w.interior) {
+            if near(f.start.x, f.end.x) == vertical
+                && (across(f.start) - line).abs() <= d.thickness / 2.0 + 1e-9
+            {
+                let (f0, f1) = (
+                    along(f.start).min(along(f.end)),
+                    along(f.start).max(along(f.end)),
+                );
+                if f0 < hi - 1e-9 && f1 > lo + 1e-9 {
+                    faults.push(format!(
+                        "a face of the {} crosses a door",
+                        layout.rooms[f.room].name
+                    ));
+                }
+            }
+        }
+        // A jamb across the wall at each end.
+        let jambs = if d.rooms.1.is_none() {
+            &w.exterior_jambs
+        } else {
+            &w.interior_jambs
+        };
+        for end in [lo, hi] {
+            let found = jambs.iter().any(|(p, q)| {
+                near(along(*p), end) && near(along(*q), end) && near(p.distance_to(*q), d.thickness)
+            });
+            if !found {
+                faults.push("a door without its jamb".into());
+            }
+        }
+        // The leaf a door's width long, into its room; a quarter swing.
+        if !near(d.hinge.distance_to(d.leaf), spec.door) {
+            faults.push("a leaf not a door's width".into());
+        }
+        let room = layout.rooms[d.into].inner;
+        if room.w.min(room.h) >= spec.door
+            && !(d.leaf.x >= room.x - 1e-9
+                && d.leaf.x <= room.right() + 1e-9
+                && d.leaf.y >= room.y - 1e-9
+                && d.leaf.y <= room.top() + 1e-9)
+        {
+            faults.push(format!("a leaf outside the {}", layout.rooms[d.into].name));
+        }
+        if !near(
+            (d.swing.1 - d.swing.0).rem_euclid(std::f64::consts::TAU),
+            std::f64::consts::FRAC_PI_2,
+        ) {
+            faults.push("a swing that is not a quarter turn".into());
+        }
+    }
+    // The outer face open at the way in, between its jambs.
+    if let Some(way_in) = ways_in.first() {
+        let ends = [w.outside[0], w.outside[w.outside.len() - 1]];
+        let jamb_ends: Vec<Point2> = w
+            .exterior_jambs
+            .iter()
+            .flat_map(|(p, q)| [*p, *q])
+            .collect();
+        if w.outside_closed
+            || !ends
+                .iter()
+                .all(|e| jamb_ends.iter().any(|j| j.distance_to(*e) < 1e-9))
+        {
+            faults.push("the outer face is not open at the way in".into());
+        }
+        let _ = way_in;
+    }
+    faults
+}
+
+#[test]
+fn doors_reach_every_room_through_their_walls_clear_of_junctions() {
+    let (spec, layout) = tee(1.6);
+    assert_eq!(door_faults(&spec, &layout), Vec::<String>::new());
+    let outline = Rect::new(O, O, 8.0, 8.0);
+    let (spec, layout) = by_hand(
+        &[
+            Rect::new(O, O, 4.0, 4.0),
+            Rect::new(O + 4.0, O, 4.0, 4.0),
+            Rect::new(O, O + 4.0, 4.0, 4.0),
+            Rect::new(O + 4.0, O + 4.0, 4.0, 4.0),
+        ],
+        outline,
+        &[(0, 1), (0, 2), (1, 3)],
+    );
+    assert_eq!(door_faults(&spec, &layout), Vec::<String>::new());
+    let all = doors(&spec, &layout);
+    assert_eq!(all.len(), 4, "three walls and the way in");
+    // The way in is on the entrance's front, at its middle.
+    let way_in = all.iter().find(|d| d.rooms.1.is_none()).unwrap();
+    assert!((way_in.from.y - O).abs() < 1e-12);
+    assert!(((way_in.from.x + way_in.to.x) / 2.0 - (O + 2.0)).abs() < 1e-12);
+    // r3 is two doors in: its door opens into it, not into r1.
+    let to_r3 = all.iter().find(|d| d.rooms == (1, Some(3))).unwrap();
+    assert_eq!(to_r3.into, 3);
 }
 
 #[test]
@@ -740,6 +954,7 @@ proptest::proptest! {
         spec.seed = seed;
         if let Ok(plans) = alternatives_within(&spec, 1, 4) {
             proptest::prop_assert_eq!(drafting_faults(&spec, &plans[0]), Vec::<String>::new());
+            proptest::prop_assert_eq!(door_faults(&spec, &plans[0]), Vec::<String>::new());
             proptest::prop_assert_eq!(labels(&plans[0]).len(), plans[0].rooms.len());
         }
     }

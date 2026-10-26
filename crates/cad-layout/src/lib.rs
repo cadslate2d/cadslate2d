@@ -27,7 +27,7 @@ mod verify;
 
 use cad_core::tolerance::LinearTolerance;
 
-pub use draft::{Face, Label, Walls, labels, walls};
+pub use draft::{Door, Face, Label, Walls, doors, labels, walls};
 pub use search::{alternatives, alternatives_within, searches_for, solve};
 pub use spec::{MAX_ROOMS, Room, Setbacks, Spec, SpecError, Terrain};
 pub use verify::verify;
