@@ -250,6 +250,68 @@ proptest::proptest! {
     }
 }
 
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(32))]
+
+    /// Briefs with setbacks, minimum widths, aspect ratios, adjacencies, an
+    /// entrance, and a circulation budget: every alternative keeps every
+    /// hard constraint, the alternatives differ and come best first —
+    /// without circulation before with — and a refusal is never empty.
+    #[test]
+    fn every_alternative_keeps_the_hard_constraints_and_they_are_ranked(
+        width in 8.0..30.0f64,
+        depth in 8.0..30.0f64,
+        setbacks in proptest::collection::vec(0.0..3.0f64, 4),
+        rooms in proptest::collection::vec((3.0..30.0f64, 1.0..2.5f64, 1.5..4.0f64, proptest::bool::ANY), 1..8),
+        pairs in proptest::collection::vec((0..8usize, 0..8usize), 0..5),
+        entrance in 0..8usize,
+        max_circulation in prop_oneof_circulation(),
+        seed in 0..1000u64,
+    ) {
+        let mut spec = brief(width, depth, &[]);
+        spec.setbacks = Setbacks { front: setbacks[0], back: setbacks[1], left: setbacks[2], right: setbacks[3] };
+        spec.rooms = rooms
+            .iter()
+            .enumerate()
+            .map(|(i, (area, min_width, max_aspect, exterior))| Room {
+                min_width: *min_width,
+                max_aspect: *max_aspect,
+                exterior: *exterior,
+                entrance: i == entrance % rooms.len(),
+                ..Room::new(format!("room {i}"), *area)
+            })
+            .collect();
+        let n = spec.rooms.len();
+        spec.adjacent = pairs
+            .iter()
+            .map(|(a, b)| (a % n, b % n))
+            .filter(|(a, b)| a != b)
+            .map(|(a, b)| [format!("room {a}"), format!("room {b}")])
+            .collect();
+        spec.max_circulation = max_circulation;
+        spec.seed = seed;
+        match alternatives_within(&spec, 3, 6) {
+            Ok(plans) => {
+                proptest::prop_assert!(!plans.is_empty() && plans.len() <= 3);
+                for plan in &plans {
+                    proptest::prop_assert_eq!(verify(&spec, plan), Vec::<String>::new());
+                }
+                for pair in plans.windows(2) {
+                    proptest::prop_assert!(pair[0].rooms != pair[1].rooms);
+                    let rank = |p: &Layout| (p.circulation.is_some(), p.energy);
+                    proptest::prop_assert!(rank(&pair[0]) <= rank(&pair[1]));
+                }
+            }
+            Err(refusal) => proptest::prop_assert!(!refusal.reasons().is_empty()),
+        }
+    }
+}
+
+fn prop_oneof_circulation() -> impl proptest::strategy::Strategy<Value = f64> {
+    use proptest::strategy::Strategy;
+    (0..3u8).prop_map(|k| [0.0, 0.15, 0.3][k as usize])
+}
+
 // ── The verifier, against plans made by hand to break it ──
 
 /// The outline's lower left corner, with a 0.25 exterior wall from (0, 0).

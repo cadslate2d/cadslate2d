@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The long stress run (DESIGN §31, §41, §43): every property test of the
-# geometry, document, and DXF crates, with many more random cases than the
+# geometry, document, DXF, and layout crates, with many more random cases than the
 # normal check — the DXF ones are the fuzz run against hostile files — and
 # the DXF reader's time budget on a hundred-megabyte file.
 #
@@ -23,6 +23,9 @@ PROPTEST_CASES="${CASES}" \
 PROPTEST_MAX_GLOBAL_REJECTS="${CASES}" \
 PROPTEST_MAX_LOCAL_REJECTS="${CASES}" \
   cargo test --release -p cad-geometry -p cad-document -p cad-dxf
+
+# The layout search runs thousands of steps a case: a hundredth as many.
+PROPTEST_CASES="$(( CASES / 100 ))" cargo test --release -p cad-layout
 
 # The reader's work is proportional to the bytes read: a hundred megabytes
 # of groups within the budget the test states.
