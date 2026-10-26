@@ -474,6 +474,7 @@ impl CadSession {
             Some(HostRequest::InsertFile) => 6,
             Some(HostRequest::WriteBlock) => 7,
             Some(HostRequest::NewDrawing) => 8,
+            Some(HostRequest::OpenBrief) => 9,
         }
     }
 

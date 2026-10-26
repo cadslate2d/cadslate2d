@@ -62,7 +62,8 @@ pub struct Glyph {
 pub struct Font {
     glyphs: Vec<Glyph>,
     /// Glyphs beyond the file's run of characters, built from its own:
-    /// the degree sign and the diameter sign a dimension needs.
+    /// the degree sign and the diameter sign a dimension needs, and the
+    /// superscript two and three of an area or a volume.
     extras: Vec<(char, Glyph)>,
     /// How far above the baseline any glyph reaches, in cap heights:
     /// brackets and parentheses go above the capitals.
@@ -86,8 +87,10 @@ pub struct Metrics {
 
 /// The glyphs the file lacks that a dimension's text needs, drawn from
 /// its own: `°` as a small circle at the cap height, `Ø` as the `O` with a
-/// stroke from its bottom left to its top right. Both lie within the box
-/// of the glyphs they are made from, so the font's reach is unchanged.
+/// stroke from its bottom left to its top right, and `²` and `³` — a floor
+/// plan's m² (#281) — as the `2` and the `3` at six tenths of their size,
+/// their tops at the cap height. Each lies within the box of the glyph it
+/// is made from, so the font's reach is unchanged.
 fn synthesized(glyphs: &[Glyph]) -> Vec<(char, Glyph)> {
     let of = |c: char| glyphs.get((c as u32 - FIRST_CHAR) as usize);
     let mut extras = Vec::new();
@@ -128,8 +131,35 @@ fn synthesized(glyphs: &[Glyph]) -> Vec<(char, Glyph)> {
             ));
         }
     }
+    for (superscript, digit) in [('²', '2'), ('³', '3')] {
+        if let Some(glyph) = of(digit) {
+            // Six tenths the size, raised so its top stays where the
+            // digit's is: within the digit's own box.
+            let raised = 1.0 - SUPERSCRIPT;
+            let strokes = glyph
+                .strokes
+                .iter()
+                .map(|stroke| {
+                    stroke
+                        .iter()
+                        .map(|p| Vec2::new(p.x * SUPERSCRIPT, raised + p.y * SUPERSCRIPT))
+                        .collect()
+                })
+                .collect();
+            extras.push((
+                superscript,
+                Glyph {
+                    strokes,
+                    advance: glyph.advance * SUPERSCRIPT,
+                },
+            ));
+        }
+    }
     extras
 }
+
+/// A superscript's size, as a share of the digit it is made from.
+const SUPERSCRIPT: f64 = 0.6;
 
 /// Why a glyph line could not be read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -458,6 +488,21 @@ mod tests {
         for (a, b) in flat.iter().flatten().zip(up.iter().flatten()) {
             assert!(close(b.x, 10.0 - (a.y - 20.0)) && close(b.y, 20.0 + (a.x - 10.0)));
         }
+    }
+
+    #[test]
+    fn superscripts_are_small_raised_digits_within_the_cap_height() {
+        let font = Font::simplex();
+        for (superscript, digit) in [('²', '2'), ('³', '3')] {
+            let small = font.glyph(superscript).expect("a superscript");
+            let full = font.glyph(digit).unwrap();
+            assert!(close(small.advance, full.advance * 0.6));
+            for point in small.strokes.iter().flatten() {
+                assert!(point.y >= 0.4 - 1e-9 && point.y <= 1.0 + 1e-9, "{point:?}");
+            }
+        }
+        let area = font.metrics("12.50 m²", 1.0);
+        assert!(close(area.ascent, font.ascent()));
     }
 
     #[test]

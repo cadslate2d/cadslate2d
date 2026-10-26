@@ -90,6 +90,20 @@ impl Spec {
         0.15
     }
 
+    /// A brief from its JSON — a spec file, or a brief typed or sent —
+    /// read and checked.
+    pub fn from_json(text: &str) -> Result<Self, SpecError> {
+        let spec: Self = serde_json::from_str(text)
+            .map_err(|e| SpecError(format!("The brief cannot be read: {e}")))?;
+        spec.check()?;
+        Ok(spec)
+    }
+
+    /// The brief as one line of JSON.
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).expect("a brief is plain data")
+    }
+
     /// The index of the way in.
     pub fn entrance(&self) -> usize {
         self.rooms.iter().position(|r| r.entrance).unwrap_or(0)

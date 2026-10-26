@@ -25,6 +25,8 @@ const RENDER_FLAGS = Dirty.Scene | Dirty.Overlay | Dirty.View;
 const DRAWING_ACCEPT = ".dxf,.dwg";
 /** What INSERT offers to pick (#222). */
 const DXF_ACCEPT = ".dxf";
+/** What FLOORPLAN's File offers to pick (#281): a brief, as JSON. */
+const BRIEF_ACCEPT = ".json,application/json";
 const DXF_MIME_TYPE = "application/dxf";
 const DWG_MIME_TYPE = "application/acad";
 const PDF_MIME_TYPE = "application/pdf";
@@ -539,6 +541,8 @@ export class CadApp {
         return this.#writeBlock();
       case HostRequest.NewDrawing:
         return this.#newDrawing();
+      case HostRequest.OpenBrief:
+        return this.#openBrief();
       case HostRequest.None:
         return;
     }
@@ -549,6 +553,21 @@ export class CadApp {
     const file = await this.#host.files.open(DXF_ACCEPT);
     this.loop.invalidate(
       file ? this.engine.insertDxf(file.bytes, file.name) : this.engine.key(KeyAction.Escape),
+    );
+    this.ui.refresh(this.engine);
+  }
+
+  /**
+   * FLOORPLAN's spec file (#281): picked, read, and typed in as the brief
+   * the command is waiting for, through the command line like any answer;
+   * none, and it gives up.
+   */
+  async #openBrief(): Promise<void> {
+    const file = await this.#host.files.open(BRIEF_ACCEPT);
+    this.loop.invalidate(
+      file
+        ? this.engine.submitText(new TextDecoder().decode(file.bytes))
+        : this.engine.key(KeyAction.Escape),
     );
     this.ui.refresh(this.engine);
   }

@@ -168,6 +168,14 @@ const DRAWING_TYPES = [
   },
 ];
 const PDF_TYPES = [{ description: "PDF plot", accept: { "application/pdf": [".pdf"] } }];
+const BRIEF_TYPES = [
+  { description: "Floor-plan brief", accept: { "application/json": [".json"] } },
+];
+
+/** What the open picker offers for an `accept` list: a brief, or drawings. */
+function openTypesFor(accept: string): FilePickerAcceptType[] {
+  return accept.includes(".json") ? BRIEF_TYPES : DRAWING_TYPES;
+}
 
 /**
  * What the save picker offers for a file of this type (#187: plots are
@@ -205,11 +213,11 @@ async function writeThrough(handle: FileSystemFileHandle, content: FileContent):
 export const fileSystemAccessFiles: FileAccess = {
   writesBack: true,
 
-  async open() {
+  async open(accept) {
     const picker = window.showOpenFilePicker;
     if (!picker) return undefined;
     try {
-      const [handle] = await picker.call(window, { types: DRAWING_TYPES, multiple: false });
+      const [handle] = await picker.call(window, { types: openTypesFor(accept), multiple: false });
       if (!handle) return undefined;
       const file = await handle.getFile();
       return {

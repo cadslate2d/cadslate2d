@@ -197,6 +197,7 @@ The annealing itself descends a single energy, 3 × hard violation + soft. That 
   - **The budget per plan:** 40 searches up to six rooms, then 360,000 steps' worth, at least 8 (`searches_for`).
   - **The first quarter** of the searches make no circulation space.
   - Plans are distinct when any room differs by a centimetre or more.
+  - **Asked for alternatives,** the search spends more than one plan's budget only once it has found a plan to vary. When the first `searches_for` searches find none, it stops there and refuses as exhausted. Added 2026-10-26 with `FLOORPLAN` (#281): without it, asking for three plans tripled the time an exhausted refusal takes.
 
 ### 6. The circulation space
 

@@ -130,6 +130,9 @@ pub enum HostRequest {
     /// Save the drawing `WBLOCK` made (#222), from
     /// `Session::take_block_file`, to a file the user chooses.
     WriteBlock,
+    /// Let the user pick a floor plan's spec file (#281), and type its text
+    /// in as the brief FLOORPLAN is waiting for; none, and it gives up.
+    OpenBrief,
     /// Replace the drawing with an empty one (#245), once the user agrees
     /// to lose what has not been saved, through `Session::new_drawing`.
     NewDrawing,

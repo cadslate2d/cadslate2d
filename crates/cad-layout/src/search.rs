@@ -695,7 +695,9 @@ pub fn alternatives(spec: &Spec, count: usize) -> Result<Vec<Layout>, Refusal> {
 }
 
 /// Up to `count` different plans, best first, from the brief's seed and
-/// those after it, stopping when `count` are found or after `searches`.
+/// those after it, stopping when `count` are found or after `searches` —
+/// or, when the first `searches / count` found none, then: alternatives
+/// cost more searches only once there is a plan to vary.
 /// The first quarter of the searches make no circulation space; the rest
 /// may, within the brief's budget, if the rooms alone gave too few plans.
 /// Ranked lexicographically: a plan is kept only when it keeps every hard
@@ -708,11 +710,17 @@ pub fn alternatives_within(
 ) -> Result<Vec<Layout>, Refusal> {
     let problem = Problem::new(spec)?;
     let searches = searches.max(1);
+    let first = (searches / count.max(1)).max(1);
     let mut found: Vec<Layout> = Vec::new();
+    let mut made = 0;
     let mut nearest: Option<Eval> = None;
     for k in 0..searches {
         let seed = spec.seed.wrapping_add(k as u64);
-        let rooms_alone = (k as f64) < (searches as f64 * WITHOUT_CIRCULATION).ceil();
+        if k == first && found.is_empty() {
+            break;
+        }
+        made += 1;
+        let rooms_alone = (k as f64) < (first as f64 * WITHOUT_CIRCULATION).ceil();
         let eval = problem.anneal(seed, !rooms_alone);
         if eval.violations.is_empty() {
             let layout = problem.layout(eval, seed);
@@ -730,7 +738,7 @@ pub fn alternatives_within(
         let eval = nearest.expect("a search at least");
         return Err(Refusal::Exhausted {
             reasons: problem.explain(&eval),
-            searches,
+            searches: made,
         });
     }
     found.sort_by(|a, b| {

@@ -73,6 +73,7 @@ export const HostRequest = {
   InsertFile: 6,
   WriteBlock: 7,
   NewDrawing: 8,
+  OpenBrief: 9,
 } as const;
 export type HostRequest = (typeof HostRequest)[keyof typeof HostRequest];
 

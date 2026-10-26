@@ -241,6 +241,9 @@ const DRAW: Menu = {
     command("&Hatch...", "HATCH"),
     command("Bou&ndary...", "BOUNDARY"),
     command("&Wipeout", "WIPEOUT"),
+    SEPARATOR,
+    // A floor plan from a brief (#281, ADR-0039).
+    command("&Floor Plan...", "FLOORPLAN"),
     command("Re&vision Cloud", "REVCLOUD"),
     SEPARATOR,
     cascade("Te&xt", [

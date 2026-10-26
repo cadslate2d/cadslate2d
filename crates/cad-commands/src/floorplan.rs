@@ -10,8 +10,8 @@
 
 use cad_core::{EntityId, Point2};
 use cad_document::{
-    ArcEntity, Drawing, Justification, Layer, LayoutId, LineEntity, PolylineEntity, Properties,
-    TextEntity, TransactionError,
+    ArcEntity, Drawing, Entity, Justification, Layer, LayoutId, LineEntity, PolylineEntity,
+    Properties, TextEntity, TransactionError,
 };
 use cad_layout::{Layout, Spec, doors, labels, walls};
 
@@ -20,7 +20,7 @@ pub const EXTERIOR_WALLS: &str = "WALL-EXT";
 pub const INTERIOR_WALLS: &str = "WALL-INT";
 pub const ROOM_TEXT: &str = "ROOM-TEXT";
 pub const DOORS: &str = "DOOR";
-const LAYERS: [&str; 4] = [EXTERIOR_WALLS, INTERIOR_WALLS, ROOM_TEXT, DOORS];
+pub const LAYERS: [&str; 4] = [EXTERIOR_WALLS, INTERIOR_WALLS, ROOM_TEXT, DOORS];
 
 /// The labels' cap height, in metres.
 const LABEL_HEIGHT: f64 = 0.25;
@@ -30,60 +30,38 @@ pub fn area_text(area: f64) -> String {
     format!("{area:.2} m²")
 }
 
-/// Draws `layout` with the terrain's origin at `origin` and `scale`
-/// drawing units to the metre, in `space`, as one transaction. Returns
-/// what it made.
-pub fn draw(
-    drawing: &mut Drawing,
-    space: LayoutId,
-    spec: &Spec,
-    layout: &Layout,
-    origin: Point2,
-    scale: f64,
-) -> Result<Vec<EntityId>, TransactionError> {
-    let found = LAYERS.map(|name| drawing.layers().find(name));
+/// What a plan is drawn as, each entity with the index of its layer in
+/// [`LAYERS`]: the terrain's origin at `origin`, `scale` drawing units to
+/// the metre. The preview shows these; [`draw`] commits them.
+pub fn entities(spec: &Spec, layout: &Layout, origin: Point2, scale: f64) -> Vec<(usize, Entity)> {
     let at = |p: Point2| Point2::new(origin.x + p.x * scale, origin.y + p.y * scale);
     let w = walls(spec, layout);
-    let mut transaction = drawing.transaction().in_space(space);
-    let mut layer = [None; 4];
-    for (i, name) in LAYERS.iter().enumerate() {
-        layer[i] = Some(match found[i] {
-            Some(id) => id,
-            None => transaction.add_layer(Layer::named(*name))?,
-        });
-    }
-    let on = |i: usize| Properties {
-        layer: layer[i].expect("found or made"),
-        ..Properties::default()
-    };
-    let mut made = Vec::new();
-    made.push(transaction.insert_with(
-        PolylineEntity::new(w.outside.iter().map(|p| at(*p)).collect(), w.outside_closed),
-        on(0),
-    )?);
+    let mut out: Vec<(usize, Entity)> = vec![(
+        0,
+        PolylineEntity::new(w.outside.iter().map(|p| at(*p)).collect(), w.outside_closed).into(),
+    )];
     for (faces, i) in [(&w.exterior, 0), (&w.interior, 1)] {
         for face in faces {
-            made.push(
-                transaction.insert_with(LineEntity::new(at(face.start), at(face.end)), on(i))?,
-            );
+            out.push((i, LineEntity::new(at(face.start), at(face.end)).into()));
         }
     }
     for (jambs, i) in [(&w.exterior_jambs, 0), (&w.interior_jambs, 1)] {
         for (a, b) in jambs {
-            made.push(transaction.insert_with(LineEntity::new(at(*a), at(*b)), on(i))?);
+            out.push((i, LineEntity::new(at(*a), at(*b)).into()));
         }
     }
     for door in doors(spec, layout) {
-        made.push(transaction.insert_with(LineEntity::new(at(door.hinge), at(door.leaf)), on(3))?);
-        made.push(transaction.insert_with(
+        out.push((3, LineEntity::new(at(door.hinge), at(door.leaf)).into()));
+        out.push((
+            3,
             ArcEntity::new(
                 at(door.hinge),
                 spec.door * scale,
                 door.swing.0,
                 door.swing.1,
-            ),
-            on(3),
-        )?);
+            )
+            .into(),
+        ));
     }
     let height = LABEL_HEIGHT * scale;
     for label in labels(layout) {
@@ -96,8 +74,39 @@ pub fn draw(
                 text,
             );
             entity.justification = Justification::Center;
-            made.push(transaction.insert_with(entity, on(2))?);
+            out.push((2, entity.into()));
         }
+    }
+    out
+}
+
+/// Draws `layout` with the terrain's origin at `origin` and `scale`
+/// drawing units to the metre, in `space`, as one transaction, its layers
+/// made where the drawing has none of their names. Returns what it made.
+pub fn draw(
+    drawing: &mut Drawing,
+    space: LayoutId,
+    spec: &Spec,
+    layout: &Layout,
+    origin: Point2,
+    scale: f64,
+) -> Result<Vec<EntityId>, TransactionError> {
+    let found = LAYERS.map(|name| drawing.layers().find(name));
+    let mut transaction = drawing.transaction().in_space(space);
+    let mut layer = [None; 4];
+    for (i, name) in LAYERS.iter().enumerate() {
+        layer[i] = Some(match found[i] {
+            Some(id) => id,
+            None => transaction.add_layer(Layer::named(*name))?,
+        });
+    }
+    let mut made = Vec::new();
+    for (i, entity) in entities(spec, layout, origin, scale) {
+        let properties = Properties {
+            layer: layer[i].expect("found or made"),
+            ..Properties::default()
+        };
+        made.push(transaction.insert_with(entity, properties)?);
     }
     transaction.commit();
     Ok(made)
