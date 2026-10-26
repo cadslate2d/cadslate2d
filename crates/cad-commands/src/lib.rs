@@ -51,7 +51,7 @@ pub use selection::{Selection, SelectionMethod};
 pub use session::{Aim, Session};
 pub use settings::{DraftingSettings, Paper, PlotArea, PlotScale, PlotSettings};
 pub use snap::{SnapMode, SnapModes, SnapPoint};
-pub use summary::{AI_CONTEXT_LIMIT, AiContext, AiObject, SelectionSummary};
+pub use summary::{AI_CONTEXT_LIMIT, AiContext, AiGroup, AiObject, SelectionSummary};
 pub use toggles::{Toggle, Toggles};
 pub use transient::TransientEdit;
 pub use ui_state::{ImportReport, LayerRow, UiState};

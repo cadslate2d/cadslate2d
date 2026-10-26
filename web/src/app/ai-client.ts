@@ -59,6 +59,12 @@ export interface RequestContext {
   }[];
   /** The parameters on those objects, by name, value, and what they measure (#274). */
   readonly parameters?: readonly string[];
+  /** The groups those objects belong to (#325): a plan accepted, its description its brief. */
+  readonly groups?: readonly {
+    readonly name: string;
+    readonly description: string;
+    readonly members: number;
+  }[];
 }
 
 export interface AiRequest {

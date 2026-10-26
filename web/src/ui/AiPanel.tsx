@@ -378,6 +378,12 @@ function Conversation({
                   <strong>parameter</strong> {parameter}
                 </li>
               ))}
+              {snapshot.consent.context.groups.map((group) => (
+                <li key={group.name}>
+                  <strong>group {group.name}</strong> {group.members} objects
+                  {group.description ? ` · ${group.description}` : ""}
+                </li>
+              ))}
               <li>
                 <strong>layers</strong> {snapshot.consent.context.layers.join(", ")}
               </li>

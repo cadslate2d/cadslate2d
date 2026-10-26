@@ -272,6 +272,7 @@ impl Command for FloorPlanCommand {
                     plan,
                     self.origin,
                     self.scale,
+                    index as u32 + 1,
                 ) {
                     Ok(made) => ctx.message(format!(
                         "Plan {} drawn: {} rooms, {} objects.",

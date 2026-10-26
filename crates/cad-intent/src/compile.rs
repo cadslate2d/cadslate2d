@@ -58,7 +58,7 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 38] = [
+pub const COMMANDS: [&str; 39] = [
     "LINE",
     "PLINE",
     "RECTANG",
@@ -97,6 +97,7 @@ pub const COMMANDS: [&str; 38] = [
     "DIMCONSTRAINT",
     "-PARAMETERS",
     "FLOORPLAN",
+    "ERASE",
 ];
 
 /// Compiles every operation of a validated document, in order.
@@ -203,6 +204,7 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
                 answer(Answer::Text(text.clone())),
             ],
         ),
+        Operation::Erase { targets } => ("ERASE", vec![Step::Select(targets.clone())]),
         Operation::Move {
             targets,
             displacement,

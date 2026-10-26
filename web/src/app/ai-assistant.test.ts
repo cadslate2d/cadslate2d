@@ -92,7 +92,7 @@ class FakeClient implements AiClient {
 }
 
 class FakeHost implements AssistantHost {
-  context: AiContext = { layers: ["0"], objects: [], parameters: [], leftOut: 0 };
+  context: AiContext = { layers: ["0"], objects: [], parameters: [], leftOut: 0, groups: [] };
   proposed: string[] = [];
   accepted = 0;
   rejected = 0;
@@ -218,6 +218,7 @@ describe("the AI assistant (#260)", () => {
       objects: [{ id: 4, kind: "circle", geometry: "center 30, 30; radius 8", layer: "HOLES" }],
       parameters: [],
       leftOut: 0,
+      groups: [],
     };
     await assistant.ask("move these up 25");
     expect(client.asked).toEqual([]);
@@ -246,6 +247,7 @@ describe("the AI assistant (#260)", () => {
       objects: [{ id: 1, kind: "line", geometry: "start 0, 0; end 120, 0", layer: "0" }],
       parameters: ["d1 = 120: horizontal distance, id 1 start to id 1 end"],
       leftOut: 0,
+      groups: [],
     };
     await assistant.ask("make it 20 wider");
     expect(assistant.getSnapshot().consent?.context.parameters).toEqual([

@@ -442,6 +442,24 @@
         },
         {
           "additionalProperties": false,
+          "description": "Removes the targets from the drawing: what a plan drawn earlier\nis, before it is drawn again revised (#325).",
+          "properties": {
+            "op": {
+              "const": "erase",
+              "type": "string"
+            },
+            "targets": {
+              "$ref": "#/$defs/Targets"
+            }
+          },
+          "required": [
+            "op",
+            "targets"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "Moves the targets by a displacement.",
           "properties": {
             "displacement": {

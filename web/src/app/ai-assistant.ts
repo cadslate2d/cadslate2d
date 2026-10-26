@@ -275,11 +275,12 @@ export class AiAssistant {
     const consent = this.#snapshot.consent;
     if (!consent) return;
     this.#set({ consent: undefined });
-    const { layers, objects, parameters } = consent.context;
+    const { layers, objects, parameters, groups } = consent.context;
     await this.#send(consent.prompt, {
       layers,
       objects,
       ...(parameters.length > 0 ? { parameters } : {}),
+      ...(groups.length > 0 ? { groups } : {}),
     });
   }
 

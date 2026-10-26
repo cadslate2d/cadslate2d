@@ -381,6 +381,7 @@ impl Check {
                 }
                 Ok(())
             }
+            Operation::Erase { targets } => self.targets("targets", targets),
             Operation::Move {
                 targets,
                 displacement,

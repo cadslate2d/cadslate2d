@@ -90,6 +90,14 @@ export interface AiContext {
   readonly parameters: readonly string[];
   /** Selected objects beyond the limit, left out. */
   readonly leftOut: number;
+  /** The groups any selected object belongs to (#325): a plan accepted, with its brief. */
+  readonly groups: readonly AiGroup[];
+}
+
+export interface AiGroup {
+  readonly name: string;
+  readonly description: string;
+  readonly members: number;
 }
 
 export interface AiObject {

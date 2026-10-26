@@ -52,6 +52,7 @@ export interface Interpreted {
     layers: string[];
     objects: { id: number; kind: string; geometry: string }[];
     parameters?: string[];
+    groups?: { name: string; description: string; members: number }[];
   };
   previous?: { prompt: string; intent: unknown };
 }

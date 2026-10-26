@@ -428,6 +428,87 @@ fn parameters(h: &Harness) -> Vec<String> {
     names
 }
 
+/// #325: `erase` takes the selection or named objects away; a plan drawn
+/// is a group whose description holds its brief, which the context the
+/// AI is sent carries, so the plan is drawn again revised — erased, then
+/// planned anew with windows, at the same place.
+#[test]
+fn erase_removes_objects_and_a_drawn_plan_is_revised_from_its_groups_brief() {
+    let mut h = run(r#"
+        {"op": "circle", "center": [0, 0], "radius": 10},
+        {"op": "line", "points": [[0, 50], [100, 50]]},
+        {"op": "erase", "targets": "selection"},
+        {"op": "circle", "center": [50, 0], "radius": 5},
+        {"op": "erase", "targets": [1]}
+    "#);
+    assert_eq!(kinds(&h), ["circle"]);
+    let brief = r#"{"terrain": {"width": 12, "depth": 20}, "setbacks": {"front": 5},
+        "rooms": [{"name": "living room", "area": 25, "entrance": true}, {"name": "kitchen", "area": 10},
+                  {"name": "bedroom 1", "area": 12}, {"name": "bedroom 2", "area": 10}, {"name": "bathroom", "area": 5}],
+        "adjacent": [["kitchen", "living room"]]}"#;
+    h.session
+        .run_intent(&document(&format!(
+            r#"{{"op": "floor_plan", "brief": {brief}, "at": [100, 100]}}"#
+        )))
+        .unwrap();
+    let drawn = h.session.drawing().len();
+    assert!(drawn > 50);
+    // Selected whole, the plan's group and its brief go with the request.
+    let all: Vec<cad_core::EntityId> = h.session.drawing().entities().map(|(id, _)| id).collect();
+    h.session.select_only(&all);
+    let context = h.session.ai_context();
+    assert_eq!(context.groups.len(), 1);
+    let group = &context.groups[0];
+    assert_eq!(group.name, "PLAN-1");
+    assert_eq!(
+        group.members,
+        drawn - 1,
+        "the plan's objects; the circle is not in it"
+    );
+    assert!(
+        group.description.starts_with(r#"{"brief":{"#),
+        "{}",
+        group.description
+    );
+    assert!(
+        group.description.contains(r#""at":[100,100]"#)
+            && group.description.contains(r#""alternative":1"#)
+    );
+    // Revised as the AI would: erased, then planned again with windows.
+    let revised = brief.trim_end_matches('}').to_owned() + r#", "windows": 1.5}"#;
+    h.session
+        .run_intent(&document(&format!(
+            r#"{{"op": "erase", "targets": "selection"}}, {{"op": "floor_plan", "brief": {revised}, "at": [100, 100]}}"#
+        )))
+        .unwrap();
+    let windows = h
+        .session
+        .drawing()
+        .layers()
+        .find("WINDOW")
+        .expect("windows drawn");
+    let drawing = h.session.drawing();
+    let glass = drawing
+        .entities()
+        .filter(|(id, _)| drawing.properties(*id).is_some_and(|p| p.layer == windows))
+        .count();
+    assert!(glass >= 6, "{glass}");
+    // The old plan's group went with its objects, so the name is free again.
+    let groups: Vec<String> = drawing
+        .groups()
+        .iter()
+        .map(|(_, g)| g.name.clone())
+        .collect();
+    assert_eq!(groups, ["PLAN-1"]);
+    assert!(
+        drawing
+            .groups()
+            .iter()
+            .all(|(_, g)| g.description.contains(r#""windows":1.5"#))
+    );
+    assert!(!kinds(&h).contains(&"circle"), "the selection was erased");
+}
+
 /// #274: a plate made, its parameters in the context the AI is sent, then
 /// widened by its width parameter with its holes keeping their places from
 /// the edges; a parameter that is not there refused with the reason.

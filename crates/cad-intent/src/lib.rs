@@ -27,14 +27,14 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 7;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
 /// the parts (#272), version 3 the placements (#273), version 4 the
 /// constraints and parameters (#274), version 5 floor plans (#282),
-/// version 6 their windows (#324).
-pub const READS: [u32; 6] = [1, 2, 3, 4, 5, 6];
+/// version 6 their windows (#324), version 7 `erase` (#325).
+pub const READS: [u32; 7] = [1, 2, 3, 4, 5, 6, 7];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -246,6 +246,11 @@ pub enum Operation {
     },
 
     // ── modify ──
+    /// Removes the targets from the drawing: what a plan drawn earlier
+    /// is, before it is drawn again revised (#325).
+    Erase {
+        targets: Targets,
+    },
     /// Moves the targets by a displacement.
     Move {
         targets: Targets,
@@ -643,6 +648,7 @@ impl Operation {
             Self::Arc { .. } => "arc",
             Self::Polygon { .. } => "polygon",
             Self::Text { .. } => "text",
+            Self::Erase { .. } => "erase",
             Self::Move { .. } => "move",
             Self::Copy { .. } => "copy",
             Self::Rotate { .. } => "rotate",

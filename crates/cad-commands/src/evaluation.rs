@@ -72,6 +72,9 @@ pub struct PlanWanted {
     pub setbacks: Vec<(String, f64)>,
     /// Which of the plans.
     pub alternative: Option<u32>,
+    /// A plan drawn already is drawn again (#325): the document erases the
+    /// selection — the plan's objects — before its `floor_plan`.
+    pub replaces: bool,
     /// The windows' width, metres, exact (#324).
     pub windows: Option<f64>,
     /// A revision: every room and pairing of the brief revised is kept,
@@ -104,6 +107,7 @@ impl PlanWanted {
                 .map(|n| n as u32),
             keeps_previous: value["keeps_previous"].as_bool().unwrap_or(false),
             windows: value["windows"].as_f64(),
+            replaces: value["replaces"].as_bool().unwrap_or(false),
             count: value["count"].as_u64().map(|n| n as usize),
             pairs: value["pairs"].as_u64().map(|n| n as usize),
             ..Self::default()
@@ -153,6 +157,17 @@ impl PlanWanted {
         let Some((brief, alternative)) = plan(intent) else {
             return Some("no floor plan".into());
         };
+        if self.replaces {
+            let erases_first = matches!(
+                intent.operations.first(),
+                Some(cad_intent::Operation::Erase {
+                    targets: cad_intent::Targets::Selection(_)
+                })
+            );
+            if !erases_first {
+                return Some("the plan drawn before is not erased first".into());
+            }
+        }
         let near = |a: f64, b: f64| (a - b).abs() <= 0.01 * b.abs().max(1.0);
         if let Some((w, d)) = self.terrain
             && !(near(brief.terrain.width, w) && near(brief.terrain.depth, d))
@@ -277,13 +292,22 @@ pub struct Case {
     pub language: String,
     pub prompt: String,
     pub setup: Option<Intent>,
-    pub select: Vec<u64>,
+    /// The IDs selected, or every entity the setup made (`"all"`).
+    pub select: Selected,
     pub previous: Option<Value>,
     pub expected: Expected,
     /// A request for options (AI service #10): how few and how many may
     /// come, each wanted as one answer would be, and no two drawing the
     /// same. A case without it wants no options.
     pub options: Option<(usize, usize)>,
+}
+
+/// What a case selects before its request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Selected {
+    Ids(Vec<u64>),
+    /// Everything the setup drew: a plan accepted, say (#325).
+    All,
 }
 
 /// One level's cases: `l1`, AI commands.
@@ -363,11 +387,13 @@ impl Corpus {
                     language: text("lang")?,
                     prompt: text("prompt")?,
                     setup: case.get("setup").map(document).transpose().map_err(at)?,
-                    select: case
-                        .get("select")
-                        .and_then(Value::as_array)
-                        .map(|ids| ids.iter().filter_map(Value::as_u64).collect())
-                        .unwrap_or_default(),
+                    select: match &case["select"] {
+                        Value::String(all) if all == "all" => Selected::All,
+                        Value::Array(ids) => {
+                            Selected::Ids(ids.iter().filter_map(Value::as_u64).collect())
+                        }
+                        _ => Selected::Ids(Vec::new()),
+                    },
                     previous: case.get("previous").cloned(),
                     expected,
                     options: match &case["options"] {
@@ -517,11 +543,10 @@ fn start(case: &Case) -> Harness {
             .run_intent(setup)
             .unwrap_or_else(|error| panic!("{}: the setup does not run: {error}", case.name));
     }
-    let selected: Vec<EntityId> = case
-        .select
-        .iter()
-        .map(|&id| EntityId::from_raw(id))
-        .collect();
+    let selected: Vec<EntityId> = match &case.select {
+        Selected::Ids(ids) => ids.iter().map(|&id| EntityId::from_raw(id)).collect(),
+        Selected::All => h.session.drawing().entities().map(|(id, _)| id).collect(),
+    };
     h.session.select_only(&selected);
     h
 }
@@ -552,6 +577,20 @@ pub fn request(case: &Case) -> Value {
         if !context.parameters.is_empty() {
             request["context"]["parameters"] = json!(context.parameters);
         }
+        if !context.groups.is_empty() {
+            let groups: Vec<Value> = context
+                .groups
+                .iter()
+                .map(|group| {
+                    json!({
+                        "name": group.name,
+                        "description": group.description,
+                        "members": group.members,
+                    })
+                })
+                .collect();
+            request["context"]["groups"] = json!(groups);
+        }
     }
     if let Some(previous) = &case.previous {
         request["previous"] = previous.clone();
@@ -572,9 +611,18 @@ fn reason(case: &Case) -> Option<String> {
 }
 
 /// The document a revision revises, when the case is one.
+/// The plan a case revises: the proposal's, or — a plan drawn already —
+/// the setup's (#325).
 fn previous(case: &Case) -> Option<Intent> {
-    let intent = case.previous.as_ref()?.get("intent")?;
-    parse(&intent.to_string()).ok()
+    match case.previous.as_ref().and_then(|p| p.get("intent")) {
+        Some(intent) => parse(&intent.to_string()).ok(),
+        None => case.setup.clone().filter(|setup| {
+            setup
+                .operations
+                .iter()
+                .any(|op| matches!(op, cad_intent::Operation::FloorPlan { .. }))
+        }),
+    }
 }
 
 /// Runs `intent` from the case's start: the drawing it makes, or why not.

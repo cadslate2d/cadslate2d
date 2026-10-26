@@ -642,6 +642,19 @@ pub struct AiContext {
     pub parameters: Vec<String>,
     /// Objects selected beyond `AI_CONTEXT_LIMIT`, left out.
     pub left_out: usize,
+    /// The groups any listed object belongs to (#325): a floor plan
+    /// accepted is one, its description holding the brief it was made
+    /// from, so a request can revise it.
+    pub groups: Vec<AiGroup>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AiGroup {
+    pub name: String,
+    /// What the drafter — or the command that made it — wrote about it.
+    pub description: String,
+    /// How many objects it has, listed or not.
+    pub members: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -706,6 +719,17 @@ impl AiContext {
             })
             .collect();
         let listed: Vec<u64> = objects.iter().map(|object| object.id).collect();
+        let mut seen = std::collections::BTreeSet::new();
+        let groups: Vec<AiGroup> = listed
+            .iter()
+            .flat_map(|&id| drawing.groups_of(cad_core::EntityId::from_raw(id)))
+            .filter(|(id, _)| seen.insert(*id))
+            .map(|(_, group)| AiGroup {
+                name: group.name.clone(),
+                description: group.description.clone(),
+                members: group.members.len(),
+            })
+            .collect();
         let mut parameters: Vec<(String, String)> = drawing
             .constraints()
             .iter()
@@ -719,6 +743,7 @@ impl AiContext {
             .collect();
         parameters.sort();
         Self {
+            groups,
             parameters: parameters.into_iter().map(|(_, text)| text).collect(),
             unit: drawing.unit().map(cad_core::LengthUnit::suffix),
             layers: drawing

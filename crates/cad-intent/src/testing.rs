@@ -242,6 +242,7 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         placement(),
         constraint(),
         floor_plan(),
+        targets().prop_map(|targets| Operation::Erase { targets }),
     ]
 }
 

@@ -11,7 +11,7 @@
 
 use cad_core::{EntityId, Point2};
 use cad_document::{
-    ArcEntity, Drawing, Entity, Justification, Layer, LayoutId, LineEntity, PolylineEntity,
+    ArcEntity, Drawing, Entity, Group, Justification, Layer, LayoutId, LineEntity, PolylineEntity,
     Properties, TextEntity, TransactionError,
 };
 use cad_layout::{Layout, Spec, doors, labels, walls, windows};
@@ -100,9 +100,27 @@ pub fn entities(spec: &Spec, layout: &Layout, origin: Point2, scale: f64) -> Vec
     out
 }
 
+/// The prefix of the group a drawn plan is kept in: `PLAN-1`, `PLAN-2`, …
+pub const PLAN_GROUP: &str = "PLAN-";
+
+/// What a plan's group says of it: the brief and where and how it was
+/// drawn, as JSON, so a later request can draw it again revised (#325).
+pub fn plan_description(spec: &Spec, origin: Point2, scale: f64, alternative: u32) -> String {
+    format!(
+        "{{\"brief\":{},\"at\":[{},{}],\"scale\":{},\"alternative\":{alternative}}}",
+        spec.to_json(),
+        origin.x,
+        origin.y,
+        scale
+    )
+}
+
 /// Draws `layout` with the terrain's origin at `origin` and `scale`
 /// drawing units to the metre, in `space`, as one transaction, its layers
-/// made where the drawing has none of their names. Returns what it made.
+/// made where the drawing has none of their names, and its objects in a
+/// group — `PLAN-1`, the first number free — whose description holds the
+/// brief and where it was drawn, `alternative` being which plan (#325).
+/// Picking one object picks that object alone. Returns what it made.
 pub fn draw(
     drawing: &mut Drawing,
     space: LayoutId,
@@ -110,8 +128,14 @@ pub fn draw(
     layout: &Layout,
     origin: Point2,
     scale: f64,
+    alternative: u32,
 ) -> Result<Vec<EntityId>, TransactionError> {
     let found = LAYERS.map(|name| drawing.layers().find(name));
+    let taken: Vec<String> = drawing
+        .groups()
+        .iter()
+        .map(|(_, group)| group.name.clone())
+        .collect();
     let mut transaction = drawing.transaction().in_space(space);
     let mut layer = [None; LAYERS.len()];
     for (i, name) in LAYERS.iter().enumerate() {
@@ -128,6 +152,14 @@ pub fn draw(
         };
         made.push(transaction.insert_with(entity, properties)?);
     }
+    let name = (1..)
+        .map(|n| format!("{PLAN_GROUP}{n}"))
+        .find(|name| !taken.contains(name))
+        .expect("a number is free");
+    let mut group = Group::named(name, made.clone());
+    group.description = plan_description(spec, origin, scale, alternative);
+    group.selectable = false;
+    transaction.add_group(group)?;
     transaction.commit();
     Ok(made)
 }
@@ -184,6 +216,7 @@ mod tests {
             &layout,
             Point2::ORIGIN,
             1.0,
+            1,
         )
         .unwrap();
         let w = walls(&spec, &layout);
@@ -250,6 +283,7 @@ mod tests {
             &layout,
             Point2::new(100.0, 50.0),
             1000.0,
+            1,
         )
         .unwrap();
         // Only the four missing layers were made.
@@ -267,6 +301,41 @@ mod tests {
                 .vertices
                 .contains(&Point2::new(100.0 + f.x * 1000.0, 50.0 + f.y * 1000.0))
         );
+    }
+
+    /// #325: a drawn plan is a group, PLAN-1 then PLAN-2, not picked whole,
+    /// its description the brief and where it was drawn.
+    #[test]
+    fn a_drawn_plan_is_a_group_holding_its_brief() {
+        let spec = house();
+        let layout = solve(&spec).unwrap();
+        let mut drawing = Drawing::new();
+        for (origin, which) in [(Point2::ORIGIN, 1), (Point2::new(50.0, 0.0), 2)] {
+            let made = draw(
+                &mut drawing,
+                LayoutId::MODEL,
+                &spec,
+                &layout,
+                origin,
+                1.0,
+                which,
+            )
+            .unwrap();
+            let (_, group) = drawing
+                .groups()
+                .iter()
+                .find(|(_, g)| g.name == format!("PLAN-{which}"))
+                .expect("the plan's group");
+            assert_eq!(group.members, made);
+            assert!(!group.selectable);
+            assert_eq!(
+                group.description,
+                plan_description(&spec, origin, 1.0, which)
+            );
+            assert!(group.description.contains(r#""alternative":"#));
+            assert!(group.description.contains(&spec.to_json()));
+        }
+        assert_eq!(drawing.groups().len(), 2);
     }
 
     /// #324: a window in each room's outside walls when the brief gives
@@ -287,6 +356,7 @@ mod tests {
             &layout,
             Point2::ORIGIN,
             1.0,
+            1,
         )
         .unwrap();
         let glass = on(&drawing, WINDOWS);

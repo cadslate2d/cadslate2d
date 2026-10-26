@@ -106,6 +106,15 @@ struct AiContextDto {
     objects: Vec<AiObjectDto>,
     parameters: Vec<String>,
     left_out: u32,
+    groups: Vec<AiGroupDto>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiGroupDto {
+    name: String,
+    description: String,
+    members: u32,
 }
 
 #[derive(Serialize)]
@@ -606,6 +615,15 @@ impl CadSession {
                 .collect(),
             parameters: context.parameters,
             left_out: context.left_out as u32,
+            groups: context
+                .groups
+                .into_iter()
+                .map(|group| AiGroupDto {
+                    name: group.name,
+                    description: group.description,
+                    members: group.members as u32,
+                })
+                .collect(),
         })?)
     }
 
