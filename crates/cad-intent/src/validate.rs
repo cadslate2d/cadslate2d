@@ -831,6 +831,9 @@ impl Check {
                 if let Some(share) = brief.max_circulation {
                     self.not_negative("brief.max_circulation", share)?;
                 }
+                if let Some(width) = brief.windows {
+                    self.positive("brief.windows", width)?;
+                }
                 if let Some(at) = at {
                     self.point("at", *at)?;
                 }

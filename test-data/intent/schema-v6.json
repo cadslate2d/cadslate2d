@@ -43,6 +43,14 @@
         "terrain": {
           "$ref": "#/$defs/BriefTerrain",
           "description": "The plot: `width` along its front (x), `depth` back from it (y)."
+        },
+        "windows": {
+          "description": "The windows' width, metres: a window in each outside wall of every\nroom. Absent, only rooms that ask for an outside wall have one.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [

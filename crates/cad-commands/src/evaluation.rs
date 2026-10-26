@@ -42,7 +42,10 @@ pub enum Expected {
     /// A floor plan (#282) whose brief has these properties — what the
     /// request fixes, leaving the rest to the model — and that is drawn.
     /// The example is an answer that has them, which the corpus checks.
-    Plan { wanted: PlanWanted, example: Intent },
+    Plan {
+        wanted: Box<PlanWanted>,
+        example: Intent,
+    },
 }
 
 /// What a floor plan's brief must have. A room is matched by a pattern:
@@ -69,6 +72,8 @@ pub struct PlanWanted {
     pub setbacks: Vec<(String, f64)>,
     /// Which of the plans.
     pub alternative: Option<u32>,
+    /// The windows' width, metres, exact (#324).
+    pub windows: Option<f64>,
     /// A revision: every room and pairing of the brief revised is kept,
     /// each room's area too unless an `areas` pattern names it.
     pub keeps_previous: bool,
@@ -98,6 +103,7 @@ impl PlanWanted {
                 .and_then(Value::as_u64)
                 .map(|n| n as u32),
             keeps_previous: value["keeps_previous"].as_bool().unwrap_or(false),
+            windows: value["windows"].as_f64(),
             count: value["count"].as_u64().map(|n| n as usize),
             pairs: value["pairs"].as_u64().map(|n| n as usize),
             ..Self::default()
@@ -215,6 +221,16 @@ impl PlanWanted {
                 return Some(format!("a {side} setback of {given}, not {value}"));
             }
         }
+        if let Some(width) = self.windows
+            && brief
+                .windows
+                .is_none_or(|given| (given - width).abs() > 1e-6)
+        {
+            return Some(match brief.windows {
+                Some(given) => format!("windows {given} m wide, not {width}"),
+                None => format!("no windows, not {width} m wide"),
+            });
+        }
         if let Some(wanted) = self.alternative
             && alternative.unwrap_or(1) != wanted
         {
@@ -326,7 +342,7 @@ impl Corpus {
                 };
                 let expected = match (&case["expected"], &case["refused"]) {
                     _ if case.get("plan").is_some() => Expected::Plan {
-                        wanted: PlanWanted::read(&case["plan"]).map_err(at)?,
+                        wanted: Box::new(PlanWanted::read(&case["plan"]).map_err(at)?),
                         example: document(&case["example"]).map_err(at)?,
                     },
                     (Value::String(word), _) if word == "nothing" => Expected::Nothing,

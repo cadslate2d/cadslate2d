@@ -27,13 +27,14 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 5;
+pub const VERSION: u32 = 6;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
 /// the parts (#272), version 3 the placements (#273), version 4 the
-/// constraints and parameters (#274), version 5 floor plans (#282).
-pub const READS: [u32; 5] = [1, 2, 3, 4, 5];
+/// constraints and parameters (#274), version 5 floor plans (#282),
+/// version 6 their windows (#324).
+pub const READS: [u32; 6] = [1, 2, 3, 4, 5, 6];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -572,6 +573,10 @@ pub struct Brief {
     /// rooms' floor; 0 forbids it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_circulation: Option<f64>,
+    /// The windows' width, metres: a window in each outside wall of every
+    /// room. Absent, only rooms that ask for an outside wall have one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub windows: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
