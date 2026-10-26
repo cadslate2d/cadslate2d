@@ -651,3 +651,49 @@ test("a floor plan with windows by request", async ({ page }) => {
   expect(glass.length).toBeGreaterThanOrEqual(8);
   expect(glass.length % 2).toBe(0);
 });
+
+// #325: a plan accepted keeps its brief in its group; selected and asked
+// for windows, it is drawn again with them — erased, then planned anew —
+// as one undo.
+const ADD_WINDOWS = "Add 150 cm windows in every room's outside walls";
+
+test("a plan accepted is revised by request: windows added to the plan drawn", async ({ page }) => {
+  const service = await fakeAiService(page);
+  service.plan = "pro";
+  await openApp(page);
+  await signIn(page, service);
+  await ask(page, HOUSE);
+  const proposal = panel(page).getByTestId("ai-proposal");
+  await expect(proposal).toContainText("Adds");
+  await proposal.getByRole("button", { name: "Accept" }).click();
+  await expect(proposal).toHaveCount(0);
+  expect((await onLayerOf(page, "WINDOW")).length).toBe(0);
+  const walls = (await onLayerOf(page, "WALL-EXT")).length;
+
+  // The plan selected whole: its group and brief are shown at the consent.
+  await enter(page, "ALL");
+  await page.keyboard.press("Escape");
+  await ask(page, ADD_WINDOWS);
+  const consent = panel(page).getByTestId("ai-consent");
+  await expect(consent).toContainText("group PLAN-1");
+  await consent.getByRole("button", { name: "Send with these" }).click();
+  await expect(proposal).toBeVisible();
+  await expect.poll(() => service.interpreted.length).toBe(2);
+  const sent = service.interpreted[1]?.context?.groups ?? [];
+  expect(sent.map((group) => group.name)).toEqual(["PLAN-1"]);
+  expect(sent[0]?.description).toContain('"brief"');
+  await proposal.getByRole("button", { name: "Accept" }).click();
+  await expect(proposal).toHaveCount(0);
+  expect((await onLayerOf(page, "WINDOW")).length).toBeGreaterThanOrEqual(8);
+  expect((await onLayerOf(page, "WALL-EXT")).length).toBeGreaterThan(walls);
+  // One undo takes the revision back: the first plan, without windows.
+  await enter(page, "U");
+  expect((await onLayerOf(page, "WINDOW")).length).toBe(0);
+  expect((await onLayerOf(page, "WALL-EXT")).length).toBe(walls);
+});
+
+/** The drawing's entities on `layer`, as DXFOUT writes them. */
+async function onLayerOf(page: Page, layer: string) {
+  const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+  return entities(file.text).filter((entity) => group(entity, 8) === layer);
+}
