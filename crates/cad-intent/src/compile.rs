@@ -58,7 +58,7 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 37] = [
+pub const COMMANDS: [&str; 38] = [
     "LINE",
     "PLINE",
     "RECTANG",
@@ -96,6 +96,7 @@ pub const COMMANDS: [&str; 37] = [
     "GEOMCONSTRAINT",
     "DIMCONSTRAINT",
     "-PARAMETERS",
+    "FLOORPLAN",
 ];
 
 /// Compiles every operation of a validated document, in order.
@@ -622,6 +623,24 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
                 (None, _) => enter(),
             });
             ("DIMCONSTRAINT", steps)
+        }
+        Operation::FloorPlan {
+            brief,
+            at: place,
+            alternative,
+        } => {
+            let mut steps = vec![
+                keyword("Brief"),
+                answer(Answer::Text(
+                    serde_json::to_string(brief).expect("a brief is plain data"),
+                )),
+                place.map_or_else(enter, at),
+            ];
+            for _ in 1..alternative.unwrap_or(1) {
+                steps.push(keyword("Next"));
+            }
+            steps.push(keyword("Accept"));
+            ("FLOORPLAN", steps)
         }
         Operation::SetParameter { name, value } => (
             "-PARAMETERS",

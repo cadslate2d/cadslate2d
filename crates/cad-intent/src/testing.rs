@@ -5,8 +5,8 @@ use proptest::prelude::*;
 
 use crate::validate::same_point;
 use crate::{
-    Color, Intent, Measure, Operation, Orientation, Pick, Point, Relation, SelectionWord, Targets,
-    Unit, VERSION,
+    Brief, BriefRoom, BriefTerrain, Color, Intent, Measure, Operation, Orientation, Pick, Point,
+    Relation, SelectionWord, Targets, Unit, VERSION,
 };
 
 fn differ(a: Point, b: Point) -> bool {
@@ -241,7 +241,52 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         part(),
         placement(),
         constraint(),
+        floor_plan(),
     ]
+}
+
+/// A floor plan (#282): a brief of one to six rooms on a plot, some of
+/// them side by side; many cannot be built, and the engine says why.
+fn floor_plan() -> impl Strategy<Value = Operation> {
+    (
+        (8.0..40.0f64, 8.0..40.0f64),
+        proptest::collection::vec(3.0..40.0f64, 1..7),
+        proptest::collection::vec((0..6usize, 0..6usize), 0..4),
+        proptest::option::of(point()),
+        proptest::option::of(1u32..=3),
+    )
+        .prop_map(|((width, depth), areas, pairs, at, alternative)| {
+            let rooms: Vec<BriefRoom> = areas
+                .iter()
+                .enumerate()
+                .map(|(i, area)| BriefRoom {
+                    name: format!("room {i}"),
+                    area: *area,
+                    min_width: None,
+                    max_aspect: None,
+                    exterior: false,
+                    entrance: false,
+                })
+                .collect();
+            let n = rooms.len();
+            let adjacent = pairs
+                .into_iter()
+                .map(|(a, b)| (a % n, b % n))
+                .filter(|(a, b)| a != b)
+                .map(|(a, b)| [format!("room {a}"), format!("room {b}")])
+                .collect();
+            Operation::FloorPlan {
+                brief: Brief {
+                    terrain: BriefTerrain { width, depth },
+                    setbacks: None,
+                    rooms,
+                    adjacent,
+                    max_circulation: None,
+                },
+                at,
+                alternative,
+            }
+        })
 }
 
 /// A constraint or a parameter (#274); the picks are arbitrary, so most

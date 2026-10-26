@@ -259,6 +259,28 @@ fn what_is_refused_says_where_and_why() {
         "value",
         Reason::NotPositive,
     );
+    // A floor plan's brief: rooms named once, side by side only with rooms
+    // of the brief, one of three plans.
+    invalid(
+        r#"{"op": "floor_plan", "brief": {"terrain": {"width": 10, "depth": 20}, "rooms": [{"name": "a", "area": 10}, {"name": "a", "area": 5}]}}"#,
+        "brief.rooms.name",
+        Reason::Repeated,
+    );
+    invalid(
+        r#"{"op": "floor_plan", "brief": {"terrain": {"width": 10, "depth": 20}, "rooms": [{"name": "a", "area": 10}], "adjacent": [["a", "b"]]}}"#,
+        "brief.adjacent",
+        Reason::Unknown,
+    );
+    invalid(
+        r#"{"op": "floor_plan", "brief": {"terrain": {"width": 10, "depth": 20}, "rooms": []}}"#,
+        "brief.rooms",
+        Reason::TooFew(1),
+    );
+    invalid(
+        r#"{"op": "floor_plan", "brief": {"terrain": {"width": 10, "depth": 20}, "rooms": [{"name": "a", "area": 10}]}, "alternative": 4}"#,
+        "alternative",
+        Reason::TooMany(3),
+    );
     invalid(
         r#"{"op": "set_properties", "targets": [1]}"#,
         "layer",
@@ -282,9 +304,9 @@ fn what_is_refused_says_where_and_why() {
         IntentError::Json { .. }
     ));
     assert!(matches!(
-        parse(r#"{"version": 5, "operations": []}"#).unwrap_err(),
+        parse(r#"{"version": 6, "operations": []}"#).unwrap_err(),
         IntentError::Version {
-            found: 5,
+            found: 6,
             expected: VERSION
         }
     ));
@@ -328,7 +350,7 @@ fn what_is_refused_says_where_and_why() {
 fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../test-data/intent/schema-v4.json"
+        "/../../test-data/intent/schema-v5.json"
     );
     let generated = serde_json::to_string_pretty(&schema()).unwrap() + "\n";
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
@@ -340,7 +362,7 @@ fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
         "the schema changed: bump cad_intent::VERSION, re-record with UPDATE_SNAPSHOTS=1, and name the file after the new version"
     );
     assert!(generated.contains(r#""version""#));
-    assert_eq!(VERSION, 4);
+    assert_eq!(VERSION, 5);
 }
 
 proptest! {
@@ -385,6 +407,6 @@ fn the_selection_word_and_an_intent_serialise_as_the_document_says() {
     };
     assert_eq!(
         serde_json::to_string(&intent).unwrap(),
-        r#"{"version":4,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
+        r#"{"version":5,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
     );
 }

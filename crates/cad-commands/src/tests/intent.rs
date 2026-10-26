@@ -617,3 +617,42 @@ fn constraints_at_points_take_the_point_named() {
     );
     assert_eq!(h.session.drawing().constraints().len(), 2);
 }
+
+/// #282: a floor plan by intent — its brief, where it goes, which of the
+/// plans — is the drawing FLOORPLAN makes from the same brief; one that
+/// cannot be built is refused with the generator's reason.
+#[test]
+fn a_floor_plan_by_intent_is_the_one_floorplan_draws() {
+    let brief = r#"{"terrain": {"width": 15, "depth": 20}, "rooms": [{"name": "living", "area": 24, "entrance": true}, {"name": "kitchen", "area": 10}, {"name": "bedroom", "area": 12}, {"name": "bath", "area": 4.5}], "adjacent": [["living", "kitchen"]]}"#;
+    let by_intent = run(&format!(
+        r#"{{"op": "floor_plan", "brief": {brief}, "at": [10, 5], "alternative": 2}}"#
+    ));
+    let mut by_command = Harness::new();
+    by_command.enter_all(&["FLOORPLAN", "B", brief, "10,5", "N", ""]);
+    assert!(
+        by_command.log().last().unwrap().starts_with("Plan 2 drawn"),
+        "{:?}",
+        by_command.log()
+    );
+    assert_eq!(by_intent.entities(), by_command.entities());
+    assert!(by_intent.entities().len() > 20);
+    // The first plan is another drawing.
+    let first = run(&format!(
+        r#"{{"op": "floor_plan", "brief": {brief}, "at": [10, 5]}}"#
+    ));
+    assert_ne!(first.entities(), by_intent.entities());
+
+    let mut h = Harness::new();
+    let error = h
+        .session
+        .run_intent(&document(
+            r#"{"op": "floor_plan", "brief": {"terrain": {"width": 8, "depth": 8}, "rooms": [{"name": "living", "area": 40}, {"name": "bedroom", "area": 30}]}}"#,
+        ))
+        .unwrap_err();
+    assert!(
+        matches!(&error, RunError::Refused { command: "FLOORPLAN", reason, .. }
+            if reason.starts_with("This cannot be built: The rooms need at least 66.5 m²")),
+        "{error:?}"
+    );
+    assert!(h.entities().is_empty());
+}

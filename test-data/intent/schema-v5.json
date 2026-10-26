@@ -1,5 +1,143 @@
 {
   "$defs": {
+    "Brief": {
+      "additionalProperties": false,
+      "description": "A floor plan's brief (ADR-0039 §1), in metres: what `FLOORPLAN` reads.\nAbsent fields take the generator's defaults.",
+      "properties": {
+        "adjacent": {
+          "description": "Pairs of room names that must share a wall with a door in it.",
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "max_circulation": {
+          "description": "The most floor the search may add as a hall, as a share of the\nrooms' floor; 0 forbids it.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "rooms": {
+          "items": {
+            "$ref": "#/$defs/BriefRoom"
+          },
+          "type": "array"
+        },
+        "setbacks": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BriefSetbacks"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terrain": {
+          "$ref": "#/$defs/BriefTerrain",
+          "description": "The plot: `width` along its front (x), `depth` back from it (y)."
+        }
+      },
+      "required": [
+        "terrain",
+        "rooms"
+      ],
+      "type": "object"
+    },
+    "BriefRoom": {
+      "additionalProperties": false,
+      "description": "A room: its name and its floor area inside its walls, m².",
+      "properties": {
+        "area": {
+          "format": "double",
+          "type": "number"
+        },
+        "entrance": {
+          "description": "The way in; the first room when none says so.",
+          "type": "boolean"
+        },
+        "exterior": {
+          "description": "It wants an outside wall, for a window.",
+          "type": "boolean"
+        },
+        "max_aspect": {
+          "description": "Its longer side over its shorter is at most this; 2.5 when absent.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "min_width": {
+          "description": "Its narrower side is at least this; 1.5 m when absent.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "area"
+      ],
+      "type": "object"
+    },
+    "BriefSetbacks": {
+      "additionalProperties": false,
+      "description": "How far the building keeps from each edge of the plot; the front is\nalong the x axis.",
+      "properties": {
+        "back": {
+          "default": 0.0,
+          "format": "double",
+          "type": "number"
+        },
+        "front": {
+          "default": 0.0,
+          "format": "double",
+          "type": "number"
+        },
+        "left": {
+          "default": 0.0,
+          "format": "double",
+          "type": "number"
+        },
+        "right": {
+          "default": 0.0,
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "BriefTerrain": {
+      "additionalProperties": false,
+      "properties": {
+        "depth": {
+          "format": "double",
+          "type": "number"
+        },
+        "width": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "width",
+        "depth"
+      ],
+      "type": "object"
+    },
     "Color": {
       "anyOf": [
         {
@@ -1553,6 +1691,44 @@
             "op",
             "name",
             "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A floor plan laid out from a brief and drawn: walls, doors, and\nlabels. The brief is in metres, whatever the document's unit; `at`\nis where the terrain's lower left corner goes (the origin when\nabsent); `alternative` is which of the plans found, 1 to 3, the\nbest first. A revision of a plan — a room bigger, two rooms side by\nside, other setbacks — is this operation with its brief revised.",
+          "properties": {
+            "alternative": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "at": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "brief": {
+              "$ref": "#/$defs/Brief"
+            },
+            "op": {
+              "const": "floor_plan",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "brief"
           ],
           "type": "object"
         }

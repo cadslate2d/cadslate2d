@@ -27,13 +27,13 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 5;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
 /// the parts (#272), version 3 the placements (#273), version 4 the
-/// constraints and parameters (#274).
-pub const READS: [u32; 4] = [1, 2, 3, 4];
+/// constraints and parameters (#274), version 5 floor plans (#282).
+pub const READS: [u32; 5] = [1, 2, 3, 4, 5];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -537,6 +537,86 @@ pub enum Operation {
         name: String,
         value: f64,
     },
+
+    // ── floor plans (#282, ADR-0039) ──
+    /// A floor plan laid out from a brief and drawn: walls, doors, and
+    /// labels. The brief is in metres, whatever the document's unit; `at`
+    /// is where the terrain's lower left corner goes (the origin when
+    /// absent); `alternative` is which of the plans found, 1 to 3, the
+    /// best first. A revision of a plan — a room bigger, two rooms side by
+    /// side, other setbacks — is this operation with its brief revised.
+    FloorPlan {
+        brief: Brief,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at: Option<Point>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        alternative: Option<u32>,
+    },
+}
+
+/// A floor plan's brief (ADR-0039 §1), in metres: what `FLOORPLAN` reads.
+/// Absent fields take the generator's defaults.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct Brief {
+    /// The plot: `width` along its front (x), `depth` back from it (y).
+    pub terrain: BriefTerrain,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setbacks: Option<BriefSetbacks>,
+    pub rooms: Vec<BriefRoom>,
+    /// Pairs of room names that must share a wall with a door in it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adjacent: Vec<[String; 2]>,
+    /// The most floor the search may add as a hall, as a share of the
+    /// rooms' floor; 0 forbids it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_circulation: Option<f64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BriefTerrain {
+    pub width: f64,
+    pub depth: f64,
+}
+
+/// How far the building keeps from each edge of the plot; the front is
+/// along the x axis.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BriefSetbacks {
+    #[serde(default)]
+    pub front: f64,
+    #[serde(default)]
+    pub back: f64,
+    #[serde(default)]
+    pub left: f64,
+    #[serde(default)]
+    pub right: f64,
+}
+
+/// A room: its name and its floor area inside its walls, m².
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BriefRoom {
+    pub name: String,
+    pub area: f64,
+    /// Its narrower side is at least this; 1.5 m when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_width: Option<f64>,
+    /// Its longer side over its shorter is at most this; 2.5 when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_aspect: Option<f64>,
+    /// It wants an outside wall, for a window.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exterior: bool,
+    /// The way in; the first room when none says so.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub entrance: bool,
 }
 
 fn default_true() -> bool {
@@ -591,6 +671,7 @@ impl Operation {
             Self::Constrain { .. } => "constrain",
             Self::ConstrainDimension { .. } => "constrain_dimension",
             Self::SetParameter { .. } => "set_parameter",
+            Self::FloorPlan { .. } => "floor_plan",
         }
     }
 }

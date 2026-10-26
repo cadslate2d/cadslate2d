@@ -16,6 +16,27 @@ fn levels() -> Vec<Corpus> {
     levels
 }
 
+/// L3 is what #282 says: at least 40 briefs and revisions of floor plans,
+/// in both languages, refusals among them.
+#[test]
+#[ignore = "recorded in the next commit"]
+fn l3_asks_for_floor_plans_and_their_revisions() {
+    let l3 = Corpus::read(&root().join("l3")).unwrap();
+    assert!(l3.cases.len() >= 40, "{} cases", l3.cases.len());
+    for language in ["en", "pt"] {
+        assert!(
+            l3.cases.iter().filter(|c| c.language == language).count() >= 20,
+            "{language}"
+        );
+    }
+    assert!(l3.cases.iter().any(|c| c.previous.is_some()));
+    assert!(
+        l3.cases
+            .iter()
+            .any(|c| matches!(c.expected, Expected::Refused(_)))
+    );
+}
+
 /// L2 is what #274 says: at least 40 requests for parts, placements,
 /// constraints, and parametric edits, in both languages, refusals the
 /// solver explains among them.

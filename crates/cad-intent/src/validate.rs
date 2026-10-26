@@ -32,6 +32,10 @@ pub mod limits {
     pub const COPIES: u32 = 10_000;
     /// Holes one part may have.
     pub const HOLES: u32 = 1000;
+    /// Rooms in a floor plan's brief (ADR-0039).
+    pub const ROOMS: usize = 24;
+    /// The plans a floor plan may choose among.
+    pub const ALTERNATIVES: u32 = 3;
 }
 
 /// Why a value is refused.
@@ -67,6 +71,10 @@ pub enum Reason {
     /// A field the operation does not take in the form asked: a second
     /// object for a fix.
     Unwanted,
+    /// A name given twice where each must be one of its own.
+    Repeated,
+    /// A name that is none of those given: a room not in the brief.
+    Unknown,
 }
 
 impl fmt::Display for Reason {
@@ -85,6 +93,8 @@ impl fmt::Display for Reason {
             Self::Missing => write!(f, "must be given"),
             Self::Both(other) => write!(f, "cannot be given with {other}"),
             Self::Unwanted => write!(f, "is not taken here"),
+            Self::Repeated => write!(f, "is given twice"),
+            Self::Unknown => write!(f, "names what is not there"),
         }
     }
 }
@@ -772,6 +782,67 @@ impl Check {
             Operation::SetParameter { name, value } => {
                 self.name("name", name)?;
                 self.positive("value", *value)
+            }
+            Operation::FloorPlan {
+                brief,
+                at,
+                alternative,
+            } => {
+                self.positive("brief.terrain.width", brief.terrain.width)?;
+                self.positive("brief.terrain.depth", brief.terrain.depth)?;
+                if let Some(s) = brief.setbacks {
+                    for (field, value) in [
+                        ("brief.setbacks.front", s.front),
+                        ("brief.setbacks.back", s.back),
+                        ("brief.setbacks.left", s.left),
+                        ("brief.setbacks.right", s.right),
+                    ] {
+                        self.not_negative(field, value)?;
+                    }
+                }
+                if brief.rooms.is_empty() {
+                    return Err(self.refuse("brief.rooms", Reason::TooFew(1)));
+                }
+                if brief.rooms.len() > limits::ROOMS {
+                    return Err(self.refuse("brief.rooms", Reason::TooMany(limits::ROOMS)));
+                }
+                for (i, room) in brief.rooms.iter().enumerate() {
+                    self.name("brief.rooms.name", &room.name)?;
+                    if brief.rooms[..i].iter().any(|r| r.name == room.name) {
+                        return Err(self.refuse("brief.rooms.name", Reason::Repeated));
+                    }
+                    self.positive("brief.rooms.area", room.area)?;
+                    if let Some(width) = room.min_width {
+                        self.positive("brief.rooms.min_width", width)?;
+                    }
+                    if let Some(aspect) = room.max_aspect {
+                        self.positive("brief.rooms.max_aspect", aspect)?;
+                    }
+                }
+                for pair in &brief.adjacent {
+                    if pair[0] == pair[1]
+                        || pair
+                            .iter()
+                            .any(|n| brief.rooms.iter().all(|r| &r.name != n))
+                    {
+                        return Err(self.refuse("brief.adjacent", Reason::Unknown));
+                    }
+                }
+                if let Some(share) = brief.max_circulation {
+                    self.not_negative("brief.max_circulation", share)?;
+                }
+                if let Some(at) = at {
+                    self.point("at", *at)?;
+                }
+                if let Some(n) = alternative
+                    && !(1..=limits::ALTERNATIVES).contains(n)
+                {
+                    return Err(self.refuse(
+                        "alternative",
+                        Reason::TooMany(limits::ALTERNATIVES as usize),
+                    ));
+                }
+                Ok(())
             }
         }
     }

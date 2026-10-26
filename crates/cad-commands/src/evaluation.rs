@@ -39,6 +39,202 @@ pub enum Expected {
     Nothing,
     /// The engine refuses this, and the reply explains.
     Refused(Intent),
+    /// A floor plan (#282) whose brief has these properties — what the
+    /// request fixes, leaving the rest to the model — and that is drawn.
+    /// The example is an answer that has them, which the corpus checks.
+    Plan { wanted: PlanWanted, example: Intent },
+}
+
+/// What a floor plan's brief must have. A room is matched by a pattern:
+/// words separated by `|`, any of which its name contains, in any case —
+/// `kitchen|cozinha` — and after a `!`, words none of which it does:
+/// `bedroom|suite!bath`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PlanWanted {
+    /// The plot's width and depth, each to 1%.
+    pub terrain: Option<(f64, f64)>,
+    /// How many rooms match each pattern.
+    pub rooms: Vec<(String, usize)>,
+    /// The rooms' floor together, from and to.
+    pub total: Option<(f64, f64)>,
+    /// A room matching the pattern with its area from and to.
+    pub areas: Vec<(String, f64, f64)>,
+    /// Two rooms matching the patterns asked to open onto each other.
+    pub adjacent: Vec<(String, String)>,
+    /// Setbacks, each exact.
+    pub setbacks: Vec<(String, f64)>,
+    /// Which of the plans.
+    pub alternative: Option<u32>,
+    /// A revision: every room and pairing of the brief revised is kept,
+    /// each room's area too unless an `areas` pattern names it.
+    pub keeps_previous: bool,
+}
+
+fn matches(pattern: &str, name: &str) -> bool {
+    let name = name.to_lowercase();
+    let any = |words: &str| {
+        words
+            .split('|')
+            .any(|word| !word.trim().is_empty() && name.contains(&word.trim().to_lowercase()))
+    };
+    match pattern.split_once('!') {
+        Some((wanted, unwanted)) => any(wanted) && !any(unwanted),
+        None => any(pattern),
+    }
+}
+
+impl PlanWanted {
+    fn read(value: &Value) -> Result<Self, String> {
+        let pair = |v: &Value| -> Option<(f64, f64)> { Some((v[0].as_f64()?, v[1].as_f64()?)) };
+        let mut wanted = Self {
+            terrain: value.get("terrain").and_then(pair),
+            total: value.get("total").and_then(pair),
+            alternative: value
+                .get("alternative")
+                .and_then(Value::as_u64)
+                .map(|n| n as u32),
+            keeps_previous: value["keeps_previous"].as_bool().unwrap_or(false),
+            ..Self::default()
+        };
+        if let Some(rooms) = value["rooms"].as_object() {
+            for (pattern, count) in rooms {
+                let count = count.as_u64().ok_or("a room count is a number")?;
+                wanted.rooms.push((pattern.clone(), count as usize));
+            }
+        }
+        if let Some(areas) = value["areas"].as_object() {
+            for (pattern, range) in areas {
+                let (lo, hi) = pair(range).ok_or("an area range is two numbers")?;
+                wanted.areas.push((pattern.clone(), lo, hi));
+            }
+        }
+        if let Some(pairs) = value["adjacent"].as_array() {
+            for p in pairs {
+                let (a, b) = (p[0].as_str(), p[1].as_str());
+                let (Some(a), Some(b)) = (a, b) else {
+                    return Err("an adjacent pair is two patterns".into());
+                };
+                wanted.adjacent.push((a.to_owned(), b.to_owned()));
+            }
+        }
+        if let Some(setbacks) = value["setbacks"].as_object() {
+            for (side, v) in setbacks {
+                wanted
+                    .setbacks
+                    .push((side.clone(), v.as_f64().ok_or("a setback is a number")?));
+            }
+        }
+        Ok(wanted)
+    }
+
+    /// What the brief of `intent`'s floor plan lacks, if anything; the
+    /// plan revised is `previous`'s, when there is one.
+    pub fn missed(&self, intent: &Intent, previous: Option<&Intent>) -> Option<String> {
+        let plan = |intent: &Intent| {
+            intent.operations.iter().find_map(|op| match op {
+                cad_intent::Operation::FloorPlan {
+                    brief, alternative, ..
+                } => Some((brief.clone(), *alternative)),
+                _ => None,
+            })
+        };
+        let Some((brief, alternative)) = plan(intent) else {
+            return Some("no floor plan".into());
+        };
+        let near = |a: f64, b: f64| (a - b).abs() <= 0.01 * b.abs().max(1.0);
+        if let Some((w, d)) = self.terrain
+            && !(near(brief.terrain.width, w) && near(brief.terrain.depth, d))
+        {
+            return Some(format!(
+                "a terrain {} × {}, not {w} × {d}",
+                brief.terrain.width, brief.terrain.depth
+            ));
+        }
+        for (pattern, count) in &self.rooms {
+            let found = brief
+                .rooms
+                .iter()
+                .filter(|r| matches(pattern, &r.name))
+                .count();
+            if found != *count {
+                return Some(format!("{found} rooms like {pattern}, not {count}"));
+            }
+        }
+        let total: f64 = brief.rooms.iter().map(|r| r.area).sum();
+        if let Some((lo, hi)) = self.total
+            && !(lo..=hi).contains(&total)
+        {
+            return Some(format!("{total} m² in all, not {lo} to {hi}"));
+        }
+        for (pattern, lo, hi) in &self.areas {
+            match brief.rooms.iter().find(|r| matches(pattern, &r.name)) {
+                Some(room) if (*lo..=*hi).contains(&room.area) => {}
+                Some(room) => {
+                    return Some(format!(
+                        "the {} is {} m², not {lo} to {hi}",
+                        room.name, room.area
+                    ));
+                }
+                None => return Some(format!("no room like {pattern}")),
+            }
+        }
+        for (a, b) in &self.adjacent {
+            let joined = brief
+                .adjacent
+                .iter()
+                .any(|[x, y]| (matches(a, x) && matches(b, y)) || (matches(a, y) && matches(b, x)));
+            if !joined {
+                return Some(format!("nothing like {a} opens onto anything like {b}"));
+            }
+        }
+        for (side, value) in &self.setbacks {
+            let s = brief.setbacks.unwrap_or_default();
+            let given = match side.as_str() {
+                "front" => s.front,
+                "back" => s.back,
+                "left" => s.left,
+                _ => s.right,
+            };
+            if (given - value).abs() > 1e-6 {
+                return Some(format!("a {side} setback of {given}, not {value}"));
+            }
+        }
+        if let Some(wanted) = self.alternative
+            && alternative.unwrap_or(1) != wanted
+        {
+            return Some(format!("plan {}, not {wanted}", alternative.unwrap_or(1)));
+        }
+        if self.keeps_previous {
+            let Some((before, _)) = previous.and_then(plan) else {
+                return Some("no plan to revise".into());
+            };
+            for room in &before.rooms {
+                let resized = self.areas.iter().any(|(p, _, _)| matches(p, &room.name));
+                match brief.rooms.iter().find(|r| r.name == room.name) {
+                    None => return Some(format!("the {} is gone", room.name)),
+                    Some(now) if !resized && (now.area - room.area).abs() > 1e-6 => {
+                        return Some(format!("the {} changed size", room.name));
+                    }
+                    Some(_) => {}
+                }
+            }
+            for pair in &before.adjacent {
+                let kept = brief.adjacent.iter().any(|p| {
+                    (p[0] == pair[0] && p[1] == pair[1]) || (p[0] == pair[1] && p[1] == pair[0])
+                });
+                if !kept {
+                    return Some(format!(
+                        "{} and {} no longer open onto each other",
+                        pair[0], pair[1]
+                    ));
+                }
+            }
+            if before.terrain != brief.terrain && self.terrain.is_none() {
+                return Some("the terrain changed".into());
+            }
+        }
+        None
+    }
 }
 
 /// One request of the corpus and what should come of it.
@@ -109,6 +305,10 @@ impl Corpus {
                         .ok_or_else(|| at(format!("no {key}")))
                 };
                 let expected = match (&case["expected"], &case["refused"]) {
+                    _ if case.get("plan").is_some() => Expected::Plan {
+                        wanted: PlanWanted::read(&case["plan"]).map_err(at)?,
+                        example: document(&case["example"]).map_err(at)?,
+                    },
                     (Value::String(word), _) if word == "nothing" => Expected::Nothing,
                     (Value::Array(alternatives), _) => Expected::Drawing(
                         alternatives
@@ -175,6 +375,14 @@ impl Corpus {
                 Expected::Refused(intent) => {
                     if reason(case).is_none() {
                         faults.push(format!("{}: {intent:?} is not refused", case.name));
+                    }
+                }
+                Expected::Plan { wanted, example } => {
+                    if let Err(error) = outcome(case, example) {
+                        faults.push(format!("{}: the example: {error}", case.name));
+                    }
+                    if let Some(missed) = wanted.missed(example, previous(case).as_ref()) {
+                        faults.push(format!("{}: the example has {missed}", case.name));
                     }
                 }
                 Expected::Nothing => {}
@@ -275,6 +483,12 @@ fn reason(case: &Case) -> Option<String> {
         },
         _ => None,
     }
+}
+
+/// The document a revision revises, when the case is one.
+fn previous(case: &Case) -> Option<Intent> {
+    let intent = case.previous.as_ref()?.get("intent")?;
+    parse(&intent.to_string()).ok()
 }
 
 /// Runs `intent` from the case's start: the drawing it makes, or why not.
@@ -534,6 +748,16 @@ fn judge(case: &Case, recording: &Value) -> Result<(), String> {
             }
         }
         (Expected::Drawing(_), None) => Err(format!("nothing proposed: {reply}")),
+        (Expected::Plan { wanted, .. }, Some(intent)) => {
+            if let Err(error) = outcome(case, &intent) {
+                return Err(error.to_string());
+            }
+            match wanted.missed(&intent, previous(case).as_ref()) {
+                None => Ok(()),
+                Some(missed) => Err(format!("the plan has {missed}")),
+            }
+        }
+        (Expected::Plan { .. }, None) => Err(format!("nothing proposed: {reply}")),
         (Expected::Nothing, None) => Ok(()),
         (Expected::Nothing, Some(_)) => Err("proposed what cannot be done".to_owned()),
         (Expected::Refused(_), intent) => {
