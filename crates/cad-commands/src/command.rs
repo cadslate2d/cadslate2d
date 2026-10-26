@@ -291,6 +291,12 @@ pub trait Command: Debug {
     fn editor(&self) -> Option<&str> {
         None
     }
+
+    /// Whether the editor `editor` opens takes one line — a single-line
+    /// text's words, where Enter finishes — rather than a paragraph.
+    fn editor_is_line(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

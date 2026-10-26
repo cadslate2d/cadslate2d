@@ -75,6 +75,8 @@ export interface UiSnapshot {
   readonly selection: SelectionSummary;
   /** The text the paragraph editor opens with, while a command waits for a paragraph. */
   readonly textEditor: string | undefined;
+  /** Whether the editor takes one line: a text's words, Enter finishing them. */
+  readonly textEditorLine: boolean;
 }
 
 const NO_SELECTION: SelectionSummary = {
@@ -125,6 +127,7 @@ const INITIAL: UiSnapshot = {
   linetypes: [],
   selection: NO_SELECTION,
   textEditor: undefined,
+  textEditorLine: false,
 };
 
 export class UiStore {
@@ -210,6 +213,7 @@ export class UiStore {
       linetypes: state.linetypes,
       selection: state.selection,
       textEditor: state.textEditor,
+      textEditorLine: state.textEditorLine ?? false,
     };
     this.#listeners.forEach((listener) => listener());
   }

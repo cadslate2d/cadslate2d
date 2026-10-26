@@ -94,4 +94,33 @@ test.describe("text", () => {
     ]).toEqual(["0", "0.0", "0.0", "16.0", "Hello world"]);
     await expect(logLines(page).last()).toHaveText("Drawing exported as DXF.");
   });
+
+  // A double click on a text opens the editor with its words (the
+  // maintainer, 2026-10-26); Enter changes them, as one undo.
+  test("a double click on a text edits it", async ({ page }) => {
+    await openApp(page);
+    const canvas = page.getByRole("region", { name: "Model space" }).locator("canvas");
+    await enter(page, "TEXT", "0,0", "16", "0", "Escritório");
+    await expect(prompt(page)).toHaveText("Command:");
+    const center = await centerOf(canvas);
+    await page.mouse.dblclick(center.x + 20, center.y - 8);
+    const editor = page.getByRole("dialog", { name: "Text editor" });
+    const field = editor.getByLabel("Text");
+    await expect(field).toHaveValue("Escritório");
+    await expect(field).toBeFocused();
+    await page.keyboard.type("Suíte do casal");
+    await page.keyboard.press("Enter");
+    await expect(editor).toHaveCount(0);
+    await expect(prompt(page)).toHaveText("Command:");
+    const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    expect(group(entities(file.text, "TEXT")[0], 1)).toBe("Suíte do casal");
+    // Escape leaves it as it was.
+    await page.mouse.dblclick(center.x + 20, center.y - 8);
+    await expect(field).toHaveValue("Suíte do casal");
+    await page.keyboard.press("Escape");
+    await expect(editor).toHaveCount(0);
+    // A double click on empty space opens nothing.
+    await page.mouse.dblclick(center.x - 200, center.y + 150);
+    await expect(editor).toHaveCount(0);
+  });
 });

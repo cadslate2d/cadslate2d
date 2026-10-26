@@ -90,6 +90,9 @@ pub struct UiState {
     /// The text to open the paragraph editor with, while the active
     /// command waits for a paragraph (MTEXT, TEXTEDIT on one).
     pub text_editor: Option<String>,
+    /// Whether that editor takes one line, Enter finishing it: a text's
+    /// words rather than a paragraph.
+    pub text_editor_line: bool,
 }
 
 /// One row of the Layers panel.

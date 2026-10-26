@@ -170,6 +170,7 @@ struct UiStateDto {
     linetypes: Vec<String>,
     selection: SelectionSummaryDto,
     text_editor: Option<String>,
+    text_editor_line: bool,
 }
 
 /// The last import's account: lines for the host to show (#157).
@@ -294,6 +295,7 @@ impl From<UiState> for UiStateDto {
             linetypes: state.linetypes,
             selection: state.selection.into(),
             text_editor: state.text_editor,
+            text_editor_line: state.text_editor_line,
         }
     }
 }
@@ -396,6 +398,12 @@ impl CadSession {
         let dirty =
             self.session
                 .pointer_down(ScreenPoint::new(x, y), button, modifiers(modifier_bits));
+        self.report(dirty)
+    }
+
+    /// A double click at a screen position: on a text, it is edited.
+    pub fn double_click(&mut self, x: f64, y: f64) -> u32 {
+        let dirty = self.session.double_click(ScreenPoint::new(x, y));
         self.report(dirty)
     }
 

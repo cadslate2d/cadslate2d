@@ -606,6 +606,10 @@ impl Session {
                 .as_ref()
                 .and_then(|active| active.command.editor())
                 .map(str::to_owned),
+            text_editor_line: self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.command.editor_is_line()),
         }
     }
 
@@ -934,6 +938,42 @@ impl Session {
             },
             PointerButton::Secondary => Dirty::NONE,
         }
+    }
+
+    /// A double click at `at`. At the idle prompt, on a text, a paragraph,
+    /// or a leader's note, it edits it: TEXTEDIT with that object picked,
+    /// as typing the command and clicking the object would, so the editor
+    /// opens with its words. A grip the two clicks took without moving is
+    /// let go first. Anywhere else a double click is two clicks.
+    pub fn double_click(&mut self, at: ScreenPoint) -> Dirty {
+        let mut dirty = Dirty::NONE;
+        if self.active_grip().is_some() && self.grip_press.is_none() {
+            // The second click took the text's grip and nothing was moved:
+            // let it go quietly, as no cancel the user made.
+            self.active = None;
+            self.drawing.end_group();
+            dirty |= Dirty::OVERLAY | Dirty::UI;
+        }
+        if self.active.is_some() {
+            return dirty;
+        }
+        let Some(entity) = self.pick(at).filter(|id| !self.drawing.is_locked(*id)) else {
+            return dirty;
+        };
+        let is_text = match self.drawing.entity(entity) {
+            Some(Entity::Text(_) | Entity::MText(_)) => true,
+            Some(Entity::Leader(leader)) => leader.text.is_some(),
+            _ => false,
+        };
+        if !is_text {
+            return dirty;
+        }
+        dirty |= self.invoke_from_ui("TEXTEDIT");
+        dirty
+            | self.feed(CommandInput::Pick {
+                entity,
+                at: self.view.screen_to_world(at),
+            })
     }
 
     pub fn pointer_up(

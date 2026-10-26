@@ -127,6 +127,7 @@ export class CanvasController {
     canvas.addEventListener("pointerup", this.#onPointerUp, options);
     canvas.addEventListener("pointerleave", this.#onPointerLeave, options);
     canvas.addEventListener("auxclick", this.#onAuxClick, options);
+    canvas.addEventListener("dblclick", this.#onDoubleClick, options);
     canvas.addEventListener("wheel", this.#onWheel, { ...options, passive: false });
     canvas.addEventListener("contextmenu", (event) => event.preventDefault(), options);
     // Device pixel ratio changes (browser zoom, moving between monitors) arrive as window resizes.
@@ -201,6 +202,13 @@ export class CanvasController {
     this.#app.loop.flushPointerMove();
     const { x, y } = this.#position(event);
     this.#app.loop.invalidate(this.#app.engine.pointerUp(x, y, event.button, modifierBits(event)));
+  };
+
+  /** A double click: on a text, the engine edits it. */
+  readonly #onDoubleClick = (event: MouseEvent): void => {
+    if (this.#app.failed || event.button !== 0) return;
+    const { x, y } = this.#position(event);
+    this.#app.loop.invalidate(this.#app.engine.doubleClick(x, y));
   };
 
   readonly #onAuxClick = (event: MouseEvent): void => {

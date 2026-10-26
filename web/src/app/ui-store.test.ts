@@ -36,6 +36,7 @@ class FakeSource implements UiSource {
       groups: [],
     },
     textEditor: undefined,
+    textEditorLine: false,
   };
   logReads = 0;
 

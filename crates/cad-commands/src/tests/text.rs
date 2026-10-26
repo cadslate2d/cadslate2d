@@ -324,3 +324,53 @@ fn a_text_has_an_insertion_grip_that_moves_it_and_is_summarised() {
     assert_eq!(texts(&h)[0].insertion, p(50.0, 50.0));
     assert_eq!(texts(&h)[0].content, "Hi");
 }
+
+/// A double click on a text edits it (the maintainer, 2026-10-26): TEXTEDIT
+/// with it picked, the editor open with its words on one line; on its
+/// insertion grip too, the grip the clicks took let go; on anything else,
+/// nothing.
+#[test]
+fn a_double_click_on_a_text_edits_it_in_the_editor() {
+    let mut h = Harness::with_entities([LineEntity::new(p(0.0, 50.0), p(100.0, 50.0)).into()]);
+    h.enter_all(&["TEXT", "0,0", "10", "0", "Hello"]);
+    let width = texts(&h)[0].width();
+    let on = |h: &Harness, point: Point2| h.session.view().world_to_screen(point);
+
+    // The two clicks select it; the double click edits it.
+    let at = on(&h, p(width * 0.5, 5.0));
+    h.click(at.x, at.y);
+    h.click(at.x, at.y);
+    h.session.double_click(at);
+    assert_eq!(h.prompt(), "Enter new text <Hello>:");
+    let ui = h.session.ui_state();
+    assert_eq!(ui.text_editor.as_deref(), Some("Hello"));
+    assert!(ui.text_editor_line, "a text's words are one line");
+    h.enter("Goodbye");
+    assert_eq!(texts(&h)[0].content, "Goodbye");
+    assert_eq!(h.prompt(), "Command:");
+    h.undo();
+    assert_eq!(texts(&h)[0].content, "Hello", "one undo");
+
+    // On the insertion grip: the clicks took the grip, which is let go.
+    h.session.key(crate::KeyAction::Escape);
+    let grip = on(&h, p(0.0, 0.0));
+    h.click(grip.x, grip.y);
+    h.click(grip.x, grip.y);
+    h.session.double_click(grip);
+    assert_eq!(h.prompt(), "Enter new text <Hello>:");
+    assert!(
+        !h.log().iter().any(|line| line == "*Cancel*"),
+        "{:?}",
+        h.log()
+    );
+    h.session.key(crate::KeyAction::Escape);
+
+    // On a line: nothing is started.
+    h.session.key(crate::KeyAction::Escape);
+    let line = on(&h, p(80.0, 50.0));
+    h.click(line.x, line.y);
+    h.click(line.x, line.y);
+    h.session.double_click(line);
+    assert_eq!(h.prompt(), "Command:");
+    assert_eq!(h.session.ui_state().text_editor, None);
+}

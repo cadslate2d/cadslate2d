@@ -175,6 +175,8 @@ export interface UiState {
   readonly selection: SelectionSummary;
   /** The text to open the paragraph editor with, while a command waits for one (#144). */
   readonly textEditor?: string;
+  /** Whether that editor takes one line, Enter finishing it: a text's words. */
+  readonly textEditorLine?: boolean;
 }
 
 /** What an import did and did not bring in, as lines for the shell. */
@@ -500,6 +502,11 @@ export class CadEngine {
 
   pointerDown(x: number, y: number, button: number, modifiers: number): number {
     return this.#session.pointer_down(x, y, button, modifiers);
+  }
+
+  /** A double click at a canvas position: on a text, the engine edits it. */
+  doubleClick(x: number, y: number): number {
+    return this.#session.double_click(x, y);
   }
 
   pointerUp(x: number, y: number, button: number, modifiers: number): number {

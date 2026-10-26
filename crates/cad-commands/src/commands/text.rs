@@ -352,10 +352,22 @@ impl Command for TextEditCommand {
         Step::Continue
     }
 
+    /// Every kind of text is edited in the editor, opened with its words:
+    /// a paragraph in the paragraph editor, a text or a leader's note on
+    /// one line.
     fn editor(&self) -> Option<&str> {
         match &self.state {
-            EditState::Paragraph { old, .. } => Some(old),
-            _ => None,
+            EditState::Paragraph { old, .. }
+            | EditState::Content { old, .. }
+            | EditState::Note { old, .. } => Some(old),
+            EditState::Pick => None,
         }
+    }
+
+    fn editor_is_line(&self) -> bool {
+        matches!(
+            self.state,
+            EditState::Content { .. } | EditState::Note { .. }
+        )
     }
 }
