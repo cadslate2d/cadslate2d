@@ -659,7 +659,24 @@ body {
 
 /* The AI account (#289), at the row's right where it is always seen. */
 .header__end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   margin-left: auto;
+}
+
+/* The source on GitHub, beside the account. */
+.header__link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  text-decoration: none;
+}
+
+.header__link:hover {
+  color: var(--color-text);
 }
 
 .header__account {

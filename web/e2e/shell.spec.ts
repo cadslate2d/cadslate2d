@@ -168,3 +168,13 @@ test.describe("command log", () => {
     expect(numbers).toEqual(["1", "2", "3", "4"]);
   });
 });
+
+// The source is a click away: a link to the repository at the top right
+// (the maintainer, 2026-10-26), opening in a tab of its own.
+test("the header links to the source on GitHub", async ({ page }) => {
+  await openApp(page);
+  const link = page.getByRole("banner").getByRole("link", { name: "GitHub" });
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute("href", "https://github.com/cadslate2d/cadslate2d");
+  await expect(link).toHaveAttribute("target", "_blank");
+});
