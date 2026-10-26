@@ -1,18 +1,27 @@
 # Dependency updates (#298): one pull request a week per ecosystem, so
 # the licence check and the notices stay current with what is shipped.
+# A release is proposed only once it is two weeks old, as pnpm takes it
+# (web/pnpm-workspace.yaml): time for a bad one to be found and pulled.
+# Security updates are not delayed.
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     open-pull-requests-limit: 5
   - package-ecosystem: npm
     directory: /web
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     open-pull-requests-limit: 5
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14

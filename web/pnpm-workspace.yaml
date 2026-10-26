@@ -1,0 +1,4 @@
+# pnpm's settings for the web project. A dependency is taken only once it
+# has been published for two weeks (in minutes): long enough for a
+# malicious or broken release to be found and pulled before it reaches us.
+minimumReleaseAge: 20160

@@ -140,6 +140,7 @@ make e2e
 - Never push with failing checks.
 - Keep `README.md`, `AGENTS.md`, and `CLAUDE.md` accurate in the same commit as the change that affects them.
 - Decisions that resolve a PROVISIONAL or EXPERIMENT item, or change the baseline, get an ADR with evidence.
+- A dependency version is taken only once it has been published for two weeks: pnpm refuses younger ones (`minimumReleaseAge` in `web/pnpm-workspace.yaml`), and Dependabot waits as long (`cooldown` in `.github/dependabot.yml`). Cargo has no such setting: check a crate's release date by hand before raising a version in `Cargo.toml`. A security fix younger than that is taken deliberately, saying so in the commit.
 
 - Contributors sign the Contributor License Agreement (`CLA.md`) once, on their first pull request; the `CLA` workflow asks and records it. It is what lets the maintainer license the code under other terms as well (ADR-0035).
 
