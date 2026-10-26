@@ -21,6 +21,7 @@ pub mod intersect;
 mod join;
 mod lengthen;
 mod offset;
+pub mod opening;
 mod path;
 mod path_corner;
 mod path_offset;
@@ -50,6 +51,7 @@ pub use join::{
 };
 pub use lengthen::{lengthen_arc, lengthen_segment, polygon_from_edge, regular_polygon};
 pub use offset::{distance_to_line, offset_arc, offset_circle, offset_segment};
+pub use opening::{Leaf, Opening, OpeningError};
 pub use path::{Location, Path, PathTrimError};
 pub use path_corner::{CornerJoin, PathCornerError};
 pub use path_offset::{

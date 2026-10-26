@@ -201,7 +201,7 @@ const DRAW: Menu = {
   items: [
     command("&Line", "LINE"),
     command("&Ray", "RAY"),
-    command("Cons&truction Line", "XLINE"),
+    command("Constr&uction Line", "XLINE"),
     SEPARATOR,
     command("&Polyline", "PLINE"),
     command("Pol&ygon", "POLYGON"),
@@ -232,7 +232,7 @@ const DRAW: Menu = {
       command("A&rc", { command: "ELLIPSE", steps: ["A"] }),
     ]),
     cascade("&Block", [command("&Make...", "BLOCK"), command("&Define Attributes...", "ATTDEF")]),
-    cascade("P&oint", [
+    cascade("Poin&t", [
       command("&Multiple Point", "POINT"),
       command("&Divide", "DIVIDE"),
       command("M&easure", "MEASURE"),
@@ -244,6 +244,9 @@ const DRAW: Menu = {
     SEPARATOR,
     // A floor plan from a brief (#281, ADR-0039).
     command("&Floor Plan...", "FLOORPLAN"),
+    // An opening through a drawn wall (#325).
+    command("W&indow", "WINDOW"),
+    command("D&oor", "DOOR"),
     command("Re&vision Cloud", "REVCLOUD"),
     SEPARATOR,
     cascade("Te&xt", [

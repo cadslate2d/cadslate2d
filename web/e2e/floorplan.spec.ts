@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 import {
   chooseFile,
   chooseMenu,
+  clickWorld,
   downloadFrom,
   enter,
   entities,
@@ -107,4 +108,27 @@ test("a plan with windows: the width typed at its prompt", async ({ page }) => {
   expect(glass.length % 2).toBe(0);
   await enter(page, "U");
   expect(await onLayer(page, "WINDOW")).toHaveLength(0);
+});
+
+// #325: a window cut into a drawn wall afterwards — here the plan's — by
+// the WINDOW command, one undo.
+test("WINDOW opens a wall of a drawn plan", async ({ page }) => {
+  await openApp(page);
+  await enter(page, "FLOORPLAN", "B", JSON.stringify(BRIEF), "", "");
+  await expect(logLines(page).last()).toContainText("Plan 1 drawn");
+  const before = (await onLayer(page, "WALL-EXT")).length;
+  // The plan's front wall is along y = 3 (the front setback), x from 0 to
+  // 15: its outer face is the footprint's bottom edge, in view as drawn.
+  await enter(page, "WINDOW");
+  await expect(prompt(page)).toHaveText("Select a face of the wall:");
+  const canvas = page.getByRole("region", { name: "Model space" }).locator("canvas");
+  await clickWorld(page, canvas, 7.5, BRIEF.setbacks.front);
+  await expect(prompt(page)).toHaveText("Specify the window's centre on the wall:");
+  await enter(page, `7.5,${BRIEF.setbacks.front + 0.125}`, "1.5");
+  await expect(prompt(page)).toHaveText("Command:");
+  expect((await onLayer(page, "WINDOW")).length).toBe(2);
+  expect((await onLayer(page, "WALL-EXT")).length).toBe(before + 4);
+  await enter(page, "U");
+  expect((await onLayer(page, "WINDOW")).length).toBe(0);
+  expect((await onLayer(page, "WALL-EXT")).length).toBe(before);
 });

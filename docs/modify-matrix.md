@@ -290,6 +290,20 @@ Rules:
 
 Tests: `cad-geometry/src/trim.rs` (`break_*`), `cad-geometry/src/path.rs` (`Path::broken`), `cad-document/src/editing.rs`, `cad-commands/src/tests/break_.rs`, `cad-input/src/point.rs` (the bare `@`), `web/e2e/break.spec.ts`.
 
+## WINDOW, DOOR
+
+An opening through a wall drawn as two parallel faces — a plan's (`FLOORPLAN`), or two lines drawn by hand (#325). One face is picked; the face across from it is found among the shown objects within a metre; the opening is centred where asked, as wide as asked (1.2 m for a window, 0.9 m for a door, in the drawing's units), and must lie where both faces are. Both faces are cut as `BREAK` cuts them; a jamb across the wall closes each end, with the picked face's properties; a window's glass — two lines along the wall's middle — goes on `WINDOW`; a door's leaf, a rectangle 5 cm thick hinged at the end nearer the point that says which room it opens into, and its quarter-turn swing go on `DOOR`. The layers are made if the drawing has none. One opening is one transaction.
+
+| Face picked | Cut |
+| --- | --- |
+| Line | Two lines; one if the opening reaches an end |
+| Polyline, straight stretch | As `BREAK`: two polylines, or one shortened |
+| Anything else: an arc, a circle, a curved stretch | Refused: "Select a straight face of a wall: a line, or a straight stretch of a polyline." |
+
+Refused, and asked again: no parallel face across from the pick ("No face lies across from that one: a wall is two parallel faces."); a centre off the wall; a width that reaches past a face's end, told what fits there.
+
+Tests: `cad-geometry/src/opening.rs`, `cad-commands/src/tests/opening.rs`, `web/e2e/floorplan.spec.ts`.
+
 ## JOIN
 
 Acts on a selection, made before the command or at its prompt. What happens depends on the whole selection, in this order:

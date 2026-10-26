@@ -56,6 +56,7 @@ mod mleader;
 mod modify;
 mod mtext;
 mod offset;
+mod opening;
 mod overkill;
 mod pedit;
 mod placement;
