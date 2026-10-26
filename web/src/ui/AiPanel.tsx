@@ -260,7 +260,7 @@ function Conversation({
   pricingUrl?: string;
 }) {
   const [text, setText] = useState("");
-  const [deleting, setDeleting] = useState(false);
+  const [account, setAccount] = useState(false);
   const atLimit = snapshot.allowance?.remaining === 0;
   // The newest of the exchange stays in view as it grows.
   const scroll = useRef<HTMLDivElement>(null);
@@ -274,6 +274,17 @@ function Conversation({
     void assistant.ask(text);
     setText("");
   };
+  if (account) {
+    return (
+      <Account
+        assistant={assistant}
+        snapshot={snapshot}
+        pricingUrl={pricingUrl}
+        privacy={privacy}
+        onClose={() => setAccount(false)}
+      />
+    );
+  }
   return (
     <>
       <div className="ai__scroll" ref={scroll}>
@@ -464,16 +475,116 @@ function Conversation({
           <button
             type="button"
             className="ai__button ai__button--quiet"
+            onClick={() => {
+              setAccount(true);
+              void assistant.refresh();
+            }}
+          >
+            Account
+          </button>
+          <button
+            type="button"
+            className="ai__button ai__button--quiet"
             onClick={() => void assistant.signOut()}
           >
             Sign out
           </button>
+          {privacy}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function longDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/**
+ * The account (#289): the plan and its subscription, this month's
+ * actions, the way to Pro or to Stripe's billing portal, and deletion.
+ * What it shows is the service's; the subscription is changed at Stripe.
+ */
+function Account({
+  assistant,
+  snapshot,
+  pricingUrl,
+  privacy,
+  onClose,
+}: {
+  assistant: AiAssistant;
+  snapshot: AiSnapshot;
+  pricingUrl?: string;
+  privacy: ReactNode;
+  onClose: () => void;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  const { allowance, billing } = snapshot;
+  const pro = allowance?.plan === "pro";
+  return (
+    <>
+      <div className="ai__scroll">
+        <section className="ai__section" aria-label="Account" data-testid="ai-account">
+          <h3 className="ai__subtitle">Account</h3>
+          <p className="ai__note">{snapshot.email}</p>
+          <dl className="ai__facts">
+            <dt>Plan</dt>
+            <dd data-testid="ai-plan">
+              {allowance ? planName(allowance.plan) : "—"}
+              {pro && billing?.periodEnd && (
+                <>
+                  {" "}
+                  · {billing.cancelAtPeriodEnd ? "ends" : "renews"} on {longDate(billing.periodEnd)}
+                </>
+              )}
+            </dd>
+            {allowance && (
+              <>
+                <dt>This month</dt>
+                <dd data-testid="ai-usage">
+                  {allowance.used} of {allowance.allowance} AI actions used · resets{" "}
+                  {resetDate(allowance.resetsAt)}
+                </dd>
+              </>
+            )}
+          </dl>
+          {billing?.paymentFailed && (
+            <p className="ai__error" role="status" data-testid="ai-payment-failed">
+              The last payment failed. Stripe tries again; update the card in Manage billing to keep
+              Pro.
+            </p>
+          )}
+          {billing?.manageable ? (
+            <div className="ai__actions">
+              <button
+                type="button"
+                className="ai__button"
+                disabled={snapshot.busy}
+                onClick={() => void assistant.manage()}
+              >
+                Manage billing
+              </button>
+              <span className="ai__note">The card, invoices, and cancelling, at Stripe.</span>
+            </div>
+          ) : (
+            !pro && <Upgrade assistant={assistant} snapshot={snapshot} pricingUrl={pricingUrl} />
+          )}
+          <Problem assistant={assistant} snapshot={snapshot} pricingUrl={pricingUrl} />
           {deleting ? (
-            <span className="ai__confirm" data-testid="ai-delete-confirm">
-              Delete the account and every record of it?
+            <div className="ai__confirm" data-testid="ai-delete-confirm">
+              <span>
+                Delete the account and every record of it?
+                {billing?.manageable ? " Its subscription is cancelled first." : ""}
+              </span>
               <button
                 type="button"
                 className="ai__button ai__button--danger"
+                disabled={snapshot.busy}
                 onClick={() => void assistant.deleteAccount().then(() => setDeleting(false))}
               >
                 Delete
@@ -485,16 +596,32 @@ function Conversation({
               >
                 Keep it
               </button>
-            </span>
+            </div>
           ) : (
-            <button
-              type="button"
-              className="ai__button ai__button--quiet"
-              onClick={() => setDeleting(true)}
-            >
-              Delete account
-            </button>
+            <div className="ai__actions">
+              <button
+                type="button"
+                className="ai__button ai__button--quiet"
+                onClick={() => setDeleting(true)}
+              >
+                Delete account
+              </button>
+            </div>
           )}
+        </section>
+      </div>
+      <div className="ai__footer">
+        <div className="ai__account">
+          <button type="button" className="ai__button" onClick={onClose}>
+            Back to the assistant
+          </button>
+          <button
+            type="button"
+            className="ai__button ai__button--quiet"
+            onClick={() => void assistant.signOut()}
+          >
+            Sign out
+          </button>
           {privacy}
         </div>
       </div>

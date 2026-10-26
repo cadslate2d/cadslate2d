@@ -1077,6 +1077,28 @@ body {
   margin: 0;
 }
 
+/* The account view (#289). */
+.ai__subtitle {
+  margin: 0;
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.ai__facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.ai__facts dt {
+  color: var(--color-text-muted);
+}
+
+.ai__facts dd {
+  margin: 0;
+}
+
 /* A request's options, one on the canvas at a time (#10). */
 .ai__options {
   display: flex;

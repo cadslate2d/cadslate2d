@@ -83,6 +83,13 @@ export class FakeAiService {
   billingAvailable = true;
   /** Each Stripe page opened: Checkout with its interval, or the portal. */
   readonly stripePages: string[] = [];
+  /** Each subscription as Stripe's webhooks would have left it, by account. */
+  readonly subscriptions = new Map<
+    string,
+    { periodEnd: string; cancelAtPeriodEnd: boolean; paymentFailed: boolean }
+  >();
+  /** The accounts whose subscription was cancelled because the account was deleted. */
+  readonly cancelled: string[] = [];
   #next = 1;
 
   /** The sign-in link last emailed to `email`: its token. */
@@ -109,15 +116,25 @@ export class FakeAiService {
   }
 
   #billing(email: string) {
-    const pro = this.planOf(email) === "pro";
+    const subscription = this.subscriptions.get(email);
     return {
       available: this.billingAvailable,
-      status: pro ? "active" : null,
-      period_end: pro ? "2026-11-26T00:00:00Z" : null,
-      cancel_at_period_end: false,
-      payment_failed: false,
-      manageable: pro,
+      status: subscription ? (subscription.paymentFailed ? "past_due" : "active") : null,
+      period_end: subscription?.periodEnd ?? null,
+      cancel_at_period_end: subscription?.cancelAtPeriodEnd ?? false,
+      payment_failed: subscription?.paymentFailed ?? false,
+      manageable: subscription !== undefined,
     };
+  }
+
+  /** Pro, paid until the period's end: what Checkout completing leaves. */
+  subscribe(email: string): void {
+    this.plans.set(email, "pro");
+    this.subscriptions.set(email, {
+      periodEnd: "2026-11-26T00:00:00Z",
+      cancelAtPeriodEnd: false,
+      paymentFailed: false,
+    });
   }
 
   /** Answers one request. */
@@ -145,7 +162,7 @@ export class FakeAiService {
     // Stripe's pages, as the stand-in serves them: opening Checkout's pays.
     if (path === "GET /stripe/checkout" || path === "GET /stripe/portal") {
       const email = url.searchParams.get("account") ?? "";
-      if (path === "GET /stripe/checkout") this.plans.set(email, "pro");
+      if (path === "GET /stripe/checkout") this.subscribe(email);
       return route.fulfill({
         status: 200,
         headers: { "Content-Type": "text/html" },
@@ -202,6 +219,8 @@ export class FakeAiService {
     }
     if (path === "DELETE /v1/account") {
       if (!account || !token) return signedOut();
+      // A subscription is cancelled at Stripe before the account goes.
+      if (this.subscriptions.delete(account)) this.cancelled.push(account);
       this.accounts.delete(account);
       this.plans.delete(account);
       for (const [session, email] of this.#sessions) {

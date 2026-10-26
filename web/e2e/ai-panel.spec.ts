@@ -375,6 +375,7 @@ test("signing out and deleting the account; everything else works signed out", a
   await chooseMenu(page, "View", "AI Assistant");
   await signIn(page, service);
   expect(service.accounts.has("drafter@example.com")).toBe(true);
+  await panel(page).getByRole("button", { name: "Account" }).click();
   await panel(page).getByRole("button", { name: "Delete account" }).click();
   await expect(panel(page).getByTestId("ai-delete-confirm")).toBeVisible();
   await panel(page).getByRole("button", { name: "Delete", exact: true }).click();
@@ -461,4 +462,70 @@ test("Free sees the way to Pro; after paying, the floor plan and the revision co
   await expect(proposal).toContainText("Adds");
   await expect(error).toHaveCount(0);
   await expect(allowance).toContainText("1997 of 2000 left");
+});
+
+test("the panel's account view, on Pro", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "visual baselines are compared in Chromium only");
+  const service = await fakeAiService(page);
+  service.subscribe("drafter@example.com");
+  await openApp(page);
+  await chooseMenu(page, "View", "Layers Panel");
+  await chooseMenu(page, "View", "Properties Panel");
+  await signIn(page, service);
+  await panel(page).getByRole("button", { name: "Account" }).click();
+  await expect(panel(page).getByTestId("ai-plan")).toContainText("renews");
+  await expect(panel(page)).toHaveScreenshot("ai-panel-account.png");
+});
+
+// #289: the account in the panel — the plan, the month's actions, the way
+// to Pro, Stripe's billing portal, and deletion, which cancels Pro first.
+test("the account: upgrade, manage, and delete", async ({ page }) => {
+  const service = await fakeAiService(page);
+  await openApp(page);
+  await signIn(page, service);
+  await ask(page, CIRCLE);
+  await expect(panel(page).getByTestId("ai-proposal")).toBeVisible();
+  await panel(page).getByRole("button", { name: "Account" }).click();
+  const account = panel(page).getByTestId("ai-account");
+  await expect(account.getByTestId("ai-plan")).toHaveText("Free");
+  await expect(account.getByTestId("ai-usage")).toContainText("1 of 100 AI actions used");
+  await expect(account.getByRole("button", { name: "Manage billing" })).toHaveCount(0);
+
+  // Upgrade, in Checkout's tab; back here, Pro and when it renews.
+  const [checkout] = await Promise.all([
+    page.waitForEvent("popup"),
+    account.getByRole("button", { name: "Yearly" }).click(),
+  ]);
+  expect(service.stripePages).toEqual(["checkout year"]);
+  await checkout.close();
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(account.getByTestId("ai-plan")).toHaveText(/^Pro · renews on November 26, 2026/);
+  await expect(account.getByTestId("ai-usage")).toContainText("1 of 2000");
+
+  // Manage: Stripe's portal, in a tab of its own. Cancelled there, Pro
+  // lasts to the period's end; a failed payment is said too.
+  const [portal] = await Promise.all([
+    page.waitForEvent("popup"),
+    account.getByRole("button", { name: "Manage billing" }).click(),
+  ]);
+  await expect(portal.locator("h1")).toContainText("Billing portal");
+  await portal.close();
+  const subscription = service.subscriptions.get("drafter@example.com");
+  if (!subscription) throw new Error("no subscription");
+  subscription.cancelAtPeriodEnd = true;
+  subscription.paymentFailed = true;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(account.getByTestId("ai-plan")).toHaveText(/^Pro · ends on November 26, 2026/);
+  await expect(account.getByTestId("ai-payment-failed")).toBeVisible();
+
+  // Delete: the subscription is cancelled first, then the account goes.
+  await account.getByRole("button", { name: "Delete account" }).click();
+  const confirm = panel(page).getByTestId("ai-delete-confirm");
+  await expect(confirm).toContainText("Its subscription is cancelled first.");
+  await confirm.getByRole("button", { name: "Delete" }).click();
+  await expect(panel(page).getByTestId("ai-sign-in")).toBeVisible();
+  expect(service.cancelled).toEqual(["drafter@example.com"]);
+  expect(service.accounts.has("drafter@example.com")).toBe(false);
+  // The proposal went with the account; the drawing never changed.
+  expect(await contents(page)).toBe("No selection");
 });
