@@ -28,14 +28,14 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M19 — DWG | Complete and closed ([review](reviews/m19-exit-review.md)): DWG read and written in the AutoCAD 2000, 2004, and 2007/2008 formats by a crate of our own (ADR-0036). The check in AutoCAD needs a person (#321, M15). |
 | M20 — AI Foundations | Complete and closed ([review](reviews/m20-exit-review.md)): natural language as an optional input method (ADR-0037) — the intent IR, proposals, the AI panel, AI commands, and a corpus replayed in CI and asked live nightly; the service in its own private repository. Its nightly job's key and production need a person. |
 | M21 — Constraints and Constrained Generation | Complete and closed ([review](reviews/m21-exit-review.md)): geometric and dimensional constraints kept in the drawing and settled on every edit by a solver of our own (ADR-0038), shown on the canvas and round-tripped through DXF; parts and placements as constrained commands; the AI's second level, parametric edits through a part's parameters. |
+| M22 — Floor-Plan Generator | Complete and closed ([review](reviews/m22-exit-review.md)): floor plans from a brief by a deterministic multi-start search (ADR-0039) — walls, doors, and labels as ordinary geometry; `FLOORPLAN` with alternatives; briefs and revisions through the AI. |
 
 ## What is planned next
 
-Filed on 2026-10-18 and 2026-10-19; M22 is next. The order is the user's.
+Filed on 2026-10-18 and 2026-10-19. M21 and M22 are done; what remains is the service's, or needs a person.
 
 | Milestone | What | Epic |
 | --- | --- | --- |
-| M22 — Floor-Plan Generator | A deterministic layout solver from a terrain and room constraints to walls, doors, and labels; `FLOORPLAN` as a command with alternatives; briefs and revisions through the AI. | #276 |
 | M23 — AI Plans and Billing | In the service repository. The app's side is its account view (#289). | — |
 | Open Source Release | The main repository public under a licence decided by ADR (§44), with a trademark, a contributor agreement, audited history, dependencies, and assets, and the service kept private. Done before the repository goes public; independent of the milestones above. | #291 |
 
@@ -46,7 +46,14 @@ Level 3 of the user's AI discussion (2026-10-19), and the first domain generator
 ### Order of work
 
 1. **The ADR** (#277): [ADR-0039](adr/0039-layout-synthesis.md), proposed 2026-10-25 with its prototype, `cad-layout`, and accepted provisionally on 2026-10-26 after a review. The review asked for reliability from many seeds, lexicographic ranking, refusals that tell a proof from a failed search, a circulation contract, and an adversarial verifier. From 100 starting seeds, every feasible brief of the 32 is made every time but one brief at the edge, made 71 times; the median plan takes 11 ms.
-2. The layout solver (#278), walls, labels, and areas (#279), doors (#280), `FLOORPLAN` (#281), the AI (#282), and the exit (#283), in that order.
+2. **The layout solver** (#278): property tests over rich briefs and the alternatives.
+3. **Walls, labels, and areas** (#279): the walls as the space between the floors, exact and clean at every junction, drawn on `WALL-EXT` and `WALL-INT`.
+4. **Doors** (#280): after the topology, on the walls the search chose, clear of junctions; the way in on the front.
+5. **`FLOORPLAN`** (#281): prompted, as JSON, or from a spec file; three plans cycled; one undo; the stroke font's `²`.
+6. **Through the AI** (#282): the IR's `floor_plan` (version 5), revisions of its brief, and the L3 corpus — 42 requests, judged by what the brief must have.
+7. **The exit** (#283): `web/e2e/m22-scenario.spec.ts` and [the review](reviews/m22-exit-review.md).
+
+M22 is closed.
 
 ## M21, Constraints and Constrained Generation
 

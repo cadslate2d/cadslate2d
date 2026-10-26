@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 16e98fbc45a5c3b2cb91382b1464121ac1d9fbb9f8a26ecbe563a22bdf55012d # shrinks to dim = DimensionEntity { measure: Angular { vertex: Point2 { x: -386.72308203415287, y: 578.8706239135901 }, a: Point2 { x: 930.0758675965299, y: 0.0 }, b: Point2 { x: 158.13809957070322, y: 333.85387123120995 } }, line_point: Point2 { x: 711.560174935503, y: 92.5516996896938 }, style: #0, text_override: None, text_angle: None }, style = DimStyle { name: "Any", text_height: 0.5, arrow_size: 5.959608743062058, text_gap: 0.0, extension_offset: 0.0, extension_overshoot: 0.0, baseline_spacing: 3.75, decimals: 0, suffix: "" }

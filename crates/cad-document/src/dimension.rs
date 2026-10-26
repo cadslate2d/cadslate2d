@@ -1836,13 +1836,20 @@ mod tests {
                     for arrow in &layout.arrowheads {
                         prop_assert!(on(arrow.tip, (arrow.tip.distance_to(vertex) - arc.radius).abs()));
                     }
-                    // Every line is radial (an extension line) or tangent
-                    // (the line beneath a text placed past the arc).
+                    // Every line is radial (an extension line), its line
+                    // through the vertex, or tangent (the line beneath a text
+                    // placed past the arc), its line the arc's radius from
+                    // it — which, when the arrowheads are outside, starts an
+                    // arrow's length past the arc's end, not on it.
                     for line in &layout.lines {
                         let direction = normalized(line.end - line.start).unwrap();
-                        let radial = normalized(line.start - vertex).unwrap();
-                        let cross = (direction.x * radial.y - direction.y * radial.x).abs();
-                        prop_assert!(cross < 1e-6 || direction.dot(radial).abs() < 1e-6);
+                        let off = line.start - vertex;
+                        let apart = (direction.x * off.y - direction.y * off.x).abs();
+                        let scale = 1e-7 * (1.0 + arc.radius + off.length());
+                        prop_assert!(
+                            apart < scale || (apart - arc.radius).abs() < scale,
+                            "a line {apart} from the vertex, the arc {}", arc.radius
+                        );
                     }
                 }
                 Measure::Radius { center, radius } | Measure::Diameter { center, radius } => {
