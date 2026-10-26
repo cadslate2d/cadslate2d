@@ -252,6 +252,11 @@ function Conversation({
   pricingUrl?: string;
 }) {
   const [text, setText] = useState("");
+  // Up and Down step through the requests already made, as a command
+  // line's history does: `recalled` is how far back, 0 the draft.
+  const [recalled, setRecalled] = useState(0);
+  const [draft, setDraft] = useState("");
+  const asked = snapshot.turns.filter((turn) => turn.role === "you").map((turn) => turn.text);
   const atLimit = snapshot.allowance?.remaining === 0;
   // The newest of the exchange stays in view as it grows.
   const scroll = useRef<HTMLDivElement>(null);
@@ -264,6 +269,7 @@ function Conversation({
     if (!text.trim()) return;
     void assistant.ask(text);
     setText("");
+    setRecalled(0);
   };
   return (
     <>
@@ -436,7 +442,23 @@ function Conversation({
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 event.currentTarget.form?.requestSubmit();
+                setRecalled(0);
+                return;
               }
+              // On the first line, Up recalls the request before; on the
+              // last, Down the one after, and then what was being typed.
+              const field = event.currentTarget;
+              const before = field.value.slice(0, field.selectionStart);
+              const after = field.value.slice(field.selectionEnd);
+              const back =
+                event.key === "ArrowUp" && !before.includes("\n") && recalled < asked.length;
+              const forward = event.key === "ArrowDown" && !after.includes("\n") && recalled > 0;
+              if (!back && !forward) return;
+              event.preventDefault();
+              if (recalled === 0) setDraft(text);
+              const next = recalled + (back ? 1 : -1);
+              setRecalled(next);
+              setText(next === 0 ? draft : (asked[asked.length - next] ?? ""));
             }}
           />
           <button

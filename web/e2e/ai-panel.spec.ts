@@ -599,3 +599,33 @@ test("the AI Assistant button beside the quick actions shows and hides the panel
   await page.reload();
   await expect(panel(page)).toBeVisible();
 });
+
+// The maintainer (2026-10-26): Up in the prompt brings back the last
+// request, as a command line's history does; Down goes forward again.
+test("up and down in the prompt step through the requests made", async ({ page }) => {
+  const service = await fakeAiService(page);
+  await openApp(page);
+  await signIn(page, service);
+  await ask(page, CIRCLE);
+  await expect(panel(page).getByTestId("ai-proposal")).toBeVisible();
+  await ask(page, IMPOSSIBLE);
+  await expect(panel(page).getByTestId("ai-proposal")).toHaveCount(0);
+  const prompt = panel(page).getByLabel("What should be drawn or changed?");
+  await prompt.fill("half typed");
+  await prompt.press("ArrowUp");
+  await expect(prompt).toHaveValue(IMPOSSIBLE);
+  await prompt.press("ArrowUp");
+  await expect(prompt).toHaveValue(CIRCLE);
+  await prompt.press("ArrowUp");
+  await expect(prompt).toHaveValue(CIRCLE, { timeout: 1000 });
+  await prompt.press("ArrowDown");
+  await expect(prompt).toHaveValue(IMPOSSIBLE);
+  await prompt.press("ArrowDown");
+  await expect(prompt).toHaveValue("half typed");
+  // Recalled and sent again as it is.
+  await prompt.press("ArrowUp");
+  await prompt.press("ArrowUp");
+  await prompt.press("Enter");
+  await expect.poll(() => service.interpreted.length).toBe(3);
+  expect(service.interpreted[2]?.prompt).toBe(CIRCLE);
+});
