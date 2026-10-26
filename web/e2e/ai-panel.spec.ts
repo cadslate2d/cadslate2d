@@ -529,3 +529,53 @@ test("the account: upgrade, manage, and delete", async ({ page }) => {
   // The proposal went with the account; the drawing never changed.
   expect(await contents(page)).toBe("No selection");
 });
+
+// AI service #10: a request that asks for options. Pro steps through
+// them and accepts the one shown as one undo; Free gets one, and the note
+// of how many more Pro shows.
+const PLATE_OPTIONS =
+  "Show me three options for a 120 × 80 mm plate with its lower left corner at the origin and four Ø8 holes 10 mm in from the corners: square corners, corners rounded to 10 mm, or 10 mm chamfers";
+
+test("options: Pro steps through them and accepts one; Free gets one with the note", async ({
+  page,
+}) => {
+  const service = await fakeAiService(page);
+  service.plan = "pro";
+  await openApp(page);
+  await signIn(page, service);
+  await ask(page, PLATE_OPTIONS);
+  const proposal = panel(page).getByTestId("ai-proposal");
+  const options = proposal.getByTestId("ai-options");
+  await expect(options).toContainText("Option 1 of 3");
+  await expect(proposal.getByTestId("ai-more")).toHaveCount(0);
+  const first = (await proposal.locator(".ai__steps").textContent()) ?? "";
+  await options.getByRole("button", { name: "Next option" }).click();
+  await expect(options).toContainText("Option 2 of 3");
+  await options.getByRole("button", { name: "Next option" }).click();
+  await options.getByRole("button", { name: "Next option" }).click();
+  await expect(options).toContainText("Option 1 of 3");
+  await expect(proposal.locator(".ai__steps")).toHaveText(first);
+  await options.getByRole("button", { name: "Previous option" }).click();
+  await expect(options).toContainText("Option 3 of 3");
+  // Nothing in the drawing until Accept; then the third, as one undo.
+  expect(await contents(page)).toBe("No selection");
+  await proposal.getByRole("button", { name: "Accept" }).click();
+  await expect(proposal).toHaveCount(0);
+  await expect.poll(() => service.options.at(-1)).toBe(2);
+  expect(await contents(page)).not.toBe("No selection");
+  // One action for the three.
+  await expect(panel(page).getByTestId("ai-allowance")).toContainText("1999 of 2000 left");
+  await enter(page, "U");
+  expect(await contents(page)).toBe("No selection");
+
+  // Free: one option, and the way to the others.
+  service.plans.set("drafter@example.com", "free");
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(panel(page).getByTestId("ai-allowance")).toContainText("Free");
+  await ask(page, PLATE_OPTIONS);
+  await expect(proposal).toBeVisible();
+  await expect(proposal.getByTestId("ai-options")).toHaveCount(0);
+  const more = proposal.getByTestId("ai-more");
+  await expect(more).toContainText("Pro shows 2 more options for this request.");
+  await expect(more.getByRole("button", { name: "Upgrade to Pro, monthly" })).toBeVisible();
+});

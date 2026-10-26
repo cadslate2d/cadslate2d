@@ -30,16 +30,16 @@ Level 3 asks for floor plans in words: "a 10 × 25 m plot, 3 bedrooms, one a sui
 - **In CI** the committed recordings are replayed: `scripts/check.sh` runs `ai-eval test-data/ai`, which prints the rate per level and language and fails on any miss, and `crates/cad-commands/src/tests/corpus.rs` holds the same and that the requests are current. Deterministic and free. The e2e stand-in service (`web/e2e/ai-fake.ts`) answers from the same recordings.
 - **Live, nightly**, the AI service's repository asks the model every request again and scores the night's answers with `ai-eval test-data/ai --recordings DIR`, the committed recordings as the baseline: a language whose rate falls more than 5 points below the baseline's is a regression (`REGRESSION_TOLERANCE`), reported there.
 
-| Level | Language | Baseline (2026-10-25, gpt-6-luna, intent version 4) |
+| Level | Language | Baseline (2026-10-26, gpt-6-luna, intent version 5) |
 | --- | --- | --- |
 | l1 | en | 35/35 |
 | l1 | pt | 35/35 |
-| l2 | en | 24/24 |
-| l2 | pt | 24/24 |
-| l3 | en | 20/20 |
-| l3 | pt | 20/20 |
+| l2 | en | 26/26 |
+| l2 | pt | 26/26 |
+| l3 | en | 22/22 |
+| l3 | pt | 22/22 |
 
-Recorded again on 2026-10-26, at intent version 5, after the instructions gained floor plans; L1 accepts a circle drawn with an inscribed hexagon. The full run of L3 under the final instructions made 19/20 in each language: a Portuguese case whose wording ("nos fundos") did not say the storeroom opens onto the shop, since made plain in both languages, and an English refusal the model answered in Portuguese — asked again, it answered in English seven times in nine. The committed recordings re-ask those two. Earlier: recorded again on 2026-10-25 after the service's instructions gained the parts, placements, and constraints: the model now answers L1's plate and bolt circle with the parts, which those cases accept as well.
+Recorded again on 2026-10-26 after the reply gained `alternatives` and the instructions options (AI service #10): every level at 100%, the new option cases — a plate's corners, a bolt circle's pitch, a house's three plans — among them, and no answer offering options unasked. Before that, the same day, at intent version 5, after the instructions gained floor plans; L1 accepts a circle drawn with an inscribed hexagon. The full run of L3 under the final instructions made 19/20 in each language: a Portuguese case whose wording ("nos fundos") did not say the storeroom opens onto the shop, since made plain in both languages, and an English refusal the model answered in Portuguese — asked again, it answered in English seven times in nine. The committed recordings re-ask those two. Earlier: recorded again on 2026-10-25 after the service's instructions gained the parts, placements, and constraints: the model now answers L1's plate and bolt circle with the parts, which those cases accept as well.
 
 ## Recording again
 
