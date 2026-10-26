@@ -25,7 +25,7 @@ jobs:
       matrix:
         target: [dxf_import, input_resolve]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install nightly Rust
         run: rustup toolchain install nightly --profile minimal
@@ -39,7 +39,7 @@ jobs:
           workspaces: fuzz
 
       - name: Restore the corpus grown so far
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
@@ -48,14 +48,14 @@ jobs:
       - name: Fuzz
         run: scripts/fuzz.sh "${{ github.event.inputs.seconds || '1200' }}" "${{ matrix.target }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: fuzz-corpus-${{ matrix.target }}
           path: fuzz/corpus/${{ matrix.target }}
           if-no-files-found: ignore
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: fuzz-crashes-${{ matrix.target }}
