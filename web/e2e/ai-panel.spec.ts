@@ -629,3 +629,25 @@ test("up and down in the prompt step through the requests made", async ({ page }
   await expect.poll(() => service.interpreted.length).toBe(3);
   expect(service.interpreted[2]?.prompt).toBe(CIRCLE);
 });
+
+// #324: windows by request — a plan with 150 cm windows in every room's
+// outside walls, accepted, drawn with their glass on WINDOW.
+const HOUSE_WITH_WINDOWS =
+  "A two-bedroom house on a 12 × 20 m plot with a 5 m front setback: living room 25 m², kitchen 10 m², bedrooms of 12 and 10 m², bathroom 5 m²; the kitchen opens onto the living room; 150 cm windows in every room's outside walls";
+
+test("a floor plan with windows by request", async ({ page }) => {
+  const service = await fakeAiService(page);
+  service.plan = "pro";
+  await openApp(page);
+  await signIn(page, service);
+  await ask(page, HOUSE_WITH_WINDOWS);
+  const proposal = panel(page).getByTestId("ai-proposal");
+  await expect(proposal).toContainText("Adds");
+  expect(service.interpreted[0]).toMatchObject({ prompt: HOUSE_WITH_WINDOWS });
+  await proposal.getByRole("button", { name: "Accept" }).click();
+  await expect(proposal).toHaveCount(0);
+  const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+  const glass = entities(file.text, "LINE").filter((line) => group(line, 8) === "WINDOW");
+  expect(glass.length).toBeGreaterThanOrEqual(8);
+  expect(glass.length % 2).toBe(0);
+});
