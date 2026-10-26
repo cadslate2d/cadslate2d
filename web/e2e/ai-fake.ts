@@ -66,6 +66,12 @@ export class FakeAiService {
   readonly accounts = new Set<string>();
   /** Every interpret request, as the service received it. */
   readonly interpreted: Interpreted[] = [];
+  /**
+   * Answers that take the place of the recorded ones, by prompt: for a
+   * visual baseline, whose picture must not change each time the model
+   * words a reply differently.
+   */
+  readonly answers = new Map<string, Answer>();
   readonly outcomes: [number, string][] = [];
   /** The option each outcome named, 0 the first. */
   readonly options: number[] = [];
@@ -247,7 +253,7 @@ export class FakeAiService {
       }
       this.interpreted.push(body as unknown as Interpreted);
       const prompt = String(body["prompt"]);
-      const answer = recorded.get(prompt);
+      const answer = this.answers.get(prompt) ?? recorded.get(prompt);
       if (!answer) return reply(503, { error: "The AI is not available right now." });
       const operations = (answer.intent as { operations?: { op: string }[] } | null)?.operations;
       if (!pro && operations?.some((operation) => operation.op === "floor_plan")) {

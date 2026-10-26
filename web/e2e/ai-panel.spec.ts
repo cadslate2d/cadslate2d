@@ -394,6 +394,11 @@ test("the panel with a proposal", async ({ page, browserName }) => {
   await chooseMenu(page, "View", "Layers Panel");
   await chooseMenu(page, "View", "Properties Panel");
   await signIn(page, service);
+  // A fixed answer: the picture is the panel's, not the model's wording.
+  service.answers.set(CIRCLE, {
+    reply: "A circle of radius 25 centred at 100,100.",
+    intent: { version: 1, operations: [{ op: "circle", center: [100, 100], radius: 25 }] },
+  });
   await ask(page, CIRCLE);
   await expect(panel(page).getByTestId("ai-proposal")).toBeVisible();
   await expect(panel(page)).toHaveScreenshot("ai-panel-proposal.png");
