@@ -73,9 +73,38 @@ test("a spec file is read as the brief, and the menu starts the command", async 
 
 test("a brief that cannot be built is refused with the reason", async ({ page }) => {
   await openApp(page);
-  await enter(page, "FLOORPLAN", "8", "8", "living", "40", "bedroom", "30", "", "", "");
+  await enter(page, "FLOORPLAN", "8", "8", "living", "40", "bedroom", "30", "", "", "", "");
   await expect(logLines(page).last()).toContainText(
     "This cannot be built: The rooms need at least 66.5 m²",
   );
   await expect(prompt(page)).toHaveText("Command:");
+});
+
+// #324: windows at the width asked, in every room's outside walls.
+test("a plan with windows: the width typed at its prompt", async ({ page }) => {
+  await openApp(page);
+  await enter(
+    page,
+    "FLOORPLAN",
+    "12",
+    "20",
+    "living",
+    "25",
+    "kitchen",
+    "10",
+    "bedroom",
+    "12",
+    "",
+    "",
+  );
+  await expect(prompt(page)).toHaveText(
+    "Specify the windows' width, or press Enter for no windows:",
+  );
+  await enter(page, "1.5", "", "");
+  await expect(logLines(page).last()).toContainText("Plan 1 drawn: 3 rooms");
+  const glass = await onLayer(page, "WINDOW");
+  expect(glass.length).toBeGreaterThanOrEqual(6);
+  expect(glass.length % 2).toBe(0);
+  await enter(page, "U");
+  expect(await onLayer(page, "WINDOW")).toHaveLength(0);
 });

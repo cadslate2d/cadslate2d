@@ -5,7 +5,8 @@
 //! best plans are previewed in turn — `Next`, `Previous` — and the one
 //! accepted is drawn as one undo: ordinary walls, doors, and labels on
 //! their layers (`crate::floorplan`). A brief with no plan is refused with
-//! the reasons: proved impossible, or not found.
+//! the reasons: proved impossible, or not found. Asked for a width, every
+//! room gets a window on each outside wall (#324).
 
 use cad_core::Point2;
 use cad_input::{ExpectedInput, Keyword};
@@ -33,6 +34,8 @@ enum State {
     RoomArea(String),
     /// Two rooms that open onto each other, or Enter.
     Pair,
+    /// The windows' width, or Enter for none.
+    Windows,
     /// The brief whole, as JSON.
     Brief,
     /// Where the terrain's lower left corner goes.
@@ -138,6 +141,9 @@ impl Command for FloorPlanCommand {
             State::Pair => Prompt::new(
                 "Enter two rooms that open onto each other as name/name, or press Enter",
             ),
+            State::Windows => {
+                Prompt::new("Specify the windows' width, or press Enter for no windows")
+            }
             State::Brief => Prompt::new("Enter the brief as JSON"),
             State::Corner => {
                 Prompt::new("Specify the terrain's lower left corner").with_default("0,0")
@@ -151,7 +157,7 @@ impl Command for FloorPlanCommand {
     fn expected(&self) -> ExpectedInput {
         match &self.state {
             State::Width => ExpectedInput::distance().with_keywords(&[BRIEF, FILE]),
-            State::Depth => ExpectedInput::distance(),
+            State::Depth | State::Windows => ExpectedInput::distance(),
             State::RoomName | State::Pair | State::Brief => ExpectedInput::text(),
             State::RoomArea(_) => ExpectedInput::factor(),
             State::Corner => ExpectedInput::point(),
@@ -219,7 +225,16 @@ impl Command for FloorPlanCommand {
                 }
                 State::Pair
             }
-            (State::Pair, CommandInput::Accept) => State::Corner,
+            (State::Pair, CommandInput::Accept) => State::Windows,
+            (State::Windows, CommandInput::Accept) => State::Corner,
+            (State::Windows, CommandInput::Distance(width)) if width.is_finite() && width > 0.0 => {
+                self.spec.windows = Some(self.metres(width));
+                State::Corner
+            }
+            (State::Windows, CommandInput::Distance(_)) => {
+                ctx.message("A window's width must be greater than zero.");
+                State::Windows
+            }
             (State::Brief, CommandInput::Text(text)) => match Spec::from_json(&text) {
                 Ok(spec) => {
                     self.spec = spec;

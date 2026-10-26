@@ -91,6 +91,16 @@ fn a_brief_asked_for_is_planned_previewed_cycled_and_drawn_as_one_undo() {
         "Name two different rooms of the brief, as kitchen/living."
     );
     h.enter_all(&["living room/kitchen", ""]);
+    assert_eq!(
+        h.prompt(),
+        "Specify the windows' width, or press Enter for no windows:"
+    );
+    h.enter("0");
+    assert_eq!(
+        h.log().last().unwrap(),
+        "A window's width must be greater than zero."
+    );
+    h.enter("");
     assert_eq!(h.prompt(), "Specify the terrain's lower left corner <0,0>:");
     let revision = h.session.drawing().revision();
     h.enter("");
@@ -204,6 +214,8 @@ fn a_drawing_in_millimetres_takes_lengths_in_millimetres() {
         "6",
         "",
         "",
+        // Windows 1.5 m wide, typed in the drawing's millimetres (#324).
+        "1500",
         "",
         "",
     ]);
@@ -218,6 +230,20 @@ fn a_drawing_in_millimetres_takes_lengths_in_millimetres() {
         .filter_map(|e| e.as_line().map(|l| l.start.x.max(l.end.x)))
         .fold(0.0, f64::max);
     assert!(widest > 1000.0 && widest <= 12000.0, "{widest}");
+    let drawing = h.session.drawing();
+    let window = drawing.layers().find("WINDOW").expect("made");
+    let glass: Vec<f64> = drawing
+        .entities()
+        .filter(|(id, _)| drawing.properties(*id).is_some_and(|p| p.layer == window))
+        .filter_map(|(_, entity)| entity.as_line().map(|l| l.start.distance_to(l.end)))
+        .collect();
+    assert!(!glass.is_empty());
+    assert!(
+        glass
+            .iter()
+            .all(|&length| length > 500.0 && length <= 1500.0 + 1e-6),
+        "{glass:?}"
+    );
 }
 
 #[test]
@@ -232,6 +258,7 @@ fn a_brief_with_no_plan_is_refused_as_impossible_or_as_not_found() {
         "40",
         "bedroom",
         "30",
+        "",
         "",
         "",
         "",
