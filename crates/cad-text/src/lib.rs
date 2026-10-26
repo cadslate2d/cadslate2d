@@ -333,6 +333,98 @@ fn accented(glyphs: &[Glyph], ascent: f64, descent: f64) -> Vec<(char, Glyph)> {
     extras
 }
 
+/// The typographic marks a label is written with, from the font's own
+/// glyphs: the dashes as its hyphen drawn long — an en dash as wide as
+/// the hyphen, an em dash 1.6 times — the curly quotes as its straight ones, the
+/// ellipsis as three full stops, the multiplication sign as an × in the
+/// box of its plus, and the bullet as a small ring at the hyphen's
+/// height. Each lies within the glyphs it is made from.
+fn typographic(glyphs: &[Glyph]) -> Vec<(char, Glyph)> {
+    let of = |c: char| glyphs.get((c as u32 - FIRST_CHAR) as usize);
+    let mut extras = Vec::new();
+    let bounds = |glyph: &Glyph| {
+        let points = glyph.strokes.iter().flatten();
+        let mut low = Vec2::new(f64::MAX, f64::MAX);
+        let mut high = Vec2::new(f64::MIN, f64::MIN);
+        for p in points {
+            low = Vec2::new(low.x.min(p.x), low.y.min(p.y));
+            high = Vec2::new(high.x.max(p.x), high.y.max(p.y));
+        }
+        (low, high)
+    };
+    if let Some(hyphen) = of('-') {
+        let y = bounds(hyphen).0.y;
+        // Simplex's hyphen is already wide: an en dash as wide as it, an
+        // em dash longer.
+        for (dash, scale) in [('–', 1.0), ('—', 1.6)] {
+            let advance = hyphen.advance * scale;
+            extras.push((
+                dash,
+                Glyph {
+                    strokes: vec![vec![
+                        Vec2::new(advance * 0.08, y),
+                        Vec2::new(advance * 0.92, y),
+                    ]],
+                    advance,
+                },
+            ));
+        }
+        if let Some(o) = of('o') {
+            let advance = o.advance * 0.6;
+            let (radius, center) = (0.1, Vec2::new(advance / 2.0, y));
+            let ring = (0..=12)
+                .map(|step| {
+                    let angle = f64::from(step) / 12.0 * std::f64::consts::TAU;
+                    center + Vec2::new(radius * angle.cos(), radius * angle.sin())
+                })
+                .collect();
+            extras.push((
+                '•',
+                Glyph {
+                    strokes: vec![ring],
+                    advance,
+                },
+            ));
+        }
+    }
+    for (curly, straight) in [('‘', '`'), ('’', '\''), ('“', '"'), ('”', '"')] {
+        if let Some(glyph) = of(straight) {
+            extras.push((curly, glyph.clone()));
+        }
+    }
+    if let Some(stop) = of('.') {
+        let strokes = (0..3)
+            .flat_map(|k| {
+                let shift = Vec2::new(stop.advance * f64::from(k), 0.0);
+                stop.strokes
+                    .iter()
+                    .map(move |stroke| stroke.iter().map(|p| *p + shift).collect())
+            })
+            .collect();
+        extras.push((
+            '…',
+            Glyph {
+                strokes,
+                advance: stop.advance * 3.0,
+            },
+        ));
+    }
+    if let Some(plus) = of('+') {
+        let (low, high) = bounds(plus);
+        extras.push((
+            '×',
+            Glyph {
+                strokes: vec![
+                    vec![Vec2::new(low.x, low.y), Vec2::new(high.x, high.y)],
+                    vec![Vec2::new(low.x, high.y), Vec2::new(high.x, low.y)],
+                ],
+                advance: plus.advance,
+            },
+        ));
+    }
+    extras
+}
+
 /// A superscript's size, as a share of the digit it is made from.
 const SUPERSCRIPT: f64 = 0.6;
 
@@ -370,6 +462,7 @@ impl Font {
         let descent = -ys().fold(0.0_f64, f64::min);
         let mut extras = synthesized(&glyphs);
         extras.extend(accented(&glyphs, ascent, descent));
+        extras.extend(typographic(&glyphs));
         Ok(Font {
             glyphs,
             extras,
@@ -735,6 +828,23 @@ mod tests {
             for c in word.chars() {
                 assert!(font.glyph(c).is_some(), "{c} in {word}");
             }
+        }
+    }
+
+    #[test]
+    fn typographic_marks_are_drawn_within_the_font() {
+        let font = Font::simplex();
+        for mark in ['—', '–', '‘', '’', '“', '”', '…', '×', '•'] {
+            let glyph = font.glyph(mark).unwrap_or_else(|| panic!("{mark}"));
+            assert!(!glyph.strokes.is_empty() && glyph.advance > 0.0);
+            for point in glyph.strokes.iter().flatten() {
+                assert!(point.y <= font.ascent() + 1e-9 && point.y >= -font.descent() - 1e-9);
+            }
+        }
+        assert!(font.advance("—") > font.advance("–") && font.advance("–") >= font.advance("-"));
+        assert!(close(font.advance("…"), 3.0 * font.advance(".")));
+        for c in "TRUSS T-01 — WARREN ROOF TRUSS; 10 × 5 cm “RHS”…".chars() {
+            assert!(font.glyph(c).is_some(), "{c}");
         }
     }
 
