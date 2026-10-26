@@ -314,7 +314,7 @@ fn a_door_goes_through_a_generated_plans_interior_wall() {
             Entity::Polyline(p) => Some(p),
             _ => None,
         })
-        .last()
+        .next_back()
         .unwrap();
     let tip = leaf.vertices[1];
     assert!(
