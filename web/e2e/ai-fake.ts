@@ -15,6 +15,8 @@ export const AI_SERVICE = "https://ai-service.e2e.invalid";
 interface Answer {
   reply: string;
   intent: unknown;
+  /** The other options, for a request that asked for them (#10). */
+  alternatives?: unknown[] | null;
   /** Why the engine stopped the document, as the model explained it. */
   explanation?: string;
 }
@@ -64,6 +66,8 @@ export class FakeAiService {
   /** Every interpret request, as the service received it. */
   readonly interpreted: Interpreted[] = [];
   readonly outcomes: [number, string][] = [];
+  /** The option each outcome named, 0 the first. */
+  readonly options: number[] = [];
   /** Each explanation asked for: the request, and the engine's reason. */
   readonly explained: [number, string][] = [];
   /** Each answered request's prompt, by its record. */
@@ -236,10 +240,18 @@ export class FakeAiService {
       this.used += 1;
       const request = this.#next++;
       this.#requests.set(request, prompt);
+      // Options beyond the first are Pro's: on Free, how many more there were.
+      const alternatives = answer.alternatives ?? [];
+      const more =
+        !pro && alternatives.length > 0
+          ? { count: alternatives.length, needs: { plan: "pro", feature: "alternatives" } }
+          : undefined;
       return reply(200, {
         request,
         reply: answer.reply,
         intent: answer.intent ?? null,
+        alternatives: pro ? alternatives : [],
+        ...(more ? { more } : {}),
         allowance: this.#allowance(account),
       });
     }
@@ -271,6 +283,7 @@ export class FakeAiService {
     if (outcome) {
       if (!account) return signedOut();
       this.outcomes.push([Number(outcome[1]), String(body["outcome"])]);
+      this.options.push(Number(body["option"] ?? 0));
       return reply(204);
     }
     return reply(404, { error: `The stand-in has no route ${path}.` });

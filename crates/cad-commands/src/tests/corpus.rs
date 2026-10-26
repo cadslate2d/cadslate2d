@@ -190,3 +190,64 @@ fn a_regression_is_a_language_falling_below_the_baseline() {
     // Nothing recorded at all is every case missed.
     assert_eq!(l1.score("").passed(), 0);
 }
+
+/// A request for options (AI service #10) is judged option by option:
+/// as many as the case allows, each one wanted, no two drawing the same;
+/// and a request that asked for none gets none.
+#[test]
+fn options_are_judged_each_and_must_differ() {
+    let cases = r#"{"name": "o", "lang": "en", "prompt": "Three options for a circle at the origin: radius 10, 20, or 30", "options": 3, "expected": [[{"op": "circle", "center": [0, 0], "radius": 10}], [{"op": "circle", "center": [0, 0], "radius": 20}], [{"op": "circle", "center": [0, 0], "radius": 30}]]}
+{"name": "one", "lang": "en", "prompt": "A circle of radius 10 at the origin", "expected": [[{"op": "circle", "center": [0, 0], "radius": 10}]]}"#;
+    let corpus = Corpus {
+        level: "test".to_owned(),
+        cases: Corpus::parse(cases).unwrap(),
+    };
+    assert!(corpus.faults().is_empty(), "{:?}", corpus.faults());
+    let circle = |radius: u32| serde_json::json!({"version": cad_intent::VERSION, "operations": [{"op": "circle", "center": [0, 0], "radius": radius}]});
+    let recording = |name: &str, intent: serde_json::Value, alternatives: serde_json::Value| {
+        let case = corpus.cases.iter().find(|case| case.name == name).unwrap();
+        let content = serde_json::json!({"reply": "Here they are.", "intent": intent, "alternatives": alternatives});
+        serde_json::json!({"name": name, "request": crate::evaluation::request(case),
+            "raw": [{"content": content.to_string(), "usage": {"input": 1, "cached_input": 0, "output": 1}}]})
+        .to_string()
+    };
+    let miss = |lines: &[String], name: &str| {
+        let score = corpus.score(&lines.join("\n"));
+        score
+            .results
+            .iter()
+            .find(|r| r.name == name)
+            .unwrap()
+            .miss
+            .clone()
+    };
+    let one = recording("one", circle(10), serde_json::Value::Null);
+    let three = recording("o", circle(20), serde_json::json!([circle(10), circle(30)]));
+    assert_eq!(miss(&[three, one.clone()], "o"), None);
+    let two = recording("o", circle(20), serde_json::json!([circle(10)]));
+    assert_eq!(miss(&[two], "o").unwrap(), "2 options, not 3 to 3");
+    let twice = recording("o", circle(20), serde_json::json!([circle(10), circle(20)]));
+    assert_eq!(
+        miss(&[twice], "o").unwrap(),
+        "option 3 draws the same as another"
+    );
+    let unwanted = recording("o", circle(20), serde_json::json!([circle(10), circle(40)]));
+    assert!(
+        miss(&[unwanted], "o")
+            .unwrap()
+            .starts_with("option 3: made")
+    );
+    assert_eq!(miss(&[one], "one"), None);
+    let unasked = recording("one", circle(10), serde_json::json!([circle(20)]));
+    assert_eq!(
+        miss(&[unasked], "one").unwrap(),
+        "offered 2 options, none asked for"
+    );
+    // A case that wants options says how many: from two.
+    assert!(
+        Corpus::parse(
+            r#"{"name": "x", "lang": "en", "prompt": "p", "options": 1, "expected": "nothing"}"#
+        )
+        .is_err()
+    );
+}

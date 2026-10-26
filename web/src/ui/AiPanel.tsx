@@ -288,6 +288,29 @@ function Conversation({
 
         {snapshot.proposal && (
           <section className="ai__proposal" aria-label="Proposal" data-testid="ai-proposal">
+            {snapshot.proposal.options > 1 && (
+              <div className="ai__options" data-testid="ai-options">
+                <button
+                  type="button"
+                  className="ai__button ai__button--quiet"
+                  aria-label="Previous option"
+                  onClick={() => assistant.showOption(-1)}
+                >
+                  ‹
+                </button>
+                <span className="ai__options-count">
+                  Option {snapshot.proposal.option + 1} of {snapshot.proposal.options}
+                </span>
+                <button
+                  type="button"
+                  className="ai__button ai__button--quiet"
+                  aria-label="Next option"
+                  onClick={() => assistant.showOption(1)}
+                >
+                  ›
+                </button>
+              </div>
+            )}
             <p className="ai__proposal-headline">{snapshot.proposal.headline}</p>
             {snapshot.proposal.operations.length > 0 && (
               <ol className="ai__steps">
@@ -301,6 +324,7 @@ function Conversation({
               <button
                 type="button"
                 className="ai__button ai__button--primary"
+                disabled={snapshot.proposal.error !== undefined}
                 onClick={() => assistant.accept()}
               >
                 Accept
@@ -316,6 +340,15 @@ function Conversation({
               <p className="ai__note" data-testid="ai-revising">
                 Say how to change it: the next request refines this one.
               </p>
+            )}
+            {snapshot.proposal.more && (
+              <div className="ai__more" data-testid="ai-more">
+                <p className="ai__note">
+                  Pro shows {snapshot.proposal.more.count} more{" "}
+                  {snapshot.proposal.more.count === 1 ? "option" : "options"} for this request.
+                </p>
+                <Upgrade assistant={assistant} snapshot={snapshot} pricingUrl={pricingUrl} />
+              </div>
             )}
           </section>
         )}

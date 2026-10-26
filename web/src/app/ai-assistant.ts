@@ -59,7 +59,14 @@ export interface AiSnapshot {
   /** A request waiting for the user to send its context or not. */
   readonly consent?: { readonly prompt: string; readonly context: AiContext };
   /** The proposal on the canvas, and the service's record of it. */
-  readonly proposal?: ProposalSummary & { readonly request: number };
+  readonly proposal?: ProposalSummary & {
+    readonly request: number;
+    /** Which of the request's options is on the canvas, 0 the first, and how many there are (#10). */
+    readonly option: number;
+    readonly options: number;
+    /** The options the plan does not hold: how many, and the plan they need. */
+    readonly more?: { readonly count: number; readonly needs: PlanNeed };
+  };
   /** The request Revise will refine. */
   readonly revising?: string;
   /** Why the last call failed, and what kind of failure it was. */
@@ -86,6 +93,8 @@ export class AiAssistant {
   #kept: Kept | undefined;
   /** The request and document of the proposal on the canvas, for a revision. */
   #proposed: { prompt: string; intent: unknown } | undefined;
+  /** Every option of the request on the canvas: its document and the others (#10). */
+  #options: readonly unknown[] = [];
 
   constructor(
     readonly host: AssistantHost,
@@ -311,7 +320,13 @@ export class AiAssistant {
         void this.#report(previous.request, "rejected");
       }
       const turns = [...this.#snapshot.turns, { role: "ai" as const, text: answer.reply }];
-      if (answer.intent) {
+      this.#options = answer.intent ? [answer.intent, ...answer.alternatives] : [];
+      if (this.#options.length > 1) {
+        // Options: the first on the canvas, the others a step away. One
+        // the engine stops says why where it is shown.
+        this.#set({ turns, busy: false, allowance: answer.allowance, revising: undefined });
+        this.#show(prompt, answer.request, 0, answer.more);
+      } else if (answer.intent) {
         this.host.propose(JSON.stringify(answer.intent));
         const summary = this.host.proposalSummary();
         if (summary?.error) {
@@ -333,7 +348,15 @@ export class AiAssistant {
           busy: false,
           allowance: answer.allowance,
           revising: undefined,
-          proposal: summary ? { ...summary, request: answer.request } : undefined,
+          proposal: summary
+            ? {
+                ...summary,
+                request: answer.request,
+                option: 0,
+                options: 1,
+                ...(answer.more ? { more: answer.more } : {}),
+              }
+            : undefined,
         });
       } else {
         this.#proposed = undefined;
@@ -350,6 +373,39 @@ export class AiAssistant {
     }
   }
 
+  /** Puts option `index` of `request` on the canvas, in place of the one there. */
+  #show(
+    prompt: string,
+    request: number,
+    index: number,
+    more?: { readonly count: number; readonly needs: PlanNeed },
+  ): void {
+    const intent = this.#options[index];
+    if (this.#snapshot.proposal) this.host.rejectProposal();
+    this.host.propose(JSON.stringify(intent));
+    const summary = this.host.proposalSummary();
+    this.#proposed = { prompt, intent };
+    this.#set({
+      proposal: summary
+        ? {
+            ...summary,
+            request,
+            option: index,
+            options: this.#options.length,
+            ...(more ? { more } : {}),
+          }
+        : undefined,
+    });
+  }
+
+  /** Shows another of the request's options: `step` on from the one shown, round. */
+  showOption(step: number): void {
+    const proposal = this.#snapshot.proposal;
+    if (!proposal || proposal.options < 2 || !this.#proposed) return;
+    const index = (proposal.option + step + proposal.options) % proposal.options;
+    this.#show(this.#proposed.prompt, proposal.request, index, proposal.more);
+  }
+
   /** Asks the AI why the engine stopped the proposal of `request`. */
   async #explain(request: number, reason: string): Promise<void> {
     if (!this.client || !this.#kept) return;
@@ -363,24 +419,27 @@ export class AiAssistant {
     this.#set({ busy: false, turns: [...this.#snapshot.turns, { role: "ai", text }] });
   }
 
-  async #report(request: number, outcome: "accepted" | "rejected"): Promise<void> {
+  async #report(request: number, outcome: "accepted" | "rejected", option = 0): Promise<void> {
     if (!this.client || !this.#kept) return;
     // The record is for evaluation: a lost report changes nothing for the user.
-    await this.client.reportOutcome(this.#kept.session, request, outcome).catch(() => undefined);
+    await this.client
+      .reportOutcome(this.#kept.session, request, outcome, option)
+      .catch(() => undefined);
   }
 
   /** Applies the proposal to the drawing, as one undo. */
   accept(): void {
     const proposal = this.#snapshot.proposal;
-    if (!proposal) return;
+    if (!proposal || proposal.error) return;
     this.host.acceptProposal();
     this.#proposed = undefined;
+    this.#options = [];
     this.#set({
       proposal: undefined,
       revising: undefined,
       turns: [...this.#snapshot.turns, { role: "notice", text: "Accepted: U undoes it." }],
     });
-    void this.#report(proposal.request, "accepted");
+    void this.#report(proposal.request, "accepted", proposal.option);
   }
 
   /** Drops the proposal; the drawing never changed. */
@@ -389,6 +448,7 @@ export class AiAssistant {
     if (!proposal) return;
     this.host.rejectProposal();
     this.#proposed = undefined;
+    this.#options = [];
     this.#set({
       proposal: undefined,
       revising: undefined,
@@ -447,6 +507,7 @@ export class AiAssistant {
   #dropProposal(): void {
     if (this.#snapshot.proposal) this.host.rejectProposal();
     this.#proposed = undefined;
+    this.#options = [];
     this.#set({ proposal: undefined, revising: undefined, consent: undefined });
   }
 }

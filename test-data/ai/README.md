@@ -11,6 +11,7 @@ Level 1 is ordinary drafting said in words: new geometry, edits of the selection
   - `setup`, intent operations that make the drawing the request is made over (in millimetres), and `select`, the IDs selected;
   - `previous`, the request and document a revision replaces;
   - and what should come of it: `expected`, a list of documents any of which makes the drawing wanted (a triangle may be one polyline or three lines); `"expected": "nothing"`, for a request the operations cannot do; or `refused`, a document the engine refuses, whose reason the reply must explain.
+  - `options`, for a request that asks for options (AI service #10): how many may come, `3` or `[2, 4]`. Each option is judged as a single answer would be, and no two may draw the same; a case without it wants no options, and an answer that offers them unasked is a miss. A floor plan's options are its brief's plans, and the corpus checks the example's brief has that many, each drawn differently.
 - **`requests.jsonl`** is generated from the cases: what the app would send for each, its context from `Session::ai_context`, and the engine's reason for a refusal. `UPDATE_SNAPSHOTS=1 cargo test -p cad-commands corpus` writes it; the test fails when it is out of date.
 - **`recordings.jsonl`** is the model's answers to those requests, written by the AI service's recorder: one line per request, the provider's attempts and, for a refusal, its explanation.
 

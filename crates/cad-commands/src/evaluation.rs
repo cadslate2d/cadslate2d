@@ -264,6 +264,10 @@ pub struct Case {
     pub select: Vec<u64>,
     pub previous: Option<Value>,
     pub expected: Expected,
+    /// A request for options (AI service #10): how few and how many may
+    /// come, each wanted as one answer would be, and no two drawing the
+    /// same. A case without it wants no options.
+    pub options: Option<(usize, usize)>,
 }
 
 /// One level's cases: `l1`, AI commands.
@@ -350,6 +354,22 @@ impl Corpus {
                         .unwrap_or_default(),
                     previous: case.get("previous").cloned(),
                     expected,
+                    options: match &case["options"] {
+                        Value::Null => None,
+                        Value::Array(range) => match range.as_slice() {
+                            [least, most] => least.as_u64().zip(most.as_u64()),
+                            _ => None,
+                        }
+                        .map(|(least, most)| (least as usize, most as usize))
+                        .filter(|(least, most)| 2 <= *least && least <= most)
+                        .map(Some)
+                        .ok_or_else(|| at("options are [least, most], from 2".to_owned()))?,
+                        options => options
+                            .as_u64()
+                            .filter(|n| *n >= 2)
+                            .map(|n| Some((n as usize, n as usize)))
+                            .ok_or_else(|| at("options are a count from 2".to_owned()))?,
+                    },
                 })
             })
             .collect()
@@ -387,6 +407,14 @@ impl Corpus {
                             faults.push(format!("{}: {error}", case.name));
                         }
                     }
+                    if let Some((least, _)) = case.options
+                        && alternatives.len() < least
+                    {
+                        faults.push(format!(
+                            "{}: fewer drawings expected than the {least} options wanted",
+                            case.name
+                        ));
+                    }
                 }
                 Expected::Refused(intent) => {
                     if reason(case).is_none() {
@@ -396,6 +424,32 @@ impl Corpus {
                 Expected::Plan { wanted, example } => {
                     if let Err(error) = outcome(case, example) {
                         faults.push(format!("{}: the example: {error}", case.name));
+                    }
+                    // Options of a plan are its brief's plans: the example's
+                    // brief has as many, each drawn differently.
+                    if let Some((least, _)) = case.options {
+                        let mut drawn = Vec::new();
+                        for plan in 1..=least as u32 {
+                            let mut option = example.clone();
+                            for operation in &mut option.operations {
+                                if let cad_intent::Operation::FloorPlan { alternative, .. } =
+                                    operation
+                                {
+                                    *alternative = Some(plan);
+                                }
+                            }
+                            match outcome(case, &option) {
+                                Ok(made) if drawn.contains(&made) => faults.push(format!(
+                                    "{}: the example's plan {plan} is another's",
+                                    case.name
+                                )),
+                                Ok(made) => drawn.push(made),
+                                Err(error) => faults.push(format!(
+                                    "{}: the example's plan {plan}: {error}",
+                                    case.name
+                                )),
+                            }
+                        }
                     }
                     if let Some(missed) = wanted.missed(example, previous(case).as_ref()) {
                         faults.push(format!("{}: the example has {missed}", case.name));
@@ -716,8 +770,8 @@ pub fn language(text: &str) -> &'static str {
 }
 
 /// The model's answer in a recording: the provider's last attempt, as
-/// the service reads it.
-fn answer(recording: &Value) -> Result<(String, Option<Value>), String> {
+/// the service reads it — the reply, the intent, and the other options.
+fn answer(recording: &Value) -> Result<(String, Option<Value>, Vec<Value>), String> {
     let raw = recording["raw"]
         .as_array()
         .and_then(|raws| raws.last())
@@ -729,7 +783,42 @@ fn answer(recording: &Value) -> Result<(String, Option<Value>), String> {
         .get("intent")
         .filter(|intent| !intent.is_null())
         .cloned();
-    Ok((reply, intent))
+    let alternatives = content["alternatives"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    Ok((reply, intent, alternatives))
+}
+
+/// Whether one proposed document is what `case` wants; if so, the drawing
+/// it makes.
+fn wanted(case: &Case, intent: &Intent) -> Result<Vec<String>, String> {
+    match &case.expected {
+        Expected::Drawing(alternatives) => {
+            let wanted: Vec<Vec<String>> = alternatives
+                .iter()
+                .filter_map(|alternative| outcome(case, alternative).ok())
+                .collect();
+            match outcome(case, intent) {
+                Ok(made) if wanted.contains(&made) => Ok(made),
+                Ok(made) => Err(format!(
+                    "made\n    {}\n  wanted\n    {}",
+                    made.join("\n    "),
+                    wanted.first().map(|w| w.join("\n    ")).unwrap_or_default()
+                )),
+                Err(error) => Err(error.to_string()),
+            }
+        }
+        Expected::Plan { wanted, .. } => {
+            let made = outcome(case, intent).map_err(|error| error.to_string())?;
+            match wanted.missed(intent, previous(case).as_ref()) {
+                None => Ok(made),
+                Some(missed) => Err(format!("the plan has {missed}")),
+            }
+        }
+        Expected::Nothing => Err("proposed what cannot be done".to_owned()),
+        Expected::Refused(_) => Err("not refused".to_owned()),
+    }
 }
 
 /// Whether `recording` is what `case` wants: the expected drawing, nothing
@@ -739,61 +828,68 @@ fn judge(case: &Case, recording: &Value) -> Result<(), String> {
     if recording["request"] != request(case) {
         return Err("recorded for another request".to_owned());
     }
-    let (reply, intent) = answer(recording)?;
+    let (reply, intent, alternatives) = answer(recording)?;
     if language(&reply) != case.language {
         return Err(format!("the reply is not in its language: {reply}"));
     }
-    let intent = intent
-        .map(|intent| parse(&intent.to_string()))
-        .transpose()
-        .map_err(|error| format!("invalid document: {error}"))?;
-    match (&case.expected, intent) {
-        (Expected::Drawing(alternatives), Some(intent)) => {
-            let wanted: Vec<Vec<String>> = alternatives
-                .iter()
-                .filter_map(|alternative| outcome(case, alternative).ok())
-                .collect();
-            match outcome(case, &intent) {
-                Ok(made) if wanted.contains(&made) => Ok(()),
-                Ok(made) => Err(format!(
-                    "made\n    {}\n  wanted\n    {}",
-                    made.join("\n    "),
-                    wanted.first().map(|w| w.join("\n    ")).unwrap_or_default()
-                )),
-                Err(error) => Err(error.to_string()),
+    let document = |value: Value| {
+        parse(&value.to_string()).map_err(|error| format!("invalid document: {error}"))
+    };
+    let intent = intent.map(document).transpose()?;
+    let alternatives: Vec<Intent> = alternatives
+        .into_iter()
+        .map(document)
+        .collect::<Result<_, _>>()?;
+    match (case.options, intent) {
+        (None, _) if !alternatives.is_empty() => Err(format!(
+            "offered {} options, none asked for",
+            alternatives.len() + 1
+        )),
+        (Some(_), None) => Err(format!("nothing proposed: {reply}")),
+        (Some((least, most)), Some(first)) => {
+            let options: Vec<Intent> = std::iter::once(first).chain(alternatives).collect();
+            if !(least..=most).contains(&options.len()) {
+                return Err(format!("{} options, not {least} to {most}", options.len()));
             }
+            let mut made = Vec::new();
+            for (index, option) in options.iter().enumerate() {
+                let drawing = wanted(case, option)
+                    .map_err(|error| format!("option {}: {error}", index + 1))?;
+                if made.contains(&drawing) {
+                    return Err(format!("option {} draws the same as another", index + 1));
+                }
+                made.push(drawing);
+            }
+            Ok(())
         }
-        (Expected::Drawing(_), None) => Err(format!("nothing proposed: {reply}")),
-        (Expected::Plan { wanted, .. }, Some(intent)) => {
-            if let Err(error) = outcome(case, &intent) {
-                return Err(error.to_string());
+        (None, intent) => match (&case.expected, intent) {
+            (Expected::Drawing(_) | Expected::Plan { .. }, Some(intent)) => {
+                wanted(case, &intent).map(drop)
             }
-            match wanted.missed(&intent, previous(case).as_ref()) {
-                None => Ok(()),
-                Some(missed) => Err(format!("the plan has {missed}")),
+            (Expected::Drawing(_) | Expected::Plan { .. }, None) => {
+                Err(format!("nothing proposed: {reply}"))
             }
-        }
-        (Expected::Plan { .. }, None) => Err(format!("nothing proposed: {reply}")),
-        (Expected::Nothing, None) => Ok(()),
-        (Expected::Nothing, Some(_)) => Err("proposed what cannot be done".to_owned()),
-        (Expected::Refused(_), intent) => {
-            // Refused by the engine, or seen to be impossible by the model:
-            // either way nothing is proposed, and the reply says why.
-            if let Some(intent) = intent
-                && !matches!(outcome(case, &intent), Err(RunError::Refused { .. }))
-            {
-                return Err("not refused".to_owned());
+            (Expected::Nothing, None) => Ok(()),
+            (Expected::Nothing, Some(_)) => Err("proposed what cannot be done".to_owned()),
+            (Expected::Refused(_), intent) => {
+                // Refused by the engine, or seen to be impossible by the model:
+                // either way nothing is proposed, and the reply says why.
+                if let Some(intent) = intent
+                    && !matches!(outcome(case, &intent), Err(RunError::Refused { .. }))
+                {
+                    return Err("not refused".to_owned());
+                }
+                let explained = recording["explanation"]["content"]
+                    .as_str()
+                    .and_then(|content| serde_json::from_str::<Value>(content).ok())
+                    .and_then(|content| content["reply"].as_str().map(str::to_owned));
+                match explained {
+                    Some(reply) if language(&reply) == case.language => Ok(()),
+                    Some(reply) => Err(format!("the explanation is not in its language: {reply}")),
+                    None => Err("the refusal is not explained".to_owned()),
+                }
             }
-            let explained = recording["explanation"]["content"]
-                .as_str()
-                .and_then(|content| serde_json::from_str::<Value>(content).ok())
-                .and_then(|content| content["reply"].as_str().map(str::to_owned));
-            match explained {
-                Some(reply) if language(&reply) == case.language => Ok(()),
-                Some(reply) => Err(format!("the explanation is not in its language: {reply}")),
-                None => Err("the refusal is not explained".to_owned()),
-            }
-        }
+        },
     }
 }
 

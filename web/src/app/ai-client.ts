@@ -75,6 +75,10 @@ export interface AiAnswer {
   readonly reply: string;
   /** The intent document, or null when the request is not one the operations can do. */
   readonly intent: unknown;
+  /** The other options, when the request asked for them and the plan holds them (#10). */
+  readonly alternatives: readonly unknown[];
+  /** The options the plan does not hold: how many, and the plan they need. */
+  readonly more?: { readonly count: number; readonly needs: PlanNeed };
   readonly allowance: Allowance;
 }
 
@@ -106,7 +110,13 @@ export interface AiClient {
   signOut(session: string): Promise<void>;
   deleteAccount(session: string): Promise<void>;
   interpret(session: string, request: AiRequest): Promise<AiAnswer>;
-  reportOutcome(session: string, request: number, outcome: "accepted" | "rejected"): Promise<void>;
+  /** What the user did with a proposal, and which option they accepted (0, the first). */
+  reportOutcome(
+    session: string,
+    request: number,
+    outcome: "accepted" | "rejected",
+    option?: number,
+  ): Promise<void>;
   /** Why the engine stopped the proposal of `request`, in the request's language (#261). */
   explain(session: string, request: number, reason: string): Promise<string>;
   /** Stripe Checkout's address for Pro, paid each `interval`. */
@@ -232,17 +242,25 @@ export function httpAiClient(service: URL, fetcher: typeof fetch = globalThis.fe
         request: number;
         reply: string;
         intent: unknown;
+        alternatives?: unknown[];
+        more?: { count: number; needs: PlanNeed };
         allowance: WireAllowance;
       };
       return {
         request: answer.request,
         reply: answer.reply,
         intent: answer.intent,
+        alternatives: answer.alternatives ?? [],
+        ...(answer.more ? { more: answer.more } : {}),
         allowance: allowanceOf(answer.allowance),
       };
     },
-    async reportOutcome(session, request, outcome) {
-      await call(`/v1/requests/${request}/outcome`, { method: "POST", session, body: { outcome } });
+    async reportOutcome(session, request, outcome, option = 0) {
+      await call(`/v1/requests/${request}/outcome`, {
+        method: "POST",
+        session,
+        body: { outcome, option },
+      });
     },
     async explain(session, request, reason) {
       const explained = (await call(`/v1/requests/${request}/explain`, {

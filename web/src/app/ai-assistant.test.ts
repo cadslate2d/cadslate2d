@@ -17,10 +17,13 @@ class FakeClient implements AiClient {
   links: string[] = [];
   asked: { session: string; request: AiRequest }[] = [];
   outcomes: [number, string][] = [];
+  /** The option each report named. */
+  options: number[] = [];
   answer: AiAnswer | AiError = {
     request: 1,
     reply: "A circle.",
     intent: CIRCLE,
+    alternatives: [],
     allowance: allowance(99),
   };
   signedOut = 0;
@@ -70,8 +73,14 @@ class FakeClient implements AiClient {
     if (this.answer instanceof AiError) throw this.answer;
     return this.answer;
   }
-  async reportOutcome(_session: string, request: number, outcome: "accepted" | "rejected") {
+  async reportOutcome(
+    _session: string,
+    request: number,
+    outcome: "accepted" | "rejected",
+    option?: number,
+  ) {
     this.outcomes.push([request, outcome]);
+    this.options.push(option ?? 0);
   }
   explained: [number, string][] = [];
   explanation: string | AiError = "Those lines are parallel, so they never meet.";
@@ -259,7 +268,13 @@ describe("the AI assistant (#260)", () => {
     assistant.reject();
     expect(host.rejected).toBe(1);
 
-    client.answer = { request: 3, reply: "A circle.", intent: CIRCLE, allowance: allowance(97) };
+    client.answer = {
+      request: 3,
+      reply: "A circle.",
+      intent: CIRCLE,
+      alternatives: [],
+      allowance: allowance(97),
+    };
     await assistant.ask("a circle");
     assistant.revise();
     expect(assistant.getSnapshot().revising).toBe("a circle");
@@ -267,6 +282,7 @@ describe("the AI assistant (#260)", () => {
       request: 4,
       reply: "A bigger one.",
       intent: CIRCLE,
+      alternatives: [],
       allowance: allowance(96),
     };
     await assistant.ask("make it bigger");
@@ -294,7 +310,13 @@ describe("the AI assistant (#260)", () => {
   test("a proposal the engine stops is dropped, and the AI says why (#261)", async () => {
     const { assistant, client, host } = await signedIn();
     host.stopped = "operation 0: FILLET refused: The lines are parallel";
-    client.answer = { request: 7, reply: "A fillet.", intent: CIRCLE, allowance: allowance(99) };
+    client.answer = {
+      request: 7,
+      reply: "A fillet.",
+      intent: CIRCLE,
+      alternatives: [],
+      allowance: allowance(99),
+    };
     await assistant.ask("fillet these");
     expect(host.rejected).toBe(1);
     expect(client.explained).toEqual([[7, "operation 0: FILLET refused: The lines are parallel"]]);
@@ -321,6 +343,7 @@ describe("the AI assistant (#260)", () => {
       request: 9,
       reply: "That is 3D: not possible.",
       intent: null,
+      alternatives: [],
       allowance: allowance(99),
     };
     await assistant.ask("extrude it");
@@ -423,5 +446,101 @@ describe("plans (#9, ADR-0002)", () => {
       kind: "invalid",
       message: "There is no subscription to manage.",
     });
+  });
+});
+
+describe("options (#10)", () => {
+  const circle = (radius: number) => ({
+    version: 1,
+    operations: [{ op: "circle", center: [0, 0], radius }],
+  });
+  const radiusOf = (intent: string) =>
+    (JSON.parse(intent) as { operations: { radius: number }[] }).operations[0]?.radius;
+
+  test("options are shown in turn, and the one accepted is reported", async () => {
+    const { assistant, client, host } = await signedIn();
+    client.answer = {
+      request: 9,
+      reply: "Three circles.",
+      intent: circle(10),
+      alternatives: [circle(20), circle(30)],
+      allowance: allowance(99),
+    };
+    await assistant.ask("three options for a circle");
+    expect(assistant.getSnapshot().proposal).toMatchObject({ request: 9, option: 0, options: 3 });
+    expect(host.proposed.map(radiusOf)).toEqual([10]);
+
+    assistant.showOption(1);
+    expect(assistant.getSnapshot().proposal).toMatchObject({ option: 1 });
+    // One option on the canvas at a time: the one before is taken off.
+    expect(host.rejected).toBe(1);
+    expect(host.proposed.map(radiusOf)).toEqual([10, 20]);
+    assistant.showOption(-2); // round, to the last
+    expect(assistant.getSnapshot().proposal?.option).toBe(2);
+    expect(host.proposed.map(radiusOf).at(-1)).toBe(30);
+
+    assistant.accept();
+    expect(host.accepted).toBe(1);
+    await Promise.resolve();
+    expect(client.outcomes.at(-1)).toEqual([9, "accepted"]);
+    expect(client.options.at(-1)).toBe(2);
+  });
+
+  test("a revision refines the option shown", async () => {
+    const { assistant, client } = await signedIn();
+    client.answer = {
+      request: 9,
+      reply: "Two circles.",
+      intent: circle(10),
+      alternatives: [circle(20)],
+      allowance: allowance(99),
+    };
+    await assistant.ask("two options for a circle");
+    assistant.showOption(1);
+    assistant.revise();
+    await assistant.ask("move it right");
+    expect(client.asked.at(-1)?.request.previous).toEqual({
+      prompt: "two options for a circle",
+      intent: circle(20),
+    });
+  });
+
+  test("on Free, one option and how many more Pro shows", async () => {
+    const { assistant, client } = await signedIn();
+    client.answer = {
+      request: 9,
+      reply: "Three circles.",
+      intent: circle(10),
+      alternatives: [],
+      more: { count: 2, needs: { plan: "pro", feature: "alternatives" } },
+      allowance: allowance(99),
+    };
+    await assistant.ask("three options for a circle");
+    expect(assistant.getSnapshot().proposal).toMatchObject({
+      option: 0,
+      options: 1,
+      more: { count: 2, needs: { plan: "pro" } },
+    });
+  });
+
+  test("an option the engine stops says why where it is shown, and cannot be accepted", async () => {
+    const { assistant, client, host } = await signedIn();
+    client.answer = {
+      request: 9,
+      reply: "Two circles.",
+      intent: circle(10),
+      alternatives: [circle(20)],
+      allowance: allowance(99),
+    };
+    await assistant.ask("two options");
+    host.stopped = "operation 0: the circle does not fit";
+    assistant.showOption(1);
+    expect(assistant.getSnapshot().proposal).toMatchObject({
+      option: 1,
+      error: "operation 0: the circle does not fit",
+    });
+    assistant.accept();
+    expect(host.accepted).toBe(0);
+    expect(client.explained).toEqual([]);
   });
 });
