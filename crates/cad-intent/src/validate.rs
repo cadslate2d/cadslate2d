@@ -354,6 +354,26 @@ impl Check {
             Operation::Polyline { points, closed } => {
                 self.points("points", points, if *closed { 3 } else { 2 })
             }
+            Operation::Spline { points } => self.points("points", points, 2),
+            Operation::Hatch {
+                inside,
+                targets,
+                pattern,
+                angle,
+                scale,
+            } => {
+                match (inside, targets) {
+                    (Some(inside), None) => self.point("inside", *inside)?,
+                    (None, Some(targets)) => self.targets("targets", targets)?,
+                    (Some(_), Some(_)) => {
+                        return Err(self.refuse("inside", Reason::Both("targets")));
+                    }
+                    (None, None) => return Err(self.refuse("inside", Reason::Missing)),
+                }
+                self.name("pattern", pattern)?;
+                self.number("angle", *angle)?;
+                self.positive("scale", *scale)
+            }
             Operation::Rectangle { corner, opposite } => {
                 self.distinct("opposite", *corner, *opposite)?;
                 let flat = LinearTolerance::DEFAULT;

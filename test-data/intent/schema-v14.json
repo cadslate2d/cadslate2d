@@ -390,6 +390,83 @@
         },
         {
           "additionalProperties": false,
+          "description": "A smooth curve through the points, in order: an interpolating\nspline, passing through every one exactly.",
+          "properties": {
+            "op": {
+              "const": "spline",
+              "type": "string"
+            },
+            "points": {
+              "items": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "points"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A filled region: `SOLID`, or a pattern by name (`ANSI31` for a cut\nsection, `EARTH` for ground, `BRICK`, `STEEL`, …) at an angle and a\nscale. The boundary is the smallest closed loop around\n`inside`, or every loop the `targets` make: one of the two.",
+          "properties": {
+            "angle": {
+              "default": 0.0,
+              "format": "double",
+              "type": "number"
+            },
+            "inside": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "op": {
+              "const": "hatch",
+              "type": "string"
+            },
+            "pattern": {
+              "default": "SOLID",
+              "type": "string"
+            },
+            "scale": {
+              "default": 1.0,
+              "format": "double",
+              "type": "number"
+            },
+            "targets": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Targets"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "op"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "A closed rectangle from two opposite corners.",
           "properties": {
             "corner": {

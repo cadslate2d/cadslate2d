@@ -789,6 +789,29 @@ pub fn describe(h: &Harness) -> Vec<String> {
                     n(d.value()),
                     n(d.layout(drawing.tables().dim_style(d.style)).text.height)
                 ),
+                // The points it passes through: the same curve, however asked.
+                Entity::Spline(s) if !s.fit.is_empty() => {
+                    let points: Vec<String> = s.fit.iter().map(|q| p(*q)).collect();
+                    format!("spline through {}", points.join(" "))
+                }
+                // How it is filled and the region it covers, whether its
+                // boundary was found from a point inside or from objects.
+                Entity::Hatch(h) => {
+                    let bounds = entity.bounds(drawing.tables());
+                    let (name, angle, scale) = match &h.style {
+                        cad_document::HatchStyle::Solid => ("SOLID".to_owned(), 0.0, 1.0),
+                        cad_document::HatchStyle::Pattern {
+                            name, angle, scale, ..
+                        } => (name.to_uppercase(), *angle, *scale),
+                    };
+                    format!(
+                        "hatch {name} angle {} scale {} over {} {}",
+                        degrees(angle),
+                        n(scale),
+                        p(bounds.min()),
+                        p(bounds.max()),
+                    )
+                }
                 other => format!("{other:?}"),
             };
             let properties = drawing.properties(id).unwrap_or_default();

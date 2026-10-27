@@ -61,9 +61,11 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 47] = [
+pub const COMMANDS: [&str; 49] = [
     "LINE",
     "PLINE",
+    "SPLINE",
+    "HATCH",
     "RECTANG",
     "CIRCLE",
     "ARC",
@@ -171,6 +173,41 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
             let mut steps: Vec<Step> = points.iter().map(|p| at(*p)).collect();
             steps.push(if *closed { keyword("Close") } else { enter() });
             ("PLINE", steps)
+        }
+        Operation::Spline { points } => {
+            let mut steps: Vec<Step> = points.iter().map(|p| at(*p)).collect();
+            steps.push(enter());
+            ("SPLINE", steps)
+        }
+        Operation::Hatch {
+            inside,
+            targets,
+            pattern,
+            angle,
+            scale,
+        } => {
+            // Each answer only where its prompt is: a pattern the table
+            // lacks leaves HATCH asking for one, and nothing more is typed
+            // into it — the refusal is the pattern's.
+            const PICK: &str = "Pick internal point";
+            let mut steps = vec![
+                keyword("Pattern"),
+                answer(Answer::Text(pattern.clone())),
+                when(PICK, Answer::Keyword("Angle")),
+                when("Specify angle", Answer::Angle(*angle)),
+                when(PICK, Answer::Keyword("SCale")),
+                when("Specify scale", Answer::Number(*scale)),
+            ];
+            match (inside, targets) {
+                (Some(inside), _) => steps.push(when(PICK, Answer::Point(point(*inside)))),
+                (None, Some(targets)) => {
+                    steps.push(when(PICK, Answer::Keyword("Select")));
+                    steps.push(Step::Select(targets.clone()));
+                    steps.push(when("Select boundary", Answer::Enter));
+                }
+                (None, None) => {}
+            }
+            ("HATCH", steps)
         }
         Operation::IsoLine { points } => {
             let mut steps: Vec<Step> = points.iter().map(|p| at(iso_point(*p))).collect();

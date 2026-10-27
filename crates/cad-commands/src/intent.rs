@@ -180,6 +180,10 @@ impl Session {
         let operation = compiled.operation;
         let command = compiled.command;
         let mut steps = compiled.steps.iter().peekable();
+        // "The selection" is what was selected when the operation began —
+        // what the last one made — even where a command clears it before
+        // asking for objects, as HATCH's Select does.
+        let before: Vec<EntityId> = self.selection().iter().collect();
         let selected: Vec<EntityId> = match steps.peek() {
             Some(Step::Select(targets)) => {
                 self.select_targets(operation, targets)?;
@@ -205,6 +209,12 @@ impl Session {
                 break;
             }
             match step {
+                Step::Select(Targets::Selection(_)) if self.selection().is_empty() => {
+                    if before.is_empty() {
+                        return Err(RunError::NothingSelected { operation });
+                    }
+                    self.select_only(&before);
+                }
                 Step::Select(targets) => {
                     self.select_targets(operation, targets)?;
                 }

@@ -972,3 +972,88 @@ fn a_floor_plan_by_intent_is_the_one_floorplan_draws() {
     );
     assert!(h.entities().is_empty());
 }
+
+/// A spline passes through every point it is given, in order (#345): the
+/// ogee of a spillway's crest, drawn through its surveyed points.
+#[test]
+fn a_spline_passes_through_its_points() {
+    let h = run(
+        r#"{"op": "spline", "points": [[0, 110], [2, 109.5], [5, 107.5], [8, 104.5], [12, 100], [16, 96], [20, 92]]}"#,
+    );
+    let entities = h.entities();
+    let [Entity::Spline(spline)] = entities.as_slice() else {
+        panic!("{entities:?}");
+    };
+    let wanted = [
+        (0.0, 110.0),
+        (2.0, 109.5),
+        (5.0, 107.5),
+        (8.0, 104.5),
+        (12.0, 100.0),
+        (16.0, 96.0),
+        (20.0, 92.0),
+    ];
+    assert_eq!(spline.fit, wanted.map(|(x, y)| Point2::new(x, y)).to_vec());
+    // The curve itself goes through each, at the parameter it was fitted
+    // at: the spline interpolates, it does not approximate.
+    let curve = spline.spline();
+    let parameters = cad_geometry::spline::fit_parameters(&spline.fit);
+    for (at, t) in spline.fit.iter().zip(parameters) {
+        let on = curve.point_at(t);
+        assert!(on.distance_to(*at) < 1e-9, "{at:?}: the curve is at {on:?}");
+    }
+}
+
+/// A hatch fills the loop around a point, or the loops of its targets,
+/// with the pattern, angle, and scale asked for (#345); a pattern the
+/// table does not have is refused, and nothing is drawn.
+#[test]
+fn a_hatch_fills_its_boundary_with_its_pattern() {
+    let h = run(r#"
+        {"op": "rectangle", "corner": [0, 0], "opposite": [100, 50]},
+        {"op": "hatch", "inside": [50, 25], "pattern": "ANSI31", "angle": 15, "scale": 2}
+    "#);
+    let entities = h.entities();
+    let Entity::Hatch(hatch) = &entities[1] else {
+        panic!("{entities:?}");
+    };
+    assert_eq!(hatch.loops.len(), 1);
+    match &hatch.style {
+        cad_document::HatchStyle::Pattern {
+            name, angle, scale, ..
+        } => {
+            assert_eq!(name, "ANSI31");
+            assert!((angle - 15f64.to_radians()).abs() < 1e-12);
+            assert_eq!(*scale, 2.0);
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // What was just drawn, as the targets: solid by default.
+    let h = run(r#"
+        {"op": "polyline", "points": [[0, 0], [40, 0], [40, 30], [0, 30]], "closed": true},
+        {"op": "hatch", "targets": "selection"}
+    "#);
+    let entities = h.entities();
+    let Entity::Hatch(hatch) = &entities[1] else {
+        panic!("{entities:?}");
+    };
+    assert_eq!(hatch.style, cad_document::HatchStyle::Solid);
+
+    let mut h = Harness::new();
+    let refused = document(
+        r#"
+        {"op": "rectangle", "corner": [0, 0], "opposite": [100, 50]},
+        {"op": "hatch", "inside": [50, 25], "pattern": "AR-CONC"}
+    "#,
+    );
+    match h.session.run_intent(&refused) {
+        Err(RunError::Refused {
+            operation: 1,
+            command: "HATCH",
+            reason,
+        }) => assert!(reason.contains("AR-CONC"), "{reason}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(h.prompt(), "Command:");
+}

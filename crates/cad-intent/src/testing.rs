@@ -82,6 +82,26 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         points(2).prop_map(|points| Operation::Line { points }),
         (points(3), any::<bool>())
             .prop_map(|(points, closed)| Operation::Polyline { points, closed }),
+        points(2).prop_map(|points| Operation::Spline { points }),
+        (
+            prop_oneof![point().prop_map(Ok), targets().prop_map(Err)],
+            prop_oneof![Just("SOLID"), Just("ANSI31"), Just("EARTH")],
+            angle(),
+            positive()
+        )
+            .prop_map(|(boundary, pattern, angle, scale)| {
+                let (inside, targets) = match boundary {
+                    Ok(inside) => (Some(inside), None),
+                    Err(targets) => (None, Some(targets)),
+                };
+                Operation::Hatch {
+                    inside,
+                    targets,
+                    pattern: pattern.to_owned(),
+                    angle,
+                    scale,
+                }
+            }),
         corners().prop_map(|(corner, opposite)| Operation::Rectangle { corner, opposite }),
         (point(), positive()).prop_map(|(center, radius)| Operation::Circle { center, radius }),
         three_distinct().prop_map(|(start, through, end)| Operation::Arc {

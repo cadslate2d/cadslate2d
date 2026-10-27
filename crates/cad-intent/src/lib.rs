@@ -27,7 +27,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 13;
+pub const VERSION: u32 = 14;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -38,8 +38,9 @@ pub const VERSION: u32 = 13;
 /// a brief's stair room and storey height (#331), version 11 the
 /// isometric operations (#336), version 12 `elevation` and a brief's
 /// `building` (#337); `building_section` (#338) came with it; version 13
-/// `part_views` (#339) and `title_block` (#340).
-pub const READS: [u32; 13] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+/// `part_views` (#339) and `title_block` (#340), version 14 `spline` and
+/// `hatch` (#345).
+pub const READS: [u32; 14] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -358,6 +359,27 @@ pub enum Operation {
         points: Vec<Point>,
         #[serde(default)]
         closed: bool,
+    },
+    /// A smooth curve through the points, in order: an interpolating
+    /// spline, passing through every one exactly.
+    Spline {
+        points: Vec<Point>,
+    },
+    /// A filled region: `SOLID`, or a pattern by name (`ANSI31` for a cut
+    /// section, `EARTH` for ground, `BRICK`, `STEEL`, …) at an angle and a
+    /// scale. The boundary is the smallest closed loop around
+    /// `inside`, or every loop the `targets` make: one of the two.
+    Hatch {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        inside: Option<Point>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        targets: Option<Targets>,
+        #[serde(default = "default_solid")]
+        pattern: String,
+        #[serde(default)]
+        angle: f64,
+        #[serde(default = "default_one")]
+        scale: f64,
     },
     /// A closed rectangle from two opposite corners.
     Rectangle {
@@ -958,6 +980,14 @@ fn default_true() -> bool {
     true
 }
 
+fn default_solid() -> String {
+    "SOLID".to_owned()
+}
+
+fn default_one() -> f64 {
+    1.0
+}
+
 fn default_full_turn() -> f64 {
     360.0
 }
@@ -968,6 +998,8 @@ impl Operation {
         match self {
             Self::Line { .. } => "line",
             Self::Polyline { .. } => "polyline",
+            Self::Spline { .. } => "spline",
+            Self::Hatch { .. } => "hatch",
             Self::Rectangle { .. } => "rectangle",
             Self::Circle { .. } => "circle",
             Self::Arc { .. } => "arc",
