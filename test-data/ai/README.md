@@ -34,7 +34,7 @@ Level 4 asks for the drawings ADR-0040 adds, each kind measured as it lands: iso
 - **In CI** the committed recordings are replayed: `scripts/check.sh` runs `ai-eval test-data/ai`, which prints the rate per level and language and fails on any miss, and `crates/cad-commands/src/tests/corpus.rs` holds the same and that the requests are current. Deterministic and free. The e2e stand-in service (`web/e2e/ai-fake.ts`) answers from the same recordings.
 - **Live, nightly**, the AI service's repository asks the model every request again and scores the night's answers with `ai-eval test-data/ai --recordings DIR`, the committed recordings as the baseline: a language whose rate falls more than 5 points below the baseline's is a regression (`REGRESSION_TOLERANCE`), reported there.
 
-| Level | Language | Baseline (2026-10-27, gpt-6-luna, intent version 13) |
+| Level | Language | Baseline (2026-10-27, intent version 13) |
 | --- | --- | --- |
 | l1 | en | 37/37 |
 | l1 | pt | 37/37 |

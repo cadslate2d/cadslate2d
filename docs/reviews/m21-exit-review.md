@@ -59,7 +59,7 @@ What M21 delivered:
 
 These match ADR-0038's measurements from the start of the milestone. Settling a whole drawing's worth of parts stays well within a frame, because only the parts an edit touches are solved.
 
-**The AI's second level.** The L2 corpus was asked of `gpt-6-luna` through the staging service at intent version 4, and scored by `ai-eval`:
+**The AI's second level.** The L2 corpus was asked of the model through the staging service at intent version 4, and scored by `ai-eval`:
 
 | Level | Language | Recorded (committed) | Live, 2026-10-25 (run 40244124789) |
 | --- | --- | --- | --- |
@@ -123,7 +123,7 @@ Every one is reachable from the menus: Parametric › Geometric Constraints, Dim
 
 Nothing new. M20's list stands:
 - production (its public address, and the Free allowance);
-- OpenAI's Zero Data Retention application.
+- the provider's zero-data-retention application.
 
 The nightly key has been set since 2026-10-25.
 

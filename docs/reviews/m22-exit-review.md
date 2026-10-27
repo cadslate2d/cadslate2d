@@ -122,7 +122,7 @@ Draw › Floor Plan... starts it. `menus.test.ts` runs its macro.
 
 ## What needs a person
 
-Nothing new. Production (its address, and the Free allowance) and OpenAI's Zero Data Retention application remain from M20.
+Nothing new. Production (its address, and the Free allowance) and the provider's zero-data-retention application remain from M20.
 
 ## What follows
 

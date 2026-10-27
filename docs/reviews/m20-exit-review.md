@@ -6,7 +6,7 @@
 
 What M20 delivered:
 - A model's output can only reach the drawing as a versioned, validated intent document (`cad-intent`). The document is compiled to registered commands, run through the one entry point typing uses, previewed on the canvas, and committed on Accept as one undo.
-- The service runs on Fly.io: accounts by emailed link, the model adapter (`gpt-6-luna`), metering against a monthly allowance, and records kept 30 days with drawing context never stored.
+- The service runs, hosted: accounts by emailed link, the model adapter, metering against a monthly allowance, and records kept 30 days with drawing context never stored.
 - The AI panel sits beside Layers and Properties. It sends drawing context only after the user agrees to that request, and lets the user accept, revise, or reject each proposal. Without the service the panel says why, and drafting is untouched.
 - A corpus of 70 requests in English and Portuguese, each with the drawing it should make, is replayed from recordings in `make check`. The same corpus is asked of the model live: 70 of 70 passed on both live runs.
 
@@ -29,14 +29,14 @@ It runs in CI against the tests' stand-in service (`web/e2e/ai-fake.ts`), which 
 | --- | --- | --- |
 | An ADR amends DESIGN §3, §4, §43, §44, §45, and the deployment rule, without touching drafting being free, local, and account-free | #252 | [ADR-0037](../adr/0037-ai-input-method.md), accepted 2026-10-21; the amendments in DESIGN |
 | A model's output becomes a drawing only through a validated IR compiled to registered commands, previewed, committed on Accept as one undo | #253, #254 | `cad-intent` (26 operations, `COMMANDS` the allowlist with no file, host, or settings command, the schema snapshot `test-data/intent/schema-v1.json`, the `intent_parse` fuzz target); `Session::run_intent` tests in `crates/cad-commands/src/tests/intent.rs`; `Session::propose` tests in `tests/proposal.rs` — the preview leaves the revision unchanged, Accept is one undo |
-| The service runs, in its own repository: accounts, the model adapter, metering, what it keeps | service #1–#5 | The service's `tests/http.rs` (20 tests against Postgres) and `tests/model.rs` (7); its ADR-0001 (Fly.io); staging at `cadslate2d-ai-staging.fly.dev`; the privacy page at `/privacy` |
+| The service runs, in its own repository: accounts, the model adapter, metering, what it keeps | service #1–#5 | The service's `tests/http.rs` (20 tests against Postgres) and `tests/model.rs` (7); its ADR-0001; a staging deployment; the privacy page at `/privacy` |
 | The AI panel drives AI commands on the drawing and the selection, in any language, with per-request consent for context | #260, #261 | `web/src/app/ai-assistant.test.ts` (11 tests); `web/e2e/ai-panel.spec.ts` (8 tests, among them *a creation lands in the drawing as the model proposed it*, *an edit of the selection, by the IDs the context gave out*, *what the engine refuses is explained*, *drawing context is sent only when the user agrees*); the corpus in two languages |
-| CI replays recorded responses; a nightly live evaluation reports success rates | #261, #262, service #12 | `scripts/check.sh` runs `ai-eval test-data/ai` (every case must pass); `crates/cad-commands/src/tests/corpus.rs`; the service's `.github/workflows/nightly-eval.yml` and `scripts/nightly-eval.sh` — waiting on its `OPENAI_API_KEY` secret, see below |
+| CI replays recorded responses; a nightly live evaluation reports success rates | #261, #262, service #12 | `scripts/check.sh` runs `ai-eval test-data/ai` (every case must pass); `crates/cad-commands/src/tests/corpus.rs`; the service's `.github/workflows/nightly-eval.yml` and `scripts/nightly-eval.sh` — waiting on its provider key, see below |
 | A scenario and a review | #263 | `web/e2e/m20-scenario.spec.ts`; this review |
 
 ## Measurements
 
-**The live evaluation**: the L1 corpus asked of `gpt-6-luna` through the staging service's adapter and instructions, then scored by `ai-eval` against the committed recordings as the baseline. This is the baseline the nightly job compares with:
+**The live evaluation**: the L1 corpus asked of the model through the staging service's adapter and instructions, then scored by `ai-eval` against the committed recordings as the baseline. This is the baseline the nightly job compares with:
 
 | Level | Language | Recorded (committed) | Live, 2026-10-24 (first) | Live, 2026-10-24 (second) |
 | --- | --- | --- | --- | --- |
@@ -49,7 +49,7 @@ A case passes only when:
 - a refusal is refused, or seen to be impossible, and explained;
 - the reply is in the request's language.
 
-**Cost per request:** the second live run of all 70 requests cost **$0.0070**, about **$0.00010 per request**. That counts every attempt and every explanation, at `gpt-6-luna`'s Standard prices ($0.10 per million input tokens, $0.01 cached, $0.50 output). 226,912 input tokens were spent, 225,884 of them served from the provider's cache because the instructions and schema lead every request; 9,277 were output. With the cache cold, a request costs about $0.00034 (the service's ADR-0001). The Free plan's 100 actions a month therefore cost at most about 3 cents an account.
+**Cost per request:** measured in the service's repository, where the service's business terms are kept.
 
 **Latency:** measured by the recorder for each request, eight at a time from the staging machine. It covers every attempt and, for a refusal, the explanation:
 
@@ -75,8 +75,8 @@ The service adds little of its own:
 - **The service is private and elsewhere; the app does not need it.**
   - The address is a build setting (`VITE_AI_SERVICE_URL`); a build without one has no AI.
   - This repository's tests never reach the service: the e2e suite answers from a stand-in that follows its routes (the user's choice, option 1).
-- **Hosting:** the user chose Fly.io. Postgres is Fly's managed Postgres, and email goes through Resend from `sign-in@cadslate2d.com`.
-- **The model:** `gpt-6-luna` (the user's choice), with structured output shaped by the intent schema. An invalid document is sent back once with the reasons, then reported, never applied. The provider is asked not to store completions.
+- **Hosting, mail, and the model** are the user's choices, recorded in the service's repository.
+- **The model** answers with structured output shaped by the intent schema. An invalid document is sent back once with the reasons, then reported, never applied. The provider is asked not to store completions.
 - **Consent per request.** Selected objects are described as the Properties panel describes them, with polylines' vertices, and only after the user sees the list and agrees. Without a selection a request goes alone. The service has no column for context.
 - **Free allowance: 100 actions a month.** This was my default, not a decision the user made; it is a setting (`ALLOWANCES`) and is open to change.
 - **A revision goes with the proposal it refines** (its request and document), and the answer replaces it.
@@ -95,9 +95,9 @@ The service adds little of its own:
 
 ## What needs a person
 
-- **The nightly job's provider key.** `.github/workflows/nightly-eval.yml` in the service repository needs the secret `OPENAI_API_KEY`. A key of its own with a spending limit is best; a night costs about a cent. Until it is set the job fails at its first step and says why. Service #12 stays open until its first night has reported.
-- **Production.** The production app (`deploy/fly.production.toml`) needs the app's public address for its allowed origin and its sign-in links, and a decision on the Free allowance.
-- **OpenAI's Zero Data Retention** is an application only the account holder can make. Until then completions are sent with `store: false`.
+- **The nightly job's provider key.** `.github/workflows/nightly-eval.yml` in the service repository needs the model provider's key as a secret. A key of its own with a spending limit is best. Until it is set the job fails at its first step and says why. Service #12 stays open until its first night has reported.
+- **Production.** The production deployment needs the app's public address for its allowed origin and its sign-in links, and a decision on the Free allowance.
+- **The provider's zero-data-retention option** is an application only the account holder can make. Until then completions are sent with `store: false`.
 
 ## What follows
 
