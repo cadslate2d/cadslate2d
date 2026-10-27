@@ -386,7 +386,7 @@ Read [`AGENTS.md`](AGENTS.md) first. It holds the architecture rules, engineerin
 
 ## License
 
-CadSlate2D is free software under the **GNU Affero General Public License, version 3 or later** ([`LICENSE`](LICENSE); [ADR-0035](docs/adr/0035-licence.md)). You may use, study, change, and share it. If you serve a modified version to others over a network, you must offer them its source (AGPL §13). The name is not part of the licence: see the trademark policy once it exists (#293).
+CadSlate2D is free software under the **GNU Affero General Public License, version 3 or later** ([`LICENSE`](LICENSE); [ADR-0035](docs/adr/0035-licence.md)). You may use, study, change, and share it. If you serve a modified version to others over a network, you must offer them its source (AGPL §13). The name and the logo are not part of the licence: a modified version needs a name of its own ([`TRADEMARKS.md`](TRADEMARKS.md)).
 
 What the build contains from others, and under what terms, is in [`docs/provenance.md`](docs/provenance.md) and the third-party notices the build ships. The hosted AI service planned for the application is a separate work, kept in a private repository.
 
