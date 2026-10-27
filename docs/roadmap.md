@@ -36,8 +36,23 @@ Filed on 2026-10-18 and 2026-10-19. M21 and M22 are done; what remains is the se
 
 | Milestone | What | Epic |
 | --- | --- | --- |
+| M24 — General-Purpose Drawings | Isometric drafting, building elevations and sections from a floor plan, mechanical views of a part, and title blocks: 2D views drawn by generators from descriptions, nothing 3D kept ([ADR-0040](adr/0040-general-purpose-drawings.md)); by command and through the AI, at a new corpus level, L4. Staircases (#331) came first. | #330 |
 | M23 — AI Plans and Billing | In the service repository (Stripe, the plans' gates). The app's side: the way to Pro where a refusal names it (cadslate2d-ai-service#9), and its account view (#289). | — |
 | Open Source Release | The main repository public under a licence decided by ADR (§44), with a trademark, a contributor agreement, audited history, dependencies, and assets, and the service kept private. Done before the repository goes public; independent of the milestones above. | #291 |
+
+## M24, General-Purpose Drawings
+
+The maintainer's ask of 2026-10-26: façades, cross sections, and isometrics for architecture and mechanical engineering — general purpose, within DESIGN §4's 2D. The epic is #330.
+
+### Order of work
+
+1. **The ADR** (#335): [ADR-0040](adr/0040-general-purpose-drawings.md) — each kind a generator from a description, the line against a 3D model, the IR's operations, and L4.
+2. **Isometric drafting** (#336): the isometric snap and grid, `ISOPLANE`, isocircles, text on the planes.
+3. **Elevations** (#337): a drawn plan's façades, from its brief and heights.
+4. **Building sections** (#338): a cut across a drawn plan, the stair in section.
+5. **Mechanical views** (#339): front, top, side, and a section of a prism or a turned part.
+6. **Title blocks** (#340): a sheet's border and block, on a layout or in the model.
+7. **The exit** (#341): `web/e2e/m24-scenario.spec.ts` and the review.
 
 ## M22, Floor-Plan Generator
 
