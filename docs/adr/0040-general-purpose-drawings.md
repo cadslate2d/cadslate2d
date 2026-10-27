@@ -1,6 +1,6 @@
 # ADR-0040: General-purpose drawings are 2D views generated from descriptions; no general-purpose 3D model is kept
 
-**Status:** Proposed (2026-10-27), revised the same day after the maintainer's review, which approved the direction and asked for four changes:
+**Status:** Accepted (2026-10-27, by the maintainer, who answered the revision with "proceed"). Proposed the same day, and revised after the maintainer's review, which approved the direction and asked for four changes:
 - the line against a 3D model stated precisely (§2);
 - the isometric convention checked (§3);
 - the features each generator supports stated, and the rest refused (§4);

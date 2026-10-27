@@ -29,7 +29,7 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M20 — AI Foundations | Complete and closed ([review](reviews/m20-exit-review.md)): natural language as an optional input method (ADR-0037) — the intent IR, proposals, the AI panel, AI commands, and a corpus replayed in CI and asked live nightly; the service in its own private repository. Its nightly job's key and production need a person. |
 | M21 — Constraints and Constrained Generation | Complete and closed ([review](reviews/m21-exit-review.md)): geometric and dimensional constraints kept in the drawing and settled on every edit by a solver of our own (ADR-0038), shown on the canvas and round-tripped through DXF; parts and placements as constrained commands; the AI's second level, parametric edits through a part's parameters. |
 | M22 — Floor-Plan Generator | Complete and closed ([review](reviews/m22-exit-review.md)): floor plans from a brief by a deterministic multi-start search (ADR-0039) — walls, doors, and labels as ordinary geometry; `FLOORPLAN` with alternatives; briefs and revisions through the AI. |
-| M24 — General-Purpose Drawings | Complete and closed ([review](reviews/m24-exit-review.md)): isometric drafting, a plan's elevations and sections, a part's orthographic and section views, title blocks, and staircases — 2D views drawn by generators from descriptions, nothing 3D kept ([ADR-0040](adr/0040-general-purpose-drawings.md), proposed); by command and through the AI, at a new corpus level, L4. |
+| M24 — General-Purpose Drawings | Complete and closed ([review](reviews/m24-exit-review.md)): isometric drafting, a plan's elevations and sections, a part's orthographic and section views, title blocks, and staircases — 2D views drawn by generators from descriptions, nothing 3D kept ([ADR-0040](adr/0040-general-purpose-drawings.md), accepted); by command and through the AI, at a new corpus level, L4. |
 
 ## What is planned next
 
@@ -54,7 +54,7 @@ The maintainer's ask of 2026-10-26: façades, cross sections, and isometrics for
 6. **Title blocks** (#340): a sheet's border and block, on a layout or in the model.
 7. **The exit** (#341): `web/e2e/m24-scenario.spec.ts` and [the review](reviews/m24-exit-review.md).
 
-M24 is closed. ADR-0040 waits on the maintainer's acceptance.
+M24 is closed. ADR-0040 was accepted on 2026-10-27, after a review whose four changes are in it.
 
 ## M22, Floor-Plan Generator
 

@@ -3,7 +3,7 @@
 **Date:** 2026-10-27  
 **Scope:** the drawings beyond plans and parts that the maintainer asked for on 2026-10-26: façades, cross sections, and isometrics for architecture and mechanical engineering. They are to be drawn by command and through the AI, within DESIGN §4's 2D ([roadmap](../roadmap.md), epic #330, [ADR-0040](../adr/0040-general-purpose-drawings.md)).  
 **Outcome:** Every item is implemented and tested, by command and by request, in English and Portuguese. Three things need a person:
-- ADR-0040 is *proposed*; the maintainer accepts it here or asks for changes;
+- ADR-0040 was *proposed* here; the maintainer reviewed it, asked for four changes, and accepted it revised (below);
 - the elevations and sections are of one storey, as the plans are;
 - the corpus's recordings are of one run per instruction change.
 
@@ -101,5 +101,4 @@ The maintainer approved the direction and asked for four changes, all made the s
 
 ## For the maintainer
 
-- Accept ADR-0040, or say what to change.
 - Try a façade and a section of a plan of your own, and a part of your own: Draw › Building, and Draw › Orthographic Views.
