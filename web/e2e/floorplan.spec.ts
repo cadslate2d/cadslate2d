@@ -1,6 +1,7 @@
 // FLOORPLAN (#281, ADR-0039): a brief typed as JSON, or read from a spec
 // file, planned, previewed, and drawn as ordinary walls, doors, and labels
 // on their layers; the plans cycled; one undo; and Draw › Floor Plan....
+// STAIR (#331): a stair sized by Blondel's rule, alone or in a plan.
 import { expect, test } from "@playwright/test";
 import {
   chooseFile,
@@ -59,7 +60,7 @@ test("a brief as JSON is planned, the plans cycled, and one drawn as one undo", 
 
 test("a spec file is read as the brief, and the menu starts the command", async ({ page }) => {
   await openApp(page);
-  await chooseMenu(page, "Draw", "Floor Plan...");
+  await chooseMenu(page, "Draw", "Building", "Floor Plan...");
   await expect(prompt(page)).toHaveText("Specify terrain width or [Brief/File] <15>:");
   await chooseFile(page, () => enter(page, "F"), {
     name: "house.json",
@@ -74,7 +75,7 @@ test("a spec file is read as the brief, and the menu starts the command", async 
 
 test("a brief that cannot be built is refused with the reason", async ({ page }) => {
   await openApp(page);
-  await enter(page, "FLOORPLAN", "8", "8", "living", "40", "bedroom", "30", "", "", "", "");
+  await enter(page, "FLOORPLAN", "8", "8", "living", "40", "bedroom", "30", "", "", "", "", "");
   await expect(logLines(page).last()).toContainText(
     "This cannot be built: The rooms need at least 66.5 m²",
   );
@@ -101,7 +102,7 @@ test("a plan with windows: the width typed at its prompt", async ({ page }) => {
   await expect(prompt(page)).toHaveText(
     "Specify the windows' width, or press Enter for no windows:",
   );
-  await enter(page, "1.5", "", "");
+  await enter(page, "1.5", "", "", "");
   await expect(logLines(page).last()).toContainText("Plan 1 drawn: 3 rooms");
   const glass = await onLayer(page, "WINDOW");
   expect(glass.length).toBeGreaterThanOrEqual(6);
@@ -131,4 +132,36 @@ test("WINDOW opens a wall of a drawn plan", async ({ page }) => {
   await enter(page, "U");
   expect((await onLayer(page, "WINDOW")).length).toBe(0);
   expect((await onLayer(page, "WALL-EXT")).length).toBe(before);
+});
+
+// #331: a stair by itself, from Draw › Building › Stair..., and one in the
+// room a brief gives it.
+test("STAIR draws a stair sized by Blondel's rule as one undo", async ({ page }) => {
+  await openApp(page);
+  await chooseMenu(page, "Draw", "Building", "Stair...");
+  await expect(prompt(page)).toHaveText("Specify floor-to-floor height <2.8>:");
+  await enter(page, "", "1", "U", "Plan", "0,0", "");
+  await expect(logLines(page).last()).toHaveText(
+    "16 risers of 17.5 cm and 15 treads of 28.0 cm: two risers and a tread, 63.0 cm.",
+  );
+  const stair = await onLayer(page, "STAIR");
+  expect(stair.filter((e) => e.type === "LINE").length).toBeGreaterThan(10);
+  expect(stair.map((e) => group(e, 1))).toContain("16 R × 17.5 / T 28.0");
+  await enter(page, "U");
+  expect(await onLayer(page, "STAIR")).toHaveLength(0);
+});
+
+test("a brief's stair room is made for its stair and has it drawn", async ({ page }) => {
+  await openApp(page);
+  const brief = {
+    ...BRIEF,
+    rooms: [...BRIEF.rooms, { name: "hall", area: 12, stair: true }],
+    adjacent: [...BRIEF.adjacent, ["hall", "living room"]],
+  };
+  await enter(page, "FLOORPLAN", "B", JSON.stringify(brief), "", "");
+  await expect(logLines(page).last()).toContainText("Plan 1 drawn: 5 rooms");
+  await expect(logLines(page).last()).not.toContainText("No stair");
+  const stair = await onLayer(page, "STAIR");
+  expect(stair.length).toBeGreaterThan(15);
+  expect(stair.map((e) => group(e, 1))).toContain("16 R × 17.5 / T 28.0");
 });

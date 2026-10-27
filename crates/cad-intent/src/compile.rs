@@ -4,7 +4,10 @@
 
 use cad_core::Point2;
 
-use crate::{Color, Intent, Measure, Operation, Orientation, Pick, Relation, Targets, point};
+use crate::{
+    Color, Intent, Measure, Operation, Orientation, Pick, Relation, StairKind, StairView, Targets,
+    point,
+};
 
 /// One answer to a prompt. Lengths and points are in the document's
 /// units; the runner converts them to the drawing's and formats them.
@@ -58,7 +61,7 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 41] = [
+pub const COMMANDS: [&str; 42] = [
     "LINE",
     "PLINE",
     "RECTANG",
@@ -100,6 +103,7 @@ pub const COMMANDS: [&str; 41] = [
     "FLOORPLAN",
     "ERASE",
     "MEMBERS",
+    "STAIR",
 ];
 
 /// Compiles every operation of a validated document, in order.
@@ -668,6 +672,36 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
             }
             steps.push(keyword("Accept"));
             ("FLOORPLAN", steps)
+        }
+        Operation::Stair {
+            height,
+            width,
+            kind,
+            newel,
+            view,
+            at: foot,
+            direction,
+        } => {
+            let mut steps = vec![
+                length(*height),
+                length(*width),
+                keyword(match kind {
+                    StairKind::Straight => "Straight",
+                    StairKind::L => "L",
+                    StairKind::U => "U",
+                    StairKind::Helical => "Helical",
+                }),
+            ];
+            if *kind == StairKind::Helical {
+                steps.push(newel.map_or_else(enter, length));
+            }
+            steps.push(keyword(match view {
+                StairView::Plan => "Plan",
+                StairView::Section => "Section",
+            }));
+            steps.push(at(*foot));
+            steps.push(answer(direction.map_or(Answer::Enter, Answer::Angle)));
+            ("STAIR", steps)
         }
         Operation::SetParameter { name, value } => (
             "-PARAMETERS",

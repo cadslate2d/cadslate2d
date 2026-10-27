@@ -5,16 +5,22 @@
 //! face an exterior wall and `WALL-INT` otherwise, cut where a door or a
 //! window goes through and closed by its jambs; each door's leaf and swing
 //! on `DOOR`; each window's glass on `WINDOW` (#324); each room's name and
-//! area centred in it on `ROOM-TEXT`. The layers are made if the drawing
+//! area centred in it on `ROOM-TEXT`; in a room the brief gives the stair
+//! to the floor above, the stair on `STAIR`, sized for the storey by
+//! Blondel's rule and put where it fits (#331), the room's label moved
+//! beside it. The layers — `STAIR` only for a stair — are made if the drawing
 //! has none of those names. Nothing is a wall or door object: the plan is
 //! edited with the normal tools (DESIGN §4).
 
-use cad_core::{EntityId, Point2};
+use cad_core::{Aabb, EntityId, Point2, Vec2};
 use cad_document::{
     ArcEntity, Drawing, Entity, Group, Justification, Layer, LayoutId, LineEntity, PolylineEntity,
     Properties, TextEntity, TransactionError,
 };
+use cad_geometry::stair::{self, Kind, Placement, Rule, Stair};
 use cad_layout::{Layout, Spec, doors, labels, walls, windows};
+
+use crate::stair::STAIRS;
 
 /// The layers a plan is drawn on.
 pub const EXTERIOR_WALLS: &str = "WALL-EXT";
@@ -22,10 +28,157 @@ pub const INTERIOR_WALLS: &str = "WALL-INT";
 pub const ROOM_TEXT: &str = "ROOM-TEXT";
 pub const DOORS: &str = "DOOR";
 pub const WINDOWS: &str = "WINDOW";
-pub const LAYERS: [&str; 5] = [EXTERIOR_WALLS, INTERIOR_WALLS, ROOM_TEXT, DOORS, WINDOWS];
+pub const LAYERS: [&str; 6] = [
+    EXTERIOR_WALLS,
+    INTERIOR_WALLS,
+    ROOM_TEXT,
+    DOORS,
+    WINDOWS,
+    STAIRS,
+];
+
+/// A plan's stair: this wide, straight where the room is long enough,
+/// else turning back on itself or a quarter.
+pub const STAIR_WIDTH: f64 = 0.9;
+const STAIR_KINDS: [Kind; 3] = [Kind::Straight, Kind::U, Kind::L];
+
+/// The stair a plan draws for its storey.
+pub fn plan_stair(spec: &Spec) -> Stair {
+    Stair {
+        kind: Kind::Straight,
+        height: spec.storey_height,
+        width: STAIR_WIDTH,
+        newel: 0.15,
+        rule: Rule::default(),
+    }
+}
+
+/// What a room needs, across and along, to hold the plan's stair: a stair
+/// turning back on itself and a door's width of passage beside it, for a
+/// doorway the stair keeps clear of; the stair and the floor at its foot.
+pub fn stair_room(spec: &Spec) -> Option<(f64, f64)> {
+    let u = Stair {
+        kind: Kind::U,
+        ..plan_stair(spec)
+    };
+    let b = u.footprint().ok()?;
+    Some((
+        b.max().x - b.min().x + spec.door,
+        b.max().y - b.min().y + stair::APPROACH,
+    ))
+}
+
+/// The brief as the search takes it: each room that holds the stair at
+/// least as wide and as long as [`stair_room`].
+pub fn searched(spec: &Spec) -> Spec {
+    let mut spec = spec.clone();
+    if let Some((across, along)) = stair_room(&spec) {
+        for room in spec.rooms.iter_mut().filter(|room| room.stair) {
+            room.min_width = room.min_width.max(across);
+            room.min_length = room.min_length.max(along);
+        }
+    }
+    spec
+}
+
+/// Each room the brief gives a stair, by index, and where its stair goes:
+/// against a corner, clear of the floor its doors swing over; `None` when
+/// none fits.
+pub fn stairs(spec: &Spec, layout: &Layout) -> Vec<(usize, Option<Placement>)> {
+    let doors = doors(spec, layout);
+    let stair = plan_stair(spec);
+    spec.rooms
+        .iter()
+        .enumerate()
+        .filter(|(_, room)| room.stair)
+        .map(|(i, _)| {
+            let inner = layout.rooms[i].inner;
+            let room = Aabb::from_points(
+                Point2::new(inner.x, inner.y),
+                Point2::new(inner.right(), inner.top()),
+            );
+            let clear: Vec<Aabb> = doors
+                .iter()
+                .filter(|d| d.rooms.0 == i || d.rooms.1 == Some(i))
+                .map(|d| {
+                    // The doorway and a door's width either side of it.
+                    let along = d.to - d.from;
+                    let across = if along.x.abs() >= along.y.abs() {
+                        Vec2::new(0.0, spec.door)
+                    } else {
+                        Vec2::new(spec.door, 0.0)
+                    };
+                    Aabb::from_points(d.from - across, d.to + across)
+                })
+                .collect();
+            (i, stair::fit(&stair, &STAIR_KINDS, room, &clear))
+        })
+        .collect()
+}
+
+/// What a stair that fits nowhere would need, said: the rooms it leaves
+/// out and the floor a straight stair and a U take.
+pub fn stair_misfits(spec: &Spec, layout: &Layout) -> Option<String> {
+    let names: Vec<&str> = stairs(spec, layout)
+        .iter()
+        .filter(|(_, placed)| placed.is_none())
+        .map(|(i, _)| spec.rooms[*i].name.as_str())
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    let needs = |kind: Kind| {
+        Stair {
+            kind,
+            ..plan_stair(spec)
+        }
+        .footprint()
+        .map(|b| {
+            format!(
+                "{:.2} × {:.2} m",
+                b.max().x - b.min().x,
+                b.max().y - b.min().y + stair::APPROACH
+            )
+        })
+        .unwrap_or_default()
+    };
+    Some(format!(
+        "No stair fits in {}: a straight stair needs {} of floor, a U {}.",
+        names.join(", "),
+        needs(Kind::Straight),
+        needs(Kind::U)
+    ))
+}
+
+/// The largest part of `room` beside `taken`: where a room's label goes
+/// clear of its stair.
+fn beside(room: Aabb, taken: Aabb) -> Aabb {
+    let (r, t) = (room, taken);
+    let parts = [
+        Aabb::from_points(r.min(), Point2::new(t.min().x, r.max().y)),
+        Aabb::from_points(Point2::new(t.max().x, r.min().y), r.max()),
+        Aabb::from_points(r.min(), Point2::new(r.max().x, t.min().y)),
+        Aabb::from_points(Point2::new(r.min().x, t.max().y), r.max()),
+    ];
+    // The stair is inside the room, so each part is.
+    let area = |b: &Aabb| {
+        let d = b.max() - b.min();
+        d.x * d.y
+    };
+    parts
+        .iter()
+        .copied()
+        .max_by(|a, b| area(a).total_cmp(&area(b)))
+        .unwrap_or(room)
+}
 
 /// The labels' cap height, in metres.
 const LABEL_HEIGHT: f64 = 0.25;
+/// About how far a label's letter advances, in cap heights: what tells a
+/// label too wide for the floor it is on.
+const LABEL_ADVANCE: f64 = 0.85;
+/// The height of what a stair says of its risers and treads, in metres.
+const STAIR_TEXT: f64 = 0.1;
 
 /// A room's area as its label says it: `12.50 m²`.
 pub fn area_text(area: f64) -> String {
@@ -84,15 +237,70 @@ pub fn entities(spec: &Spec, layout: &Layout, origin: Point2, scale: f64) -> Vec
         }
     }
     let height = LABEL_HEIGHT * scale;
-    for label in labels(layout) {
+    let mut labels = labels(layout);
+    // A label turned a quarter, reading up, where it is too wide for the
+    // floor beside a stair.
+    let mut upright = vec![false; labels.len()];
+    let stair_drawn = plan_stair(spec);
+    for (i, placed) in stairs(spec, layout) {
+        let Some(placed) = placed else { continue };
+        let stair = Stair {
+            kind: placed.kind,
+            ..stair_drawn
+        };
+        let (Ok(mut laid), Ok(footprint), Ok(sizing)) =
+            (stair.plan(), stair.footprint(), stair.sizing())
+        else {
+            continue;
+        };
+        let (sin, cos) = placed.turn.sin_cos();
+        let turn =
+            |q: Point2| placed.foot + Vec2::new(q.x * cos - q.y * sin, q.x * sin + q.y * cos);
+        // The risers and treads written up the first flight, beside the
+        // walking line, rather than beside the stair.
+        laid.label.clear();
+        for entity in crate::stair::entities(&laid, at(placed.foot), placed.turn, scale) {
+            out.push((5, entity));
+        }
+        let along = turn(Point2::new(STAIR_WIDTH / 2.0 - 0.04, 0.15));
+        out.push((
+            5,
+            TextEntity::new(
+                at(along),
+                STAIR_TEXT * scale,
+                placed.turn + std::f64::consts::FRAC_PI_2,
+                sizing.words(),
+            )
+            .into(),
+        ));
+        let inner = layout.rooms[i].inner;
+        let room = Aabb::from_points(
+            Point2::new(inner.x, inner.y),
+            Point2::new(inner.right(), inner.top()),
+        );
+        let corners = footprint.corners().map(turn);
+        let part = beside(room, Aabb::from_points(corners[0], corners[2]));
+        labels[i].at = part.center();
+        let wide = labels[i]
+            .name
+            .chars()
+            .count()
+            .max(area_text(labels[i].area).chars().count()) as f64
+            * LABEL_ADVANCE
+            * LABEL_HEIGHT;
+        let (w, h) = (part.max().x - part.min().x, part.max().y - part.min().y);
+        upright[i] = w < wide && h > w;
+    }
+    for (label, upright) in labels.into_iter().zip(upright) {
         let middle = at(label.at);
+        // Down the label: its lines one under another.
+        let (down, rotation) = if upright {
+            (Vec2::new(height, 0.0), std::f64::consts::FRAC_PI_2)
+        } else {
+            (Vec2::new(0.0, -height), 0.0)
+        };
         for (text, below) in [(label.name.clone(), -0.25), (area_text(label.area), 1.25)] {
-            let mut entity = TextEntity::new(
-                Point2::new(middle.x, middle.y - below * height),
-                height,
-                0.0,
-                text,
-            );
+            let mut entity = TextEntity::new(middle + down * below, height, rotation, text);
             entity.justification = Justification::Center;
             out.push((2, entity.into()));
         }
@@ -137,15 +345,20 @@ pub fn draw(
         .map(|(_, group)| group.name.clone())
         .collect();
     let mut transaction = drawing.transaction().in_space(space);
+    let drawn = entities(spec, layout, origin, scale);
     let mut layer = [None; LAYERS.len()];
     for (i, name) in LAYERS.iter().enumerate() {
+        // The stair's layer only for a stair.
+        if name == &STAIRS && !drawn.iter().any(|(on, _)| *on == i) {
+            continue;
+        }
         layer[i] = Some(match found[i] {
             Some(id) => id,
             None => transaction.add_layer(Layer::named(*name))?,
         });
     }
     let mut made = Vec::new();
-    for (i, entity) in entities(spec, layout, origin, scale) {
+    for (i, entity) in drawn {
         let properties = Properties {
             layer: layer[i].expect("found or made"),
             ..Properties::default()
@@ -191,6 +404,7 @@ mod tests {
             door: 0.9,
             max_circulation: 0.15,
             windows: None,
+            storey_height: 2.8,
             seed: 0,
         }
     }

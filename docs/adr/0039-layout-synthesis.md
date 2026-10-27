@@ -35,23 +35,24 @@ DESIGN §4 rules out BIM: walls stay plain geometry on layers, never wall object
 - the search: `solve`, `alternatives`, and `alternatives_within` for a budget of one's own;
 - `verify`: an independent check of a plan against its brief.
 
-**The corpus** is `test-data/layout/briefs.jsonl`: 32 briefs, from a studio to a 24-room floor. Each says what should come of it:
-- **feasible** (24): a plan is made, and `verify` passes it. They include narrow, shallow, and set-back lots, strict minimum widths and aspect ratios, a chain of rooms in a row, and Portuguese room names.
+**The corpus** is `test-data/layout/briefs.jsonl`: 34 briefs, from a studio to a 24-room floor. Each says what should come of it:
+- **feasible** (25): a plan is made, and `verify` passes it. They include narrow, shallow, and set-back lots, strict minimum widths and aspect ratios, a room long enough for a stair, a chain of rooms in a row, and Portuguese room names.
 - **hard** (1): a hall that must open onto five rooms and the street within an aspect ratio of 2.5. Only one arrangement allows it. Either outcome is accepted, a verified plan or an exhausted search, but never an invalid plan or a claim that no plan exists.
-- **infeasible** (6): refused before any search, with the reason the brief expects:
+- **infeasible** (7): refused before any search, with the reason the brief expects:
   - too much floor for the land;
   - setbacks that leave nothing;
   - a 2 m² bath that must be 1.6 m wide both ways;
   - a 2.5 m² wc with too little wall for its six doors;
   - a 6 m hall on a 6 m lot;
-  - twelve rooms whose floor fits the land but not with a wall round each.
+  - twelve rooms whose floor fits the land but not with a wall round each;
+  - a 6 m² stair room that must be 1.8 m wide and 3.76 m long.
 - **exhausted** (1): 24 rooms that pass every bound checkable before a search, and that no search lays out.
 
 The corpus test, `crates/cad-layout/tests/briefs.rs`, holds every brief to its expectation in `make check`.
 
 ### Reliability from 100 starting seeds
 
-`cargo run --release -p cad-layout --example reliability` solves every brief from 100 starting seeds, far apart: seed s·1,000,003 for s = 0…99. Each `solve` is the whole procedure, every search of its budget. A run is *as expected* when it makes a plan that `verify` passes, or the expected refusal. Times are native, release, x86-64, on the development machine (2026-10-26).
+`cargo run --release -p cad-layout --example reliability` solves every brief from 100 starting seeds, far apart: seed s·1,000,003 for s = 0…99. Each `solve` is the whole procedure, every search of its budget. A run is *as expected* when it makes a plan that `verify` passes, or the expected refusal. Times are native, release, x86-64, on the development machine (2026-10-26; the two stair briefs, #331, 2026-10-27, the others unchanged within noise).
 
 | Brief | Rooms | Expected | As expected | p50 ms | p90 ms | max ms | With circulation | Largest circulation |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -80,15 +81,17 @@ The corpus test, `crates/cad-layout/tests/briefs.rs`, holds every brief to its e
 | garage | 6 | feasible | 100/100 | 11.7 | 12.3 | 22.3 | 0 | — |
 | six-equal | 6 | feasible | 100/100 | 11.8 | 12.2 | 14.4 | 0 | — |
 | casa | 6 | feasible | 100/100 | 11.8 | 12.3 | 12.6 | 0 | — |
+| stair-hall | 4 | feasible | 100/100 | 5.3 | 10.7 | 21.7 | 0 | — |
 | too-big | 2 | infeasible | 100/100 | 0.0 | 0.0 | 0.0 | — | — |
 | no-land | 1 | infeasible | 100/100 | 0.0 | 0.0 | 0.0 | — | — |
 | tiny-wide | 2 | infeasible | 100/100 | 0.0 | 0.0 | 0.0 | — | — |
 | crowded-wc | 6 | infeasible | 100/100 | 0.0 | 0.0 | 0.0 | — | — |
 | too-narrow-lot | 2 | infeasible | 100/100 | 0.0 | 0.0 | 0.0 | — | — |
 | walls-overflow | 12 | infeasible | 100/100 | 0.0 | 0.0 | 0.0 | — | — |
+| stair-too-small | 2 | infeasible | 100/100 | 0.0 | 0.0 | 0.0 | — | — |
 | crowded-24 | 24 | exhausted | 100/100 | 2,442 | 2,488 | 2,511 | — | — |
 
-**Altogether:** 3,171 of 3,200 runs as expected. Every miss is the hard brief's. Across all runs, p50 is 11.4 ms, p90 142 ms, and p99 2.46 s, the exhausted 24-room brief.
+**Altogether:** 3,371 of 3,400 runs as expected. Every miss is the hard brief's. Across all runs, p50 is 11.4 ms, p90 142 ms, and p99 2.46 s, the exhausted 24-room brief.
 
 **Without circulation** (`CIRCULATION=0`): every feasible brief but four is made 100 times in 100, as with it. The four are studio, shop, wide-rooms, and the hard hall, each 0/100. A slicing must fill its rectangle, so a 25 m² living room beside a 4 m² bath cannot keep both rooms' shapes without a space between them.
 
@@ -126,7 +129,8 @@ One JSON shape (`cad_layout::Spec`), in metres, for a spec file, for `FLOORPLAN`
 | --- | --- | --- |
 | `terrain` | `width` (along the front, x) and `depth` (y) of a rectangular plot; the front lies along the x axis from the origin | — |
 | `setbacks` | `front`, `back`, `left`, `right` | 0 |
-| `rooms` | `name`, `area` (the floor inside the walls), `min_width`, `max_aspect`, `exterior` (wants an outside wall), `entrance` (the way in) | `min_width` 1.5 m, `max_aspect` 2.5, the first room the entrance |
+| `rooms` | `name`, `area` (the floor inside the walls), `min_width`, `max_aspect`, `min_length` (its longer side at least this), `exterior` (wants an outside wall), `entrance` (the way in), `stair` (holds the stair to the floor above: `FLOORPLAN` makes the room at least as wide as a stair turning back on itself with a door's width of passage beside it, and as long as the stair and the floor at its foot; offers first the plans in which the stair fits clear of the doorways; and draws it, #331) | `min_width` 1.5 m, `max_aspect` 2.5, no `min_length`, the first room the entrance |
+| `storey_height` | the floor-to-floor height a stair climbs, sized by Blondel's rule | 2.8 m |
 | `adjacent` | pairs of room names that must share a wall with a door | none |
 | `exterior_wall`, `interior_wall` | thicknesses | 0.25 m, 0.15 m |
 | `door` | clear width of a door | 0.9 m |
@@ -149,7 +153,7 @@ The brief is checked before any search (`Spec::check`): sizes positive, names un
 **Hard**, each checked by the search with what it costs to break, and again by `verify`:
 1. inside the buildable area;
 2. every room's floor within **±5%** of its area;
-3. every room's narrower side at least its minimum width;
+3. every room's narrower side at least its minimum width, and its longer side at least its minimum length;
 4. its aspect at most its maximum;
 5. each `adjacent` pair sharing a wall long enough for a door;
 6. the entrance having one outside side long enough for one;
@@ -224,7 +228,8 @@ The **necessary conditions** behind `Infeasible` are proofs. Each allows the ±5
 4. Each room's 1.05·area is at least its minimum width squared.
 5. Each room's minimum width fits across the buildable area inside the walls.
 6. Each room's 0.95·area fits on the buildable area within its aspect ratio.
-7. Each room's longest possible perimeter holds a door's wall for each of its doors and the entrance's.
+7. A room with a minimum length: its 1.05·area is at least its minimum width by its length; the length fits along the buildable area inside the walls; and the length squared is at most its aspect ratio times its 1.05·area.
+8. Each room's longest possible perimeter holds a door's wall for each of its doors and the entrance's.
 
 A unit test holds each condition at its bound: a brief a millionth inside it is not refused by it, and one a millionth past it is. The AI and `FLOORPLAN` say a refusal as it is: "this cannot be built because…" only for `Infeasible`, and "no plan was found…" for `Exhausted`.
 
@@ -237,7 +242,7 @@ A unit test holds each condition at its bound: a brief a millionth inside it is 
 - areas at 4.9% and 5.1% either side;
 - a floor that forgets an exterior wall, or every wall;
 - an overlap, a gap, and a setback crossed, each by a millimetre;
-- a minimum width at the bound and a millimetre past it, and an aspect just past its bound;
+- a minimum width at the bound and a millimetre past it, a minimum length the same, and an aspect just past its bound;
 - an entrance whose only outside side is 1.2 m;
 - circulation exactly at its budget, 1% over it, and when forbidden.
 

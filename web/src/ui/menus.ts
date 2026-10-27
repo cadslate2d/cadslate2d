@@ -242,11 +242,14 @@ const DRAW: Menu = {
     command("Bou&ndary...", "BOUNDARY"),
     command("&Wipeout", "WIPEOUT"),
     SEPARATOR,
-    // A floor plan from a brief (#281, ADR-0039).
-    command("&Floor Plan...", "FLOORPLAN"),
-    // An opening through a drawn wall (#325).
-    command("W&indow", "WINDOW"),
-    command("D&oor", "DOOR"),
+    // Buildings: a floor plan from a brief (#281, ADR-0039), openings in
+    // a drawn wall (#325), a stair by Blondel's rule (#331).
+    cascade("Bu&ilding", [
+      command("&Floor Plan...", "FLOORPLAN"),
+      command("&Window", "WINDOW"),
+      command("&Door", "DOOR"),
+      command("&Stair...", "STAIR"),
+    ]),
     command("Re&vision Cloud", "REVCLOUD"),
     // Freehand (#326).
     command("S&ketch", "SKETCH"),

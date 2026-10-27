@@ -74,6 +74,7 @@ mod sketch;
 mod snapping;
 mod spline;
 mod splinedit;
+mod stair;
 mod stretch;
 mod style;
 mod text;

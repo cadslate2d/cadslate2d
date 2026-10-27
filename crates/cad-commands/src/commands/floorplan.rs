@@ -6,14 +6,15 @@
 //! accepted is drawn as one undo: ordinary walls, doors, and labels on
 //! their layers (`crate::floorplan`). A brief with no plan is refused with
 //! the reasons: proved impossible, or not found. Asked for a width, every
-//! room gets a window on each outside wall (#324).
+//! room gets a window on each outside wall (#324). A room named for the
+//! stair gets one, sized for the storey's height (#331).
 
 use cad_core::Point2;
 use cad_input::{ExpectedInput, Keyword};
 use cad_layout::{Layout, Refusal, Room, Setbacks, Spec, Terrain, alternatives};
 
 use super::ltscale::display;
-use crate::floorplan::{draw, entities};
+use crate::floorplan::{draw, entities, searched, stair_misfits, stair_room};
 use crate::{Command, CommandContext, CommandInput, HostRequest, OverlayItem, Prompt, Step};
 
 const BRIEF: Keyword = Keyword::new("Brief");
@@ -36,6 +37,10 @@ enum State {
     Pair,
     /// The windows' width, or Enter for none.
     Windows,
+    /// The room that holds the stair, or Enter for none.
+    StairRoom,
+    /// The floor-to-floor height the stair climbs.
+    StoreyHeight,
     /// The brief whole, as JSON.
     Brief,
     /// Where the terrain's lower left corner goes.
@@ -73,6 +78,7 @@ impl FloorPlanCommand {
                 door: 0.9,
                 max_circulation: 0.15,
                 windows: None,
+                storey_height: 2.8,
                 seed: 0,
             },
             origin: Point2::ORIGIN,
@@ -87,8 +93,11 @@ impl FloorPlanCommand {
 
     /// The plans for the brief, or what stopped them, said.
     fn plan(&mut self, ctx: &mut CommandContext<'_>) -> Step {
-        match alternatives(&self.spec, ALTERNATIVES) {
-            Ok(plans) => {
+        match alternatives(&searched(&self.spec), ALTERNATIVES) {
+            Ok(mut plans) => {
+                // The plans whose stair fits first: a doorway can leave a
+                // stair no place in one plan and not in another.
+                plans.sort_by_key(|plan| stair_misfits(&self.spec, plan).is_some());
                 ctx.message(format!(
                     "{} found. {}",
                     if plans.len() == 1 {
@@ -96,15 +105,23 @@ impl FloorPlanCommand {
                     } else {
                         format!("{} plans", plans.len())
                     },
-                    describe(&plans[0], 0, plans.len())
+                    describe(&self.spec, &plans[0], 0, plans.len())
                 ));
                 self.state = State::Choosing { plans, index: 0 };
                 Step::Continue
             }
             Err(refusal) => {
+                let stair = match stair_room(&self.spec) {
+                    Some((across, along)) if self.spec.rooms.iter().any(|r| r.stair) => {
+                        format!(" The room that holds the stair needs {across:.2} × {along:.2} m.")
+                    }
+                    _ => String::new(),
+                };
                 ctx.message(match &refusal {
-                    Refusal::Infeasible { .. } => format!("This cannot be built: {refusal}"),
-                    _ => refusal.to_string(),
+                    Refusal::Infeasible { .. } => {
+                        format!("This cannot be built: {refusal}{stair}")
+                    }
+                    _ => format!("{refusal}{stair}"),
                 });
                 Step::Finished
             }
@@ -112,13 +129,14 @@ impl FloorPlanCommand {
     }
 }
 
-/// What a plan is, in a line: its place among the plans, and the
-/// circulation it adds, if it adds any.
-fn describe(plan: &Layout, index: usize, of: usize) -> String {
+/// What a plan is, in a line: its place among the plans, the circulation
+/// it adds, if it adds any, and a stair it has no room for.
+fn describe(spec: &Spec, plan: &Layout, index: usize, of: usize) -> String {
     let circulation = plan.circulation.map_or(String::new(), |c| {
         format!(" It adds {:.2} m² of circulation.", plan.rooms[c].area())
     });
-    format!("Plan {} of {of}.{circulation}", index + 1)
+    let stair = stair_misfits(spec, plan).map_or(String::new(), |s| format!(" {s}"));
+    format!("Plan {} of {of}.{circulation}{stair}", index + 1)
 }
 
 impl Command for FloorPlanCommand {
@@ -144,6 +162,11 @@ impl Command for FloorPlanCommand {
             State::Windows => {
                 Prompt::new("Specify the windows' width, or press Enter for no windows")
             }
+            State::StairRoom => {
+                Prompt::new("Enter the room that holds the stair, or press Enter for none")
+            }
+            State::StoreyHeight => Prompt::new("Specify floor-to-floor height")
+                .with_default(display(self.spec.storey_height * self.scale)),
             State::Brief => Prompt::new("Enter the brief as JSON"),
             State::Corner => {
                 Prompt::new("Specify the terrain's lower left corner").with_default("0,0")
@@ -157,8 +180,10 @@ impl Command for FloorPlanCommand {
     fn expected(&self) -> ExpectedInput {
         match &self.state {
             State::Width => ExpectedInput::distance().with_keywords(&[BRIEF, FILE]),
-            State::Depth | State::Windows => ExpectedInput::distance(),
-            State::RoomName | State::Pair | State::Brief => ExpectedInput::text(),
+            State::Depth | State::Windows | State::StoreyHeight => ExpectedInput::distance(),
+            State::RoomName | State::Pair | State::StairRoom | State::Brief => {
+                ExpectedInput::text()
+            }
             State::RoomArea(_) => ExpectedInput::factor(),
             State::Corner => ExpectedInput::point(),
             State::Choosing { .. } => ExpectedInput::new(cad_input::InputKind::Nothing)
@@ -226,14 +251,39 @@ impl Command for FloorPlanCommand {
                 State::Pair
             }
             (State::Pair, CommandInput::Accept) => State::Windows,
-            (State::Windows, CommandInput::Accept) => State::Corner,
+            (State::Windows, CommandInput::Accept) => State::StairRoom,
             (State::Windows, CommandInput::Distance(width)) if width.is_finite() && width > 0.0 => {
                 self.spec.windows = Some(self.metres(width));
-                State::Corner
+                State::StairRoom
             }
             (State::Windows, CommandInput::Distance(_)) => {
                 ctx.message("A window's width must be greater than zero.");
                 State::Windows
+            }
+            (State::StairRoom, CommandInput::Accept) => State::Corner,
+            (State::StairRoom, CommandInput::Text(name)) => {
+                let name = name.trim();
+                match self.spec.rooms.iter_mut().find(|room| room.name == name) {
+                    Some(room) => {
+                        room.stair = true;
+                        State::StoreyHeight
+                    }
+                    None => {
+                        ctx.message(format!("No room of the brief is called {name}."));
+                        State::StairRoom
+                    }
+                }
+            }
+            (State::StoreyHeight, CommandInput::Accept) => State::Corner,
+            (State::StoreyHeight, CommandInput::Distance(height))
+                if height.is_finite() && height > 0.0 =>
+            {
+                self.spec.storey_height = self.metres(height);
+                State::Corner
+            }
+            (State::StoreyHeight, CommandInput::Distance(_)) => {
+                ctx.message("The storey's height must be greater than zero.");
+                State::StoreyHeight
             }
             (State::Brief, CommandInput::Text(text)) => match Spec::from_json(&text) {
                 Ok(spec) => {
@@ -260,7 +310,7 @@ impl Command for FloorPlanCommand {
                 } else {
                     (index + n - 1) % n
                 };
-                ctx.message(describe(&plans[index], index, n));
+                ctx.message(describe(&self.spec, &plans[index], index, n));
                 State::Choosing { plans, index }
             }
             (State::Choosing { plans, index }, CommandInput::Keyword(_) | CommandInput::Accept) => {
@@ -275,10 +325,11 @@ impl Command for FloorPlanCommand {
                     index as u32 + 1,
                 ) {
                     Ok(made) => ctx.message(format!(
-                        "Plan {} drawn: {} rooms, {} objects.",
+                        "Plan {} drawn: {} rooms, {} objects.{}",
                         index + 1,
                         plan.rooms.len(),
-                        made.len()
+                        made.len(),
+                        stair_misfits(&self.spec, plan).map_or(String::new(), |s| format!(" {s}"))
                     )),
                     Err(error) => ctx.message(error.to_string()),
                 }

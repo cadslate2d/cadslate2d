@@ -114,6 +114,7 @@ enum Violation {
     Area(usize),
     Narrow(usize, f64),
     Elongated(usize, f64),
+    Short(usize, f64),
     NotAdjacent(usize, usize, f64),
     Unreachable(usize),
     NoEntrance(f64),
@@ -257,6 +258,10 @@ impl<'a> Problem<'a> {
             if narrow < room.min_width - t.value() {
                 violations.push(Violation::Narrow(i, room.min_width - narrow));
             }
+            let long = floor.w.max(floor.h);
+            if long < room.min_length - t.value() {
+                violations.push(Violation::Short(i, room.min_length - long));
+            }
             let aspect = floor.aspect();
             if aspect > room.max_aspect + 1e-9 {
                 violations.push(Violation::Elongated(i, aspect - room.max_aspect));
@@ -339,7 +344,9 @@ impl<'a> Problem<'a> {
             .iter()
             .map(|v| match v {
                 Violation::TooDeep(d) | Violation::NoEntrance(d) => 1.0 + d,
-                Violation::Narrow(_, d) | Violation::Elongated(_, d) => 1.0 + d,
+                Violation::Narrow(_, d) | Violation::Elongated(_, d) | Violation::Short(_, d) => {
+                    1.0 + d
+                }
                 Violation::NotAdjacent(_, _, d) => 1.0 + d,
                 Violation::Area(_) | Violation::Unreachable(_) => 1.0,
             })
@@ -553,6 +560,11 @@ impl<'a> Problem<'a> {
                     "The {} could not be kept within its aspect ratio of {}.",
                     name(*i),
                     short(self.spec.rooms[*i].max_aspect)
+                ),
+                Violation::Short(i, _) => format!(
+                    "The {} could not be made {} m long.",
+                    name(*i),
+                    short(self.spec.rooms[*i].min_length)
                 ),
                 Violation::NotAdjacent(a, b, _) => format!(
                     "The {} and the {} could not share a wall long enough for a door.",
@@ -812,6 +824,39 @@ fn necessary(spec: &Spec, buildable: Rect) -> Vec<String> {
                 short(narrow)
             ));
             continue;
+        }
+        // A rectangle at least this long is at least as long as its
+        // area over its width, and at most as long as its aspect allows.
+        if room.min_length > 0.0 {
+            if most < room.min_width * room.min_length {
+                reasons.push(format!(
+                    "The {}'s {} m² cannot be {} m wide and {} m long.",
+                    room.name,
+                    short(room.area),
+                    short(room.min_width),
+                    short(room.min_length)
+                ));
+                continue;
+            }
+            if room.min_length > long {
+                reasons.push(format!(
+                    "The {} cannot be {} m long: the buildable area is {} m long inside its walls.",
+                    room.name,
+                    short(room.min_length),
+                    short(long)
+                ));
+                continue;
+            }
+            if room.min_length * room.min_length > room.max_aspect * most {
+                reasons.push(format!(
+                    "The {}'s {} m² cannot be {} m long within its aspect ratio of {}.",
+                    room.name,
+                    short(room.area),
+                    short(room.min_length),
+                    short(room.max_aspect)
+                ));
+                continue;
+            }
         }
         // The largest floor a rectangle of this aspect has inside the
         // outline's inside.

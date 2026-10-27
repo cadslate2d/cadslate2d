@@ -64,7 +64,9 @@ fn a_document_is_read_and_each_operation_compiles_to_its_command_and_answers() {
         {"op": "dim_aligned", "from": [0, 0], "to": [30, 40], "at": [10, 30]},
         {"op": "dim_radius", "target": {"id": 9}, "at": [40, 40]},
         {"op": "dim_diameter", "target": {"id": 9}, "at": [40, 40]},
-        {"op": "dim_angular", "vertex": [0, 0], "first": [10, 0], "second": [0, 10], "at": [5, 5]}
+        {"op": "dim_angular", "vertex": [0, 0], "first": [10, 0], "second": [0, 10], "at": [5, 5]},
+        {"op": "stair", "height": 2800, "width": 900, "at": [0, 0]},
+        {"op": "stair", "height": 3000, "width": 1200, "kind": "helical", "newel": 100, "view": "section", "at": [50, 0], "direction": 0}
         "#,
     );
     let intent = parse(&text).unwrap();
@@ -135,6 +137,11 @@ fn a_document_is_read_and_each_operation_compiles_to_its_command_and_answers() {
         ("DIMRADIUS", vec!["pick:9:None", "40,40"]),
         ("DIMDIAMETER", vec!["pick:9:None", "40,40"]),
         ("DIMANGULAR", vec!["", "0,0", "10,0", "0,10", "5,5"]),
+        ("STAIR", vec!["2800", "900", "Straight", "Plan", "0,0", ""]),
+        (
+            "STAIR",
+            vec!["3000", "1200", "Helical", "100", "Section", "50,0", "0"],
+        ),
     ];
     assert_eq!(got.len(), expected.len());
     for ((command, steps), (want_command, want_steps)) in got.iter().zip(&expected) {
@@ -281,6 +288,22 @@ fn what_is_refused_says_where_and_why() {
         "alternative",
         Reason::TooMany(3),
     );
+    // A stair: sized, and a newel only round which a helix turns (#331).
+    invalid(
+        r#"{"op": "stair", "height": 0, "width": 900, "at": [0, 0]}"#,
+        "height",
+        Reason::NotPositive,
+    );
+    invalid(
+        r#"{"op": "stair", "height": 2800, "width": 900, "kind": "u", "newel": 100, "at": [0, 0]}"#,
+        "newel",
+        Reason::Unwanted,
+    );
+    invalid(
+        r#"{"op": "floor_plan", "brief": {"terrain": {"width": 10, "depth": 20}, "rooms": [{"name": "a", "area": 10, "stair": true}], "storey_height": -3}}"#,
+        "brief.storey_height",
+        Reason::NotPositive,
+    );
     invalid(
         r#"{"op": "set_properties", "targets": [1]}"#,
         "layer",
@@ -304,9 +327,9 @@ fn what_is_refused_says_where_and_why() {
         IntentError::Json { .. }
     ));
     assert!(matches!(
-        parse(r#"{"version": 10, "operations": []}"#).unwrap_err(),
+        parse(r#"{"version": 11, "operations": []}"#).unwrap_err(),
         IntentError::Version {
-            found: 10,
+            found: 11,
             expected: VERSION
         }
     ));
@@ -350,7 +373,7 @@ fn what_is_refused_says_where_and_why() {
 fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../test-data/intent/schema-v9.json"
+        "/../../test-data/intent/schema-v10.json"
     );
     let generated = serde_json::to_string_pretty(&schema()).unwrap() + "\n";
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
@@ -362,7 +385,7 @@ fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
         "the schema changed: bump cad_intent::VERSION, re-record with UPDATE_SNAPSHOTS=1, and name the file after the new version"
     );
     assert!(generated.contains(r#""version""#));
-    assert_eq!(VERSION, 9);
+    assert_eq!(VERSION, 10);
 }
 
 proptest! {
@@ -407,6 +430,6 @@ fn the_selection_word_and_an_intent_serialise_as_the_document_says() {
     };
     assert_eq!(
         serde_json::to_string(&intent).unwrap(),
-        r#"{"version":9,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
+        r#"{"version":10,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
     );
 }

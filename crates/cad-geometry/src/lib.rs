@@ -32,6 +32,7 @@ mod polyline;
 mod segment;
 mod select;
 pub mod spline;
+pub mod stair;
 pub mod tangent;
 mod transform;
 mod trim;

@@ -121,6 +121,12 @@ pub fn verify(spec: &Spec, layout: &Layout) -> Vec<String> {
                 room.name, room.min_width
             ));
         }
+        if wide < room.min_length - t {
+            broken.push(format!(
+                "the {} is shorter than {} m",
+                room.name, room.min_length
+            ));
+        }
         if narrow <= 0.0 || wide > room.max_aspect * narrow + t {
             broken.push(format!("the {} is longer than its aspect ratio", room.name));
         }

@@ -23,6 +23,7 @@ fn brief(width: f64, depth: f64, rooms: &[(&str, f64)]) -> Spec {
         door: 0.9,
         max_circulation: 0.15,
         windows: None,
+        storey_height: 2.8,
         seed: 0,
     }
 }
@@ -160,6 +161,62 @@ fn each_necessary_condition_refuses_just_past_its_bound_and_not_inside_it() {
     let bound = 2.65 * 1.2 / 1.05;
     assert!(!refused_for(&hub_with(bound * past), "too little wall"));
     assert!(refused_for(&hub_with(bound * inside), "too little wall"));
+
+    // 8. A minimum length (#331): 105% of the area at least the width by
+    // the length, 1.5 × 4.
+    let long_room = |w: f64, d: f64, area: f64, length: f64| {
+        let mut spec = spec_of(w, d, &rooms(1, area));
+        spec.rooms[0].min_length = length;
+        spec
+    };
+    let bound = 1.5 * 4.0 / 1.05;
+    assert!(!refused_for(
+        &long_room(20.0, 20.0, bound * past, 4.0),
+        "m wide and"
+    ));
+    assert!(refused_for(
+        &long_room(20.0, 20.0, bound * inside, 4.0),
+        "m wide and"
+    ));
+    // 9. The length along the buildable area: 20 − 0.5 = 19.5 m.
+    let what = "m long: the buildable area is 19.5 m long";
+    assert!(!refused_for(
+        &long_room(20.0, 6.0, 40.0, 19.5 * inside),
+        what
+    ));
+    assert!(refused_for(&long_room(20.0, 6.0, 40.0, 19.5 * past), what));
+    // 10. The length within the aspect ratio: 5² ≤ 2.5 × 105% of the area.
+    let bound = 25.0 / (2.5 * 1.05);
+    let what = "m long within its aspect ratio";
+    assert!(!refused_for(
+        &long_room(20.0, 20.0, bound * past, 5.0),
+        what
+    ));
+    assert!(refused_for(
+        &long_room(20.0, 20.0, bound * inside, 5.0),
+        what
+    ));
+}
+
+#[test]
+fn a_room_given_a_minimum_length_is_laid_out_at_least_that_long() {
+    let mut spec = brief(
+        12.0,
+        15.0,
+        &[("living", 20.0), ("stair", 8.0), ("bath", 4.5)],
+    );
+    spec.rooms[0].entrance = true;
+    spec.rooms[1].min_width = 1.8;
+    spec.rooms[1].min_length = 3.8;
+    spec.adjacent = vec![
+        ["living".into(), "stair".into()],
+        ["living".into(), "bath".into()],
+    ];
+    let layout = solve(&spec).unwrap();
+    assert_eq!(verify(&spec, &layout), Vec::<String>::new());
+    let floor = layout.rooms[1].inner;
+    assert!(floor.w.max(floor.h) >= 3.8 - 1e-9, "{floor:?}");
+    assert!(floor.w.min(floor.h) >= 1.8 - 1e-9, "{floor:?}");
 }
 
 #[test]
@@ -491,6 +548,12 @@ fn widths_aspects_entrances_and_circulation_are_held_at_their_bounds() {
     assert_eq!(verify(&spec, &layout), Vec::<String>::new());
     spec.rooms[2].min_width = narrow + 0.001;
     assert!(breaks(&spec, &layout, "the r2 is narrower"));
+    let (mut spec, layout) = tee(2.0);
+    let floor = layout.rooms[2].inner;
+    spec.rooms[2].min_length = floor.w.max(floor.h);
+    assert_eq!(verify(&spec, &layout), Vec::<String>::new());
+    spec.rooms[2].min_length += 0.001;
+    assert!(breaks(&spec, &layout, "the r2 is shorter than"));
 
     let (mut spec, layout) = tee(1.2);
     let floor = layout.rooms[2].inner;

@@ -6,7 +6,7 @@ use proptest::prelude::*;
 use crate::validate::same_point;
 use crate::{
     Brief, BriefRoom, BriefTerrain, Color, Intent, Measure, MemberGroup, Operation, Orientation,
-    Pick, Point, Relation, SelectionWord, Targets, Unit, VERSION,
+    Pick, Point, Relation, SelectionWord, StairKind, StairView, Targets, Unit, VERSION,
 };
 
 fn differ(a: Point, b: Point) -> bool {
@@ -243,6 +243,7 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         placement(),
         constraint(),
         floor_plan(),
+        stair(),
         targets().prop_map(|targets| Operation::Erase { targets }),
         (
             proptest::collection::vec((targets(), 0.5f64..50.0), 1..4),
@@ -258,6 +259,36 @@ pub fn operation() -> impl Strategy<Value = Operation> {
     ]
 }
 
+/// A stair (#331): of any kind, in plan or section; many sizes are
+/// refused — a helix too tight for headroom, a newel wider than the
+/// stair — and the engine says why.
+fn stair() -> impl Strategy<Value = Operation> {
+    (
+        (0.5..6.0f64, 0.3..3.0f64),
+        prop_oneof![
+            Just(StairKind::Straight),
+            Just(StairKind::L),
+            Just(StairKind::U),
+            Just(StairKind::Helical),
+        ],
+        proptest::option::of(0.05..1.0f64),
+        prop_oneof![Just(StairView::Plan), Just(StairView::Section)],
+        point(),
+        proptest::option::of(-360.0..360.0f64),
+    )
+        .prop_map(
+            |((height, width), kind, newel, view, at, direction)| Operation::Stair {
+                height,
+                width,
+                kind,
+                newel: newel.filter(|_| kind == StairKind::Helical),
+                view,
+                at,
+                direction,
+            },
+        )
+}
+
 /// A floor plan (#282): a brief of one to six rooms on a plot, some of
 /// them side by side; many cannot be built, and the engine says why.
 fn floor_plan() -> impl Strategy<Value = Operation> {
@@ -269,10 +300,11 @@ fn floor_plan() -> impl Strategy<Value = Operation> {
         (
             proptest::option::of(1u32..=3),
             proptest::option::of(0.6..2.5f64),
+            (0..7usize, proptest::option::of(2.4..4.0f64)),
         ),
     )
         .prop_map(
-            |((width, depth), areas, pairs, at, (alternative, windows))| {
+            |((width, depth), areas, pairs, at, (alternative, windows, (stair, storey_height)))| {
                 let rooms: Vec<BriefRoom> = areas
                     .iter()
                     .enumerate()
@@ -283,6 +315,7 @@ fn floor_plan() -> impl Strategy<Value = Operation> {
                         max_aspect: None,
                         exterior: false,
                         entrance: false,
+                        stair: i == stair,
                     })
                     .collect();
                 let n = rooms.len();
@@ -300,6 +333,7 @@ fn floor_plan() -> impl Strategy<Value = Operation> {
                         adjacent,
                         max_circulation: None,
                         windows,
+                        storey_height,
                     },
                     at,
                     alternative,

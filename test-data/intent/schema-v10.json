@@ -40,6 +40,14 @@
             }
           ]
         },
+        "storey_height": {
+          "description": "The floor-to-floor height a room's stair climbs, metres; 2.8 when\nabsent.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
         "terrain": {
           "$ref": "#/$defs/BriefTerrain",
           "description": "The plot: `width` along its front (x), `depth` back from it (y)."
@@ -93,6 +101,10 @@
         },
         "name": {
           "type": "string"
+        },
+        "stair": {
+          "description": "It holds the stair to the floor above: made big enough for one and\nthe stair drawn in it.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -1818,6 +1830,62 @@
             "brief"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A stair sized by Blondel's rule (#331) — two risers and a tread\nmake 63 cm, risers at most 18 cm, treads at least 28 — climbing a\nfloor-to-floor `height`, `width` wide: in plan, its foot's middle\n`at` and climbing along `direction` (degrees, 90 when absent); in\nsection, its foot `at` on the floor below and running along\n`direction` (0 when absent). A helix turns round a newel of\n`newel`'s radius, 15 cm when absent; only a helix has one.",
+          "properties": {
+            "at": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "direction": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "height": {
+              "format": "double",
+              "type": "number"
+            },
+            "kind": {
+              "$ref": "#/$defs/StairKind",
+              "default": "straight"
+            },
+            "newel": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "op": {
+              "const": "stair",
+              "type": "string"
+            },
+            "view": {
+              "$ref": "#/$defs/StairView",
+              "default": "plan"
+            },
+            "width": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "op",
+            "height",
+            "width",
+            "at"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -1916,6 +1984,47 @@
         "selection"
       ],
       "type": "string"
+    },
+    "StairKind": {
+      "description": "A stair's kind (#331).",
+      "oneOf": [
+        {
+          "enum": [
+            "straight"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "l",
+          "description": "Turning a quarter to the left at a landing.",
+          "type": "string"
+        },
+        {
+          "const": "u",
+          "description": "Turning back to the left at a landing.",
+          "type": "string"
+        },
+        {
+          "const": "helical",
+          "description": "Round a newel, counter-clockwise going up.",
+          "type": "string"
+        }
+      ]
+    },
+    "StairView": {
+      "description": "How a stair is drawn.",
+      "oneOf": [
+        {
+          "const": "plan",
+          "description": "Seen from above, cut 1.2 m up.",
+          "type": "string"
+        },
+        {
+          "const": "section",
+          "description": "The profile of its risers and treads, the floors below and above.",
+          "type": "string"
+        }
+      ]
     },
     "Targets": {
       "anyOf": [

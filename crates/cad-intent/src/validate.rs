@@ -4,7 +4,7 @@ use std::fmt;
 
 use cad_core::tolerance::LinearTolerance;
 
-use crate::{Color, Intent, Measure, Operation, Pick, Point, Targets, VERSION, point};
+use crate::{Color, Intent, Measure, Operation, Pick, Point, StairKind, Targets, VERSION, point};
 
 /// Two points of a document are the same point when the drawing would
 /// treat them so (DESIGN §21).
@@ -800,6 +800,29 @@ impl Check {
                 self.name("name", name)?;
                 self.positive("value", *value)
             }
+            Operation::Stair {
+                height,
+                width,
+                kind,
+                newel,
+                at,
+                direction,
+                ..
+            } => {
+                self.positive("height", *height)?;
+                self.positive("width", *width)?;
+                if let Some(radius) = newel {
+                    if *kind != StairKind::Helical {
+                        return Err(self.refuse("newel", Reason::Unwanted));
+                    }
+                    self.positive("newel", *radius)?;
+                }
+                self.point("at", *at)?;
+                if let Some(angle) = direction {
+                    self.number("direction", *angle)?;
+                }
+                Ok(())
+            }
             Operation::FloorPlan {
                 brief,
                 at,
@@ -850,6 +873,9 @@ impl Check {
                 }
                 if let Some(width) = brief.windows {
                     self.positive("brief.windows", width)?;
+                }
+                if let Some(height) = brief.storey_height {
+                    self.positive("brief.storey_height", height)?;
                 }
                 if let Some(at) = at {
                     self.point("at", *at)?;

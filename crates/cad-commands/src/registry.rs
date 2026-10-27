@@ -29,8 +29,8 @@ use crate::commands::{
     PickStyleCommand, PlineCommand, PlotCommand, PointCommand, PolarAngleCommand, PolygonCommand,
     PspaceCommand, PtypeCommand, PurgeCommand, QdimCommand, QselectCommand, RayCommand,
     RectangCommand, RedoCommand, RenameCommand, RevCloudCommand, SLOT, SaveCommand, SelectCommand,
-    SettingsCommand, SketchCommand, SnapCommand, SplineCommand, SplineEditCommand, StretchCommand,
-    StyleCommand, TanArcCommand, TextCommand, TextEditCommand, TextToFrontCommand,
+    SettingsCommand, SketchCommand, SnapCommand, SplineCommand, SplineEditCommand, StairCommand,
+    StretchCommand, StyleCommand, TanArcCommand, TextCommand, TextEditCommand, TextToFrontCommand,
     TransformCommand, UndoCommand, UngroupCommand, UnitsCommand, ViewCommand, WBlockCommand,
     WipeoutCommand, XLineCommand, ZoomCommand,
 };
@@ -69,7 +69,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 169] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 170] = [
             ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
             ("RAY", &[], || Box::new(RayCommand::new())),
             ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
@@ -198,6 +198,7 @@ impl CommandRegistry {
             }),
             ("MEMBERS", &[], || Box::new(MembersCommand::new())),
             ("SKETCH", &[], || Box::new(SketchCommand::new())),
+            ("STAIR", &[], || Box::new(StairCommand::new())),
             ("DCLINEAR", &[], || {
                 Box::new(DimConstraintCommand::of(Form::Linear))
             }),

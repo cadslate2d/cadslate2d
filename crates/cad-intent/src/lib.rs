@@ -27,15 +27,16 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 9;
+pub const VERSION: u32 = 10;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
 /// the parts (#272), version 3 the placements (#273), version 4 the
 /// constraints and parameters (#274), version 5 floor plans (#282),
 /// version 6 their windows (#324), version 7 `erase` (#325), version 8
-/// `dim_scale` (#327), version 9 `members` (#329).
-pub const READS: [u32; 9] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+/// `dim_scale` (#327), version 9 `members` (#329), version 10 `stair` and
+/// a brief's stair room and storey height (#331).
+pub const READS: [u32; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -125,6 +126,33 @@ pub struct Pick {
 pub enum Orientation {
     Horizontal,
     Vertical,
+}
+
+/// A stair's kind (#331).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum StairKind {
+    #[default]
+    Straight,
+    /// Turning a quarter to the left at a landing.
+    L,
+    /// Turning back to the left at a landing.
+    U,
+    /// Round a newel, counter-clockwise going up.
+    Helical,
+}
+
+/// How a stair is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum StairView {
+    /// Seen from above, cut 1.2 m up.
+    #[default]
+    Plan,
+    /// The profile of its risers and treads, the floors below and above.
+    Section,
 }
 
 /// A geometric constraint's kind (ADR-0038).
@@ -575,6 +603,26 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         alternative: Option<u32>,
     },
+    /// A stair sized by Blondel's rule (#331) — two risers and a tread
+    /// make 63 cm, risers at most 18 cm, treads at least 28 — climbing a
+    /// floor-to-floor `height`, `width` wide: in plan, its foot's middle
+    /// `at` and climbing along `direction` (degrees, 90 when absent); in
+    /// section, its foot `at` on the floor below and running along
+    /// `direction` (0 when absent). A helix turns round a newel of
+    /// `newel`'s radius, 15 cm when absent; only a helix has one.
+    Stair {
+        height: f64,
+        width: f64,
+        #[serde(default)]
+        kind: StairKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        newel: Option<f64>,
+        #[serde(default)]
+        view: StairView,
+        at: Point,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        direction: Option<f64>,
+    },
 }
 
 /// A floor plan's brief (ADR-0039 §1), in metres: what `FLOORPLAN` reads.
@@ -599,6 +647,10 @@ pub struct Brief {
     /// room. Absent, only rooms that ask for an outside wall have one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub windows: Option<f64>,
+    /// The floor-to-floor height a room's stair climbs, metres; 2.8 when
+    /// absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storey_height: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -653,6 +705,10 @@ pub struct BriefRoom {
     /// The way in; the first room when none says so.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub entrance: bool,
+    /// It holds the stair to the floor above: made big enough for one and
+    /// the stair drawn in it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stair: bool,
 }
 
 fn default_true() -> bool {
@@ -711,6 +767,7 @@ impl Operation {
             Self::ConstrainDimension { .. } => "constrain_dimension",
             Self::SetParameter { .. } => "set_parameter",
             Self::FloorPlan { .. } => "floor_plan",
+            Self::Stair { .. } => "stair",
         }
     }
 }

@@ -7,6 +7,7 @@ use cad_document::Entity;
 use cad_layout::{Room, Setbacks, Spec, Terrain};
 
 use crate::floorplan::{DOORS, EXTERIOR_WALLS, INTERIOR_WALLS, ROOM_TEXT};
+use crate::stair::STAIRS;
 use crate::testing::Harness;
 use crate::{HostRequest, OverlayItem};
 
@@ -53,6 +54,7 @@ fn house() -> Spec {
         door: 0.9,
         max_circulation: 0.15,
         windows: None,
+        storey_height: 2.8,
         seed: 0,
     }
 }
@@ -99,6 +101,16 @@ fn a_brief_asked_for_is_planned_previewed_cycled_and_drawn_as_one_undo() {
     assert_eq!(
         h.log().last().unwrap(),
         "A window's width must be greater than zero."
+    );
+    h.enter("");
+    assert_eq!(
+        h.prompt(),
+        "Enter the room that holds the stair, or press Enter for none:"
+    );
+    h.enter("garage");
+    assert_eq!(
+        h.log().last().unwrap(),
+        "No room of the brief is called garage."
     );
     h.enter("");
     assert_eq!(h.prompt(), "Specify the terrain's lower left corner <0,0>:");
@@ -218,6 +230,7 @@ fn a_drawing_in_millimetres_takes_lengths_in_millimetres() {
         "1500",
         "",
         "",
+        "",
     ]);
     assert!(
         h.log().last().unwrap().starts_with("Plan 1 drawn"),
@@ -258,6 +271,7 @@ fn a_brief_with_no_plan_is_refused_as_impossible_or_as_not_found() {
         "40",
         "bedroom",
         "30",
+        "",
         "",
         "",
         "",
@@ -323,4 +337,117 @@ fn the_preview_is_the_plan_drawn() {
     previewed.sort_by_key(key);
     drawn.sort_by_key(key);
     assert_eq!(previewed, drawn);
+}
+
+/// The house with a hall that holds the stair (#331).
+fn house_with_a_stair() -> Spec {
+    let mut spec = house();
+    let mut hall = Room::new("hall", 12.0);
+    hall.stair = true;
+    spec.rooms.push(hall);
+    spec.adjacent.push(["hall".into(), "living room".into()]);
+    spec
+}
+
+#[test]
+fn a_room_given_the_stair_has_it_drawn_inside_it_as_part_of_the_one_undo() {
+    let spec = house_with_a_stair();
+    // The plan the search makes of the brief with the hall sized for a stair.
+    let plan = &cad_layout::alternatives(&crate::floorplan::searched(&spec), 3).unwrap()[0];
+    let inner = plan.rooms[4].inner;
+    let mut h = Harness::new();
+    h.enter_all(&["FLOORPLAN", "B", &spec.to_json(), "", ""]);
+    let said = h.log().last().unwrap().clone();
+    assert!(
+        said.starts_with("Plan 1 drawn") && !said.contains("No stair"),
+        "{said}"
+    );
+    // The storey of 2.8 m climbs in 16 risers, written up the first
+    // flight: square to the plan, in radians.
+    let said = h
+        .entities()
+        .into_iter()
+        .find_map(|e| match e {
+            Entity::Text(t) if t.content == "16 R × 17.5 / T 28.0" => Some(t),
+            _ => None,
+        })
+        .expect("the stair says its risers");
+    let quarters = said.rotation / std::f64::consts::FRAC_PI_2;
+    assert!((quarters - quarters.round()).abs() < 1e-9 && quarters.abs() <= 4.0);
+    assert!(on(&h, STAIRS) > 15, "{}", on(&h, STAIRS));
+    // Every point of the stair is inside the hall's walls.
+    let drawing = h.session.drawing();
+    let layer = drawing.layers().find(STAIRS).unwrap();
+    let points: Vec<Point2> = drawing
+        .entities()
+        .filter(|(e, _)| drawing.properties(*e).is_some_and(|p| p.layer == layer))
+        .flat_map(|(_, entity)| match entity {
+            Entity::Line(l) => vec![l.start, l.end],
+            Entity::Polyline(p) => p.vertices.clone(),
+            _ => vec![],
+        })
+        .collect();
+    assert!(!points.is_empty());
+    for q in points {
+        assert!(
+            q.x >= inner.x - 1e-9
+                && q.x <= inner.right() + 1e-9
+                && q.y >= inner.y - 1e-9
+                && q.y <= inner.top() + 1e-9,
+            "{q:?} outside {inner:?}"
+        );
+    }
+    h.enter("U");
+    assert_eq!(on(&h, STAIRS), 0);
+    assert!(h.entities().is_empty());
+}
+
+#[test]
+fn a_stair_asked_for_at_the_command_line_climbs_the_storey_in_a_room_made_for_it() {
+    let typed = |stair_room: &str| {
+        let mut h = Harness::new();
+        h.enter_all(&["UNITS", "mm"]);
+        h.enter_all(&[
+            "FLOORPLAN",
+            "12000",
+            "10000",
+            "office",
+            "20",
+            "store",
+            "6",
+            "",
+            "",
+            "",
+            stair_room,
+        ]);
+        h
+    };
+    let mut h = typed("store");
+    assert_eq!(h.prompt(), "Specify floor-to-floor height <2800>:");
+    h.enter("0");
+    assert_eq!(
+        h.log().last().unwrap(),
+        "The storey's height must be greater than zero."
+    );
+    // 3 m climbs in 18 risers of 16.7 and treads of 29.7: a U, a passage
+    // beside it, and the floor at its foot take 2.7 × 4.17 m, more than the
+    // store's 6 m².
+    h.enter_all(&["3000", ""]);
+    let said = h.log().last().unwrap().clone();
+    assert!(
+        said.starts_with("This cannot be built: The store's 6 m² cannot be 2.7 m wide both ways.")
+            && said.ends_with("The room that holds the stair needs 2.70 × 4.17 m."),
+        "{said}"
+    );
+    assert!(h.session.drawing().layers().find(STAIRS).is_none());
+
+    let mut h = typed("office");
+    h.enter_all(&["3000", "", ""]);
+    let said = h.log().last().unwrap().clone();
+    assert!(
+        said.starts_with("Plan 1 drawn") && !said.contains("No stair"),
+        "{said}"
+    );
+    assert!(texts(&h).contains(&"18 R × 16.7 / T 29.7".to_owned()));
+    assert!(on(&h, STAIRS) > 15);
 }

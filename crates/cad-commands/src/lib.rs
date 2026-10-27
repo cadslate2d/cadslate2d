@@ -27,6 +27,7 @@ mod selection;
 mod session;
 mod settings;
 pub mod snap;
+pub mod stair;
 mod summary;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

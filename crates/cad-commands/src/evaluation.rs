@@ -77,6 +77,11 @@ pub struct PlanWanted {
     pub replaces: bool,
     /// The windows' width, metres, exact (#324).
     pub windows: Option<f64>,
+    /// The one room that holds the stair, by pattern, and the stair drawn
+    /// in it (#331).
+    pub stair: Option<String>,
+    /// The storey's height, metres, exact.
+    pub storey_height: Option<f64>,
     /// A revision: every room and pairing of the brief revised is kept,
     /// each room's area too unless an `areas` pattern names it.
     pub keeps_previous: bool,
@@ -107,6 +112,8 @@ impl PlanWanted {
                 .map(|n| n as u32),
             keeps_previous: value["keeps_previous"].as_bool().unwrap_or(false),
             windows: value["windows"].as_f64(),
+            stair: value["stair"].as_str().map(str::to_owned),
+            storey_height: value["storey_height"].as_f64(),
             replaces: value["replaces"].as_bool().unwrap_or(false),
             count: value["count"].as_u64().map(|n| n as usize),
             pairs: value["pairs"].as_u64().map(|n| n as usize),
@@ -245,6 +252,36 @@ impl PlanWanted {
                 Some(given) => format!("windows {given} m wide, not {width}"),
                 None => format!("no windows, not {width} m wide"),
             });
+        }
+        if let Some(pattern) = &self.stair {
+            let stairs: Vec<&str> = brief
+                .rooms
+                .iter()
+                .filter(|r| r.stair)
+                .map(|r| r.name.as_str())
+                .collect();
+            match stairs.as_slice() {
+                [name] if matches(pattern, name) => {}
+                [] => return Some("no room with the stair".into()),
+                names => {
+                    return Some(format!(
+                        "the stair in {}, not like {pattern}",
+                        names.join(", ")
+                    ));
+                }
+            }
+        }
+        if let Some(height) = self.storey_height
+            && brief
+                .storey_height
+                .is_none_or(|given| (given - height).abs() > 1e-6)
+        {
+            return Some(format!(
+                "a storey of {}, not {height} m",
+                brief
+                    .storey_height
+                    .map_or("2.8".to_owned(), |h| h.to_string())
+            ));
         }
         if let Some(wanted) = self.alternative
             && alternative.unwrap_or(1) != wanted
@@ -880,6 +917,9 @@ fn wanted(case: &Case, intent: &Intent) -> Result<Vec<String>, String> {
         }
         Expected::Plan { wanted, .. } => {
             let made = outcome(case, intent).map_err(|error| error.to_string())?;
+            if wanted.stair.is_some() && !made.iter().any(|m| m.contains(" layer STAIR")) {
+                return Err("the plan has no stair drawn".to_owned());
+            }
             match wanted.missed(intent, previous(case).as_ref()) {
                 None => Ok(made),
                 Some(missed) => Err(format!("the plan has {missed}")),

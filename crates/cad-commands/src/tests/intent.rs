@@ -565,6 +565,48 @@ fn members_make_a_truss_of_its_centrelines() {
     );
 }
 
+/// #331: `stair` draws what STAIR typed draws, in plan and in section; a
+/// brief's stair room has its stair drawn in it, for its storey.
+#[test]
+fn a_stair_is_the_one_typed_and_a_briefs_stair_room_holds_one() {
+    for (operation, typed) in [
+        (
+            r#"{"op": "stair", "height": 2.8, "width": 0.9, "kind": "u", "at": [1, 2]}"#,
+            vec!["STAIR", "2.8", "0.9", "U", "Plan", "1,2", ""],
+        ),
+        (
+            r#"{"op": "stair", "height": 3, "width": 1.2, "kind": "helical", "newel": 0.1, "view": "section", "at": [0, 0], "direction": 0}"#,
+            vec!["STAIR", "3", "1.2", "Helical", "0.1", "Section", "0,0", "0"],
+        ),
+    ] {
+        let by_intent = run(operation);
+        let mut by_hand = Harness::new();
+        by_hand.enter_all(&typed);
+        assert!(!by_intent.entities().is_empty());
+        assert_eq!(by_intent.entities(), by_hand.entities(), "{operation}");
+    }
+    let h = run(
+        r#"{"op": "floor_plan", "brief": {"terrain": {"width": 15, "depth": 20}, "rooms": [
+            {"name": "living", "area": 24, "entrance": true},
+            {"name": "kitchen", "area": 10},
+            {"name": "hall", "area": 12, "stair": true}
+        ], "adjacent": [["living", "kitchen"], ["living", "hall"]], "storey_height": 3}}"#,
+    );
+    let texts: Vec<String> = h
+        .entities()
+        .into_iter()
+        .filter_map(|e| match e {
+            Entity::Text(t) => Some(t.content),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        texts.contains(&"18 R × 16.7 / T 29.7".to_owned()),
+        "{texts:?}"
+    );
+    assert!(h.session.drawing().layers().find("STAIR").is_some());
+}
+
 /// #274: a plate made, its parameters in the context the AI is sent, then
 /// widened by its width parameter with its holes keeping their places from
 /// the edges; a parameter that is not there refused with the reason.

@@ -33,6 +33,12 @@ pub struct Spec {
     /// that asks for an outside wall.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub windows: Option<f64>,
+    /// The floor-to-floor height a room's stair climbs (#331).
+    #[serde(
+        default = "Spec::default_storey_height",
+        skip_serializing_if = "Spec::is_default_storey_height"
+    )]
+    pub storey_height: f64,
     /// The search's seed: the same brief and seed make the same plan.
     #[serde(default)]
     pub seed: u64,
@@ -72,6 +78,10 @@ pub struct Room {
     /// Its longer side over its shorter is at most this.
     #[serde(default = "Room::default_max_aspect")]
     pub max_aspect: f64,
+    /// Its longer side, inside the walls, is at least this: none when 0.
+    /// What a stair needs of the room it is in (#331).
+    #[serde(default, skip_serializing_if = "Room::no_min_length")]
+    pub min_length: f64,
     /// It wants an outside wall — a window — when it can have one.
     #[serde(default)]
     pub exterior: bool,
@@ -79,6 +89,10 @@ pub struct Room {
     /// says so.
     #[serde(default)]
     pub entrance: bool,
+    /// It holds the stair to the floor above (#331), drawn in it when it
+    /// fits.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stair: bool,
 }
 
 impl Spec {
@@ -90,6 +104,12 @@ impl Spec {
     }
     fn default_door() -> f64 {
         0.9
+    }
+    pub(crate) fn default_storey_height() -> f64 {
+        2.8
+    }
+    fn is_default_storey_height(height: &f64) -> bool {
+        height.to_bits() == Self::default_storey_height().to_bits()
     }
     pub(crate) fn default_max_circulation() -> f64 {
         0.15
@@ -153,6 +173,7 @@ impl Spec {
         positive("The exterior wall's thickness".into(), self.exterior_wall)?;
         positive("The interior wall's thickness".into(), self.interior_wall)?;
         positive("The door's width".into(), self.door)?;
+        positive("The storey's height".into(), self.storey_height)?;
         if let Some(width) = self.windows {
             positive("The windows' width".into(), width)?;
         }
@@ -176,6 +197,12 @@ impl Spec {
             }
             positive(format!("The {}'s area", room.name), room.area)?;
             positive(format!("The {}'s minimum width", room.name), room.min_width)?;
+            if !(room.min_length.is_finite() && room.min_length >= 0.0) {
+                return Err(SpecError(format!(
+                    "The {}'s minimum length cannot be negative",
+                    room.name
+                )));
+            }
             if !(room.max_aspect.is_finite() && room.max_aspect >= 1.0) {
                 return Err(SpecError(format!(
                     "The {}'s aspect ratio must be 1 or more",
@@ -207,6 +234,9 @@ impl Room {
     fn default_max_aspect() -> f64 {
         2.5
     }
+    fn no_min_length(length: &f64) -> bool {
+        *length == 0.0
+    }
 
     /// A room of `area`, with the defaults.
     pub fn new(name: impl Into<String>, area: f64) -> Self {
@@ -215,8 +245,10 @@ impl Room {
             area,
             min_width: Self::default_min_width(),
             max_aspect: Self::default_max_aspect(),
+            min_length: 0.0,
             exterior: false,
             entrance: false,
+            stair: false,
         }
     }
 }
