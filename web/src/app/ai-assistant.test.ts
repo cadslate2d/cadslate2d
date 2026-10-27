@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { AiContext, ProposalSummary } from "../cad/engine";
-import { AiAssistant, type AssistantHost, type SessionStore } from "./ai-assistant";
+import { AiAssistant, STALE_PAGE, type AssistantHost, type SessionStore } from "./ai-assistant";
 import { AiError, type AiAnswer, type AiClient, type AiRequest, type Allowance } from "./ai-client";
 
 const allowance = (remaining: number): Allowance => ({
@@ -368,6 +368,21 @@ describe("the AI assistant (#260)", () => {
     await assistant.start("#ai-sign-in=good-token");
     await assistant.ask("a circle");
     expect(client.asked.at(-1)?.request.history).toBeUndefined();
+  });
+
+  test("an answer in a newer intent version than the page reads asks for a reload, not the AI (#347)", async () => {
+    const { assistant, client, host } = await signedIn();
+    host.stopped = "The proposal is not valid: version 14 is not read; this is version 13.";
+    await assistant.ask("a circle");
+    expect(host.rejected).toBe(1);
+    expect(client.explained).toEqual([]);
+    expect(assistant.getSnapshot().proposal).toBeUndefined();
+    expect(assistant.getSnapshot().busy).toBe(false);
+    expect(assistant.getSnapshot().turns.at(-1)).toEqual({ role: "notice", text: STALE_PAGE });
+    // An older document the page does not read is the engine's ordinary refusal.
+    host.stopped = "The proposal is not valid: version 0 is not read; this is version 13.";
+    await assistant.ask("a circle");
+    expect(client.explained).toHaveLength(1);
   });
 
   test("a proposal the engine stops is dropped, and the AI says why (#261)", async () => {

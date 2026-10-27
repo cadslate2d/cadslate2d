@@ -85,6 +85,16 @@ interface Kept {
   expiresAt: string;
 }
 
+/** What is said when the service answers in a newer intent version than this page reads. */
+export const STALE_PAGE =
+  "This page is older than the AI service: reload it (Ctrl+Shift+R) to use the answer. A drawing not yet exported is offered back after the reload.";
+
+/** Whether the engine refused a document for being of a version newer than it reads. */
+function newerThanThisPage(error: string): boolean {
+  const match = /version (\d+) is not read; this is version (\d+)/.exec(error);
+  return match !== null && Number(match[1]) > Number(match[2]);
+}
+
 /** The most earlier turns the service takes with a request, and their size together. */
 const HISTORY_TURNS = 10;
 const HISTORY_CHARACTERS = 60_000;
@@ -347,6 +357,21 @@ export class AiAssistant {
       } else if (answer.intent) {
         this.host.propose(JSON.stringify(answer.intent));
         const summary = this.host.proposalSummary();
+        if (summary?.error && newerThanThisPage(summary.error)) {
+          // The service answers in an intent version this page predates: no
+          // explanation from the AI helps, a reload does (#347).
+          this.host.rejectProposal();
+          this.#proposed = undefined;
+          void this.#report(answer.request, "rejected");
+          this.#set({
+            busy: false,
+            turns: [...turns, { role: "notice", text: STALE_PAGE }],
+            allowance: answer.allowance,
+            revising: undefined,
+            proposal: undefined,
+          });
+          return;
+        }
         if (summary?.error) {
           // The engine stopped it: nothing is proposed, and the AI says why.
           this.host.rejectProposal();

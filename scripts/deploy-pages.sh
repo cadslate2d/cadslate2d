@@ -18,6 +18,12 @@ grep -q 'http-equiv="Content-Security-Policy"' "$dist/index.html" || {
   echo "$dist/index.html has no content-security policy: not the production build." >&2
   exit 1
 }
+# What the published app reads, for the AI service's deploy to wait on:
+# the service goes to production only once the app reads the intent
+# version it writes (#347).
+intent=$(sed -n 's/^pub const VERSION: u32 = \([0-9]*\);/\1/p' crates/cad-intent/src/lib.rs)
+[ -n "$intent" ] || { echo "cad_intent::VERSION not found" >&2; exit 1; }
+printf '{"commit":"%s","intent":%s}\n' "${GITHUB_SHA:-$(git rev-parse HEAD)}" "$intent" > "$dist/version.json"
 # Pinned: a version published well over two weeks ago (AGENTS.md).
 wrangler=(npx --yes wrangler@4.20.0)
 "${wrangler[@]}" pages project create cadslate2d --production-branch=main 2>/dev/null || true
