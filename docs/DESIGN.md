@@ -95,6 +95,8 @@ than:
 
 > a SaaS design platform with CAD features.
 
+> **Note (2026-10-27, [ADR-0040](adr/0040-general-purpose-drawings.md), proposed):** façades, building sections, isometric drawings, and a part's orthographic views are 2D drafting. Each is drawn by a generator from a small description, as ordinary geometry; nothing 3D is kept, shown, or rendered. 3D modelling stays ruled out, and ADR-0040 says what would cross that line.
+
 > **Amended (2026-10-21, [ADR-0037](adr/0037-ai-input-method.md)):** natural language is one more input method, optional, through a hosted service in its own repository. It is the one thing in the product that takes an account, and the account is for it alone: the wedge above — free, no mandatory account, local-first — is untouched for everything else.
 
 ## 3.2 Product principle

@@ -79,7 +79,8 @@ test("the M0 user story", async ({ page }) => {
   for (const request of requests.filter((request) => !request.url.startsWith("blob:"))) {
     expect(request.method, request.url).toBe("GET");
     expect(new URL(request.url).origin, request.url).toBe(origin);
-    expect(request.url, request.url).toMatch(/\/(\?debug)?$|\.(js|css|wasm|html)$/);
+    // The tab's icons are static files too.
+    expect(request.url, request.url).toMatch(/\/(\?debug)?$|\.(js|css|wasm|html|png|ico)$/);
   }
 });
 
