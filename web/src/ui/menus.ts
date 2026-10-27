@@ -259,6 +259,7 @@ const DRAW: Menu = {
       command("&Door", "DOOR"),
       command("&Stair...", "STAIR"),
       command("&Elevation...", "ELEVATION"),
+      command("Se&ction...", "BSECTION"),
     ]),
     command("Re&vision Cloud", "REVCLOUD"),
     // Freehand (#326).

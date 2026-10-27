@@ -457,6 +457,46 @@ impl Stair {
         Ok(out)
     }
 
+    /// What a building section through the stair's first flight cuts
+    /// (#338): its profile of risers and treads and its underside, the
+    /// foot at the origin, climbing along +x — the whole stair when it is
+    /// straight; the first flight and its landing, as deep as the stair is
+    /// wide, for an L or a U.
+    pub fn cut_profile(&self) -> Result<[Vec<Point2>; 2], StairError> {
+        let sizing = self.check()?;
+        let (h, g) = (sizing.riser, sizing.tread);
+        let (first, _) = self.flights(&sizing);
+        let (risers, landing) = match self.kind {
+            Kind::L | Kind::U => (first + 1, Some(self.width)),
+            Kind::Straight | Kind::Helical => (sizing.risers, None),
+        };
+        let mut profile = vec![p(0.0, 0.0)];
+        let (mut x, mut y) = (0.0, 0.0);
+        for k in 0..risers {
+            y += h;
+            profile.push(p(x, y));
+            if k + 1 == risers {
+                if let Some(depth) = landing {
+                    x += depth;
+                    profile.push(p(x, y));
+                }
+                break;
+            }
+            x += g;
+            profile.push(p(x, y));
+        }
+        let pitch = (g * g + h * h).sqrt() / g;
+        let mut underside = vec![p(0.0, 0.0)];
+        for pair in profile.windows(2) {
+            if pair[1].y > pair[0].y {
+                underside.push(pair[1] - Vec2::new(0.0, WAIST * pitch));
+            } else if pair[1].x - pair[0].x > g + 1e-9 {
+                underside.push(pair[1] - Vec2::new(0.0, WAIST));
+            }
+        }
+        Ok([profile, underside])
+    }
+
     /// The stair in section, unrolled along its walking line: the foot at
     /// the origin, the floor below along y = 0, the floor above at the
     /// height, climbing along +x.
@@ -841,6 +881,32 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn a_cut_through_the_first_flight_climbs_to_its_landing_or_the_floor_above() {
+        let straight = stair(Kind::Straight).cut_profile().unwrap();
+        let top = straight[0].last().unwrap();
+        assert!(close(top.y, 2.8) && close(top.x, 15.0 * 0.28));
+        // A U's first flight: half the treads less one, then the landing
+        // as deep as the stair is wide, at the height its risers reach.
+        let u = stair(Kind::U).cut_profile().unwrap();
+        let sizing = stair(Kind::U).sizing().unwrap();
+        let first = (sizing.treads() - 1).div_ceil(2);
+        let end = u[0].last().unwrap();
+        assert!(close(end.y, (first + 1) as f64 * sizing.riser));
+        assert!(close(end.x, first as f64 * sizing.tread + 0.9));
+        // The underside stays under the profile.
+        for profile in [straight, u] {
+            for q in &profile[1][1..] {
+                let above = profile[0]
+                    .iter()
+                    .filter(|r| (r.x - q.x).abs() < 1e-9)
+                    .map(|r| r.y)
+                    .fold(f64::NEG_INFINITY, f64::max);
+                assert!(above > q.y, "{q:?}");
+            }
+        }
     }
 
     #[test]

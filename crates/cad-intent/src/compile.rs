@@ -61,7 +61,7 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 44] = [
+pub const COMMANDS: [&str; 45] = [
     "LINE",
     "PLINE",
     "RECTANG",
@@ -106,6 +106,7 @@ pub const COMMANDS: [&str; 44] = [
     "STAIR",
     "ELLIPSE",
     "ELEVATION",
+    "BSECTION",
 ];
 
 /// Compiles every operation of a validated document, in order.
@@ -737,6 +738,21 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
                 ],
             )
         }
+        Operation::BuildingSection {
+            plan,
+            from,
+            to,
+            at: place,
+        } => (
+            "BSECTION",
+            vec![
+                keyword("Name"),
+                answer(Answer::Text(plan.clone())),
+                at(*from),
+                at(*to),
+                place.map_or_else(enter, at),
+            ],
+        ),
         Operation::Stair {
             height,
             width,

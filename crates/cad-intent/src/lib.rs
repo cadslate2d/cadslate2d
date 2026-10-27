@@ -37,7 +37,7 @@ pub const VERSION: u32 = 12;
 /// `dim_scale` (#327), version 9 `members` (#329), version 10 `stair` and
 /// a brief's stair room and storey height (#331), version 11 the
 /// isometric operations (#336), version 12 `elevation` and a brief's
-/// `building` (#337).
+/// `building` (#337); `building_section` (#338) came with it.
 pub const READS: [u32; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
 /// A point, `[x, y]`, in the document's units.
@@ -695,6 +695,19 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         at: Option<Point>,
     },
+    /// A section through a floor plan drawn already (#338): `plan` its
+    /// group's name; the cut from `from` to `to`, two points of the
+    /// drawing across the plan or up it — the cut is square to the plan's
+    /// axis they run nearer, through their middle, and the section looks
+    /// to the left of the way from `from` to `to`; `at`, where the floor's
+    /// left end goes, under the plan when absent.
+    BuildingSection {
+        plan: String,
+        from: Point,
+        to: Point,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at: Option<Point>,
+    },
     /// A stair sized by Blondel's rule (#331) — two risers and a tread
     /// make 63 cm, risers at most 18 cm, treads at least 28 — climbing a
     /// floor-to-floor `height`, `width` wide: in plan, its foot's middle
@@ -899,6 +912,7 @@ impl Operation {
             Self::FloorPlan { .. } => "floor_plan",
             Self::Stair { .. } => "stair",
             Self::Elevation { .. } => "elevation",
+            Self::BuildingSection { .. } => "building_section",
         }
     }
 }

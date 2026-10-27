@@ -23,6 +23,7 @@
 mod draft;
 mod elevation;
 mod search;
+mod section;
 mod spec;
 mod verify;
 
@@ -34,6 +35,7 @@ pub use draft::{
 };
 pub use elevation::{Elevation, Side, elevation};
 pub use search::{alternatives, alternatives_within, searches_for, solve};
+pub use section::{Cut, Section, section};
 pub use spec::{Building, MAX_ROOMS, Roof, Room, Setbacks, Spec, SpecError, Terrain};
 pub use verify::verify;
 

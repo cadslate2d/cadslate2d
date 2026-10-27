@@ -2080,6 +2080,56 @@
         },
         {
           "additionalProperties": false,
+          "description": "A section through a floor plan drawn already (#338): `plan` its\ngroup's name; the cut from `from` to `to`, two points of the\ndrawing across the plan or up it — the cut is square to the plan's\naxis they run nearer, through their middle, and the section looks\nto the left of the way from `from` to `to`; `at`, where the floor's\nleft end goes, under the plan when absent.",
+          "properties": {
+            "at": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "from": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "op": {
+              "const": "building_section",
+              "type": "string"
+            },
+            "plan": {
+              "type": "string"
+            },
+            "to": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "plan",
+            "from",
+            "to"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "A stair sized by Blondel's rule (#331) — two risers and a tread\nmake 63 cm, risers at most 18 cm, treads at least 28 — climbing a\nfloor-to-floor `height`, `width` wide: in plan, its foot's middle\n`at` and climbing along `direction` (degrees, 90 when absent); in\nsection, its foot `at` on the floor below and running along\n`direction` (0 when absent). A helix turns round a newel of\n`newel`'s radius, 15 cm when absent; only a helix has one.",
           "properties": {
             "at": {

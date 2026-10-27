@@ -31,6 +31,7 @@ pub(crate) mod block;
 mod boundary;
 #[path = "break_.rs"]
 mod break_command;
+mod bsection;
 mod chprop;
 mod circle;
 mod clipboard;
@@ -130,6 +131,7 @@ pub(crate) use attributes::{AttdefCommand, AtteditCommand};
 pub(crate) use block::{BlockCommand, ExplodeCommand, InsertCommand};
 pub(crate) use boundary::BoundaryCommand;
 pub(crate) use break_command::BreakCommand;
+pub(crate) use bsection::BuildingSectionCommand;
 pub(crate) use chprop::ChpropCommand;
 pub(crate) use circle::CircleCommand;
 pub(crate) use clipboard::{Clipboard, CopyClipCommand, PasteClipCommand};

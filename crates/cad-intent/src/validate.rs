@@ -825,6 +825,14 @@ impl Check {
                 self.name("name", name)?;
                 self.positive("value", *value)
             }
+            Operation::BuildingSection { plan, from, to, at } => {
+                self.name("plan", plan)?;
+                self.distinct("to", *from, *to)?;
+                if let Some(at) = at {
+                    self.point("at", *at)?;
+                }
+                Ok(())
+            }
             Operation::Elevation {
                 plan,
                 roof_pitch,

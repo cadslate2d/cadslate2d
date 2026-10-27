@@ -182,3 +182,20 @@ test("ELEVATION draws a plan's façade on its layers as one undo", async ({ page
   await enter(page, "U");
   expect(await onLayer(page, "ELEV-WALL")).toHaveLength(0);
 });
+
+// #338: a section through the plan, from Draw › Building › Section....
+test("BSECTION cuts the plan, hatches what it cuts, and marks the plan", async ({ page }) => {
+  await openApp(page);
+  await enter(page, "FLOORPLAN", "B", JSON.stringify({ ...BRIEF, windows: 1.2 }), "", "");
+  await expect(logLines(page).last()).toContainText("Plan 1 drawn");
+  await chooseMenu(page, "Draw", "Building", "Section...");
+  await expect(prompt(page)).toHaveText("Select an object of a floor plan or [Name]:");
+  await enter(page, "N", "PLAN-1", "0,8", "15,8", "0,-12");
+  await expect(logLines(page).last()).toContainText("Section A-A of PLAN-1 drawn as SECT-1");
+  const hatches = (await onLayer(page, "SECT-HATCH")).filter((e) => e.type === "HATCH");
+  expect(hatches.length).toBeGreaterThanOrEqual(4);
+  const letters = (await onLayer(page, "SECT-MARK")).filter((e) => e.type === "TEXT");
+  expect(letters.map((e) => group(e, 1))).toEqual(["A", "A"]);
+  await enter(page, "U");
+  expect(await onLayer(page, "SECT-HATCH")).toHaveLength(0);
+});

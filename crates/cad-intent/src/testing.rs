@@ -246,6 +246,19 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         stair(),
         isometric(),
         elevation(),
+        (
+            prop_oneof![Just("PLAN-1"), Just("PLAN-2")],
+            point(),
+            point(),
+            proptest::option::of(point()),
+        )
+            .prop_filter("apart", |(_, a, b, _)| differ(*a, *b))
+            .prop_map(|(plan, from, to, at)| Operation::BuildingSection {
+                plan: plan.to_owned(),
+                from,
+                to,
+                at,
+            }),
         targets().prop_map(|targets| Operation::Erase { targets }),
         (
             proptest::collection::vec((targets(), 0.5f64..50.0), 1..4),

@@ -628,6 +628,28 @@ fn an_elevation_of_the_plan_just_drawn_is_the_one_typed() {
     );
 }
 
+/// #338: a section through a plan drawn by the same document is the one
+/// typed.
+#[test]
+fn a_building_section_is_the_one_typed() {
+    let brief = r#"{"terrain": {"width": 15, "depth": 20}, "rooms": [{"name": "living", "area": 24, "entrance": true}, {"name": "kitchen", "area": 10}], "windows": 1.2}"#;
+    let by_intent = run(&format!(
+        r#"{{"op": "floor_plan", "brief": {brief}}}, {{"op": "building_section", "plan": "PLAN-1", "from": [0, 2], "to": [15, 2], "at": [0, -12]}}"#
+    ));
+    let mut by_hand = Harness::new();
+    by_hand.enter_all(&["FLOORPLAN", "B", brief, "", ""]);
+    by_hand.enter_all(&["BSECTION", "N", "PLAN-1", "0,2", "15,2", "0,-12"]);
+    assert!(
+        by_hand
+            .log()
+            .iter()
+            .any(|l| l.starts_with("Section A-A of PLAN-1")),
+        "{:?}",
+        by_hand.log()
+    );
+    assert_eq!(by_intent.entities(), by_hand.entities());
+}
+
 /// #331: `stair` draws what STAIR typed draws, in plan and in section; a
 /// brief's stair room has its stair drawn in it, for its storey.
 #[test]

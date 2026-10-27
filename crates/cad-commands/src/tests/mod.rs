@@ -11,6 +11,7 @@ mod blocks;
 mod boundary;
 #[path = "break_.rs"]
 mod break_command;
+mod bsection;
 mod bulged;
 mod chprop;
 mod clipboard;

@@ -71,7 +71,8 @@ fn a_document_is_read_and_each_operation_compiles_to_its_command_and_answers() {
         {"op": "iso_polyline", "points": [[0, 0, 0], [0, 10, 0], [0, 10, 10]], "closed": true},
         {"op": "iso_circle", "center": [0, 0, 0], "radius": 10},
         {"op": "elevation", "plan": "PLAN-1"},
-        {"op": "elevation", "plan": "PLAN-1", "side": "left", "roof": "gable", "roof_pitch": 35, "at": [0, -12000]}
+        {"op": "elevation", "plan": "PLAN-1", "side": "left", "roof": "gable", "roof_pitch": 35, "at": [0, -12000]},
+        {"op": "building_section", "plan": "PLAN-1", "from": [5000, -1000], "to": [5000, 21000]}
         "#,
     );
     let intent = parse(&text).unwrap();
@@ -182,6 +183,10 @@ fn a_document_is_read_and_each_operation_compiles_to_its_command_and_answers() {
                 "35?Specify roof pitch",
                 "0,-12000",
             ],
+        ),
+        (
+            "BSECTION",
+            vec!["Name", "PLAN-1", "5000,-1000", "5000,21000", ""],
         ),
     ];
     assert_eq!(got.len(), expected.len());
