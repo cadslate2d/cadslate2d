@@ -73,7 +73,8 @@ fn a_document_is_read_and_each_operation_compiles_to_its_command_and_answers() {
         {"op": "elevation", "plan": "PLAN-1"},
         {"op": "elevation", "plan": "PLAN-1", "side": "left", "roof": "gable", "roof_pitch": 35, "at": [0, -12000]},
         {"op": "building_section", "plan": "PLAN-1", "from": [5000, -1000], "to": [5000, 21000]},
-        {"op": "part_views", "part": {"steps": [[40, 30], [20, 10]], "bore": 8}, "projection": "third", "section": true}
+        {"op": "part_views", "part": {"steps": [[40, 30], [20, 10]], "bore": 8}, "projection": "third", "section": true},
+        {"op": "title_block", "paper": "A2", "scale": 50, "title": "HOUSE", "drawn_by": "LA"}
         "#,
     );
     let intent = parse(&text).unwrap();
@@ -196,6 +197,21 @@ fn a_document_is_read_and_each_operation_compiles_to_its_command_and_answers() {
                 r#"{"steps":[[40.0,30.0],[20.0,10.0]],"bore":8.0}"#,
                 "Third",
                 "Yes",
+                "",
+            ],
+        ),
+        (
+            "TITLEBLOCK",
+            vec![
+                "A2",
+                "Landscape",
+                "50?Specify the scale",
+                "HOUSE",
+                "",
+                "LA",
+                "",
+                "",
+                "First",
                 "",
             ],
         ),

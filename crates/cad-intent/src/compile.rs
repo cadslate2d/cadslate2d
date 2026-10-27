@@ -5,8 +5,8 @@
 use cad_core::Point2;
 
 use crate::{
-    Color, Intent, Measure, Operation, Orientation, Pick, Projection, Relation, RoofKind, Side,
-    StairKind, StairView, Targets, iso_point, point,
+    Color, Intent, Measure, Operation, Orientation, PaperSize, Pick, Projection, Relation,
+    RoofKind, Side, StairKind, StairView, Targets, iso_point, point,
 };
 
 /// One answer to a prompt. Lengths and points are in the document's
@@ -61,7 +61,7 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 46] = [
+pub const COMMANDS: [&str; 47] = [
     "LINE",
     "PLINE",
     "RECTANG",
@@ -108,6 +108,7 @@ pub const COMMANDS: [&str; 46] = [
     "ELEVATION",
     "BSECTION",
     "PARTVIEWS",
+    "TITLEBLOCK",
 ];
 
 /// Compiles every operation of a validated document, in order.
@@ -774,6 +775,54 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
                 place.map_or_else(enter, at),
             ],
         ),
+        Operation::TitleBlock {
+            paper,
+            portrait,
+            scale,
+            title,
+            number,
+            drawn_by,
+            date,
+            sheet,
+            projection,
+            at: place,
+        } => {
+            let text = |value: &String| {
+                if value.trim().is_empty() {
+                    enter()
+                } else {
+                    answer(Answer::Text(value.clone()))
+                }
+            };
+            (
+                "TITLEBLOCK",
+                vec![
+                    keyword(match paper {
+                        PaperSize::A4 => "A4",
+                        PaperSize::A3 => "A3",
+                        PaperSize::A2 => "A2",
+                        PaperSize::A1 => "A1",
+                        PaperSize::A0 => "A0",
+                    }),
+                    keyword(if *portrait { "Portrait" } else { "Landscape" }),
+                    // Asked in the model only.
+                    when(
+                        "Specify the scale",
+                        scale.map_or(Answer::Enter, Answer::Number),
+                    ),
+                    text(title),
+                    text(number),
+                    text(drawn_by),
+                    text(date),
+                    text(sheet),
+                    keyword(match projection {
+                        Projection::First => "First",
+                        Projection::Third => "Third",
+                    }),
+                    place.map_or_else(enter, at),
+                ],
+            )
+        }
         Operation::Stair {
             height,
             width,

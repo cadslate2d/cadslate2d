@@ -248,6 +248,35 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         elevation(),
         part_views(),
         (
+            prop_oneof![
+                Just(crate::PaperSize::A4),
+                Just(crate::PaperSize::A3),
+                Just(crate::PaperSize::A0),
+            ],
+            any::<bool>(),
+            proptest::option::of(1.0..200.0f64),
+            "[A-Z ]{0,12}",
+            prop_oneof![
+                Just(crate::Projection::First),
+                Just(crate::Projection::Third)
+            ],
+            proptest::option::of(point()),
+        )
+            .prop_map(|(paper, portrait, scale, title, projection, at)| {
+                Operation::TitleBlock {
+                    paper,
+                    portrait,
+                    scale,
+                    title,
+                    number: String::new(),
+                    drawn_by: String::new(),
+                    date: String::new(),
+                    sheet: String::new(),
+                    projection,
+                    at,
+                }
+            }),
+        (
             prop_oneof![Just("PLAN-1"), Just("PLAN-2")],
             point(),
             point(),

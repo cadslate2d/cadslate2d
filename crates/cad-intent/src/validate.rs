@@ -825,6 +825,35 @@ impl Check {
                 self.name("name", name)?;
                 self.positive("value", *value)
             }
+            Operation::TitleBlock {
+                scale,
+                title,
+                number,
+                drawn_by,
+                date,
+                sheet,
+                at,
+                ..
+            } => {
+                if let Some(scale) = scale {
+                    self.positive("scale", *scale)?;
+                }
+                for (field, value) in [
+                    ("title", title),
+                    ("number", number),
+                    ("drawn_by", drawn_by),
+                    ("date", date),
+                    ("sheet", sheet),
+                ] {
+                    if value.chars().count() > limits::TEXT {
+                        return Err(self.refuse(field, Reason::TooLong(limits::TEXT)));
+                    }
+                }
+                if let Some(at) = at {
+                    self.point("at", *at)?;
+                }
+                Ok(())
+            }
             Operation::PartViews { part, at, .. } => {
                 match (&part.profile, &part.steps) {
                     (Some(profile), None) => {

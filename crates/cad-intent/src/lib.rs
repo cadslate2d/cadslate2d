@@ -38,7 +38,7 @@ pub const VERSION: u32 = 13;
 /// a brief's stair room and storey height (#331), version 11 the
 /// isometric operations (#336), version 12 `elevation` and a brief's
 /// `building` (#337); `building_section` (#338) came with it; version 13
-/// `part_views` (#339).
+/// `part_views` (#339) and `title_block` (#340).
 pub const READS: [u32; 13] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
 
 /// A point, `[x, y]`, in the document's units.
@@ -234,6 +234,18 @@ pub enum Projection {
     First,
     /// The top view over the front, the right side on its right (ASME).
     Third,
+}
+
+/// A sheet's paper (#340).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum PaperSize {
+    A4,
+    #[default]
+    A3,
+    A2,
+    A1,
+    A0,
 }
 
 /// A stair's kind (#331).
@@ -773,6 +785,32 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         at: Option<Point>,
     },
+    /// A sheet's border and title block (#340): the paper, landscape unless
+    /// `portrait`; in the model, drawn at 1:`scale` (1 when absent) — on a
+    /// layout, in paper millimetres; the fields; the projection; its lower
+    /// left corner `at`, the origin when absent.
+    TitleBlock {
+        #[serde(default)]
+        paper: PaperSize,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        portrait: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale: Option<f64>,
+        #[serde(default)]
+        title: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        number: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        drawn_by: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        date: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        sheet: String,
+        #[serde(default)]
+        projection: Projection,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at: Option<Point>,
+    },
     /// A stair sized by Blondel's rule (#331) — two risers and a tread
     /// make 63 cm, risers at most 18 cm, treads at least 28 — climbing a
     /// floor-to-floor `height`, `width` wide: in plan, its foot's middle
@@ -979,6 +1017,7 @@ impl Operation {
             Self::Elevation { .. } => "elevation",
             Self::BuildingSection { .. } => "building_section",
             Self::PartViews { .. } => "part_views",
+            Self::TitleBlock { .. } => "title_block",
         }
     }
 }

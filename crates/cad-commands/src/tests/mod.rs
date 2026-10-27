@@ -82,6 +82,7 @@ mod stair;
 mod stretch;
 mod style;
 mod text;
+mod titleblock;
 mod tracking;
 mod transform;
 mod units;

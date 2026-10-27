@@ -36,6 +36,7 @@ mod summary;
 pub mod testing;
 #[cfg(test)]
 mod tests;
+pub mod titleblock;
 mod toggles;
 mod transient;
 mod ui_state;

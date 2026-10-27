@@ -670,6 +670,38 @@ fn part_views_are_the_ones_typed() {
     assert_eq!(by_intent.entities(), by_hand.entities());
 }
 
+/// #340: a title block by intent is the one typed.
+#[test]
+fn a_title_block_is_the_one_typed() {
+    let by_intent = run(
+        r#"{"op": "title_block", "paper": "A3", "scale": 20, "title": "BRACKET", "number": "M-7", "projection": "third", "at": [-50, -50]}"#,
+    );
+    let mut by_hand = Harness::new();
+    by_hand.enter_all(&[
+        "TITLEBLOCK",
+        "A3",
+        "L",
+        "20",
+        "BRACKET",
+        "M-7",
+        "",
+        "",
+        "",
+        "T",
+        "-50,-50",
+    ]);
+    assert!(
+        by_hand
+            .log()
+            .last()
+            .unwrap()
+            .starts_with("A3 landscape sheet drawn as TITLE-1"),
+        "{:?}",
+        by_hand.log()
+    );
+    assert_eq!(by_intent.entities(), by_hand.entities());
+}
+
 /// #331: `stair` draws what STAIR typed draws, in plan and in section; a
 /// brief's stair room has its stair drawn in it, for its storey.
 #[test]

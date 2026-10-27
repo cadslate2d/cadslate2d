@@ -32,8 +32,8 @@ use crate::commands::{
     RayCommand, RectangCommand, RedoCommand, RenameCommand, RevCloudCommand, SLOT, SaveCommand,
     SelectCommand, SettingsCommand, SketchCommand, SnapCommand, SplineCommand, SplineEditCommand,
     StairCommand, StretchCommand, StyleCommand, TanArcCommand, TextCommand, TextEditCommand,
-    TextToFrontCommand, TransformCommand, UndoCommand, UngroupCommand, UnitsCommand, ViewCommand,
-    WBlockCommand, WipeoutCommand, XLineCommand, ZoomCommand,
+    TextToFrontCommand, TitleBlockCommand, TransformCommand, UndoCommand, UngroupCommand,
+    UnitsCommand, ViewCommand, WBlockCommand, WipeoutCommand, XLineCommand, ZoomCommand,
 };
 use crate::session::select_keywords;
 
@@ -70,7 +70,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 174] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 175] = [
             ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
             ("RAY", &[], || Box::new(RayCommand::new())),
             ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
@@ -203,6 +203,7 @@ impl CommandRegistry {
             ("ELEVATION", &[], || Box::new(ElevationCommand::new())),
             ("BSECTION", &[], || Box::new(BuildingSectionCommand::new())),
             ("PARTVIEWS", &[], || Box::new(PartViewsCommand::new())),
+            ("TITLEBLOCK", &[], || Box::new(TitleBlockCommand::new())),
             ("DCLINEAR", &[], || {
                 Box::new(DimConstraintCommand::of(Form::Linear))
             }),

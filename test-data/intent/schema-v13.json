@@ -2167,6 +2167,66 @@
         },
         {
           "additionalProperties": false,
+          "description": "A sheet's border and title block (#340): the paper, landscape unless\n`portrait`; in the model, drawn at 1:`scale` (1 when absent) — on a\nlayout, in paper millimetres; the fields; the projection; its lower\nleft corner `at`, the origin when absent.",
+          "properties": {
+            "at": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "date": {
+              "type": "string"
+            },
+            "drawn_by": {
+              "type": "string"
+            },
+            "number": {
+              "type": "string"
+            },
+            "op": {
+              "const": "title_block",
+              "type": "string"
+            },
+            "paper": {
+              "$ref": "#/$defs/PaperSize",
+              "default": "A3"
+            },
+            "portrait": {
+              "type": "boolean"
+            },
+            "projection": {
+              "$ref": "#/$defs/Projection",
+              "default": "first"
+            },
+            "scale": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "sheet": {
+              "type": "string"
+            },
+            "title": {
+              "default": "",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "A stair sized by Blondel's rule (#331) — two risers and a tread\nmake 63 cm, risers at most 18 cm, treads at least 28 — climbing a\nfloor-to-floor `height`, `width` wide: in plan, its foot's middle\n`at` and climbing along `direction` (degrees, 90 when absent); in\nsection, its foot `at` on the floor below and running along\n`direction` (0 when absent). A helix turns round a newel of\n`newel`'s radius, 15 cm when absent; only a helix has one.",
           "properties": {
             "at": {
@@ -2228,6 +2288,17 @@
       "enum": [
         "horizontal",
         "vertical"
+      ],
+      "type": "string"
+    },
+    "PaperSize": {
+      "description": "A sheet's paper (#340).",
+      "enum": [
+        "A4",
+        "A3",
+        "A2",
+        "A1",
+        "A0"
       ],
       "type": "string"
     },
