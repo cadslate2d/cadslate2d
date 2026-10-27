@@ -246,6 +246,7 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         stair(),
         isometric(),
         elevation(),
+        part_views(),
         (
             prop_oneof![Just("PLAN-1"), Just("PLAN-2")],
             point(),
@@ -298,6 +299,55 @@ fn elevation() -> impl Strategy<Value = Operation> {
             side,
             roof,
             roof_pitch,
+            at,
+        })
+}
+
+/// A part's views (#339): a box with holes, or a turned part; holes may
+/// fall outside, and the engine says so.
+fn part_views() -> impl Strategy<Value = Operation> {
+    let hole = (
+        prop_oneof![
+            Just(crate::PartAxis::X),
+            Just(crate::PartAxis::Y),
+            Just(crate::PartAxis::Z),
+        ],
+        point(),
+        1.0..20.0f64,
+    )
+        .prop_map(|(axis, at, diameter)| crate::PartHole { axis, at, diameter });
+    let prism = (
+        (10.0..200.0f64, 10.0..200.0f64, 5.0..100.0f64),
+        proptest::collection::vec(hole, 0..3),
+    )
+        .prop_map(|((w, h, depth), holes)| crate::PartDescription {
+            profile: Some(vec![[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]]),
+            depth: Some(depth),
+            holes,
+            ..crate::PartDescription::default()
+        });
+    let turned = (
+        proptest::collection::vec((5.0..80.0f64, 5.0..80.0f64), 1..4),
+        proptest::option::of(0.5..4.0f64),
+    )
+        .prop_map(|(steps, bore)| crate::PartDescription {
+            steps: Some(steps.into_iter().map(|(d, l)| [d, l]).collect()),
+            bore,
+            ..crate::PartDescription::default()
+        });
+    (
+        prop_oneof![prism, turned],
+        prop_oneof![
+            Just(crate::Projection::First),
+            Just(crate::Projection::Third)
+        ],
+        any::<bool>(),
+        proptest::option::of(point()),
+    )
+        .prop_map(|(part, projection, section, at)| Operation::PartViews {
+            part,
+            projection,
+            section,
             at,
         })
 }

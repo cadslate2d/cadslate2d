@@ -5,8 +5,8 @@
 use cad_core::Point2;
 
 use crate::{
-    Color, Intent, Measure, Operation, Orientation, Pick, Relation, RoofKind, Side, StairKind,
-    StairView, Targets, iso_point, point,
+    Color, Intent, Measure, Operation, Orientation, Pick, Projection, Relation, RoofKind, Side,
+    StairKind, StairView, Targets, iso_point, point,
 };
 
 /// One answer to a prompt. Lengths and points are in the document's
@@ -61,7 +61,7 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 45] = [
+pub const COMMANDS: [&str; 46] = [
     "LINE",
     "PLINE",
     "RECTANG",
@@ -107,6 +107,7 @@ pub const COMMANDS: [&str; 45] = [
     "ELLIPSE",
     "ELEVATION",
     "BSECTION",
+    "PARTVIEWS",
 ];
 
 /// Compiles every operation of a validated document, in order.
@@ -750,6 +751,26 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
                 answer(Answer::Text(plan.clone())),
                 at(*from),
                 at(*to),
+                place.map_or_else(enter, at),
+            ],
+        ),
+        Operation::PartViews {
+            part,
+            projection,
+            section,
+            at: place,
+        } => (
+            "PARTVIEWS",
+            vec![
+                keyword("Json"),
+                answer(Answer::Text(
+                    serde_json::to_string(part).expect("a part is plain data"),
+                )),
+                keyword(match projection {
+                    Projection::First => "First",
+                    Projection::Third => "Third",
+                }),
+                keyword(if *section { "Yes" } else { "No" }),
                 place.map_or_else(enter, at),
             ],
         ),

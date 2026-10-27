@@ -23,6 +23,7 @@ mod history;
 pub mod intent;
 mod log;
 mod overlay;
+pub mod partviews;
 pub mod proposal;
 mod registry;
 mod selection;

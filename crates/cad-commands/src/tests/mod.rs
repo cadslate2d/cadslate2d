@@ -62,6 +62,7 @@ mod mtext;
 mod offset;
 mod opening;
 mod overkill;
+mod partviews;
 mod pedit;
 mod placement;
 mod plot;

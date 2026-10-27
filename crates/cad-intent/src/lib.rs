@@ -27,7 +27,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 12;
+pub const VERSION: u32 = 13;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -37,8 +37,9 @@ pub const VERSION: u32 = 12;
 /// `dim_scale` (#327), version 9 `members` (#329), version 10 `stair` and
 /// a brief's stair room and storey height (#331), version 11 the
 /// isometric operations (#336), version 12 `elevation` and a brief's
-/// `building` (#337); `building_section` (#338) came with it.
-pub const READS: [u32; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+/// `building` (#337); `building_section` (#338) came with it; version 13
+/// `part_views` (#339).
+pub const READS: [u32; 13] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -182,6 +183,57 @@ pub enum RoofKind {
     Gable,
     /// Four slopes.
     Hip,
+}
+
+/// A part to draw the views of (#339): a prism — a front `profile` of
+/// `[x, z]` corners extruded `depth` back, with `holes` — or a turned part
+/// — `steps` of `[diameter, length]` along its axis, with a `bore`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct PartDescription {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<Vec<Point>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holes: Vec<PartHole>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steps: Option<Vec<[f64; 2]>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bore: Option<f64>,
+}
+
+/// A hole right through a prism along `axis`: `at` is `[x, z]` along y,
+/// `[x, y]` along z, `[y, z]` along x.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct PartHole {
+    pub axis: PartAxis,
+    pub at: Point,
+    pub diameter: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum PartAxis {
+    X,
+    Y,
+    Z,
+}
+
+/// How a part's views are laid out.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum Projection {
+    /// The top view under the front, the right side on its left (ISO).
+    #[default]
+    First,
+    /// The top view over the front, the right side on its right (ASME).
+    Third,
 }
 
 /// A stair's kind (#331).
@@ -708,6 +760,19 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         at: Option<Point>,
     },
+    /// A part's standard views (#339): the front — cut in section when
+    /// `section` — the top unless the part is turned, and the right side,
+    /// hidden edges dashed and centre lines drawn; the front view's lower
+    /// left corner `at`, the origin when absent.
+    PartViews {
+        part: PartDescription,
+        #[serde(default)]
+        projection: Projection,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        section: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at: Option<Point>,
+    },
     /// A stair sized by Blondel's rule (#331) — two risers and a tread
     /// make 63 cm, risers at most 18 cm, treads at least 28 — climbing a
     /// floor-to-floor `height`, `width` wide: in plan, its foot's middle
@@ -913,6 +978,7 @@ impl Operation {
             Self::Stair { .. } => "stair",
             Self::Elevation { .. } => "elevation",
             Self::BuildingSection { .. } => "building_section",
+            Self::PartViews { .. } => "part_views",
         }
     }
 }

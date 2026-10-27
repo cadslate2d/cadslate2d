@@ -261,6 +261,7 @@ const DRAW: Menu = {
       command("&Elevation...", "ELEVATION"),
       command("Se&ction...", "BSECTION"),
     ]),
+    command("&Orthographic Views...", "PARTVIEWS"),
     command("Re&vision Cloud", "REVCLOUD"),
     // Freehand (#326).
     command("S&ketch", "SKETCH"),

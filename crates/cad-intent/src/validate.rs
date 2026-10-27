@@ -825,6 +825,47 @@ impl Check {
                 self.name("name", name)?;
                 self.positive("value", *value)
             }
+            Operation::PartViews { part, at, .. } => {
+                match (&part.profile, &part.steps) {
+                    (Some(profile), None) => {
+                        self.points("part.profile", profile, 3)?;
+                        self.positive("part.depth", part.depth.unwrap_or(0.0))?;
+                        if part.bore.is_some() {
+                            return Err(self.refuse("part.bore", Reason::Unwanted));
+                        }
+                    }
+                    (None, Some(steps)) => {
+                        if steps.is_empty() {
+                            return Err(self.refuse("part.steps", Reason::TooFew(1)));
+                        }
+                        for [diameter, length] in steps {
+                            self.positive("part.steps", *diameter)?;
+                            self.positive("part.steps", *length)?;
+                        }
+                        if let Some(bore) = part.bore {
+                            self.not_negative("part.bore", bore)?;
+                        }
+                        if part.depth.is_some() || !part.holes.is_empty() {
+                            return Err(self.refuse("part.depth", Reason::Unwanted));
+                        }
+                    }
+                    (Some(_), Some(_)) => {
+                        return Err(self.refuse("part.steps", Reason::Both("profile")));
+                    }
+                    (None, None) => return Err(self.refuse("part", Reason::Nothing)),
+                }
+                if part.holes.len() > limits::HOLES as usize {
+                    return Err(self.refuse("part.holes", Reason::TooMany(limits::HOLES as usize)));
+                }
+                for hole in &part.holes {
+                    self.point("part.holes.at", hole.at)?;
+                    self.positive("part.holes.diameter", hole.diameter)?;
+                }
+                if let Some(at) = at {
+                    self.point("at", *at)?;
+                }
+                Ok(())
+            }
             Operation::BuildingSection { plan, from, to, at } => {
                 self.name("plan", plan)?;
                 self.distinct("to", *from, *to)?;

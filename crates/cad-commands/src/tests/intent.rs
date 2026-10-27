@@ -650,6 +650,26 @@ fn a_building_section_is_the_one_typed() {
     assert_eq!(by_intent.entities(), by_hand.entities());
 }
 
+/// #339: a part's views by intent are the ones typed.
+#[test]
+fn part_views_are_the_ones_typed() {
+    let part = r#"{"profile": [[0, 0], [100, 0], [100, 20], [30, 20], [30, 60], [0, 60]], "depth": 40, "holes": [{"axis": "z", "at": [70, 20], "diameter": 10}]}"#;
+    let by_intent = run(&format!(
+        r#"{{"op": "part_views", "part": {part}, "section": true, "at": [10, 10]}}"#
+    ));
+    let mut by_hand = Harness::new();
+    by_hand.enter_all(&["PARTVIEWS", "J", part, "F", "Y", "10,10"]);
+    assert!(
+        by_hand
+            .log()
+            .iter()
+            .any(|l| l.starts_with("Part views drawn as PART-1")),
+        "{:?}",
+        by_hand.log()
+    );
+    assert_eq!(by_intent.entities(), by_hand.entities());
+}
+
 /// #331: `stair` draws what STAIR typed draws, in plan and in section; a
 /// brief's stair room has its stair drawn in it, for its storey.
 #[test]

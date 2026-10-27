@@ -2130,6 +2130,43 @@
         },
         {
           "additionalProperties": false,
+          "description": "A part's standard views (#339): the front — cut in section when\n`section` — the top unless the part is turned, and the right side,\nhidden edges dashed and centre lines drawn; the front view's lower\nleft corner `at`, the origin when absent.",
+          "properties": {
+            "at": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "op": {
+              "const": "part_views",
+              "type": "string"
+            },
+            "part": {
+              "$ref": "#/$defs/PartDescription"
+            },
+            "projection": {
+              "$ref": "#/$defs/Projection",
+              "default": "first"
+            },
+            "section": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "op",
+            "part"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "A stair sized by Blondel's rule (#331) — two risers and a tread\nmake 63 cm, risers at most 18 cm, treads at least 28 — climbing a\nfloor-to-floor `height`, `width` wide: in plan, its foot's middle\n`at` and climbing along `direction` (degrees, 90 when absent); in\nsection, its foot `at` on the floor below and running along\n`direction` (0 when absent). A helix turns round a newel of\n`newel`'s radius, 15 cm when absent; only a helix has one.",
           "properties": {
             "at": {
@@ -2194,6 +2231,99 @@
       ],
       "type": "string"
     },
+    "PartAxis": {
+      "enum": [
+        "x",
+        "y",
+        "z"
+      ],
+      "type": "string"
+    },
+    "PartDescription": {
+      "additionalProperties": false,
+      "description": "A part to draw the views of (#339): a prism — a front `profile` of\n`[x, z]` corners extruded `depth` back, with `holes` — or a turned part\n— `steps` of `[diameter, length]` along its axis, with a `bore`.",
+      "properties": {
+        "bore": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "depth": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "holes": {
+          "items": {
+            "$ref": "#/$defs/PartHole"
+          },
+          "type": "array"
+        },
+        "profile": {
+          "items": {
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "steps": {
+          "items": {
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PartHole": {
+      "additionalProperties": false,
+      "description": "A hole right through a prism along `axis`: `at` is `[x, z]` along y,\n`[x, y]` along z, `[y, z]` along x.",
+      "properties": {
+        "at": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "axis": {
+          "$ref": "#/$defs/PartAxis"
+        },
+        "diameter": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "axis",
+        "at",
+        "diameter"
+      ],
+      "type": "object"
+    },
     "Pick": {
       "additionalProperties": false,
       "description": "One object picked where a command asks for one, and, where it matters\nwhich part — the part of a line a trim removes, the side an offset goes\nto — the point the pick is nearest to.",
@@ -2222,6 +2352,21 @@
         "id"
       ],
       "type": "object"
+    },
+    "Projection": {
+      "description": "How a part's views are laid out.",
+      "oneOf": [
+        {
+          "const": "first",
+          "description": "The top view under the front, the right side on its left (ISO).",
+          "type": "string"
+        },
+        {
+          "const": "third",
+          "description": "The top view over the front, the right side on its right (ASME).",
+          "type": "string"
+        }
+      ]
     },
     "Relation": {
       "description": "A geometric constraint's kind (ADR-0038).",
