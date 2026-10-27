@@ -12,6 +12,7 @@ import {
   type AiClient,
   type AiErrorKind,
   type AiRequest,
+  type Exchange,
   type Allowance,
   type Billing,
   type PlanNeed,
@@ -84,6 +85,10 @@ interface Kept {
   expiresAt: string;
 }
 
+/** The most earlier turns the service takes with a request, and their size together. */
+const HISTORY_TURNS = 10;
+const HISTORY_CHARACTERS = 60_000;
+
 /** The fragment a sign-in link opens the app with. */
 const SIGN_IN = /(?:^#|&)ai-sign-in=([A-Za-z0-9_-]+)/;
 
@@ -95,6 +100,8 @@ export class AiAssistant {
   #proposed: { prompt: string; intent: unknown } | undefined;
   /** Every option of the request on the canvas: its document and the others (#10). */
   #options: readonly unknown[] = [];
+  /** The conversation so far, oldest first, sent with each request; with the request each answered. */
+  #history: { request: number; exchange: Exchange }[] = [];
 
   constructor(
     readonly host: AssistantHost,
@@ -313,6 +320,16 @@ export class AiAssistant {
         ...(unit ? { unit } : {}),
         ...(context ? { context } : {}),
         ...(revised ? { previous: revised } : {}),
+        ...(this.#history.length > 0 ? { history: this.#recent() } : {}),
+      });
+      this.#history.push({
+        request: answer.request,
+        exchange: {
+          prompt,
+          reply: answer.reply,
+          ...(answer.intent ? { intent: answer.intent } : {}),
+          accepted: false,
+        },
       });
       // A new answer replaces the proposal waiting: that one was not taken.
       const previous = this.#snapshot.proposal;
@@ -386,6 +403,7 @@ export class AiAssistant {
     this.host.propose(JSON.stringify(intent));
     const summary = this.host.proposalSummary();
     this.#proposed = { prompt, intent };
+    this.#remember(request, { intent });
     this.#set({
       proposal: summary
         ? {
@@ -420,6 +438,30 @@ export class AiAssistant {
     this.#set({ busy: false, turns: [...this.#snapshot.turns, { role: "ai", text }] });
   }
 
+  /** Changes what the conversation says of `request`: the option shown, or that it was drawn. */
+  #remember(request: number, change: Partial<Exchange>): void {
+    const kept = [...this.#history].reverse().find((entry) => entry.request === request);
+    if (kept) kept.exchange = { ...kept.exchange, ...change };
+  }
+
+  /**
+   * The conversation to send: its last turns, as many as the service takes
+   * (at most ten, and 60,000 characters together).
+   */
+  #recent(): Exchange[] {
+    const recent: Exchange[] = [];
+    let size = 0;
+    for (const { exchange } of [...this.#history].reverse()) {
+      size +=
+        exchange.prompt.length +
+        exchange.reply.length +
+        (exchange.intent === undefined ? 0 : JSON.stringify(exchange.intent).length);
+      if (recent.length === HISTORY_TURNS || size > HISTORY_CHARACTERS) break;
+      recent.unshift(exchange);
+    }
+    return recent;
+  }
+
   async #report(request: number, outcome: "accepted" | "rejected", option = 0): Promise<void> {
     if (!this.client || !this.#kept) return;
     // The record is for evaluation: a lost report changes nothing for the user.
@@ -433,6 +475,7 @@ export class AiAssistant {
     const proposal = this.#snapshot.proposal;
     if (!proposal || proposal.error) return;
     this.host.acceptProposal();
+    this.#remember(proposal.request, { accepted: true });
     this.#proposed = undefined;
     this.#options = [];
     this.#set({
@@ -472,7 +515,7 @@ export class AiAssistant {
   async signOut(): Promise<void> {
     const kept = this.#kept;
     this.#forget();
-    this.#dropProposal();
+    this.#endConversation();
     this.#set({
       status: "signed-out",
       email: undefined,
@@ -491,7 +534,7 @@ export class AiAssistant {
     try {
       await this.client.deleteAccount(this.#kept.session);
       this.#forget();
-      this.#dropProposal();
+      this.#endConversation();
       this.#set({
         status: "signed-out",
         email: undefined,
@@ -505,7 +548,9 @@ export class AiAssistant {
     }
   }
 
-  #dropProposal(): void {
+  /** Drops the proposal and forgets the conversation: the account it was with is gone. */
+  #endConversation(): void {
+    this.#history = [];
     if (this.#snapshot.proposal) this.host.rejectProposal();
     this.#proposed = undefined;
     this.#options = [];

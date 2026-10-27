@@ -73,6 +73,16 @@ export interface AiRequest {
   readonly context?: RequestContext;
   /** The proposal this request revises (#261): its request and its document. */
   readonly previous?: { readonly prompt: string; readonly intent: unknown };
+  /** The conversation before this request, oldest first, so it can refer to what was drawn. */
+  readonly history?: readonly Exchange[];
+}
+
+/** An earlier request of the conversation: what was answered, and whether it was drawn. */
+export interface Exchange {
+  readonly prompt: string;
+  readonly reply: string;
+  readonly intent?: unknown;
+  readonly accepted: boolean;
 }
 
 export interface AiAnswer {

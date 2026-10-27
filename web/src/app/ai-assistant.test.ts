@@ -289,7 +289,7 @@ describe("the AI assistant (#260)", () => {
     };
     await assistant.ask("make it bigger");
     // The revision goes with the proposal it refines.
-    expect(client.asked.at(-1)?.request).toEqual({
+    expect(client.asked.at(-1)?.request).toMatchObject({
       prompt: "make it bigger",
       unit: "mm",
       previous: { prompt: "a circle", intent: CIRCLE },
@@ -307,6 +307,67 @@ describe("the AI assistant (#260)", () => {
     assistant.accept();
     await assistant.ask("a circle");
     expect(client.asked.at(-1)?.request.previous).toBeUndefined();
+  });
+
+  test("each request carries the conversation before it, and what of it was drawn", async () => {
+    const { assistant, client } = await signedIn();
+    const RECTANGLE = {
+      version: 1,
+      operations: [{ op: "rectangle", corner: [0, 0], other: [1000, 3000] }],
+    };
+    client.answer = {
+      request: 1,
+      reply: "A rectangle.",
+      intent: RECTANGLE,
+      alternatives: [],
+      allowance: allowance(99),
+    };
+    await assistant.ask("draw a rectangle, 10m x 30m, in centimeters");
+    // The first request has no conversation before it.
+    expect(client.asked[0]?.request.history).toBeUndefined();
+    assistant.accept();
+
+    client.answer = {
+      request: 2,
+      reply: "A circle.",
+      intent: CIRCLE,
+      alternatives: [],
+      allowance: allowance(98),
+    };
+    await assistant.ask("a circle at the center of the rectangle, radius 100 cm");
+    expect(client.asked[1]?.request.history).toEqual([
+      {
+        prompt: "draw a rectangle, 10m x 30m, in centimeters",
+        reply: "A rectangle.",
+        intent: RECTANGLE,
+        accepted: true,
+      },
+    ]);
+    assistant.reject();
+
+    client.answer = {
+      request: 3,
+      reply: "Which one?",
+      intent: null,
+      alternatives: [],
+      allowance: allowance(97),
+    };
+    await assistant.ask("the rectangle you've just drawn");
+    expect(client.asked[2]?.request.history?.map((turn) => turn.accepted)).toEqual([true, false]);
+    expect(client.asked[2]?.request.history?.[1]?.intent).toEqual(CIRCLE);
+
+    // Only the last ten go, oldest dropped first.
+    for (let n = 0; n < 12; n += 1) await assistant.ask(`request ${n}`);
+    const sent = client.asked.at(-1)?.request.history ?? [];
+    expect(sent).toHaveLength(10);
+    expect(sent.at(-1)?.prompt).toBe("request 10");
+    expect(sent[0]?.prompt).toBe("request 1");
+
+    // Signing out forgets it.
+    await assistant.signOut();
+    await assistant.start("#ai-sign-in=good-token");
+    await assistant.ask("a circle");
+    expect(client.asked.at(-1)?.request.history).toBeUndefined();
   });
 
   test("a proposal the engine stops is dropped, and the AI says why (#261)", async () => {

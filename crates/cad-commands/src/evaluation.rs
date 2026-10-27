@@ -5,7 +5,8 @@
 //!
 //! A level's `cases.jsonl` is written by hand: a case's prompt and language,
 //! the drawing it starts from (`setup`, as intent operations), the objects
-//! selected, the request it refines (`previous`), and what should come of
+//! selected, the request it refines (`previous`), the conversation before it
+//! (`history`), and what should come of
 //! it — the drawing one of the `expected` documents makes, `"nothing"`, or
 //! the engine refusing what `refused` asks. [`Corpus::requests`] is what the
 //! app would send for each, its context from `Session::ai_context`: the AI
@@ -332,6 +333,10 @@ pub struct Case {
     /// The IDs selected, or every entity the setup made (`"all"`).
     pub select: Selected,
     pub previous: Option<Value>,
+    /// The conversation before the request, as the app sends it: earlier
+    /// requests, their replies and documents, and whether each was accepted.
+    /// What was accepted is drawn by `setup`.
+    pub history: Option<Value>,
     pub expected: Expected,
     /// A request for options (AI service #10): how few and how many may
     /// come, each wanted as one answer would be, and no two drawing the
@@ -432,6 +437,7 @@ impl Corpus {
                         _ => Selected::Ids(Vec::new()),
                     },
                     previous: case.get("previous").cloned(),
+                    history: case.get("history").cloned(),
                     expected,
                     options: match &case["options"] {
                         Value::Null => None,
@@ -631,6 +637,9 @@ pub fn request(case: &Case) -> Value {
     }
     if let Some(previous) = &case.previous {
         request["previous"] = previous.clone();
+    }
+    if let Some(history) = &case.history {
+        request["history"] = history.clone();
     }
     request
 }
