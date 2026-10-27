@@ -29,15 +29,15 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M20 — AI Foundations | Complete and closed ([review](reviews/m20-exit-review.md)): natural language as an optional input method (ADR-0037) — the intent IR, proposals, the AI panel, AI commands, and a corpus replayed in CI and asked live nightly; the service in its own private repository. Its nightly job's key and production need a person. |
 | M21 — Constraints and Constrained Generation | Complete and closed ([review](reviews/m21-exit-review.md)): geometric and dimensional constraints kept in the drawing and settled on every edit by a solver of our own (ADR-0038), shown on the canvas and round-tripped through DXF; parts and placements as constrained commands; the AI's second level, parametric edits through a part's parameters. |
 | M22 — Floor-Plan Generator | Complete and closed ([review](reviews/m22-exit-review.md)): floor plans from a brief by a deterministic multi-start search (ADR-0039) — walls, doors, and labels as ordinary geometry; `FLOORPLAN` with alternatives; briefs and revisions through the AI. |
+| M23 — AI Plans and Billing | Complete and closed in Stripe's test mode (its review is in the service's repository): Free and Pro, bought, managed, and cancelled through Stripe, the service enforcing what each allows; the account and the way to Pro in the app (#289). Going live — production, Stripe's live mode, a real payment, the terms read by a lawyer — needs the maintainer, and is in the service's repository. |
 | M24 — General-Purpose Drawings | Complete and closed ([review](reviews/m24-exit-review.md)): isometric drafting, a plan's elevations and sections, a part's orthographic and section views, title blocks, and staircases — 2D views drawn by generators from descriptions, nothing 3D kept ([ADR-0040](adr/0040-general-purpose-drawings.md), accepted); by command and through the AI, at a new corpus level, L4. |
 
 ## What is planned next
 
-Filed on 2026-10-18 and 2026-10-19. M21 and M22 are done; what remains is the service's, or needs a person.
+Filed on 2026-10-18 and 2026-10-19. What remains needs a person.
 
 | Milestone | What | Epic |
 | --- | --- | --- |
-| M23 — AI Plans and Billing | In the service repository (Stripe, the plans' gates). The app's side: the way to Pro where a refusal names it (cadslate2d-ai-service#9), and its account view (#289). | — |
 | Open Source Release | The main repository public under a licence decided by ADR (§44), with a trademark, a contributor agreement, audited history, dependencies, and assets, and the service kept private. Done before the repository goes public; independent of the milestones above. | #291 |
 
 ## M24, General-Purpose Drawings
