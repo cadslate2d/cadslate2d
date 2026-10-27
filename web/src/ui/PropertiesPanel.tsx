@@ -126,7 +126,7 @@ export function PropertiesPanel({ app }: { app: CadApp }) {
   };
 
   return (
-    <aside className="properties" aria-label="Properties">
+    <aside className="properties" aria-label="Properties" data-panel="properties">
       <div className="properties__header">
         <h2 className="properties__title">Properties</h2>
         <span className="properties__headline" data-testid="selection-headline">

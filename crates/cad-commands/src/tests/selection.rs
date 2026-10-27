@@ -246,3 +246,37 @@ fn only_index_candidates_are_tested_the_drawing_is_never_scanned() {
     assert!(selected(&h).is_empty());
     assert_eq!(log.borrow().queries.len(), 1);
 }
+
+/// A right click on an object at the idle prompt, with nothing selected,
+/// selects it for the shortcut menu. With a selection, during a command, or
+/// over nothing, it changes nothing: the menu acts on what is there.
+#[test]
+fn a_right_click_on_an_object_selects_it_when_nothing_is() {
+    let (mut h, lower, upper) = two_lines();
+    assert!(h.right_click_world(Point2::new(500.0, 500.0)).is_empty());
+    assert!(selected(&h).is_empty());
+
+    let dirty = h.right_click_world(Point2::new(20.0, 0.0));
+    assert!(dirty.contains(Dirty::OVERLAY | Dirty::UI));
+    assert_eq!(selected(&h), vec![lower]);
+    // The selection stands: a right click elsewhere does not add to it.
+    assert!(h.right_click_world(Point2::new(20.0, 50.0)).is_empty());
+    assert_eq!(selected(&h), vec![lower]);
+
+    h.escape();
+    h.enter("MOVE");
+    assert!(h.right_click_world(Point2::new(20.0, 50.0)).is_empty());
+    assert!(!selected(&h).contains(&upper));
+    let revision = h.session.drawing().revision();
+    h.escape();
+    assert_eq!(h.session.drawing().revision(), revision);
+}
+
+/// An object on a locked layer is not selected by a right click either.
+#[test]
+fn a_right_click_leaves_a_locked_object_alone() {
+    let (mut h, _, _) = two_lines();
+    h.enter_all(&["-LAYER", "Lock", "0", ""]);
+    h.right_click_world(Point2::new(20.0, 0.0));
+    assert!(selected(&h).is_empty());
+}

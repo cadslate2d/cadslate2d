@@ -12,7 +12,15 @@ export type Panel = "toolbar" | "layers" | "properties" | "ai";
 export type Dialog = "about";
 
 export type MenuAction =
-  { readonly macro: Macro } | { readonly panel: Panel } | { readonly dialog: Dialog };
+  | { readonly macro: Macro }
+  | { readonly panel: Panel }
+  | { readonly dialog: Dialog }
+  /** Typed into the command line as it is, to the command asking: `""` is Enter. */
+  | { readonly input: string }
+  /** Escape: the command cancelled, or the selection cleared. */
+  | { readonly cancel: true }
+  /** A panel shown, and brought into view: never hidden. */
+  | { readonly show: Panel };
 
 /** What an item's state is decided from. */
 export interface MenuContext {

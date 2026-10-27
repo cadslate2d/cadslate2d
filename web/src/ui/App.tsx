@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { CadApp } from "../app/cad-app";
-import { CadEngine, coreVersion, loadEngine } from "../cad/engine";
+import { CadEngine, KeyAction, coreVersion, loadEngine } from "../cad/engine";
 import { CanvasView } from "./CanvasView";
 import { CommandLine } from "./CommandLine";
 import { ExportWarning } from "./ExportWarning";
@@ -15,6 +15,7 @@ import { MenuBar } from "./MenuBar";
 import type { MenuAction, Panel } from "./menu-model";
 import { MENUS } from "./menus";
 import { PropertiesPanel } from "./PropertiesPanel";
+import { ShortcutMenu } from "./ShortcutMenu";
 import { AiPanel } from "./AiPanel";
 import { AiAssistant, browserSessionStore } from "../app/ai-assistant";
 import { httpAiClient } from "../app/ai-client";
@@ -163,7 +164,16 @@ export function App() {
   const act = (action: MenuAction) => {
     if ("macro" in action) core.app.runMacro(action.macro);
     else if ("panel" in action) visibility[action.panel].toggle();
-    else if (action.dialog === "about") setAbout(true);
+    else if ("input" in action) core.app.submitText(action.input);
+    else if ("cancel" in action) core.app.key(KeyAction.Escape);
+    else if ("show" in action) {
+      if (!visibility[action.show].visible) visibility[action.show].toggle();
+      requestAnimationFrame(() =>
+        document
+          .querySelector(`[data-panel="${action.show}"]`)
+          ?.scrollIntoView({ block: "nearest" }),
+      );
+    } else if (action.dialog === "about") setAbout(true);
   };
   const panels = layers.visible || properties.visible || ai.visible;
   const shell = ["shell", toolbar.visible && "shell--with-toolbar", panels && "shell--with-panels"]
@@ -188,6 +198,7 @@ export function App() {
       />
       {toolbar.visible && <Toolbar app={core.app} />}
       <CanvasView app={core.app} />
+      <ShortcutMenu app={core.app} onAction={act} />
       <ImportReport app={core.app} />
       <ExportWarning app={core.app} />
       <Recovery app={core.app} />

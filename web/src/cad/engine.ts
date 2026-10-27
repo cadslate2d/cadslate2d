@@ -140,6 +140,8 @@ export interface UiState {
   readonly selectionCount: number;
   /** Whether Space submits the command line like Enter. */
   readonly spaceAccepts: boolean;
+  /** The command Enter repeats at the idle prompt, if any. */
+  readonly repeat?: string;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
   /** Whether the clipboard holds something to paste (#247). */

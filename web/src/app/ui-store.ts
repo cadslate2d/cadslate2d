@@ -35,6 +35,8 @@ export interface UiSnapshot {
   readonly tracking: string | undefined;
   readonly selectionCount: number;
   readonly spaceAccepts: boolean;
+  /** The command Enter repeats at the idle prompt, if any. */
+  readonly repeat: string | undefined;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
   readonly canPaste: boolean;
@@ -105,6 +107,7 @@ const INITIAL: UiSnapshot = {
   tracking: undefined,
   selectionCount: 0,
   spaceAccepts: true,
+  repeat: undefined,
   canUndo: false,
   canRedo: false,
   canPaste: false,
@@ -192,6 +195,7 @@ export class UiStore {
       tracking: state.tracking,
       selectionCount: state.selectionCount,
       spaceAccepts: state.spaceAccepts,
+      repeat: state.repeat,
       canUndo: state.canUndo,
       canRedo: state.canRedo,
       canPaste: state.canPaste,

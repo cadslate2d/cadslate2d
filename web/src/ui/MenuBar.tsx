@@ -36,7 +36,7 @@ function Label({ label, underline }: { label: string; underline: boolean }) {
 }
 
 /** The entries of one open list, and the cascade open beside it. */
-function MenuList({
+export function MenuList({
   entries,
   level,
   state,

@@ -34,6 +34,8 @@ pub struct UiState {
     /// Whether Space submits the command line like Enter. False only while a
     /// command expects free text (none do yet).
     pub space_accepts: bool,
+    /// The command Enter repeats at the idle prompt, if any (DESIGN §13.4).
+    pub repeat: Option<&'static str>,
     pub can_undo: bool,
     pub can_redo: bool,
     /// Whether the session's clipboard holds something to paste (#247):

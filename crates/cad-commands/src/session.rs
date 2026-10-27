@@ -567,6 +567,7 @@ impl Session {
             }),
             selection_count: self.selection.len(),
             space_accepts: self.expected().space_accepts(),
+            repeat: self.last_command,
             can_undo: self.drawing.can_undo(),
             can_redo: self.drawing.can_redo(),
             can_paste: self.clipboard.is_some(),
@@ -953,6 +954,20 @@ impl Session {
                 Some(aim) => self.feed_point(aim.point).unwrap_or(Dirty::NONE),
                 None => Dirty::NONE,
             },
+            // A right click at the idle prompt, with nothing selected, picks
+            // the object under the cursor, so the host's shortcut menu
+            // offers what can be done with it. Otherwise the menu acts on
+            // the selection as it is, and the click changes nothing.
+            PointerButton::Secondary
+                if self.active.is_none()
+                    && self.selection.is_empty()
+                    && self.selection_box.is_none() =>
+            {
+                match self.pick(at) {
+                    Some(id) => self.change_selection(&[id], false, SelectionMethod::Click),
+                    None => Dirty::NONE,
+                }
+            }
             PointerButton::Secondary => Dirty::NONE,
         }
     }

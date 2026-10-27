@@ -1321,3 +1321,13 @@ body {
 .ai__link {
   color: var(--color-accent);
 }
+
+/* The drawing area's right-click menu: a menu bar list, where the pointer is. */
+.shortcut-menu {
+  position: fixed;
+  z-index: 40;
+}
+
+.shortcut-menu > .menubar__list {
+  position: static;
+}

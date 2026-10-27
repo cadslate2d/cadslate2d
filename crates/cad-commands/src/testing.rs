@@ -107,6 +107,19 @@ impl Harness {
                 .pointer_up(at, PointerButton::Primary, Modifiers::NONE)
     }
 
+    /// Presses and releases the secondary button on the screen position
+    /// that shows `point`: what opens the host's shortcut menu.
+    pub fn right_click_world(&mut self, point: Point2) -> Dirty {
+        let at = self.session.view().world_to_screen(point);
+        let dirty = self
+            .session
+            .pointer_down(at, PointerButton::Secondary, Modifiers::NONE);
+        dirty
+            | self
+                .session
+                .pointer_up(at, PointerButton::Secondary, Modifiers::NONE)
+    }
+
     /// Clicks with Shift held.
     pub fn shift_click_world(&mut self, point: Point2) -> Dirty {
         let at = self.session.view().world_to_screen(point);
