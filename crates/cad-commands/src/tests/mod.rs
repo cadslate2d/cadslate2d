@@ -70,6 +70,7 @@ mod reconciliation;
 mod revcloud;
 mod selection;
 mod selection_sets;
+mod sketch;
 mod snapping;
 mod spline;
 mod splinedit;

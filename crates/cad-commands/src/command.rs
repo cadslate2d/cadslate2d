@@ -227,6 +227,12 @@ pub trait Command: Debug {
     /// and never touches the document (§17).
     fn preview(&self, _cursor: Point2, _out: &mut Vec<OverlayItem>) {}
 
+    /// The pointer moved to `at`, as `Session::aim` makes it a point: for a
+    /// command that records the pointer's path (SKETCH, #326). It changes
+    /// only the command's own state, never the document; the default does
+    /// nothing.
+    fn pointer_moved(&mut self, _at: Point2) {}
+
     /// Describes what picking the hovered object would do, for commands that
     /// ask for an object. Like [`Command::preview`], it is transient: the
     /// document is not touched, and the description must be what the pick

@@ -248,6 +248,8 @@ const DRAW: Menu = {
     command("W&indow", "WINDOW"),
     command("D&oor", "DOOR"),
     command("Re&vision Cloud", "REVCLOUD"),
+    // Freehand (#326).
+    command("S&ketch", "SKETCH"),
     SEPARATOR,
     cascade("Te&xt", [
       command("&Multiline Text...", "MTEXT"),

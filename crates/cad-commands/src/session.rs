@@ -833,6 +833,12 @@ impl Session {
             self.view
                 .pan_by_pixels(at.x - previous.x, at.y - previous.y);
             dirty |= Dirty::VIEW;
+        } else if let Some(point) = self.aim().map(|aim| aim.point)
+            && let Some(active) = self.active.as_mut()
+        {
+            // A command that records the path sees where the pointer went,
+            // through the one pipeline that makes it a point.
+            active.command.pointer_moved(point);
         }
         dirty
     }
