@@ -41,6 +41,7 @@ mod hatch;
 mod housekeeping;
 mod inquiry;
 mod intent;
+mod isometric;
 mod join;
 mod layer_command;
 mod layers;

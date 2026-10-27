@@ -27,7 +27,10 @@ fn bare() -> Harness {
 fn snap_sets_the_spacing_and_switches_grid_snap() {
     let mut h = bare();
     h.enter("SNAP");
-    assert_eq!(h.prompt(), "Specify snap spacing or [ON/OFF/Aspect] <10>:");
+    assert_eq!(
+        h.prompt(),
+        "Specify snap spacing or [ON/OFF/Aspect/Style] <10>:"
+    );
     h.enter("-1");
     assert_eq!(
         h.log().last().unwrap(),
@@ -85,7 +88,19 @@ fn the_grid_can_follow_the_snap_spacing() {
     h.enter_all(&["SNAP", "2.5", "GRID"]);
     assert_eq!(h.prompt(), "Specify grid spacing or [Snap] <10>:");
     h.enter("S");
-    assert_eq!(h.session.overlay()[0], OverlayItem::Grid { spacing: 2.5 });
+    assert_eq!(
+        h.session.overlay()[0],
+        OverlayItem::Grid {
+            spacing: 2.5,
+            isometric: false
+        }
+    );
     h.enter_all(&["GRID", "20"]);
-    assert_eq!(h.session.overlay()[0], OverlayItem::Grid { spacing: 20.0 });
+    assert_eq!(
+        h.session.overlay()[0],
+        OverlayItem::Grid {
+            spacing: 20.0,
+            isometric: false
+        }
+    );
 }

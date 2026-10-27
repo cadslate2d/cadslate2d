@@ -201,6 +201,29 @@ pub fn ortho(base: Point2, cursor: Point2) -> Track {
     }
 }
 
+/// ORTHO on an isometric plane (#336): the cursor constrained to the
+/// plane's axis, either way, nearest the direction it is in from `base`.
+pub fn iso_ortho(base: Point2, cursor: Point2, plane: cad_core::iso::Plane) -> Track {
+    let offset = cursor - base;
+    let along = plane
+        .axes()
+        .into_iter()
+        .max_by(|a, b| offset.dot(*a).abs().total_cmp(&offset.dot(*b).abs()))
+        .expect("two axes");
+    let distance = offset.dot(along);
+    let direction = if distance >= 0.0 { along } else { along * -1.0 };
+    Track {
+        kind: TrackKind::Ortho,
+        from: base,
+        point: base + along * distance,
+        angle: direction
+            .y
+            .atan2(direction.x)
+            .to_degrees()
+            .rem_euclid(360.0),
+    }
+}
+
 /// POLAR: if the cursor is within `reach` (world units) of a direction that
 /// is a multiple of `increment` degrees from `base`, the cursor projected
 /// onto that direction. `None` leaves the cursor free.
@@ -252,6 +275,35 @@ mod tests {
         let tracked = object_tracking(&[corner], p(30.0, 32.0), 45.0, 5.0).unwrap();
         assert!(tracked.point.distance_to(p(31.0, 31.0)) < 1e-9);
         assert!((tracked.first.angle - 45.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn isometric_ortho_follows_the_planes_axes() {
+        use cad_core::iso::Plane;
+        let base = p(10.0, 10.0);
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        // Up and a little right: on the top plane, along 30°; on the left,
+        // straight up; on the right, up too.
+        let cursor = p(14.0, 20.0);
+        let top = iso_ortho(base, cursor, Plane::Top);
+        assert!(close(top.angle, 30.0), "{}", top.angle);
+        let left = iso_ortho(base, cursor, Plane::Left);
+        assert!(close(left.angle, 90.0));
+        assert!(close(left.point.x, 10.0));
+        // Down and left on the top plane: 210°, the x axis backwards.
+        let back = iso_ortho(base, p(0.0, 4.0), Plane::Top);
+        assert!(close(back.angle, 210.0), "{}", back.angle);
+        // The point is on the axis through the base, at the cursor's
+        // distance along it.
+        for plane in Plane::ALL {
+            for cursor in [p(3.0, 25.0), p(-8.0, -2.0), p(30.0, 1.0)] {
+                let track = iso_ortho(base, cursor, plane);
+                let along = track.point - base;
+                let unit = Vec2::from_polar(1.0, track.angle.to_radians());
+                assert!(close(along.x * unit.y - along.y * unit.x, 0.0));
+                assert!(plane.axes().iter().any(|a| close(a.dot(unit).abs(), 1.0)));
+            }
+        }
     }
 
     #[test]

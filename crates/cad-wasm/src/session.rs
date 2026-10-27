@@ -55,6 +55,7 @@ fn key_action(code: u32) -> Option<KeyAction> {
         14 => Some(KeyAction::Copy),
         15 => Some(KeyAction::Cut),
         16 => Some(KeyAction::Paste),
+        17 => Some(KeyAction::Isoplane),
         _ => None,
     }
 }
@@ -159,6 +160,9 @@ struct UiStateDto {
     toggles: u32,
     /// The drawing's unit suffix, or empty for unitless (#186).
     unit: String,
+    /// The current isometric plane, or empty with the standard snap style
+    /// (#336).
+    isoplane: &'static str,
     /// The user's command aliases, one per line (#186).
     user_aliases: String,
     document_name: Option<String>,
@@ -295,6 +299,7 @@ impl From<UiState> for UiStateDto {
             paper: state.paper,
             through: state.through,
             unit: state.unit.unwrap_or("").to_owned(),
+            isoplane: state.isoplane.unwrap_or(""),
             user_aliases: state.user_aliases,
             import_report: state.import_report.map(|report| ImportReportDto {
                 serial: report.serial,

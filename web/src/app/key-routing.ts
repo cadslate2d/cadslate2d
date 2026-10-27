@@ -11,6 +11,8 @@ export type KeyIntent =
   | { kind: "save" }
   /** Ctrl+Shift+A: group selection on or off (#214). */
   | { kind: "group-selection" }
+  /** F5, Ctrl+E: the next isometric plane (#336). */
+  | { kind: "isoplane" }
   /** A key that starts a command, as its menu item does (#247): Ctrl+P, Ctrl+Shift+S. */
   | { kind: "command"; command: string }
   /** Ctrl+A with nothing typed: everything, at the idle prompt (#247). */
@@ -65,6 +67,7 @@ export function classifyKey(event: KeyLike, spaceAccepts: boolean, inputEmpty = 
     if (key === "o") return { kind: "open" };
     if (key === "s" && !event.shiftKey) return { kind: "save" };
     if (key === "a" && event.shiftKey) return { kind: "group-selection" };
+    if (key === "e" && !event.shiftKey) return { kind: "isoplane" };
     if (key === "p" && !event.shiftKey) return { kind: "command", command: "PLOT" };
     if (key === "s" && event.shiftKey) return { kind: "command", command: "SAVEAS" };
     // With text typed, Ctrl+A selects the text, as in any field.
@@ -82,6 +85,7 @@ export function classifyKey(event: KeyLike, spaceAccepts: boolean, inputEmpty = 
 
   const toggle = TOGGLE_KEYS[event.key];
   if (toggle) return { kind: "toggle", toggle };
+  if (event.key === "F5") return { kind: "isoplane" };
 
   switch (event.key) {
     case "Enter":

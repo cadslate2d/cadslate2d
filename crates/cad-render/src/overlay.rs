@@ -248,7 +248,14 @@ impl OverlayFrame {
         self.push_construction_items(items, drawing, view);
         for item in items {
             match item {
-                OverlayItem::Grid { spacing } => self.push_grid(*spacing, view),
+                OverlayItem::Grid {
+                    spacing,
+                    isometric: false,
+                } => self.push_grid(*spacing, view),
+                OverlayItem::Grid {
+                    spacing,
+                    isometric: true,
+                } => self.push_iso_grid(*spacing, view),
                 OverlayItem::Highlight(id) => {
                     if let Some(entity) = drawing.entity(*id) {
                         self.frame
@@ -615,6 +622,48 @@ impl OverlayFrame {
                 let y = row as f64 * shown;
                 self.frame
                     .push_segment(style, Point2::new(min.x, y), Point2::new(max.x, y));
+            }
+        }
+    }
+
+    /// The isometric grid (#336): the lines of the snap lattice across the
+    /// visible area — verticals through its columns and the rows along 30°
+    /// and 150° — every fifth major, on world multiples like the square
+    /// grid's.
+    fn push_iso_grid(&mut self, spacing: f64, view: &View) {
+        let Some(shown) = displayed_grid_spacing(spacing, view.scale()) else {
+            return;
+        };
+        let visible = view.visible_bounds();
+        let (min, max) = (visible.min(), visible.max());
+        // Columns: x = n·s·cos 30°. Rows along 30°: y − x·tan 30° = n·s;
+        // along 150°: y + x·tan 30° = n·s.
+        let column = shown * cad_core::iso::X.x;
+        let tan = cad_core::iso::X.y / cad_core::iso::X.x;
+        let columns = (min.x / column).ceil() as i64..=(max.x / column).floor() as i64;
+        let corners = visible.corners();
+        let offsets = |slope: f64| {
+            let values = corners.map(|c| c.y - slope * c.x);
+            let lo = values.iter().copied().fold(f64::INFINITY, f64::min);
+            let hi = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            ((lo / shown).ceil() as i64)..=((hi / shown).floor() as i64)
+        };
+        for (style, major) in [(StyleRole::GridMinor, false), (StyleRole::GridMajor, true)] {
+            let wanted = |line: &i64| (line % GRID_MAJOR_EVERY == 0) == major;
+            for n in columns.clone().filter(wanted) {
+                let x = n as f64 * column;
+                self.frame
+                    .push_segment(style, Point2::new(x, min.y), Point2::new(x, max.y));
+            }
+            for slope in [tan, -tan] {
+                for n in offsets(slope).filter(wanted) {
+                    let b = n as f64 * shown;
+                    self.frame.push_segment(
+                        style,
+                        Point2::new(min.x, slope * min.x + b),
+                        Point2::new(max.x, slope * max.x + b),
+                    );
+                }
             }
         }
     }
@@ -1103,7 +1152,14 @@ mod tests {
 
     fn grid_frame(spacing: f64, view: &View) -> OverlayFrame {
         let mut overlay = OverlayFrame::new();
-        overlay.rebuild(&[OverlayItem::Grid { spacing }], &Drawing::new(), view);
+        overlay.rebuild(
+            &[OverlayItem::Grid {
+                spacing,
+                isometric: false,
+            }],
+            &Drawing::new(),
+            view,
+        );
         overlay
     }
 
@@ -1125,6 +1181,55 @@ mod tests {
             }
         }
         (columns, rows)
+    }
+
+    #[test]
+    fn the_isometric_grid_runs_along_its_three_axes_through_the_lattice() {
+        let view = view();
+        let mut overlay = OverlayFrame::new();
+        overlay.rebuild(
+            &[OverlayItem::Grid {
+                spacing: 10.0,
+                isometric: true,
+            }],
+            &Drawing::new(),
+            &view,
+        );
+        let frame = overlay.frame();
+        let origin = frame.origin();
+        let segments: Vec<[f64; 4]> = frame
+            .segments()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|s| {
+                let [x0, y0, x1, y1] = s.map(f64::from);
+                [origin.x + x0, origin.y + y0, origin.x + x1, origin.y + y1]
+            })
+            .collect();
+        assert!(!segments.is_empty());
+        let mut directions = [0usize; 3];
+        for [x0, y0, x1, y1] in &segments {
+            let angle = (y1 - y0).atan2(x1 - x0).to_degrees().rem_euclid(180.0);
+            let k = [90.0, 30.0, 150.0]
+                .iter()
+                .position(|a: &f64| (a - angle).abs() < 1e-3)
+                .unwrap_or_else(|| panic!("a grid line at {angle}°"));
+            directions[k] += 1;
+        }
+        assert!(directions.iter().all(|&n| n > 0), "{directions:?}");
+        // A lattice point in view is on a line of each direction.
+        let shown = displayed_grid_spacing(10.0, view.scale()).unwrap();
+        let point = cad_core::iso::map(shown, shown, 0.0);
+        let on = |[x0, y0, x1, y1]: [f64; 4]| {
+            let (dx, dy) = (x1 - x0, y1 - y0);
+            ((point.x - x0) * dy - (point.y - y0) * dx).abs() / dx.hypot(dy) < 1e-3
+        };
+        assert_eq!(
+            segments.iter().filter(|s| on(**s)).count(),
+            3,
+            "one line of each direction through {point:?}"
+        );
     }
 
     #[test]

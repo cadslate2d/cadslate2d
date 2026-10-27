@@ -51,6 +51,11 @@ pub struct DraftingSettings {
     pub snap_spacing: [f64; 2],
     /// The grid drawn at the snap spacing rather than its own (`GRID Snap`).
     pub grid_follows_snap: bool,
+    /// The snap grid's style (#336): standard, or isometric — the lattice,
+    /// the grid, and ORTHO on the isometric axes.
+    pub isometric: bool,
+    /// The isometric plane ORTHO and isocircles work on: `ISOPLANE`, F5.
+    pub isoplane: cad_core::iso::Plane,
     /// The datum ordinate dimensions measure from (#227): the origin until
     /// `DIMORDINATE Datum` or `QDIM Datum point` moves it, for the session.
     pub ordinate_datum: Point2,
@@ -155,7 +160,8 @@ impl DraftingSettings {
     /// across when it follows snap (#219).
     pub fn grid_spacing_shown(&self) -> f64 {
         if self.grid_follows_snap {
-            self.snap_spacing[0]
+            // An isometric lattice's spacing is its vertical one.
+            self.snap_spacing[usize::from(self.isometric)]
         } else {
             self.grid_spacing
         }
@@ -181,6 +187,8 @@ impl Default for DraftingSettings {
             cloud_arcs: [7.5, 15.0],
             snap_spacing: [DEFAULT_GRID_SPACING, DEFAULT_GRID_SPACING],
             grid_follows_snap: false,
+            isometric: false,
+            isoplane: cad_core::iso::Plane::Top,
             ordinate_datum: Point2::ORIGIN,
         }
     }

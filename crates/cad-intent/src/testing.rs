@@ -244,6 +244,7 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         constraint(),
         floor_plan(),
         stair(),
+        isometric(),
         targets().prop_map(|targets| Operation::Erase { targets }),
         (
             proptest::collection::vec((targets(), 0.5f64..50.0), 1..4),
@@ -256,6 +257,41 @@ pub fn operation() -> impl Strategy<Value = Operation> {
                     .collect(),
                 keep_centrelines,
             }),
+    ]
+}
+
+/// A point on the isometric axes.
+fn iso_point() -> impl Strategy<Value = crate::IsoPoint> {
+    (-500.0..500.0f64, -500.0..500.0f64, -500.0..500.0f64).prop_map(|(x, y, z)| [x, y, z])
+}
+
+/// Isometric lines, polylines, and circles (#336), their points never
+/// twice on one place of the page in a row.
+fn isometric() -> impl Strategy<Value = Operation> {
+    let apart = |points: &Vec<crate::IsoPoint>| {
+        points
+            .windows(2)
+            .all(|w| differ(crate::iso_point(w[0]), crate::iso_point(w[1])))
+    };
+    let plane = prop_oneof![
+        Just(crate::IsoPlane::Left),
+        Just(crate::IsoPlane::Top),
+        Just(crate::IsoPlane::Right),
+    ];
+    prop_oneof![
+        proptest::collection::vec(iso_point(), 2..6)
+            .prop_filter("apart", apart)
+            .prop_map(|points| Operation::IsoLine { points }),
+        (proptest::collection::vec(iso_point(), 3..6), any::<bool>())
+            .prop_filter("apart", move |(points, _)| apart(points))
+            .prop_map(|(points, closed)| Operation::IsoPolyline { points, closed }),
+        (iso_point(), 0.5..100.0f64, plane).prop_map(|(center, radius, plane)| {
+            Operation::IsoCircle {
+                center,
+                radius,
+                plane,
+            }
+        }),
     ]
 }
 

@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { CadApp } from "../app/cad-app";
 import { STATUS_BAR } from "../app/toggles";
+import { KeyAction } from "../cad/engine";
 import { LayoutTabs } from "./LayoutTabs";
 
 const COORDINATE_DECIMALS = 4;
@@ -76,6 +77,18 @@ export function StatusBar({ app }: { app: CadApp }) {
           </button>
         );
       })}
+      {ui.isoplane && (
+        <button
+          type="button"
+          className="status__chip status__toggle status__chip--active"
+          data-testid="isoplane"
+          title="The isometric plane ORTHO and isocircles work on (F5). Click for the next; type SNAP Style to leave isometric drafting."
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => app.key(KeyAction.Isoplane)}
+        >
+          ISO {ui.isoplane.toUpperCase()}
+        </button>
+      )}
       <button
         type="button"
         className="status__chip status__toggle status__chip--active"

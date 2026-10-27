@@ -48,6 +48,8 @@ export const KeyAction = {
   Copy: 14,
   Cut: 15,
   Paste: 16,
+  /** F5, Ctrl+E: the next isometric plane (#336). */
+  Isoplane: 17,
 } as const;
 export type KeyAction = (typeof KeyAction)[keyof typeof KeyAction];
 
@@ -149,6 +151,8 @@ export interface UiState {
   readonly toggles: number;
   /** The drawing's unit as its suffix, or empty for unitless (#186). */
   readonly unit: string;
+  /** The current isometric plane, or empty with the standard snap style (#336). */
+  readonly isoplane: string;
   /** The user's command aliases, one per line (#186). */
   readonly userAliases: string;
   /** Name of the file the drawing was opened from, if any. */

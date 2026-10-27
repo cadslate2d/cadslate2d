@@ -17,6 +17,7 @@ const canUndo = ({ ui }: MenuContext) => ui.canUndo;
 const canRedo = ({ ui }: MenuContext) => ui.canRedo;
 const canPaste = ({ ui }: MenuContext) => ui.canPaste;
 const onPaper = ({ ui }: MenuContext) => ui.paper;
+const isometric = ({ ui }: MenuContext) => ui.isoplane !== "";
 
 /** An item that shows or hides a part of the shell, checked while it shows. */
 function panel(label: string, part: Panel): MenuItem {
@@ -185,6 +186,13 @@ const TOOLS: Menu = {
     cascade("Dra&fting Settings", [
       command("&Object Snap...", "OSNAP"),
       command("&Snap...", "SNAP"),
+      // Isometric drafting (#336): the style, then the plane, F5.
+      command(
+        "&Isometric Snap",
+        { command: "SNAP", steps: ["S", "I"] },
+        { checked: ({ ui }) => ui.isoplane !== "" },
+      ),
+      command("Isometric Pla&ne", "ISOPLANE", { shortcut: "F5", enabled: isometric }),
       command("&Grid...", "GRID"),
       command("&Polar Angle...", "POLARANG"),
       command("Pic&k Style...", "PICKSTYLE"),
@@ -230,6 +238,7 @@ const DRAW: Menu = {
       command("&Center", { command: "ELLIPSE", steps: ["C"] }),
       command("&Axis, End", "ELLIPSE"),
       command("A&rc", { command: "ELLIPSE", steps: ["A"] }),
+      command("&Isocircle", { command: "ELLIPSE", steps: ["I"] }, { enabled: isometric }),
     ]),
     cascade("&Block", [command("&Make...", "BLOCK"), command("&Define Attributes...", "ATTDEF")]),
     cascade("Poin&t", [

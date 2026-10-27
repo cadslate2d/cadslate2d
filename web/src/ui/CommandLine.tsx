@@ -50,6 +50,9 @@ export function CommandLine({ app }: { app: CadApp }) {
         case "group-selection":
           app.key(KeyAction.GroupSelection);
           break;
+        case "isoplane":
+          app.key(KeyAction.Isoplane);
+          break;
         case "command":
           setText("");
           app.invoke(intent.command);

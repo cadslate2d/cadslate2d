@@ -565,6 +565,38 @@ fn members_make_a_truss_of_its_centrelines() {
     );
 }
 
+/// #336: an isometric box's edges and a hole in its top, by points on the
+/// isometric axes; the hole is the top plane's isocircle, as ELLIPSE
+/// Isocircle draws it.
+#[test]
+fn isometric_operations_draw_on_the_axes() {
+    let h = run(r#"
+        {"op": "iso_polyline", "points": [[0, 0, 0], [40, 0, 0], [40, 30, 0], [0, 30, 0]], "closed": true},
+        {"op": "iso_line", "points": [[40, 0, 0], [40, 0, 20]]},
+        {"op": "iso_circle", "center": [20, 15, 20], "radius": 8}
+    "#);
+    assert_eq!(kinds(&h), ["polyline", "line", "other"]);
+    let edge = h.lines()[0];
+    let corner = cad_core::iso::map(40.0, 0.0, 0.0);
+    assert!(edge.start.distance_to(corner) < 1e-9);
+    assert!((edge.end - edge.start - cad_core::Vec2::new(0.0, 20.0)).length() < 1e-9);
+    let Entity::Ellipse(hole) = h.entities()[2].clone() else {
+        panic!()
+    };
+    let mut typed = Harness::new();
+    typed.enter_all(&["SNAP", "S", "I", "10", "ELLIPSE", "I", "0,0", "8"]);
+    let Entity::Ellipse(by_hand) = typed.entities()[0].clone() else {
+        panic!()
+    };
+    assert!(
+        hole.center
+            .distance_to(cad_core::iso::map(20.0, 15.0, 20.0))
+            < 1e-9
+    );
+    assert!((hole.major - by_hand.major).length() < 1e-9);
+    assert!((hole.ratio - by_hand.ratio).abs() < 1e-9);
+}
+
 /// #331: `stair` draws what STAIR typed draws, in plan and in section; a
 /// brief's stair room has its stair drawn in it, for its storey.
 #[test]

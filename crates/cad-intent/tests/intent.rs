@@ -66,7 +66,10 @@ fn a_document_is_read_and_each_operation_compiles_to_its_command_and_answers() {
         {"op": "dim_diameter", "target": {"id": 9}, "at": [40, 40]},
         {"op": "dim_angular", "vertex": [0, 0], "first": [10, 0], "second": [0, 10], "at": [5, 5]},
         {"op": "stair", "height": 2800, "width": 900, "at": [0, 0]},
-        {"op": "stair", "height": 3000, "width": 1200, "kind": "helical", "newel": 100, "view": "section", "at": [50, 0], "direction": 0}
+        {"op": "stair", "height": 3000, "width": 1200, "kind": "helical", "newel": 100, "view": "section", "at": [50, 0], "direction": 0},
+        {"op": "iso_line", "points": [[0, 0, 0], [20, 0, 0], [20, 0, 10]]},
+        {"op": "iso_polyline", "points": [[0, 0, 0], [0, 10, 0], [0, 10, 10]], "closed": true},
+        {"op": "iso_circle", "center": [0, 0, 0], "radius": 10}
         "#,
     );
     let intent = parse(&text).unwrap();
@@ -141,6 +144,26 @@ fn a_document_is_read_and_each_operation_compiles_to_its_command_and_answers() {
         (
             "STAIR",
             vec!["3000", "1200", "Helical", "100", "Section", "50,0", "0"],
+        ),
+        // 20 along x is 17.32 across and 10 up; 10 up z is straight up.
+        (
+            "LINE",
+            vec!["0,0", "17.32050807568877,10", "17.32050807568877,20", ""],
+        ),
+        (
+            "PLINE",
+            vec![
+                "0,0",
+                "-8.660254037844386,5",
+                "-8.660254037844386,15",
+                "Close",
+            ],
+        ),
+        // The top plane's isocircle: its long axis level, 10·√(3/2) long,
+        // its short one 10/√2.
+        (
+            "ELLIPSE",
+            vec!["Center", "0,0", "12.247448713915889,0", "7.071067811865475"],
         ),
     ];
     assert_eq!(got.len(), expected.len());
@@ -288,6 +311,18 @@ fn what_is_refused_says_where_and_why() {
         "alternative",
         Reason::TooMany(3),
     );
+    // Isometric points never twice on one place of the page (#336): one
+    // step along x and y is one up z.
+    invalid(
+        r#"{"op": "iso_line", "points": [[1, 1, 0], [0, 0, 1]]}"#,
+        "points",
+        Reason::Coincident,
+    );
+    invalid(
+        r#"{"op": "iso_circle", "center": [0, 0, 0], "radius": 0}"#,
+        "radius",
+        Reason::NotPositive,
+    );
     // A stair: sized, and a newel only round which a helix turns (#331).
     invalid(
         r#"{"op": "stair", "height": 0, "width": 900, "at": [0, 0]}"#,
@@ -327,9 +362,9 @@ fn what_is_refused_says_where_and_why() {
         IntentError::Json { .. }
     ));
     assert!(matches!(
-        parse(r#"{"version": 11, "operations": []}"#).unwrap_err(),
+        parse(r#"{"version": 12, "operations": []}"#).unwrap_err(),
         IntentError::Version {
-            found: 11,
+            found: 12,
             expected: VERSION
         }
     ));
@@ -373,7 +408,7 @@ fn what_is_refused_says_where_and_why() {
 fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../test-data/intent/schema-v10.json"
+        "/../../test-data/intent/schema-v11.json"
     );
     let generated = serde_json::to_string_pretty(&schema()).unwrap() + "\n";
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
@@ -385,7 +420,7 @@ fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
         "the schema changed: bump cad_intent::VERSION, re-record with UPDATE_SNAPSHOTS=1, and name the file after the new version"
     );
     assert!(generated.contains(r#""version""#));
-    assert_eq!(VERSION, 10);
+    assert_eq!(VERSION, 11);
 }
 
 proptest! {
@@ -430,6 +465,6 @@ fn the_selection_word_and_an_intent_serialise_as_the_document_says() {
     };
     assert_eq!(
         serde_json::to_string(&intent).unwrap(),
-        r#"{"version":10,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
+        r#"{"version":11,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
     );
 }

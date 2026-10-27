@@ -19,20 +19,20 @@ use crate::commands::{
     DxfOutCommand, EdgeCommand, EllipseCommand, EraseCommand, ExplodeCommand, ExportCommand,
     FLANGE, FindCommand, FloorPlanCommand, Form, GeneratorCommand, Geom, GeomConstraintCommand,
     GridCommand, GroupCommand, HOLE_PATTERN, HatchCommand, HatchEditCommand, IdCommand,
-    InsertCommand, JoinCommand, LayIsoCommand, LayUnisoCommand, LayerAllCommand, LayerCommand,
-    LayerMergeCommand, LayerPickCommand, LayerStateCommand, LayoutCommand, LeaderCommand,
-    LengthenCommand, LineCommand, LinetypeCommand, ListCommand, LtscaleCommand, LweightCommand,
-    MLeaderCommand, MLeaderEditCommand, MLeaderStyleCommand, MTextCommand, MatchpropCommand,
-    MeasureCommand, MembersCommand, MirrorCommand, ModelCommand, MspaceCommand, MviewCommand,
-    NewCommand, OffsetCommand, OpenCommand, OpeningCommand, OpeningKind, OsnapCommand,
-    OverkillCommand, PLATE, PanCommand, ParametersCommand, PasteClipCommand, PeditCommand,
-    PickStyleCommand, PlineCommand, PlotCommand, PointCommand, PolarAngleCommand, PolygonCommand,
-    PspaceCommand, PtypeCommand, PurgeCommand, QdimCommand, QselectCommand, RayCommand,
-    RectangCommand, RedoCommand, RenameCommand, RevCloudCommand, SLOT, SaveCommand, SelectCommand,
-    SettingsCommand, SketchCommand, SnapCommand, SplineCommand, SplineEditCommand, StairCommand,
-    StretchCommand, StyleCommand, TanArcCommand, TextCommand, TextEditCommand, TextToFrontCommand,
-    TransformCommand, UndoCommand, UngroupCommand, UnitsCommand, ViewCommand, WBlockCommand,
-    WipeoutCommand, XLineCommand, ZoomCommand,
+    InsertCommand, IsoplaneCommand, JoinCommand, LayIsoCommand, LayUnisoCommand, LayerAllCommand,
+    LayerCommand, LayerMergeCommand, LayerPickCommand, LayerStateCommand, LayoutCommand,
+    LeaderCommand, LengthenCommand, LineCommand, LinetypeCommand, ListCommand, LtscaleCommand,
+    LweightCommand, MLeaderCommand, MLeaderEditCommand, MLeaderStyleCommand, MTextCommand,
+    MatchpropCommand, MeasureCommand, MembersCommand, MirrorCommand, ModelCommand, MspaceCommand,
+    MviewCommand, NewCommand, OffsetCommand, OpenCommand, OpeningCommand, OpeningKind,
+    OsnapCommand, OverkillCommand, PLATE, PanCommand, ParametersCommand, PasteClipCommand,
+    PeditCommand, PickStyleCommand, PlineCommand, PlotCommand, PointCommand, PolarAngleCommand,
+    PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand, QdimCommand, QselectCommand,
+    RayCommand, RectangCommand, RedoCommand, RenameCommand, RevCloudCommand, SLOT, SaveCommand,
+    SelectCommand, SettingsCommand, SketchCommand, SnapCommand, SplineCommand, SplineEditCommand,
+    StairCommand, StretchCommand, StyleCommand, TanArcCommand, TextCommand, TextEditCommand,
+    TextToFrontCommand, TransformCommand, UndoCommand, UngroupCommand, UnitsCommand, ViewCommand,
+    WBlockCommand, WipeoutCommand, XLineCommand, ZoomCommand,
 };
 use crate::session::select_keywords;
 
@@ -69,7 +69,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 170] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 171] = [
             ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
             ("RAY", &[], || Box::new(RayCommand::new())),
             ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
@@ -321,6 +321,7 @@ impl CommandRegistry {
             }),
             ("FIND", &[], || Box::new(FindCommand::new())),
             ("SNAP", &["SN"], || Box::new(SnapCommand::new())),
+            ("ISOPLANE", &[], || Box::new(IsoplaneCommand::default())),
             ("STYLE", &["ST"], || Box::new(StyleCommand::new())),
             ("WBLOCK", &["W"], || Box::new(WBlockCommand::new())),
             ("COPYCLIP", &[], || Box::new(CopyClipCommand::copy())),

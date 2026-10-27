@@ -172,6 +172,26 @@
       ],
       "description": "A colour: an index of the 1–255 table, or a name the engine knows\n(`red`, `bylayer`, …)."
     },
+    "IsoPlane": {
+      "description": "An isometric plane (#336): the face of a box two axes span.",
+      "oneOf": [
+        {
+          "const": "left",
+          "description": "`y` and `z`.",
+          "type": "string"
+        },
+        {
+          "const": "top",
+          "description": "`x` and `y`.",
+          "type": "string"
+        },
+        {
+          "const": "right",
+          "description": "`x` and `z`.",
+          "type": "string"
+        }
+      ]
+    },
     "Measure": {
       "description": "What a dimensional constraint measures.",
       "oneOf": [
@@ -467,6 +487,97 @@
             "op",
             "at",
             "text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An isometric drawing's lines (#336): segments through the points on\nthe isometric axes, in order, one object per segment.",
+          "properties": {
+            "op": {
+              "const": "iso_line",
+              "type": "string"
+            },
+            "points": {
+              "items": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 3,
+                "minItems": 3,
+                "type": "array"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "points"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "One polyline through points on the isometric axes.",
+          "properties": {
+            "closed": {
+              "default": false,
+              "type": "boolean"
+            },
+            "op": {
+              "const": "iso_polyline",
+              "type": "string"
+            },
+            "points": {
+              "items": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 3,
+                "minItems": 3,
+                "type": "array"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "points"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A circle on an isometric plane, drawn as the ellipse it is: a hole\nin a box's top face is on `top`, in its right face on `right`.",
+          "properties": {
+            "center": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 3,
+              "minItems": 3,
+              "type": "array"
+            },
+            "op": {
+              "const": "iso_circle",
+              "type": "string"
+            },
+            "plane": {
+              "$ref": "#/$defs/IsoPlane",
+              "default": "top"
+            },
+            "radius": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "op",
+            "center",
+            "radius"
           ],
           "type": "object"
         },

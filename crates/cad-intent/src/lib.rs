@@ -27,7 +27,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 10;
+pub const VERSION: u32 = 11;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -35,11 +35,16 @@ pub const VERSION: u32 = 10;
 /// constraints and parameters (#274), version 5 floor plans (#282),
 /// version 6 their windows (#324), version 7 `erase` (#325), version 8
 /// `dim_scale` (#327), version 9 `members` (#329), version 10 `stair` and
-/// a brief's stair room and storey height (#331).
-pub const READS: [u32; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+/// a brief's stair room and storey height (#331), version 11 the
+/// isometric operations (#336).
+pub const READS: [u32; 11] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
+
+/// A point on the isometric axes (#336), `[x, y, z]`: `x` along 30°, `y`
+/// along 150°, `z` up the page, each at true length from the origin.
+pub type IsoPoint = [f64; 3];
 
 /// What a model asks the engine to do: a version, a unit the numbers are
 /// in, and the operations in order.
@@ -126,6 +131,30 @@ pub struct Pick {
 pub enum Orientation {
     Horizontal,
     Vertical,
+}
+
+/// An isometric plane (#336): the face of a box two axes span.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum IsoPlane {
+    /// `y` and `z`.
+    Left,
+    /// `x` and `y`.
+    #[default]
+    Top,
+    /// `x` and `z`.
+    Right,
+}
+
+impl IsoPlane {
+    pub fn plane(self) -> cad_core::iso::Plane {
+        match self {
+            Self::Left => cad_core::iso::Plane::Left,
+            Self::Top => cad_core::iso::Plane::Top,
+            Self::Right => cad_core::iso::Plane::Right,
+        }
+    }
 }
 
 /// A stair's kind (#331).
@@ -272,6 +301,26 @@ pub enum Operation {
         height: Option<f64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rotation: Option<f64>,
+    },
+
+    /// An isometric drawing's lines (#336): segments through the points on
+    /// the isometric axes, in order, one object per segment.
+    IsoLine {
+        points: Vec<IsoPoint>,
+    },
+    /// One polyline through points on the isometric axes.
+    IsoPolyline {
+        points: Vec<IsoPoint>,
+        #[serde(default)]
+        closed: bool,
+    },
+    /// A circle on an isometric plane, drawn as the ellipse it is: a hole
+    /// in a box's top face is on `top`, in its right face on `right`.
+    IsoCircle {
+        center: IsoPoint,
+        radius: f64,
+        #[serde(default)]
+        plane: IsoPlane,
     },
 
     // ── modify ──
@@ -730,6 +779,9 @@ impl Operation {
             Self::Arc { .. } => "arc",
             Self::Polygon { .. } => "polygon",
             Self::Text { .. } => "text",
+            Self::IsoLine { .. } => "iso_line",
+            Self::IsoPolyline { .. } => "iso_polyline",
+            Self::IsoCircle { .. } => "iso_circle",
             Self::Members { .. } => "members",
             Self::Erase { .. } => "erase",
             Self::Move { .. } => "move",
@@ -794,4 +846,10 @@ pub fn schema() -> serde_json::Value {
 
 pub(crate) fn point(p: Point) -> Point2 {
     Point2::new(p[0], p[1])
+}
+
+/// Where a point on the isometric axes falls on the page.
+pub fn iso_point(p: IsoPoint) -> Point {
+    let q = cad_core::iso::map(p[0], p[1], p[2]);
+    [q.x, q.y]
 }

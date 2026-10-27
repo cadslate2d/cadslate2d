@@ -45,6 +45,8 @@ export interface UiSnapshot {
   readonly toggles: number;
   /** The drawing's unit as its suffix, or empty for unitless. */
   readonly unit: string;
+  /** The current isometric plane, or empty with the standard snap style (#336). */
+  readonly isoplane: string;
   /** The user's command aliases, one per line, as the engine holds them. */
   readonly userAliases: string;
   readonly documentName: string | undefined;
@@ -110,6 +112,7 @@ const INITIAL: UiSnapshot = {
   constraintDimensions: true,
   toggles: 0,
   unit: "",
+  isoplane: "",
   userAliases: "",
   documentName: undefined,
   documentFormat: "dxf",
@@ -196,6 +199,7 @@ export class UiStore {
       constraintDimensions: state.constraintDimensions,
       toggles: state.toggles,
       unit: state.unit,
+      isoplane: state.isoplane,
       userAliases: state.userAliases,
       documentName: state.documentName,
       documentFormat: state.documentFormat,

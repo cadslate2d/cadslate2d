@@ -15,7 +15,9 @@ pub enum OverlayItem {
     /// The reference grid, with lines `spacing` drawing units apart. It
     /// depends on the view, so it lives here and not in the committed scene;
     /// it is drawn beneath the drawing.
-    Grid { spacing: f64 },
+    /// Isometric (#336): lines along 30°, 150°, and 90° through the snap
+    /// lattice rather than across and up.
+    Grid { spacing: f64, isometric: bool },
     /// A selected entity to highlight.
     Highlight(EntityId),
     /// The entity under the cursor while a command asks for one object: what

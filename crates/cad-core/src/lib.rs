@@ -8,6 +8,7 @@
 
 mod aabb;
 mod id;
+pub mod iso;
 mod point;
 pub mod tolerance;
 mod units;

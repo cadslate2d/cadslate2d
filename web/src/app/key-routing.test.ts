@@ -28,6 +28,12 @@ describe("classifyKey", () => {
     expect(kind(key("ArrowDown"))).toBe("history-next");
   });
 
+  test("F5 and Ctrl+E switch the isometric plane (#336)", () => {
+    expect(kind(key("F5"))).toBe("isoplane");
+    expect(kind(key("e", { ctrlKey: true }))).toBe("isoplane");
+    expect(kind(key("E", { ctrlKey: true, shiftKey: true }))).toBe("ignore");
+  });
+
   test("undo and redo chords, on any platform", () => {
     expect(kind(key("z", { ctrlKey: true }))).toBe("undo");
     expect(kind(key("z", { metaKey: true }))).toBe("undo");
@@ -113,7 +119,7 @@ describe("classifyKey", () => {
     expect(kind(key("c", { metaKey: true }))).toBe("ignore");
     expect(kind(key("I", { ctrlKey: true, shiftKey: true }))).toBe("ignore");
     expect(kind(key("d", { altKey: true }))).toBe("ignore");
-    for (const name of ["F5", "F12", "F1", "Tab", "Shift", "Control", "PageDown"]) {
+    for (const name of ["F12", "F1", "Tab", "Shift", "Control", "PageDown"]) {
       expect(kind(key(name)), name).toBe("ignore");
     }
   });

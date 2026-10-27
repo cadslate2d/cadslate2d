@@ -1,7 +1,9 @@
 //! ELLIPSE (#181): by the ends of one axis and the half-length of the
 //! other — typed, or a point that far from the centre — or by the centre
 //! and one axis end; `Arc` for an arc of one, by its start and end
-//! parameters, typed in degrees or given by points.
+//! parameters, typed in degrees or given by points. With the isometric
+//! snap style (#336), `Isocircle`: a circle of the current isometric plane
+//! by its centre and radius or diameter, drawn as the ellipse it is.
 
 use cad_core::tolerance::LinearTolerance;
 use cad_core::{Point2, Vec2};
@@ -13,6 +15,8 @@ use crate::{Command, CommandContext, CommandInput, OverlayItem, Prompt, Step};
 
 const ARC: Keyword = Keyword::new("Arc");
 const CENTER: Keyword = Keyword::new("Center");
+const ISOCIRCLE: Keyword = Keyword::new("Isocircle");
+const DIAMETER: Keyword = Keyword::new("Diameter");
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
 
 #[derive(Debug)]
@@ -20,23 +24,45 @@ enum State {
     /// One end of an axis, or `Arc`, or `Center`.
     Start,
     /// The other end of that axis.
-    OtherEnd { first: Point2 },
+    OtherEnd {
+        first: Point2,
+    },
     /// The centre, for the `Center` method.
     Center,
     /// One end of an axis from a known centre.
-    AxisEnd { center: Point2 },
+    AxisEnd {
+        center: Point2,
+    },
     /// The half-length of the other axis, as a distance or a point.
-    OtherAxis { center: Point2, major: Vec2 },
+    OtherAxis {
+        center: Point2,
+        major: Vec2,
+    },
     /// `Arc`: the start parameter, as an angle or a point.
-    ArcStart { ellipse: Ellipse },
+    ArcStart {
+        ellipse: Ellipse,
+    },
     /// `Arc`: the end parameter.
-    ArcEnd { ellipse: Ellipse, start: f64 },
+    ArcEnd {
+        ellipse: Ellipse,
+        start: f64,
+    },
+    /// `Isocircle`: its centre, then its radius or diameter.
+    IsoCenter,
+    IsoRadius {
+        center: Point2,
+    },
+    IsoDiameter {
+        center: Point2,
+    },
 }
 
 #[derive(Debug)]
 pub(crate) struct EllipseCommand {
     state: State,
     arc: bool,
+    /// The isometric plane, when the snap style is isometric.
+    isoplane: Option<cad_core::iso::Plane>,
 }
 
 impl EllipseCommand {
@@ -44,7 +70,19 @@ impl EllipseCommand {
         Self {
             state: State::Start,
             arc: false,
+            isoplane: None,
         }
+    }
+
+    /// The isocircle of `radius` round `center` on the current plane.
+    fn isocircle(&self, center: Point2, radius: f64) -> Option<Ellipse> {
+        let plane = self.isoplane?;
+        if !radius.is_finite() || TOLERANCE.is_zero(radius) {
+            return None;
+        }
+        let (major, ratio) = plane.circle(radius);
+        let ellipse = Ellipse::full(center, major, ratio);
+        ellipse.is_valid().then_some(ellipse)
     }
 
     /// The whole ellipse `other` away from the axis through `center` along
@@ -72,6 +110,10 @@ impl EllipseCommand {
                 Self::shaped(*center, *major, cursor.distance_to(*center))
             }
             State::ArcStart { ellipse } => Some(*ellipse),
+            State::IsoRadius { center } => self.isocircle(*center, cursor.distance_to(*center)),
+            State::IsoDiameter { center } => {
+                self.isocircle(*center, cursor.distance_to(*center) / 2.0)
+            }
             State::ArcEnd { ellipse, start } => {
                 let end = ellipse.parameter_of(cursor);
                 Some(Ellipse::from_parameters(
@@ -97,6 +139,11 @@ fn create(ellipse: Ellipse, ctx: &mut CommandContext<'_>) -> Step {
 }
 
 impl Command for EllipseCommand {
+    fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
+        self.isoplane = ctx.settings.isometric.then_some(ctx.settings.isoplane);
+        Step::Continue
+    }
+
     fn prompt(&self) -> Prompt {
         Prompt::new(match &self.state {
             State::Start => "Specify axis endpoint of ellipse",
@@ -106,15 +153,23 @@ impl Command for EllipseCommand {
             State::OtherAxis { .. } => "Specify distance to other axis",
             State::ArcStart { .. } => "Specify start parameter",
             State::ArcEnd { .. } => "Specify end parameter",
+            State::IsoCenter => "Specify center of isocircle",
+            State::IsoRadius { .. } => "Specify radius of isocircle",
+            State::IsoDiameter { .. } => "Specify diameter of isocircle",
         })
     }
 
     fn expected(&self) -> ExpectedInput {
         match &self.state {
+            State::Start if self.isoplane.is_some() => {
+                ExpectedInput::point().with_keywords(&[ARC, CENTER, ISOCIRCLE])
+            }
             State::Start => ExpectedInput::point().with_keywords(&[ARC, CENTER]),
-            State::OtherEnd { .. } | State::Center | State::AxisEnd { .. } => {
+            State::OtherEnd { .. } | State::Center | State::AxisEnd { .. } | State::IsoCenter => {
                 ExpectedInput::point()
             }
+            State::IsoRadius { .. } => ExpectedInput::distance().with_keywords(&[DIAMETER]),
+            State::IsoDiameter { .. } => ExpectedInput::distance(),
             State::OtherAxis { .. } => ExpectedInput::distance(),
             State::ArcStart { .. } | State::ArcEnd { .. } => ExpectedInput::angle(),
         }
@@ -125,7 +180,8 @@ impl Command for EllipseCommand {
             State::OtherEnd { first } => Some(*first),
             State::AxisEnd { center } | State::OtherAxis { center, .. } => Some(*center),
             State::ArcStart { ellipse } | State::ArcEnd { ellipse, .. } => Some(ellipse.center),
-            State::Start | State::Center => None,
+            State::IsoRadius { center } | State::IsoDiameter { center } => Some(*center),
+            State::Start | State::Center | State::IsoCenter => None,
         }
     }
 
@@ -150,8 +206,37 @@ impl Command for EllipseCommand {
                     self.arc = true;
                 } else if keyword == CENTER {
                     self.state = State::Center;
+                } else if keyword == ISOCIRCLE {
+                    self.state = State::IsoCenter;
                 }
                 Step::Continue
+            }
+            (State::IsoCenter, CommandInput::Point(center)) => {
+                self.state = State::IsoRadius { center };
+                Step::Continue
+            }
+            (State::IsoRadius { center }, CommandInput::Keyword(_)) => {
+                self.state = State::IsoDiameter { center: *center };
+                Step::Continue
+            }
+            (State::IsoRadius { center } | State::IsoDiameter { center }, input) => {
+                let length = match input {
+                    CommandInput::Distance(length) => length,
+                    CommandInput::Point(point) => point.distance_to(*center),
+                    _ => return Step::Continue,
+                };
+                let radius = if matches!(self.state, State::IsoDiameter { .. }) {
+                    length / 2.0
+                } else {
+                    length
+                };
+                match self.isocircle(*center, radius) {
+                    Some(ellipse) => create(ellipse, ctx),
+                    None => {
+                        ctx.message("The isocircle must have a radius.");
+                        Step::Continue
+                    }
+                }
             }
             (State::Start, CommandInput::Point(first)) => {
                 self.state = State::OtherEnd { first };

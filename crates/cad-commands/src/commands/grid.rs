@@ -95,10 +95,19 @@ mod tests {
         h.toggle(Toggle::Grid);
         assert_eq!(
             h.session.overlay(),
-            vec![OverlayItem::Grid { spacing: 10.0 }]
+            vec![OverlayItem::Grid {
+                spacing: 10.0,
+                isometric: false
+            }]
         );
         h.enter_all(&["GRID", "25"]);
-        assert_eq!(h.session.overlay()[0], OverlayItem::Grid { spacing: 25.0 });
+        assert_eq!(
+            h.session.overlay()[0],
+            OverlayItem::Grid {
+                spacing: 25.0,
+                isometric: false
+            }
+        );
 
         h.toggle(Toggle::Grid);
         assert!(h.session.overlay().is_empty());

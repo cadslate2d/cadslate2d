@@ -49,6 +49,9 @@ describe("the menus of the classic workspace (#247)", () => {
       const { command, steps = [] } = entry.action.macro;
       const engine = new CadEngine();
       engine.resize(800, 600);
+      // An isocircle wants the isometric snap style, as its greying says (#336).
+      if (path.at(-1) === "Isocircle")
+        for (const word of ["SNAP", "S", "I", ""]) engine.submitText(word);
       engine.invoke(command);
       for (const step of steps) {
         // A pause waits for the user: what follows is checked by hand.

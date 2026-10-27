@@ -47,6 +47,9 @@ pub struct UiState {
     pub toggles: u32,
     /// The drawing's unit as its suffix — `mm`, `in` — or none (#186).
     pub unit: Option<&'static str>,
+    /// The current isometric plane while the snap style is isometric
+    /// (#336): `Left`, `Top`, `Right`.
+    pub isoplane: Option<&'static str>,
     /// The user's command aliases, one per line, for the host to keep (#186).
     pub user_aliases: String,
     /// Name of the file the drawing was opened from, if any.

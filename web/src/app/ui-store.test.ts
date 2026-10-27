@@ -16,6 +16,7 @@ class FakeSource implements UiSource {
     constraintDimensions: true,
     toggles: 0,
     unit: "",
+    isoplane: "",
     userAliases: "",
     documentFormat: "dxf",
     unsavedChanges: false,

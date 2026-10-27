@@ -49,6 +49,8 @@ pub enum KeyAction {
     Copy,
     Cut,
     Paste,
+    /// F5 or Ctrl+E (#336): the next isometric plane, `ISOPLANE`.
+    Isoplane,
 }
 
 /// The format of the file a drawing came in (#318): what `SAVE` writes

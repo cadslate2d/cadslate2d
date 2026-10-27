@@ -503,7 +503,11 @@ impl Session {
         // Grid snap moves the free cursor, unless what is asked for is a
         // place on the screen, as object snap does not apply there (#219).
         let cursor = if self.toggles.is_on(Toggle::Snap) && !on_screen {
-            aids::grid_snap(cursor, self.settings.snap_spacing)
+            if self.settings.isometric {
+                cad_core::iso::lattice(cursor, self.settings.snap_spacing[1])
+            } else {
+                aids::grid_snap(cursor, self.settings.snap_spacing)
+            }
         } else {
             cursor
         };
@@ -515,7 +519,9 @@ impl Session {
             .point_target()
             .and_then(|command| command.tracking_base());
         let track = base.and_then(|base| {
-            if self.toggles.is_on(Toggle::Ortho) {
+            if self.toggles.is_on(Toggle::Ortho) && self.settings.isometric {
+                Some(aids::iso_ortho(base, cursor, self.settings.isoplane))
+            } else if self.toggles.is_on(Toggle::Ortho) {
                 Some(aids::ortho(base, cursor))
             } else if self.toggles.is_on(Toggle::Polar) {
                 let reach = self.view.pixels_to_world(POLAR_APERTURE.0);
@@ -568,6 +574,10 @@ impl Session {
             constraint_dimensions: self.settings.constraint_dimensions,
             toggles: self.toggles.bits(),
             unit: self.drawing.unit().map(LengthUnit::suffix),
+            isoplane: self
+                .settings
+                .isometric
+                .then(|| self.settings.isoplane.name()),
             user_aliases: self.registry.aliases().user_aliases(),
             document_name: self.document_name.clone(),
             document_format: self.document_format,
@@ -725,6 +735,7 @@ impl Session {
         if self.toggles.is_on(Toggle::Grid) {
             items.push(OverlayItem::Grid {
                 spacing: self.settings.grid_spacing_shown(),
+                isometric: self.settings.isometric,
             });
         }
         items.extend(self.selection.iter().map(OverlayItem::Highlight));
@@ -1340,6 +1351,12 @@ impl Session {
                     self.log.push(format!("<{} off>", rival.label()));
                 }
                 // Drafting aids change what the overlay shows under the cursor.
+                Dirty::OVERLAY | Dirty::UI
+            }
+            KeyAction::Isoplane => {
+                self.settings.isoplane = self.settings.isoplane.next();
+                self.log
+                    .push(format!("<Isoplane {}>", self.settings.isoplane.name()));
                 Dirty::OVERLAY | Dirty::UI
             }
             KeyAction::GroupSelection => {

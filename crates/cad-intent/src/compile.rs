@@ -6,7 +6,7 @@ use cad_core::Point2;
 
 use crate::{
     Color, Intent, Measure, Operation, Orientation, Pick, Relation, StairKind, StairView, Targets,
-    point,
+    iso_point, point,
 };
 
 /// One answer to a prompt. Lengths and points are in the document's
@@ -61,7 +61,7 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 42] = [
+pub const COMMANDS: [&str; 43] = [
     "LINE",
     "PLINE",
     "RECTANG",
@@ -104,6 +104,7 @@ pub const COMMANDS: [&str; 42] = [
     "ERASE",
     "MEMBERS",
     "STAIR",
+    "ELLIPSE",
 ];
 
 /// Compiles every operation of a validated document, in order.
@@ -166,6 +167,35 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
             let mut steps: Vec<Step> = points.iter().map(|p| at(*p)).collect();
             steps.push(if *closed { keyword("Close") } else { enter() });
             ("PLINE", steps)
+        }
+        Operation::IsoLine { points } => {
+            let mut steps: Vec<Step> = points.iter().map(|p| at(iso_point(*p))).collect();
+            steps.push(enter());
+            ("LINE", steps)
+        }
+        Operation::IsoPolyline { points, closed } => {
+            let mut steps: Vec<Step> = points.iter().map(|p| at(iso_point(*p))).collect();
+            steps.push(if *closed { keyword("Close") } else { enter() });
+            ("PLINE", steps)
+        }
+        Operation::IsoCircle {
+            center,
+            radius,
+            plane,
+        } => {
+            // The ellipse by its centre, the end of its long axis, and the
+            // half-length of the short one.
+            let (major, ratio) = plane.plane().circle(*radius);
+            let c = iso_point(*center);
+            (
+                "ELLIPSE",
+                vec![
+                    keyword("Center"),
+                    at(c),
+                    at([c[0] + major.x, c[1] + major.y]),
+                    length(major.length() * ratio),
+                ],
+            )
         }
         Operation::Rectangle { corner, opposite } => ("RECTANG", vec![at(*corner), at(*opposite)]),
         Operation::Circle { center, radius } => ("CIRCLE", vec![at(*center), length(*radius)]),

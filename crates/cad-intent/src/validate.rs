@@ -257,6 +257,23 @@ impl Check {
         Ok(())
     }
 
+    /// Points on the isometric axes: each coordinate a number, and two in
+    /// a row never on the same place of the page.
+    fn iso_points(
+        &self,
+        field: &'static str,
+        points: &[crate::IsoPoint],
+        least: usize,
+    ) -> Result<(), IntentError> {
+        for point in points {
+            for value in point {
+                self.number(field, *value)?;
+            }
+        }
+        let mapped: Vec<Point> = points.iter().map(|p| crate::iso_point(*p)).collect();
+        self.points(field, &mapped, least)
+    }
+
     fn distinct(&self, field: &'static str, a: Point, b: Point) -> Result<(), IntentError> {
         self.point(field, a)?;
         self.point(field, b)?;
@@ -326,6 +343,14 @@ impl Check {
     fn operation(&self, operation: &Operation) -> Result<(), IntentError> {
         match operation {
             Operation::Line { points } => self.points("points", points, 2),
+            Operation::IsoLine { points } => self.iso_points("points", points, 2),
+            Operation::IsoPolyline { points, closed } => {
+                self.iso_points("points", points, if *closed { 3 } else { 2 })
+            }
+            Operation::IsoCircle { center, radius, .. } => {
+                self.iso_points("center", &[*center], 1)?;
+                self.positive("radius", *radius)
+            }
             Operation::Polyline { points, closed } => {
                 self.points("points", points, if *closed { 3 } else { 2 })
             }
