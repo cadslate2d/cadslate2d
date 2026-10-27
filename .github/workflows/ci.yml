@@ -101,6 +101,11 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # A GitHub environment, so the repository lists each publish as a
+    # deployment, with the address it went to.
+    environment:
+      name: production
+      url: https://cadslate2d.com
     concurrency:
       group: publish
       cancel-in-progress: false
