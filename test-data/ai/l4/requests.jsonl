@@ -1,0 +1,8 @@
+{"name":"iso-top-face-en","request":{"prompt":"Draw, in isometric, the outline of the top face of a box 60 long along x, 40 deep along y, at a height of 30, as one closed polyline with a corner at x 0, y 0","unit":"mm"}}
+{"name":"iso-top-face-pt","request":{"prompt":"Desenhe em isométrica o contorno da face superior de uma caixa de 60 de comprimento em x e 40 de profundidade em y, a 30 de altura, como uma polilinha fechada com um canto em x 0, y 0","unit":"mm"}}
+{"name":"iso-hole-top-en","request":{"prompt":"Draw an isometric circle of radius 10 on the top face, centred at x 30, y 20, z 30","unit":"mm"}}
+{"name":"iso-hole-top-pt","request":{"prompt":"Desenhe um círculo isométrico de raio 10 na face superior, com centro em x 30, y 20, z 30","unit":"mm"}}
+{"name":"iso-hole-right-en","request":{"prompt":"On the right face of an isometric box, the x–z plane at y 0, draw a hole of diameter 16 centred at x 30, z 15","unit":"mm"}}
+{"name":"iso-hole-right-pt","request":{"prompt":"Na face direita de uma caixa em isométrica, o plano x–z em y 0, desenhe um furo de diâmetro 16 com centro em x 30, z 15","unit":"mm"}}
+{"name":"iso-path-en","request":{"prompt":"In isometric, draw lines from the origin 50 along the x axis, then 20 straight up","unit":"mm"}}
+{"name":"iso-path-pt","request":{"prompt":"Em isométrica, desenhe linhas da origem 50 ao longo do eixo x e depois 20 para cima","unit":"mm"}}
