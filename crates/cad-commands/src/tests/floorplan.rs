@@ -452,3 +452,45 @@ fn a_stair_asked_for_at_the_command_line_climbs_the_storey_in_a_room_made_for_it
     assert!(texts(&h).contains(&"18 R × 16.7 / T 29.7".to_owned()));
     assert!(on(&h, STAIRS) > 15);
 }
+
+/// A stair hall that is the way in too has a door on every wall, and a stair
+/// against any of them would stand in a doorway (#344). It is sized for a
+/// passage either side of the stair: too small for that, it is refused
+/// saying what it needs; large enough, its stair is drawn.
+#[test]
+fn a_stair_hall_that_is_the_way_in_is_sized_for_a_passage_either_side() {
+    let brief = |area: f64| {
+        format!(
+            r#"{{"terrain":{{"width":12,"depth":15}},"rooms":[{{"name":"living room","area":22}},{{"name":"kitchen","area":9}},{{"name":"stair hall","area":{area},"entrance":true,"stair":true}},{{"name":"toilet","area":3}}],"adjacent":[["living room","kitchen"],["living room","stair hall"],["stair hall","toilet"]],"storey_height":3}}"#
+        )
+    };
+    let mut h = Harness::new();
+    h.enter_all(&["FLOORPLAN", "B", &brief(12.0), ""]);
+    let said = h
+        .log()
+        .into_iter()
+        .find(|line| line.starts_with("This cannot be built"))
+        .unwrap_or_else(|| panic!("{:?}", h.log()));
+    assert!(
+        said.starts_with("This cannot be built: The stair hall's 12 m² cannot be 3.6 m wide")
+            && said.ends_with(
+                "The room that holds the stair and the way in needs 3.60 × 4.17 m: a passage either side of the stair."
+            ),
+        "{said}"
+    );
+    assert!(h.entities().is_empty());
+
+    // Every plan of a hall that can hold it has its stair.
+    let spec = Spec::from_json(&brief(16.0)).unwrap();
+    for plan in crate::floorplan::plans(&spec).unwrap() {
+        assert_eq!(crate::floorplan::stair_misfits(&spec, &plan), None);
+    }
+    let mut h = Harness::new();
+    h.enter_all(&["FLOORPLAN", "B", &brief(16.0), "", ""]);
+    let said = h.log().last().unwrap().clone();
+    assert!(
+        said.starts_with("Plan 1 drawn") && !said.contains("No stair"),
+        "{said}"
+    );
+    assert!(on(&h, STAIRS) > 15);
+}

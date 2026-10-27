@@ -106,11 +106,16 @@ impl FloorPlanCommand {
                 Step::Continue
             }
             Err(refusal) => {
-                let stair = match stair_room(&self.spec) {
-                    Some((across, along)) if self.spec.rooms.iter().any(|r| r.stair) => {
+                let room = self.spec.rooms.iter().find(|r| r.stair);
+                let stair = match room.and_then(|r| stair_room(&self.spec, r.entrance).zip(Some(r)))
+                {
+                    Some(((across, along), r)) if r.entrance => format!(
+                        " The room that holds the stair and the way in needs {across:.2} × {along:.2} m: a passage either side of the stair."
+                    ),
+                    Some(((across, along), _)) => {
                         format!(" The room that holds the stair needs {across:.2} × {along:.2} m.")
                     }
-                    _ => String::new(),
+                    None => String::new(),
                 };
                 ctx.message(match &refusal {
                     Refusal::Infeasible { .. } => {

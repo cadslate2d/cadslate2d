@@ -56,14 +56,17 @@ pub fn plan_stair(spec: &Spec) -> Stair {
 /// What a room needs, across and along, to hold the plan's stair: a stair
 /// turning back on itself and a door's width of passage beside it, for a
 /// doorway the stair keeps clear of; the stair and the floor at its foot.
-pub fn stair_room(spec: &Spec) -> Option<(f64, f64)> {
+/// The way in as well (`entrance`) is a door more than such a room has
+/// walls clear for, so it takes a passage either side of the stair (#344).
+pub fn stair_room(spec: &Spec, entrance: bool) -> Option<(f64, f64)> {
     let u = Stair {
         kind: Kind::U,
         ..plan_stair(spec)
     };
     let b = u.footprint().ok()?;
+    let passages = if entrance { 2.0 } else { 1.0 };
     Some((
-        b.max().x - b.min().x + spec.door,
+        b.max().x - b.min().x + passages * spec.door,
         b.max().y - b.min().y + stair::APPROACH,
     ))
 }
@@ -72,8 +75,9 @@ pub fn stair_room(spec: &Spec) -> Option<(f64, f64)> {
 /// least as wide and as long as [`stair_room`].
 pub fn searched(spec: &Spec) -> Spec {
     let mut spec = spec.clone();
-    if let Some((across, along)) = stair_room(&spec) {
-        for room in spec.rooms.iter_mut().filter(|room| room.stair) {
+    let needs = [stair_room(&spec, false), stair_room(&spec, true)];
+    for room in spec.rooms.iter_mut().filter(|room| room.stair) {
+        if let Some((across, along)) = needs[usize::from(room.entrance)] {
             room.min_width = room.min_width.max(across);
             room.min_length = room.min_length.max(along);
         }
