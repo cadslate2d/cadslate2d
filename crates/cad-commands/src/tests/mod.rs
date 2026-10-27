@@ -28,6 +28,7 @@ mod dimordinate;
 mod dimstyle;
 mod draworder;
 mod edge;
+mod elevation;
 mod ellipse;
 mod far_from_origin;
 mod find;

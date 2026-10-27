@@ -27,7 +27,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 11;
+pub const VERSION: u32 = 12;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -36,8 +36,9 @@ pub const VERSION: u32 = 11;
 /// version 6 their windows (#324), version 7 `erase` (#325), version 8
 /// `dim_scale` (#327), version 9 `members` (#329), version 10 `stair` and
 /// a brief's stair room and storey height (#331), version 11 the
-/// isometric operations (#336).
-pub const READS: [u32; 11] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+/// isometric operations (#336), version 12 `elevation` and a brief's
+/// `building` (#337).
+pub const READS: [u32; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -155,6 +156,32 @@ impl IsoPlane {
             Self::Right => cad_core::iso::Plane::Right,
         }
     }
+}
+
+/// A building's side, as an elevation sees it (#337): the front faces the
+/// street, along the plot's width.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum Side {
+    #[default]
+    Front,
+    Back,
+    Left,
+    Right,
+}
+
+/// A roof's kind (#337).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum RoofKind {
+    /// A slab behind a parapet.
+    Flat,
+    /// Two slopes, gable ends on the short sides.
+    Gable,
+    /// Four slopes.
+    Hip,
 }
 
 /// A stair's kind (#331).
@@ -652,6 +679,22 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         alternative: Option<u32>,
     },
+    /// A façade of a floor plan drawn already (#337): `plan` its group's
+    /// name, `PLAN-1`; the side it is seen from; the roof — the brief's
+    /// when absent — and a pitched roof's `roof_pitch` in degrees; `at`,
+    /// where the façade's left end stands on the ground, under the plan
+    /// when absent.
+    Elevation {
+        plan: String,
+        #[serde(default)]
+        side: Side,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        roof: Option<RoofKind>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        roof_pitch: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at: Option<Point>,
+    },
     /// A stair sized by Blondel's rule (#331) — two risers and a tread
     /// make 63 cm, risers at most 18 cm, treads at least 28 — climbing a
     /// floor-to-floor `height`, `width` wide: in plan, its foot's middle
@@ -700,6 +743,41 @@ pub struct Brief {
     /// absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storey_height: Option<f64>,
+    /// The heights and roof its elevations and sections are drawn with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub building: Option<BriefBuilding>,
+}
+
+/// What a building's elevations and sections need besides its plan, in
+/// metres and degrees; each absent field the generator's default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BriefBuilding {
+    /// A window's sill above the floor; 0.9.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sill: Option<f64>,
+    /// A window's head; 2.1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_head: Option<f64>,
+    /// A door's head; 2.1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub door_head: Option<f64>,
+    /// The slabs' thickness; 0.2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slab: Option<f64>,
+    /// Flat when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roof: Option<RoofKind>,
+    /// A pitched roof's slope, degrees; 30.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roof_pitch: Option<f64>,
+    /// How far a pitched roof reaches past the walls; 0.5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eaves: Option<f64>,
+    /// A flat roof's parapet above its slab; 0.5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parapet: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -820,6 +898,7 @@ impl Operation {
             Self::SetParameter { .. } => "set_parameter",
             Self::FloorPlan { .. } => "floor_plan",
             Self::Stair { .. } => "stair",
+            Self::Elevation { .. } => "elevation",
         }
     }
 }

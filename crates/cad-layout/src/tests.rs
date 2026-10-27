@@ -24,6 +24,7 @@ fn brief(width: f64, depth: f64, rooms: &[(&str, f64)]) -> Spec {
         max_circulation: 0.15,
         windows: None,
         storey_height: 2.8,
+        building: crate::Building::default(),
         seed: 0,
     }
 }

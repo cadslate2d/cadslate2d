@@ -323,6 +323,75 @@ pub fn plan_description(spec: &Spec, origin: Point2, scale: f64, alternative: u3
     )
 }
 
+/// The plans FLOORPLAN offers for `spec`: the search's, the brief's stair
+/// rooms made big enough for a stair, the plans whose stair fits first —
+/// a doorway can leave a stair no place in one plan and not in another.
+pub fn plans(spec: &Spec) -> Result<Vec<Layout>, cad_layout::Refusal> {
+    let mut plans = cad_layout::alternatives(&searched(spec), PLANS)?;
+    plans.sort_by_key(|plan| stair_misfits(spec, plan).is_some());
+    Ok(plans)
+}
+
+/// How many plans FLOORPLAN offers.
+pub const PLANS: usize = 3;
+
+/// A plan drawn by FLOORPLAN, as its group describes it (#325): the brief,
+/// where its terrain's origin is, its scale, and which plan it is, laid
+/// out again — the search is deterministic.
+#[derive(Clone, Debug)]
+pub struct DrawnPlan {
+    /// Its group's name: `PLAN-1`.
+    pub name: String,
+    pub spec: Spec,
+    pub origin: Point2,
+    pub scale: f64,
+    pub alternative: u32,
+    pub layout: Layout,
+}
+
+/// The plan drawn in the group named `name`; why not, said, when there is
+/// none or its description is not a plan's.
+pub fn drawn_plan(drawing: &Drawing, name: &str) -> Result<DrawnPlan, String> {
+    let group = drawing
+        .groups()
+        .iter()
+        .map(|(_, group)| group)
+        .find(|group| group.name.eq_ignore_ascii_case(name.trim()))
+        .ok_or_else(|| format!("No group is called {}.", name.trim()))?;
+    let not_a_plan = || format!("{} is not a floor plan drawn by FLOORPLAN.", group.name);
+    let value: serde_json::Value =
+        serde_json::from_str(&group.description).map_err(|_| not_a_plan())?;
+    let spec = Spec::from_json(&value["brief"].to_string()).map_err(|_| not_a_plan())?;
+    let at = |i: usize| value["at"][i].as_f64();
+    let (Some(x), Some(y), Some(scale)) = (at(0), at(1), value["scale"].as_f64()) else {
+        return Err(not_a_plan());
+    };
+    let alternative = value["alternative"].as_u64().unwrap_or(1).max(1) as u32;
+    let layout = plans(&spec)
+        .map_err(|refusal| refusal.to_string())?
+        .into_iter()
+        .nth(alternative as usize - 1)
+        .ok_or_else(not_a_plan)?;
+    Ok(DrawnPlan {
+        name: group.name.clone(),
+        spec,
+        origin: Point2::new(x, y),
+        scale,
+        alternative,
+        layout,
+    })
+}
+
+/// The name of the drawn plan `entity` is part of, if it is part of one.
+pub fn plan_holding(drawing: &Drawing, entity: EntityId) -> Option<String> {
+    drawing
+        .groups()
+        .iter()
+        .map(|(_, group)| group)
+        .find(|group| group.name.starts_with(PLAN_GROUP) && group.members.contains(&entity))
+        .map(|group| group.name.clone())
+}
+
 /// Draws `layout` with the terrain's origin at `origin` and `scale`
 /// drawing units to the metre, in `space`, as one transaction, its layers
 /// made where the drawing has none of their names, and its objects in a
@@ -405,6 +474,7 @@ mod tests {
             max_circulation: 0.15,
             windows: None,
             storey_height: 2.8,
+            building: cad_layout::Building::default(),
             seed: 0,
         }
     }

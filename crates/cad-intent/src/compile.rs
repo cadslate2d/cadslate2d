@@ -5,8 +5,8 @@
 use cad_core::Point2;
 
 use crate::{
-    Color, Intent, Measure, Operation, Orientation, Pick, Relation, StairKind, StairView, Targets,
-    iso_point, point,
+    Color, Intent, Measure, Operation, Orientation, Pick, Relation, RoofKind, Side, StairKind,
+    StairView, Targets, iso_point, point,
 };
 
 /// One answer to a prompt. Lengths and points are in the document's
@@ -61,7 +61,7 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 43] = [
+pub const COMMANDS: [&str; 44] = [
     "LINE",
     "PLINE",
     "RECTANG",
@@ -105,6 +105,7 @@ pub const COMMANDS: [&str; 43] = [
     "MEMBERS",
     "STAIR",
     "ELLIPSE",
+    "ELEVATION",
 ];
 
 /// Compiles every operation of a validated document, in order.
@@ -702,6 +703,39 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
             }
             steps.push(keyword("Accept"));
             ("FLOORPLAN", steps)
+        }
+        Operation::Elevation {
+            plan,
+            side,
+            roof,
+            roof_pitch,
+            at: place,
+        } => {
+            let roof_word = roof.map(|roof| match roof {
+                RoofKind::Flat => "Flat",
+                RoofKind::Gable => "Gable",
+                RoofKind::Hip => "Hip",
+            });
+            (
+                "ELEVATION",
+                vec![
+                    keyword("Name"),
+                    answer(Answer::Text(plan.clone())),
+                    keyword(match side {
+                        Side::Front => "Front",
+                        Side::Back => "Back",
+                        Side::Left => "Left",
+                        Side::Right => "Right",
+                    }),
+                    roof_word.map_or_else(enter, keyword),
+                    // Asked only for a pitched roof.
+                    when(
+                        "Specify roof pitch",
+                        roof_pitch.map_or(Answer::Enter, Answer::Angle),
+                    ),
+                    place.map_or_else(enter, at),
+                ],
+            )
         }
         Operation::Stair {
             height,

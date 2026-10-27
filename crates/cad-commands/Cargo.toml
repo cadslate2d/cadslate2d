@@ -10,7 +10,7 @@ license.workspace = true
 [features]
 # Exposes the headless test harness (`cad_commands::testing`) to other crates' tests,
 # and the AI corpus's evaluation (`cad_commands::evaluation`, `examples/ai-eval.rs`).
-testing = ["dep:serde_json"]
+testing = []
 
 [dependencies]
 cad-core.workspace = true
@@ -19,7 +19,8 @@ cad-input.workspace = true
 cad-document.workspace = true
 cad-intent.workspace = true
 cad-layout.workspace = true
-serde_json = { workspace = true, optional = true }
+# A drawn plan's group describes it as JSON (#325, #337).
+serde_json.workspace = true
 
 [[example]]
 name = "ai-eval"

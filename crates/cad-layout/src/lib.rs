@@ -21,6 +21,7 @@
 //! inside them.
 
 mod draft;
+mod elevation;
 mod search;
 mod spec;
 mod verify;
@@ -31,8 +32,9 @@ pub use draft::{
     Door, Face, LEAF_THICKNESS, Label, WINDOW_CLEARANCE, WINDOW_MIN, Walls, Window, doors, labels,
     walls, windows,
 };
+pub use elevation::{Elevation, Side, elevation};
 pub use search::{alternatives, alternatives_within, searches_for, solve};
-pub use spec::{MAX_ROOMS, Room, Setbacks, Spec, SpecError, Terrain};
+pub use spec::{Building, MAX_ROOMS, Roof, Room, Setbacks, Spec, SpecError, Terrain};
 pub use verify::verify;
 
 /// An axis-aligned rectangle: its lower left corner and its size.

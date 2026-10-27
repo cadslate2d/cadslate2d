@@ -597,6 +597,37 @@ fn isometric_operations_draw_on_the_axes() {
     assert!((hole.ratio - by_hand.ratio).abs() < 1e-9);
 }
 
+/// #337: a plan and its façade in one document — the plan's group named
+/// as the first free — the same drawing as typing them; the brief's
+/// building gives the roof when the elevation does not.
+#[test]
+fn an_elevation_of_the_plan_just_drawn_is_the_one_typed() {
+    let brief = r#"{"terrain": {"width": 15, "depth": 20}, "rooms": [{"name": "living", "area": 24, "entrance": true}, {"name": "kitchen", "area": 10}], "windows": 1.2, "building": {"roof": "hip", "roof_pitch": 25}}"#;
+    let by_intent = run(&format!(
+        r#"{{"op": "floor_plan", "brief": {brief}}}, {{"op": "elevation", "plan": "PLAN-1", "side": "right", "at": [30, 0]}}"#
+    ));
+    let mut by_hand = Harness::new();
+    by_hand.enter_all(&["FLOORPLAN", "B", brief, "", ""]);
+    by_hand.enter_all(&["ELEVATION", "N", "PLAN-1", "R", "", "", "30,0"]);
+    assert!(
+        by_hand
+            .log()
+            .iter()
+            .any(|l| l.starts_with("Right elevation of PLAN-1")),
+        "{:?}",
+        by_hand.log()
+    );
+    assert_eq!(by_intent.entities(), by_hand.entities());
+    // The hip roof of the brief, its pitch the brief's.
+    let drawing = by_intent.session.drawing();
+    let roof = drawing.layers().find("ELEV-ROOF").expect("a roof drawn");
+    assert!(
+        drawing
+            .entities()
+            .any(|(id, _)| drawing.properties(id).is_some_and(|p| p.layer == roof))
+    );
+}
+
 /// #331: `stair` draws what STAIR typed draws, in plan and in section; a
 /// brief's stair room has its stair drawn in it, for its storey.
 #[test]

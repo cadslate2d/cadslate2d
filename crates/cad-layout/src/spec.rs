@@ -39,9 +39,70 @@ pub struct Spec {
         skip_serializing_if = "Spec::is_default_storey_height"
     )]
     pub storey_height: f64,
+    /// The heights and the roof its elevations and sections are drawn
+    /// with (#337, ADR-0040); the layout does not depend on them.
+    #[serde(default, skip_serializing_if = "Building::is_default")]
+    pub building: Building,
     /// The search's seed: the same brief and seed make the same plan.
     #[serde(default)]
     pub seed: u64,
+}
+
+/// A roof's kind (#337).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Roof {
+    /// A slab behind a parapet.
+    #[default]
+    Flat,
+    /// Two slopes meeting at a ridge along the building's longer side,
+    /// the short sides gable ends.
+    Gable,
+    /// Four slopes: the short sides slope too.
+    Hip,
+}
+
+/// What a building's elevations and sections need besides its plan, in
+/// metres and degrees: the openings' heights and the roof.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Building {
+    /// A window's sill above the floor.
+    pub sill: f64,
+    /// A window's head above the floor.
+    pub window_head: f64,
+    /// A door's head above the floor.
+    pub door_head: f64,
+    /// The floor and roof slabs' thickness.
+    pub slab: f64,
+    pub roof: Roof,
+    /// A pitched roof's slope, degrees.
+    pub roof_pitch: f64,
+    /// How far a pitched roof reaches past the walls.
+    pub eaves: f64,
+    /// How far a flat roof's parapet rises above its slab.
+    pub parapet: f64,
+}
+
+impl Default for Building {
+    fn default() -> Self {
+        Self {
+            sill: 0.9,
+            window_head: 2.1,
+            door_head: 2.1,
+            slab: 0.2,
+            roof: Roof::Flat,
+            roof_pitch: 30.0,
+            eaves: 0.5,
+            parapet: 0.5,
+        }
+    }
+}
+
+impl Building {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// The plot: a rectangle, its front along the x axis from the origin.
@@ -174,6 +235,28 @@ impl Spec {
         positive("The interior wall's thickness".into(), self.interior_wall)?;
         positive("The door's width".into(), self.door)?;
         positive("The storey's height".into(), self.storey_height)?;
+        let b = &self.building;
+        positive("The window's head".into(), b.window_head)?;
+        positive("The door's head".into(), b.door_head)?;
+        positive("The slab's thickness".into(), b.slab)?;
+        if !(b.sill.is_finite() && b.sill >= 0.0 && b.sill < b.window_head) {
+            return Err(SpecError("A window's sill must be below its head".into()));
+        }
+        if b.window_head > self.storey_height || b.door_head > self.storey_height {
+            return Err(SpecError(
+                "A window's or door's head must be within the storey's height".into(),
+            ));
+        }
+        if !(b.roof_pitch.is_finite() && b.roof_pitch > 0.0 && b.roof_pitch < 75.0) {
+            return Err(SpecError(
+                "The roof's pitch must be between 0 and 75 degrees".into(),
+            ));
+        }
+        for (what, value) in [("eaves", b.eaves), ("parapet", b.parapet)] {
+            if !(value.is_finite() && value >= 0.0) {
+                return Err(SpecError(format!("The {what} cannot be negative")));
+            }
+        }
         if let Some(width) = self.windows {
             positive("The windows' width".into(), width)?;
         }

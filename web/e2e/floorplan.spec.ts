@@ -165,3 +165,20 @@ test("a brief's stair room is made for its stair and has it drawn", async ({ pag
   expect(stair.length).toBeGreaterThan(15);
   expect(stair.map((e) => group(e, 1))).toContain("16 R × 17.5 / T 28.0");
 });
+
+// #337: a façade of the plan drawn, from Draw › Building › Elevation....
+test("ELEVATION draws a plan's façade on its layers as one undo", async ({ page }) => {
+  await openApp(page);
+  await enter(page, "FLOORPLAN", "B", JSON.stringify({ ...BRIEF, windows: 1.2 }), "", "");
+  await expect(logLines(page).last()).toContainText("Plan 1 drawn");
+  await chooseMenu(page, "Draw", "Building", "Elevation...");
+  await expect(prompt(page)).toHaveText("Select an object of a floor plan or [Name]:");
+  await enter(page, "N", "PLAN-1", "Front", "Gable", "30", "0,-12");
+  await expect(logLines(page).last()).toContainText("Front elevation of PLAN-1 drawn as ELEV-1");
+  expect((await onLayer(page, "ELEV-WALL")).length).toBeGreaterThan(0);
+  expect((await onLayer(page, "ELEV-OPENING")).length).toBeGreaterThanOrEqual(2);
+  expect((await onLayer(page, "ELEV-ROOF")).length).toBe(1);
+  expect((await onLayer(page, "ELEV-TEXT")).map((e) => group(e, 1))).toContain("FRONT ELEVATION");
+  await enter(page, "U");
+  expect(await onLayer(page, "ELEV-WALL")).toHaveLength(0);
+});

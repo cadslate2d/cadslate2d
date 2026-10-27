@@ -11,10 +11,10 @@
 
 use cad_core::Point2;
 use cad_input::{ExpectedInput, Keyword};
-use cad_layout::{Layout, Refusal, Room, Setbacks, Spec, Terrain, alternatives};
+use cad_layout::{Layout, Refusal, Room, Setbacks, Spec, Terrain};
 
 use super::ltscale::display;
-use crate::floorplan::{draw, entities, searched, stair_misfits, stair_room};
+use crate::floorplan::{draw, entities, plans, stair_misfits, stair_room};
 use crate::{Command, CommandContext, CommandInput, HostRequest, OverlayItem, Prompt, Step};
 
 const BRIEF: Keyword = Keyword::new("Brief");
@@ -22,9 +22,6 @@ const FILE: Keyword = Keyword::new("File");
 const NEXT: Keyword = Keyword::new("Next");
 const PREVIOUS: Keyword = Keyword::new("Previous");
 const ACCEPT: Keyword = Keyword::new("Accept");
-
-/// How many plans are offered.
-const ALTERNATIVES: usize = 3;
 
 #[derive(Debug)]
 enum State {
@@ -79,6 +76,7 @@ impl FloorPlanCommand {
                 max_circulation: 0.15,
                 windows: None,
                 storey_height: 2.8,
+                building: cad_layout::Building::default(),
                 seed: 0,
             },
             origin: Point2::ORIGIN,
@@ -93,11 +91,8 @@ impl FloorPlanCommand {
 
     /// The plans for the brief, or what stopped them, said.
     fn plan(&mut self, ctx: &mut CommandContext<'_>) -> Step {
-        match alternatives(&searched(&self.spec), ALTERNATIVES) {
-            Ok(mut plans) => {
-                // The plans whose stair fits first: a doorway can leave a
-                // stair no place in one plan and not in another.
-                plans.sort_by_key(|plan| stair_misfits(&self.spec, plan).is_some());
+        match plans(&self.spec) {
+            Ok(plans) => {
                 ctx.message(format!(
                     "{} found. {}",
                     if plans.len() == 1 {

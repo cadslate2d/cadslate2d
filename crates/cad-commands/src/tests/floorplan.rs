@@ -55,6 +55,7 @@ fn house() -> Spec {
         max_circulation: 0.15,
         windows: None,
         storey_height: 2.8,
+        building: cad_layout::Building::default(),
         seed: 0,
     }
 }

@@ -12,6 +12,7 @@ mod command;
 mod commands;
 pub mod constraint_display;
 mod dirty;
+pub mod elevation;
 #[cfg(any(test, feature = "testing"))]
 pub mod evaluation;
 mod events;
@@ -36,6 +37,7 @@ mod tests;
 mod toggles;
 mod transient;
 mod ui_state;
+pub mod views;
 
 pub use aids::{Track, TrackKind};
 pub use command::{

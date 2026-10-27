@@ -825,6 +825,21 @@ impl Check {
                 self.name("name", name)?;
                 self.positive("value", *value)
             }
+            Operation::Elevation {
+                plan,
+                roof_pitch,
+                at,
+                ..
+            } => {
+                self.name("plan", plan)?;
+                if let Some(pitch) = roof_pitch {
+                    self.positive("roof_pitch", *pitch)?;
+                }
+                if let Some(at) = at {
+                    self.point("at", *at)?;
+                }
+                Ok(())
+            }
             Operation::Stair {
                 height,
                 width,
@@ -901,6 +916,27 @@ impl Check {
                 }
                 if let Some(height) = brief.storey_height {
                     self.positive("brief.storey_height", height)?;
+                }
+                if let Some(b) = brief.building {
+                    for (field, value) in [
+                        ("brief.building.window_head", b.window_head),
+                        ("brief.building.door_head", b.door_head),
+                        ("brief.building.slab", b.slab),
+                        ("brief.building.roof_pitch", b.roof_pitch),
+                    ] {
+                        if let Some(value) = value {
+                            self.positive(field, value)?;
+                        }
+                    }
+                    for (field, value) in [
+                        ("brief.building.sill", b.sill),
+                        ("brief.building.eaves", b.eaves),
+                        ("brief.building.parapet", b.parapet),
+                    ] {
+                        if let Some(value) = value {
+                            self.not_negative(field, value)?;
+                        }
+                    }
                 }
                 if let Some(at) = at {
                     self.point("at", *at)?;

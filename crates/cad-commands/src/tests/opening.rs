@@ -205,6 +205,7 @@ fn a_window_goes_through_a_generated_plans_exterior_wall() {
         max_circulation: 0.15,
         windows: None,
         storey_height: 2.8,
+        building: cad_layout::Building::default(),
         seed: 0,
     };
     let layout = cad_layout::solve(&spec).unwrap();
@@ -265,6 +266,7 @@ fn a_door_goes_through_a_generated_plans_interior_wall() {
         max_circulation: 0.15,
         windows: None,
         storey_height: 2.8,
+        building: cad_layout::Building::default(),
         seed: 0,
     };
     let layout = cad_layout::solve(&spec).unwrap();

@@ -69,7 +69,9 @@ fn a_document_is_read_and_each_operation_compiles_to_its_command_and_answers() {
         {"op": "stair", "height": 3000, "width": 1200, "kind": "helical", "newel": 100, "view": "section", "at": [50, 0], "direction": 0},
         {"op": "iso_line", "points": [[0, 0, 0], [20, 0, 0], [20, 0, 10]]},
         {"op": "iso_polyline", "points": [[0, 0, 0], [0, 10, 0], [0, 10, 10]], "closed": true},
-        {"op": "iso_circle", "center": [0, 0, 0], "radius": 10}
+        {"op": "iso_circle", "center": [0, 0, 0], "radius": 10},
+        {"op": "elevation", "plan": "PLAN-1"},
+        {"op": "elevation", "plan": "PLAN-1", "side": "left", "roof": "gable", "roof_pitch": 35, "at": [0, -12000]}
         "#,
     );
     let intent = parse(&text).unwrap();
@@ -164,6 +166,22 @@ fn a_document_is_read_and_each_operation_compiles_to_its_command_and_answers() {
         (
             "ELLIPSE",
             vec!["Center", "0,0", "12.247448713915889,0", "7.071067811865475"],
+        ),
+        // The brief's roof, its pitch if it asks, under the plan.
+        (
+            "ELEVATION",
+            vec!["Name", "PLAN-1", "Front", "", "?Specify roof pitch", ""],
+        ),
+        (
+            "ELEVATION",
+            vec![
+                "Name",
+                "PLAN-1",
+                "Left",
+                "Gable",
+                "35?Specify roof pitch",
+                "0,-12000",
+            ],
         ),
     ];
     assert_eq!(got.len(), expected.len());
@@ -362,9 +380,9 @@ fn what_is_refused_says_where_and_why() {
         IntentError::Json { .. }
     ));
     assert!(matches!(
-        parse(r#"{"version": 12, "operations": []}"#).unwrap_err(),
+        parse(r#"{"version": 13, "operations": []}"#).unwrap_err(),
         IntentError::Version {
-            found: 12,
+            found: 13,
             expected: VERSION
         }
     ));
@@ -408,7 +426,7 @@ fn what_is_refused_says_where_and_why() {
 fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../test-data/intent/schema-v11.json"
+        "/../../test-data/intent/schema-v12.json"
     );
     let generated = serde_json::to_string_pretty(&schema()).unwrap() + "\n";
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
@@ -420,7 +438,7 @@ fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
         "the schema changed: bump cad_intent::VERSION, re-record with UPDATE_SNAPSHOTS=1, and name the file after the new version"
     );
     assert!(generated.contains(r#""version""#));
-    assert_eq!(VERSION, 11);
+    assert_eq!(VERSION, 12);
 }
 
 proptest! {
@@ -465,6 +483,6 @@ fn the_selection_word_and_an_intent_serialise_as_the_document_says() {
     };
     assert_eq!(
         serde_json::to_string(&intent).unwrap(),
-        r#"{"version":11,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
+        r#"{"version":12,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
     );
 }

@@ -16,6 +16,17 @@
           },
           "type": "array"
         },
+        "building": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BriefBuilding"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The heights and roof its elevations and sections are drawn with."
+        },
         "max_circulation": {
           "description": "The most floor the search may add as a hall, as a share of the\nrooms' floor; 0 forbids it.",
           "format": "double",
@@ -65,6 +76,80 @@
         "terrain",
         "rooms"
       ],
+      "type": "object"
+    },
+    "BriefBuilding": {
+      "additionalProperties": false,
+      "description": "What a building's elevations and sections need besides its plan, in\nmetres and degrees; each absent field the generator's default.",
+      "properties": {
+        "door_head": {
+          "description": "A door's head; 2.1.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "eaves": {
+          "description": "How far a pitched roof reaches past the walls; 0.5.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "parapet": {
+          "description": "A flat roof's parapet above its slab; 0.5.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "roof": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RoofKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Flat when absent."
+        },
+        "roof_pitch": {
+          "description": "A pitched roof's slope, degrees; 30.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "sill": {
+          "description": "A window's sill above the floor; 0.9.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "slab": {
+          "description": "The slabs' thickness; 0.2.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "window_head": {
+          "description": "A window's head; 2.1.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "BriefRoom": {
@@ -1944,6 +2029,57 @@
         },
         {
           "additionalProperties": false,
+          "description": "A façade of a floor plan drawn already (#337): `plan` its group's\nname, `PLAN-1`; the side it is seen from; the roof — the brief's\nwhen absent — and a pitched roof's `roof_pitch` in degrees; `at`,\nwhere the façade's left end stands on the ground, under the plan\nwhen absent.",
+          "properties": {
+            "at": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "op": {
+              "const": "elevation",
+              "type": "string"
+            },
+            "plan": {
+              "type": "string"
+            },
+            "roof": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RoofKind"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "roof_pitch": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "side": {
+              "$ref": "#/$defs/Side",
+              "default": "front"
+            }
+          },
+          "required": [
+            "op",
+            "plan"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "A stair sized by Blondel's rule (#331) — two risers and a tread\nmake 63 cm, risers at most 18 cm, treads at least 28 — climbing a\nfloor-to-floor `height`, `width` wide: in plan, its foot's middle\n`at` and climbing along `direction` (degrees, 90 when absent); in\nsection, its foot `at` on the floor below and running along\n`direction` (0 when absent). A helix turns round a newel of\n`newel`'s radius, 15 cm when absent; only a helix has one.",
           "properties": {
             "at": {
@@ -2089,10 +2225,40 @@
         }
       ]
     },
+    "RoofKind": {
+      "description": "A roof's kind (#337).",
+      "oneOf": [
+        {
+          "const": "flat",
+          "description": "A slab behind a parapet.",
+          "type": "string"
+        },
+        {
+          "const": "gable",
+          "description": "Two slopes, gable ends on the short sides.",
+          "type": "string"
+        },
+        {
+          "const": "hip",
+          "description": "Four slopes.",
+          "type": "string"
+        }
+      ]
+    },
     "SelectionWord": {
       "description": "The one word [`Targets::Selection`] takes.",
       "enum": [
         "selection"
+      ],
+      "type": "string"
+    },
+    "Side": {
+      "description": "A building's side, as an elevation sees it (#337): the front faces the\nstreet, along the plot's width.",
+      "enum": [
+        "front",
+        "back",
+        "left",
+        "right"
       ],
       "type": "string"
     },

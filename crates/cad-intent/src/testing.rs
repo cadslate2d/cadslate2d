@@ -245,6 +245,7 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         floor_plan(),
         stair(),
         isometric(),
+        elevation(),
         targets().prop_map(|targets| Operation::Erase { targets }),
         (
             proptest::collection::vec((targets(), 0.5f64..50.0), 1..4),
@@ -258,6 +259,34 @@ pub fn operation() -> impl Strategy<Value = Operation> {
                 keep_centrelines,
             }),
     ]
+}
+
+/// A façade (#337) of a plan that may not be there: most name none, and
+/// the engine says so.
+fn elevation() -> impl Strategy<Value = Operation> {
+    (
+        prop_oneof![Just("PLAN-1"), Just("PLAN-2"), Just("ELEV-1")],
+        prop_oneof![
+            Just(crate::Side::Front),
+            Just(crate::Side::Back),
+            Just(crate::Side::Left),
+            Just(crate::Side::Right),
+        ],
+        proptest::option::of(prop_oneof![
+            Just(crate::RoofKind::Flat),
+            Just(crate::RoofKind::Gable),
+            Just(crate::RoofKind::Hip),
+        ]),
+        proptest::option::of(5.0..70.0f64),
+        proptest::option::of(point()),
+    )
+        .prop_map(|(plan, side, roof, roof_pitch, at)| Operation::Elevation {
+            plan: plan.to_owned(),
+            side,
+            roof,
+            roof_pitch,
+            at,
+        })
 }
 
 /// A point on the isometric axes.
@@ -370,6 +399,7 @@ fn floor_plan() -> impl Strategy<Value = Operation> {
                         max_circulation: None,
                         windows,
                         storey_height,
+                        building: None,
                     },
                     at,
                     alternative,
