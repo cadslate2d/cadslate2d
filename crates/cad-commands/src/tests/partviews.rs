@@ -177,6 +177,18 @@ fn what_cannot_be_a_part_is_refused_and_asked_again() {
     h.enter(r#"{"profile": [[0, 0], [10, 0], [10, 10]], "depth": 5, "holes": [{"axis": "y", "at": [50, 50], "diameter": 2}]}"#);
     assert_eq!(h.log().last().unwrap(), "Hole 1 is not inside the part.");
     assert_eq!(h.prompt(), "Enter the part as JSON:");
+    h.enter(r#"{"profile": [[0, 0], [100, 0], [100, 20], [30, 20], [30, 60], [0, 60]], "depth": 40, "holes": [{"axis": "z", "at": [32, 20], "diameter": 8}]}"#);
+    assert!(
+        h.log()
+            .last()
+            .unwrap()
+            .starts_with("Hole 1 enters or leaves the part through a sloped face or across a step")
+    );
+    h.enter(r#"{"profile": [[0, 0], [100, 0], [100, 50], [0, 50]], "depth": 40, "holes": [{"axis": "y", "at": [30, 25], "diameter": 10}, {"axis": "y", "at": [38, 25], "diameter": 8}]}"#);
+    assert_eq!(
+        h.log().last().unwrap(),
+        "Holes 1 and 2 meet; the curves where they do are not drawn."
+    );
     h.enter(r#"{"steps": [[10, 5]], "bore": 12}"#);
     assert_eq!(
         h.log().last().unwrap(),

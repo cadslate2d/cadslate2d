@@ -22,6 +22,9 @@
 //! through left open; it replaces the front view.
 
 use cad_core::Point2;
+use cad_core::tolerance::LinearTolerance;
+
+use crate::{Orientation, orientation};
 
 /// An axis of the part: `x` across the front, `y` back from it, `z` up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,8 +68,20 @@ pub enum PartError {
     Profile,
     /// A size that is not one: a depth, a diameter, a length.
     NotPositive(&'static str),
+    /// A profile whose edges cross: not the outline of a part.
+    ProfileCrosses,
     /// A hole whose centre is not inside the part.
     HoleOutside(usize),
+    /// A hole that breaks out through a side: its edge passes outside the
+    /// part somewhere along it.
+    HoleBreaksOut(usize),
+    /// A hole that enters or leaves the part through a face not square to
+    /// it, or across a step: where it meets such a face its rim is an
+    /// ellipse or a broken curve, not a circle (ADR-0040 §4).
+    HoleOblique(usize),
+    /// Two holes that meet: where they do, the edges are curves of
+    /// intersection the views do not draw.
+    HolesMeet(usize, usize),
     /// A bore as wide as a step, or wider.
     Bore,
 }
@@ -210,6 +225,123 @@ pub fn views(part: &Part, section: bool) -> Result<Views, PartError> {
     }
 }
 
+/// What a prism's views can be drawn for, in closed form (ADR-0040 §4):
+/// a simple profile; each hole wholly inside the part, entering and
+/// leaving through faces square to it — so every rim is a circle — and
+/// meeting no other hole. Anything else is refused, never drawn wrong.
+fn check_prism(
+    profile: &[Point2],
+    depth: f64,
+    holes: &[Hole],
+    lo: Point2,
+    hi: Point2,
+    tol: f64,
+) -> Result<(), PartError> {
+    let n = profile.len();
+    let edge = |i: usize| (profile[i], profile[(i + 1) % n]);
+    // No two edges that do not share a corner cross or touch.
+    for i in 0..n {
+        for j in i + 1..n {
+            if j == i + 1 || (i == 0 && j == n - 1) {
+                continue;
+            }
+            let ((a, b), (c, d)) = (edge(i), edge(j));
+            let side = |p: Point2, q: Point2, r: Point2| orientation(p, q, r);
+            if side(a, b, c) != side(a, b, d) && side(c, d, a) != side(c, d, b) {
+                return Err(PartError::ProfileCrosses);
+            }
+            let collinear = Orientation::Collinear;
+            if [side(a, b, c), side(a, b, d), side(c, d, a), side(c, d, b)].contains(&collinear) {
+                let on = |p: Point2, q: Point2, r: Point2| {
+                    side(p, q, r) == collinear
+                        && r.x >= p.x.min(q.x)
+                        && r.x <= p.x.max(q.x)
+                        && r.y >= p.y.min(q.y)
+                        && r.y <= p.y.max(q.y)
+                };
+                if on(a, b, c) || on(a, b, d) || on(c, d, a) || on(c, d, b) {
+                    return Err(PartError::ProfileCrosses);
+                }
+            }
+        }
+    }
+    // The distance from a point to an edge.
+    let distance = |p: Point2, (a, b): (Point2, Point2)| {
+        let ab = b - a;
+        let t = ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+        p.distance_to(a + ab * t)
+    };
+    // A band of the profile — x or z between two values — crossed only by
+    // edges square to the hole: horizontal ones for a hole down z,
+    // vertical ones for a hole along x; and no corner inside it, so no
+    // step.
+    let square_band = |from: f64, to: f64, across_x: bool| {
+        let coord = |q: Point2| if across_x { q.x } else { q.y };
+        let other = |q: Point2| if across_x { q.y } else { q.x };
+        profile
+            .iter()
+            .all(|q| coord(*q) < from - tol || coord(*q) > to + tol)
+            && (0..n).all(|i| {
+                let (a, b) = edge(i);
+                let crosses = coord(a).min(coord(b)) < to && coord(a).max(coord(b)) > from;
+                !crosses || (other(a) - other(b)).abs() <= tol
+            })
+    };
+    for (i, hole) in holes.iter().enumerate() {
+        if !(hole.diameter.is_finite() && hole.diameter > 0.0) {
+            return Err(PartError::NotPositive("hole diameter"));
+        }
+        let r = hole.diameter / 2.0;
+        let [a, b] = hole.at;
+        let inside = match hole.axis {
+            Axis::Y => at_x(profile, a).iter().any(|&(z0, z1)| b > z0 && b < z1),
+            Axis::Z => a > lo.x && a < hi.x && b > 0.0 && b < depth && !at_x(profile, a).is_empty(),
+            Axis::X => a > 0.0 && a < depth && b > lo.y && b < hi.y && !at_z(profile, b).is_empty(),
+        };
+        if !inside {
+            return Err(PartError::HoleOutside(i));
+        }
+        let within = match hole.axis {
+            Axis::Y => (0..n).all(|k| distance(p(a, b), edge(k)) > r + tol),
+            Axis::Z => b - r > tol && b + r < depth - tol,
+            Axis::X => a - r > tol && a + r < depth - tol,
+        };
+        if !within {
+            return Err(PartError::HoleBreaksOut(i));
+        }
+        let square = match hole.axis {
+            Axis::Y => true,
+            Axis::Z => square_band(a - r, a + r, true),
+            Axis::X => square_band(b - r, b + r, false),
+        };
+        if !square {
+            return Err(PartError::HoleOblique(i));
+        }
+    }
+    // Two holes meet where their axes come closer than their radii
+    // together.
+    for (i, h) in holes.iter().enumerate() {
+        for (j, k) in holes.iter().enumerate().skip(i + 1) {
+            let reach = (h.diameter + k.diameter) / 2.0;
+            // Each hole's place as (x, y, z), its own axis's coordinate free.
+            let place = |hole: &Hole| match hole.axis {
+                Axis::Y => [Some(hole.at[0]), None, Some(hole.at[1])],
+                Axis::Z => [Some(hole.at[0]), Some(hole.at[1]), None],
+                Axis::X => [None, Some(hole.at[0]), Some(hole.at[1])],
+            };
+            let (u, v) = (place(h), place(k));
+            let apart: f64 = (0..3)
+                .filter_map(|c| Some((u[c]? - v[c]?).powi(2)))
+                .sum::<f64>()
+                .sqrt();
+            if apart < reach + tol {
+                return Err(PartError::HolesMeet(i, j));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn prism(
     profile: &[Point2],
     depth: f64,
@@ -224,22 +356,8 @@ fn prism(
     }
     let (lo, hi) = bounds(profile.iter().copied());
     let size = (hi.x - lo.x).max(hi.y - lo.y).max(depth);
-    let tol = 1e-9 * size.max(1.0);
-    let inside = |x: f64, z: f64| at_x(profile, x).iter().any(|&(a, b)| z > a && z < b);
-    for (i, hole) in holes.iter().enumerate() {
-        if !(hole.diameter.is_finite() && hole.diameter > 0.0) {
-            return Err(PartError::NotPositive("hole diameter"));
-        }
-        let [a, b] = hole.at;
-        let ok = match hole.axis {
-            Axis::Y => inside(a, b),
-            Axis::Z => a > lo.x && a < hi.x && b > 0.0 && b < depth,
-            Axis::X => a > 0.0 && a < depth && b > lo.y && b < hi.y,
-        };
-        if !ok {
-            return Err(PartError::HoleOutside(i));
-        }
-    }
+    let tol = LinearTolerance::DEFAULT.at_magnitude(size).value();
+    check_prism(profile, depth, holes, lo, hi, tol)?;
     let o = overrun(size);
     let mut front = View {
         min: lo,
@@ -860,6 +978,80 @@ mod tests {
                 false
             ),
             Err(PartError::Bore)
+        );
+    }
+
+    /// ADR-0040 §4: what the closed forms do not cover is refused, each
+    /// case at its edge.
+    #[test]
+    fn what_the_views_cannot_draw_rightly_is_refused() {
+        let hole = |axis, at: [f64; 2], diameter| Hole { axis, at, diameter };
+        // A bow-tie profile.
+        let crossed = Part::Prism {
+            profile: vec![p(0.0, 0.0), p(10.0, 10.0), p(10.0, 0.0), p(0.0, 4.0)],
+            depth: 5.0,
+            holes: vec![],
+        };
+        assert_eq!(views(&crossed, false), Err(PartError::ProfileCrosses));
+        // A hole along y whose edge reaches past the block's top (z 50):
+        // at z 45.1 with radius 5 it does; at 44 it is clear.
+        assert_eq!(
+            views(&block(vec![hole(Axis::Y, [50.0, 45.1], 10.0)]), false),
+            Err(PartError::HoleBreaksOut(0))
+        );
+        assert!(views(&block(vec![hole(Axis::Y, [50.0, 44.0], 10.0)]), false).is_ok());
+        // Down z, 6 from the back face of a block 40 deep: radius 6 breaks
+        // out, 5.9 does not.
+        assert_eq!(
+            views(&block(vec![hole(Axis::Z, [50.0, 34.0], 12.0)]), false),
+            Err(PartError::HoleBreaksOut(0))
+        );
+        assert!(views(&block(vec![hole(Axis::Z, [50.0, 34.0], 11.8)]), false).is_ok());
+        // Down z across the bracket's step at x 30: it leaves through two
+        // levels.
+        assert_eq!(
+            views(&bracket(vec![hole(Axis::Z, [32.0, 20.0], 8.0)]), false),
+            Err(PartError::HoleOblique(0))
+        );
+        // Down z through a sloped top: its rim would be an ellipse.
+        let ramp = Part::Prism {
+            profile: vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 20.0), p(0.0, 50.0)],
+            depth: 40.0,
+            holes: vec![hole(Axis::Z, [50.0, 20.0], 10.0)],
+        };
+        assert_eq!(views(&ramp, false), Err(PartError::HoleOblique(0)));
+        // Two holes that meet: along y at z 40 and along x at z 45, radii
+        // 4 and 6; and two side by side along y, overlapping.
+        assert_eq!(
+            views(
+                &bracket(vec![
+                    hole(Axis::Y, [15.0, 40.0], 8.0),
+                    hole(Axis::X, [20.0, 45.0], 12.0)
+                ]),
+                false
+            ),
+            Err(PartError::HolesMeet(0, 1))
+        );
+        assert_eq!(
+            views(
+                &block(vec![
+                    hole(Axis::Y, [30.0, 25.0], 10.0),
+                    hole(Axis::Y, [38.0, 25.0], 8.0)
+                ]),
+                false
+            ),
+            Err(PartError::HolesMeet(0, 1))
+        );
+        // Far enough apart, they are drawn.
+        assert!(
+            views(
+                &block(vec![
+                    hole(Axis::Y, [30.0, 25.0], 10.0),
+                    hole(Axis::Y, [45.0, 25.0], 8.0)
+                ]),
+                false
+            )
+            .is_ok()
         );
     }
 

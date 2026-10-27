@@ -73,7 +73,7 @@ impl ElevationCommand {
         let Some(plan) = &self.plan else {
             return Step::Finished;
         };
-        let facade = elevation(&plan.spec, &plan.layout, self.side);
+        let facade = elevation(&plan.spec, &plan.resolved, self.side);
         let made = entities(&facade, self.side, at, plan.scale);
         let space = ctx.space;
         match draw_group(
@@ -148,7 +148,7 @@ impl Command for ElevationCommand {
 
     fn preview(&self, cursor: Point2, out: &mut Vec<OverlayItem>) {
         if let (State::Place, Some(plan)) = (&self.state, &self.plan) {
-            let facade = elevation(&plan.spec, &plan.layout, self.side);
+            let facade = elevation(&plan.spec, &plan.resolved, self.side);
             for (_, entity) in entities(&facade, self.side, cursor, plan.scale) {
                 out.push(OverlayItem::PreviewEntity(entity));
             }

@@ -17,9 +17,10 @@
 //! long sides, a hip's four.
 
 use cad_core::Point2;
+use cad_core::tolerance::LinearTolerance;
 
 use crate::elevation::{GROUND_PAST, ROOF_THICKNESS};
-use crate::{Layout, Roof, Spec, doors, windows};
+use crate::{Resolved, Roof, Spec};
 
 /// Where a section cuts and which way it looks: a line square to the
 /// plan's x axis (`along_x` false: the line x = `at`) or to its y axis
@@ -67,9 +68,19 @@ fn rectangle(u0: f64, z0: f64, u1: f64, z1: f64) -> Vec<Point2> {
     vec![p(a, z0), p(b, z0), p(b, z1), p(a, z1)]
 }
 
-/// The cut of `layout` along `cut`; `None` when the line misses the
-/// building.
-pub fn section(spec: &Spec, layout: &Layout, cut: Cut) -> Option<Section> {
+/// Why a cut is refused rather than drawn wrong.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CutError {
+    /// The line misses the building.
+    Misses,
+    /// The line runs inside a wall, along it: the section would be the
+    /// wall's length of solid wall, which is not what a section is for.
+    AlongWall,
+}
+
+/// The cut of the plan along `cut`, or why it is refused.
+pub fn section(spec: &Spec, plan: &Resolved, cut: Cut) -> Result<Section, CutError> {
+    let layout = &plan.layout;
     let building = spec.building;
     let fp = layout.footprint;
     let outline = layout.outline;
@@ -89,7 +100,30 @@ pub fn section(spec: &Spec, layout: &Layout, cut: Cut) -> Option<Section> {
         (fp.x, fp.right())
     };
     if !(cut.at > side_lo && cut.at < side_hi) {
-        return None;
+        return Err(CutError::Misses);
+    }
+    // Inside a wall running along the cut: within half its thickness of a
+    // room's side along it.
+    let linear = LinearTolerance::DEFAULT.at_magnitude(fp.w + fp.h);
+    let (outer_lo, outer_hi) = outline_sides(layout, !cut.along_x);
+    for room in &layout.rooms {
+        let r = room.rect;
+        let sides = if cut.along_x {
+            [r.y, r.top()]
+        } else {
+            [r.x, r.right()]
+        };
+        for side in sides {
+            let exterior = linear.eq(side, outer_lo) || linear.eq(side, outer_hi);
+            let thickness = if exterior {
+                spec.exterior_wall
+            } else {
+                spec.interior_wall
+            };
+            if (cut.at - side).abs() <= thickness / 2.0 {
+                return Err(CutError::AlongWall);
+            }
+        }
     }
     // Facing +y the right hand is +x; facing +x it is −y.
     let direction = if cut.along_x == cut.looking_up {
@@ -160,8 +194,7 @@ pub fn section(spec: &Spec, layout: &Layout, cut: Cut) -> Option<Section> {
     };
     let te = spec.exterior_wall;
     let flat_top = wall + building.slab + building.parapet;
-    let all_doors = doors(spec, layout);
-    let all_windows = windows(spec, layout);
+    let (all_doors, all_windows) = (&plan.doors, &plan.windows);
     // An opening through the wall at `c` where the cut crosses it.
     let opening_at = |from: Point2, to: Point2, c: f64| {
         near(along(from), c)
@@ -258,7 +291,17 @@ pub fn section(spec: &Spec, layout: &Layout, cut: Cut) -> Option<Section> {
             }
         }
     }
-    Some(out)
+    Ok(out)
+}
+
+/// The outline's x sides — its left and right — or its y sides.
+fn outline_sides(layout: &crate::Layout, x_sides: bool) -> (f64, f64) {
+    let o = layout.outline;
+    if x_sides {
+        (o.x, o.right())
+    } else {
+        (o.y, o.top())
+    }
 }
 
 #[cfg(test)]
@@ -266,7 +309,7 @@ mod tests {
     use super::*;
     use crate::{Building, Room, Setbacks, Terrain, solve};
 
-    fn house(roof: Roof) -> (Spec, Layout) {
+    fn house(roof: Roof) -> (Spec, Resolved) {
         let spec = Spec {
             terrain: Terrain {
                 width: 14.0,
@@ -298,7 +341,8 @@ mod tests {
             seed: 0,
         };
         let layout = solve(&spec).unwrap();
-        (spec, layout)
+        let plan = Resolved::of(&spec, &layout);
+        (spec, plan)
     }
 
     fn close(a: f64, b: f64) -> bool {
@@ -318,7 +362,8 @@ mod tests {
 
     #[test]
     fn every_wall_the_cut_crosses_is_cut_at_its_thickness() {
-        let (spec, layout) = house(Roof::Flat);
+        let (spec, plan) = house(Roof::Flat);
+        let layout = &plan.layout;
         let fp = layout.footprint;
         for along_x in [true, false] {
             let at = if along_x {
@@ -328,7 +373,7 @@ mod tests {
             };
             let s = section(
                 &spec,
-                &layout,
+                &plan,
                 Cut {
                     along_x,
                     at,
@@ -370,16 +415,19 @@ mod tests {
 
     #[test]
     fn a_window_cut_through_breaks_its_wall_and_shows_its_glass() {
-        let (spec, layout) = house(Roof::Flat);
+        let (spec, plan) = house(Roof::Flat);
+        let layout = &plan.layout;
         // Through the middle of a window in the front wall.
-        let window = windows(&spec, &layout)
+        let window = plan
+            .windows
+            .clone()
             .into_iter()
             .find(|w| (w.from.y - layout.outline.y).abs() < 1e-6)
             .expect("a front window");
         let x = (window.from.x + window.to.x) / 2.0;
         let s = section(
             &spec,
-            &layout,
+            &plan,
             Cut {
                 along_x: false,
                 at: x,
@@ -401,8 +449,37 @@ mod tests {
     }
 
     #[test]
+    fn a_cut_inside_a_wall_is_refused() {
+        let (spec, plan) = house(Roof::Flat);
+        let layout = &plan.layout;
+        // Along the front wall's centreline, and a hair inside its face.
+        for at in [layout.outline.y, layout.outline.y + 0.125] {
+            let cut = Cut {
+                along_x: true,
+                at,
+                looking_up: true,
+            };
+            assert_eq!(section(&spec, &plan, cut), Err(CutError::AlongWall), "{at}");
+        }
+        // Along an interior wall: the side two rooms share.
+        let shared = layout
+            .rooms
+            .iter()
+            .map(|r| r.rect.y)
+            .find(|&y| y > layout.outline.y + 1e-6)
+            .expect("rooms one above another");
+        let cut = Cut {
+            along_x: true,
+            at: shared + 0.07,
+            looking_up: true,
+        };
+        assert_eq!(section(&spec, &plan, cut), Err(CutError::AlongWall));
+    }
+
+    #[test]
     fn a_pitched_roof_rises_from_its_eaves_at_its_pitch() {
-        let (spec, layout) = house(Roof::Gable);
+        let (spec, plan) = house(Roof::Gable);
+        let layout = &plan.layout;
         let fp = layout.footprint;
         let rise = 30_f64.to_radians().tan();
         // Across the ridge: the gable's two slopes and their apex.
@@ -416,7 +493,7 @@ mod tests {
             },
             looking_up: true,
         };
-        let s = section(&spec, &layout, across).unwrap();
+        let s = section(&spec, &plan, across).unwrap();
         let roof = s.cut.last().unwrap();
         let span = s.width;
         assert!(
@@ -440,7 +517,7 @@ mod tests {
             },
             looking_up: false,
         };
-        let s = section(&spec, &layout, along).unwrap();
+        let s = section(&spec, &plan, along).unwrap();
         let roof = s.cut.last().unwrap();
         let z = 2.8 + quarter * rise;
         assert!(
@@ -451,24 +528,24 @@ mod tests {
 
     #[test]
     fn a_cut_outside_the_building_is_none_and_the_view_sets_the_way_u_runs() {
-        let (spec, layout) = house(Roof::Flat);
+        let (spec, plan) = house(Roof::Flat);
+        let layout = &plan.layout;
         let fp = layout.footprint;
         assert!(
             section(
                 &spec,
-                &layout,
+                &plan,
                 Cut {
                     along_x: true,
                     at: fp.y - 1.0,
                     looking_up: true
                 }
-            )
-            .is_none()
+            ) == Err(CutError::Misses)
         );
         let at = fp.y + fp.h / 2.0;
         let up = section(
             &spec,
-            &layout,
+            &plan,
             Cut {
                 along_x: true,
                 at,
@@ -478,7 +555,7 @@ mod tests {
         .unwrap();
         let down = section(
             &spec,
-            &layout,
+            &plan,
             Cut {
                 along_x: true,
                 at,

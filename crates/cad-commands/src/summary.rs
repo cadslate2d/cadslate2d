@@ -726,7 +726,7 @@ impl AiContext {
             .filter(|(id, _)| seen.insert(*id))
             .map(|(_, group)| AiGroup {
                 name: group.name.clone(),
-                description: group.description.clone(),
+                description: crate::floorplan::for_the_ai(&group.description),
                 members: group.members.len(),
             })
             .collect();

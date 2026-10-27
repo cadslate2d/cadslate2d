@@ -22,6 +22,7 @@
 
 mod draft;
 mod elevation;
+mod resolved;
 mod search;
 mod section;
 mod spec;
@@ -34,8 +35,9 @@ pub use draft::{
     walls, windows,
 };
 pub use elevation::{Elevation, Side, elevation};
+pub use resolved::{Resolved, SNAPSHOT_VERSION};
 pub use search::{alternatives, alternatives_within, searches_for, solve};
-pub use section::{Cut, Section, section};
+pub use section::{Cut, CutError, Section, section};
 pub use spec::{Building, MAX_ROOMS, Roof, Room, Setbacks, Spec, SpecError, Terrain};
 pub use verify::verify;
 

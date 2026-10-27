@@ -8,9 +8,9 @@
 
 use cad_core::Point2;
 use cad_input::{ExpectedInput, Keyword};
-use cad_layout::{Cut, section};
+use cad_layout::{Cut, CutError, section};
 
-use crate::bsection::{GROUP, LAYERS, description, entities, mark};
+use crate::bsection::{GROUP, LAYERS, description, entities, mark, meets_a_stair_elsewhere};
 use crate::floorplan::{DrawnPlan, PLAN_GROUP, drawn_plan, plan_holding};
 use crate::views::draw_group;
 use crate::{Command, CommandContext, CommandInput, OverlayItem, Prompt, Step};
@@ -24,6 +24,21 @@ enum State {
     First,
     Second(Point2),
     Place(Cut),
+}
+
+/// Why a cut through `plan` is refused rather than drawn wrong.
+fn refused(plan: &DrawnPlan, cut: Cut) -> Option<String> {
+    match section(&plan.spec, &plan.resolved, cut) {
+        Err(CutError::Misses) => Some("The cut misses the building.".into()),
+        Err(CutError::AlongWall) => {
+            Some("The cut runs inside a wall: move it off the wall.".into())
+        }
+        Ok(_) if meets_a_stair_elsewhere(&plan.spec, &plan.stairs, cut) => Some(
+            "The cut meets the stair other than up its first flight, where its section is not drawn: cut up the first flight, or clear of the stair."
+                .into(),
+        ),
+        Ok(_) => None,
+    }
 }
 
 #[derive(Debug)]
@@ -96,21 +111,26 @@ impl BuildingSectionCommand {
         let Some(plan) = &self.plan else {
             return Step::Finished;
         };
-        let Some(cutting) = section(&plan.spec, &plan.layout, cut) else {
-            ctx.message("The cut misses the building.");
+        let Ok(cutting) = section(&plan.spec, &plan.resolved, cut) else {
             return Step::Finished;
         };
         let letter = Self::letter(ctx);
         let mut made = entities(
             &plan.spec,
-            &plan.layout,
+            &plan.stairs,
             cut,
             &cutting,
             letter,
             at,
             plan.scale,
         );
-        made.extend(mark(&plan.layout, cut, letter, plan.origin, plan.scale));
+        made.extend(mark(
+            &plan.resolved.layout,
+            cut,
+            letter,
+            plan.origin,
+            plan.scale,
+        ));
         let space = ctx.space;
         match draw_group(
             ctx.drawing,
@@ -170,10 +190,10 @@ impl Command for BuildingSectionCommand {
                 end: cursor,
             }),
             (State::Place(cut), Some(plan)) => {
-                if let Some(cutting) = section(&plan.spec, &plan.layout, cut) {
+                if let Ok(cutting) = section(&plan.spec, &plan.resolved, cut) {
                     for (_, entity) in entities(
                         &plan.spec,
-                        &plan.layout,
+                        &plan.stairs,
                         cut,
                         &cutting,
                         '?',
@@ -226,11 +246,12 @@ impl Command for BuildingSectionCommand {
                     match self.cut(a, b) {
                         Some(cut) => {
                             let plan = self.plan.as_ref().expect("taken");
-                            if section(&plan.spec, &plan.layout, cut).is_none() {
-                                ctx.message("The cut misses the building.");
-                                State::First
-                            } else {
-                                State::Place(cut)
+                            match refused(plan, cut) {
+                                Some(why) => {
+                                    ctx.message(why);
+                                    State::First
+                                }
+                                None => State::Place(cut),
                             }
                         }
                         None => State::First,

@@ -100,7 +100,21 @@ impl PartViewsCommand {
         match error {
             PartError::Profile => "The part's profile needs three corners and an area.".into(),
             PartError::NotPositive(what) => format!("The part's {what} must be greater than zero."),
+            PartError::ProfileCrosses => "The part's profile crosses itself.".into(),
             PartError::HoleOutside(i) => format!("Hole {} is not inside the part.", i + 1),
+            PartError::HoleBreaksOut(i) => format!(
+                "Hole {} breaks out through a side of the part: move it in, or make it smaller.",
+                i + 1
+            ),
+            PartError::HoleOblique(i) => format!(
+                "Hole {} enters or leaves the part through a sloped face or across a step, where its edge is not a circle; its views are not drawn.",
+                i + 1
+            ),
+            PartError::HolesMeet(i, j) => format!(
+                "Holes {} and {} meet; the curves where they do are not drawn.",
+                i + 1,
+                j + 1
+            ),
             PartError::Bore => "The bore must be narrower than every step.".into(),
         }
     }

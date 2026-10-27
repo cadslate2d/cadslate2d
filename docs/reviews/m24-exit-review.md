@@ -91,6 +91,14 @@ New commands, each registered, in the README's table, on a menu, and reachable b
 
 `SNAP` gained Style and `ELLIPSE` gained Isocircle, the latter greyed on the menu while the snap is standard.
 
+## After the maintainer's review of ADR-0040
+
+The maintainer approved the direction and asked for four changes, all made the same day:
+- **The boundary** is now stated as generators reasoning in implicit 3D, while the program keeps no general-purpose 3D scene, solid topology, or dependency graph.
+- **The isometric axes** were checked. The map is an orthographic isometric projection, rows square and equally long, eye along (−1, −1, 1); a test proves it. The convention stays.
+- **Each generator states what it supports and refuses the rest.** `PARTVIEWS` refuses a crossed profile, a hole that breaks out, one through a sloped face or across a step, and holes that meet. One of this review's own screenshots had two holes meeting and drew them as if they did not. `BSECTION` refuses a cut inside a wall, and one meeting the stair other than up its first flight.
+- **A plan's views come from the plan as drawn**, kept versioned in its group (`cad_layout::Resolved`), never from the brief laid out again. This matters: the WASM app and the native tests lay out one brief differently.
+
 ## For the maintainer
 
 - Accept ADR-0040, or say what to change.

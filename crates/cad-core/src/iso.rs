@@ -1,6 +1,7 @@
 //! Isometric drafting (#336, ADR-0040): an isometric *drawing* on three
-//! axes at true length — `x` along 30°, `y` along 150°, `z` up — and the
-//! three planes they pair into. Needed by the drafting aids, the renderer's
+//! axes at true length — `x` along 30°, `y` along 150°, `z` up, the eye
+//! looking along (−1, −1, 1), above the nearest corner — and the three
+//! planes they pair into. Needed by the drafting aids, the renderer's
 //! grid, ELLIPSE, and the intent compiler alike.
 
 use crate::{Point2, Vec2};
@@ -122,6 +123,37 @@ mod tests {
         // A unit cube's far top corner is two units up the page.
         let corner = map(1.0, 1.0, 1.0);
         assert!(close(corner.x, 0.0) && close(corner.y, 2.0));
+    }
+
+    /// The map is an orthographic isometric projection, scaled to true
+    /// length (an isometric drawing, √(3/2) times the projection): its
+    /// two rows — where x, y, and z go across and up — are square to each
+    /// other and equally long, so every axis is foreshortened alike; and
+    /// the eye looks along (−1, −1, 1), from above the corner nearest it,
+    /// the lowest on the page. The positive axes leave that corner at 30°,
+    /// 150°, and 90°; as lines the three axes are 60° apart, and the rays
+    /// along x, along y, and down z are 120° apart. Drawing the axes at
+    /// 330°, 210°, and 90° instead is the same projection seen from the
+    /// opposite octant, (1, 1, 1): the nearest corner the highest.
+    #[test]
+    fn the_map_is_an_isometric_projection_seen_from_minus_x_minus_y_above() {
+        let across = [X.x, Y.x, Z.x];
+        let up = [X.y, Y.y, Z.y];
+        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        assert!(close(dot(across, up), 0.0));
+        assert!(close(dot(across, across), 1.5) && close(dot(up, up), 1.5));
+        // The eye: across × up, towards the viewer.
+        let eye = [
+            across[1] * up[2] - across[2] * up[1],
+            across[2] * up[0] - across[0] * up[2],
+            across[0] * up[1] - across[1] * up[0],
+        ];
+        let k = eye[2];
+        assert!(k > 0.0 && close(eye[0], -k) && close(eye[1], -k));
+        // The rays along x, along y, and down z, 120° apart.
+        let angle = |v: Vec2| v.y.atan2(v.x).to_degrees().rem_euclid(360.0);
+        let rays = [angle(X), angle(Y), angle(Z * -1.0)];
+        assert!(close(rays[1] - rays[0], 120.0) && close(rays[2] - rays[1], 120.0));
     }
 
     #[test]

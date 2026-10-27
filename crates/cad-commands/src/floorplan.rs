@@ -18,7 +18,7 @@ use cad_document::{
     Properties, TextEntity, TransactionError,
 };
 use cad_geometry::stair::{self, Kind, Placement, Rule, Stair};
-use cad_layout::{Layout, Spec, doors, labels, walls, windows};
+use cad_layout::{Layout, Resolved, Spec, doors, labels, walls, windows};
 
 use crate::stair::STAIRS;
 
@@ -311,16 +311,58 @@ pub fn entities(spec: &Spec, layout: &Layout, origin: Point2, scale: f64) -> Vec
 /// The prefix of the group a drawn plan is kept in: `PLAN-1`, `PLAN-2`, …
 pub const PLAN_GROUP: &str = "PLAN-";
 
-/// What a plan's group says of it: the brief and where and how it was
-/// drawn, as JSON, so a later request can draw it again revised (#325).
-pub fn plan_description(spec: &Spec, origin: Point2, scale: f64, alternative: u32) -> String {
+/// What a plan's group says of it, as JSON: the brief and where and how
+/// it was drawn, so a later request can draw it again revised (#325); and
+/// then the plan as drawn — its layout, openings, and stairs — so what is
+/// drawn from it later is drawn from this plan and not from its brief laid
+/// out again (ADR-0040 §3). The AI is sent only the first part
+/// ([`for_the_ai`]).
+pub fn plan_description(
+    spec: &Spec,
+    layout: &Layout,
+    origin: Point2,
+    scale: f64,
+    alternative: u32,
+) -> String {
+    let placed: Vec<serde_json::Value> = stairs(spec, layout)
+        .into_iter()
+        .filter_map(|(room, placed)| {
+            let placed = placed?;
+            Some(serde_json::json!({
+                "room": room,
+                "kind": match placed.kind {
+                    Kind::Straight => "straight",
+                    Kind::L => "l",
+                    Kind::U => "u",
+                    Kind::Helical => "helical",
+                },
+                "foot": [placed.foot.x, placed.foot.y],
+                "turn": placed.turn,
+            }))
+        })
+        .collect();
     format!(
-        "{{\"brief\":{},\"at\":[{},{}],\"scale\":{},\"alternative\":{alternative}}}",
+        "{{\"brief\":{},\"at\":[{},{}],\"scale\":{},\"alternative\":{alternative}{SNAPSHOT}{},\"stairs\":{}}}",
         spec.to_json(),
         origin.x,
         origin.y,
-        scale
+        scale,
+        Resolved::of(spec, layout).to_json(),
+        serde_json::Value::Array(placed),
     )
+}
+
+/// Where a plan's description turns from what the AI is sent to the plan
+/// as drawn.
+const SNAPSHOT: &str = ",\"resolved\":";
+
+/// A group's description as the AI is sent it: a drawn plan's without the
+/// plan as drawn, which only the program reads; any other as it is.
+pub fn for_the_ai(description: &str) -> String {
+    match description.find(SNAPSHOT) {
+        Some(at) if description.starts_with("{\"brief\":") => format!("{}}}", &description[..at]),
+        _ => description.to_owned(),
+    }
 }
 
 /// The plans FLOORPLAN offers for `spec`: the search's, the brief's stair
@@ -346,7 +388,10 @@ pub struct DrawnPlan {
     pub origin: Point2,
     pub scale: f64,
     pub alternative: u32,
-    pub layout: Layout,
+    /// The plan as drawn, read back from its group.
+    pub resolved: Resolved,
+    /// Where its stairs were drawn, by room.
+    pub stairs: Vec<(usize, Placement)>,
 }
 
 /// The plan drawn in the group named `name`; why not, said, when there is
@@ -367,18 +412,51 @@ pub fn drawn_plan(drawing: &Drawing, name: &str) -> Result<DrawnPlan, String> {
         return Err(not_a_plan());
     };
     let alternative = value["alternative"].as_u64().unwrap_or(1).max(1) as u32;
-    let layout = plans(&spec)
-        .map_err(|refusal| refusal.to_string())?
-        .into_iter()
-        .nth(alternative as usize - 1)
-        .ok_or_else(not_a_plan)?;
+    // The plan as drawn, never the brief laid out again: another version
+    // of the search, or another platform, may lay it out otherwise.
+    let resolved = Resolved::from_json(&value["resolved"]).ok_or_else(|| {
+        format!(
+            "{} does not keep the plan it was drawn as: draw it again with FLOORPLAN.",
+            group.name
+        )
+    })?;
+    let stairs = value["stairs"]
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .filter_map(|s| {
+                    let kind = match s["kind"].as_str()? {
+                        "straight" => Kind::Straight,
+                        "l" => Kind::L,
+                        "u" => Kind::U,
+                        "helical" => Kind::Helical,
+                        _ => return None,
+                    };
+                    let foot = Point2::new(s["foot"][0].as_f64()?, s["foot"][1].as_f64()?);
+                    let room = usize::try_from(s["room"].as_u64()?).ok()?;
+                    Some((
+                        room,
+                        Placement {
+                            kind,
+                            foot,
+                            turn: s["turn"].as_f64()?,
+                        },
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if resolved.layout.rooms.len() < spec.rooms.len() {
+        return Err(not_a_plan());
+    }
     Ok(DrawnPlan {
         name: group.name.clone(),
         spec,
         origin: Point2::new(x, y),
         scale,
         alternative,
-        layout,
+        resolved,
+        stairs,
     })
 }
 
@@ -439,7 +517,7 @@ pub fn draw(
         .find(|name| !taken.contains(name))
         .expect("a number is free");
     let mut group = Group::named(name, made.clone());
-    group.description = plan_description(spec, origin, scale, alternative);
+    group.description = plan_description(spec, layout, origin, scale, alternative);
     group.selectable = false;
     transaction.add_group(group)?;
     transaction.commit();
@@ -614,12 +692,57 @@ mod tests {
             assert!(!group.selectable);
             assert_eq!(
                 group.description,
-                plan_description(&spec, origin, 1.0, which)
+                plan_description(&spec, &layout, origin, 1.0, which)
             );
+            // The AI is sent the brief and where it was drawn, not the plan
+            // as drawn; the program reads that back exactly.
+            let sent = for_the_ai(&group.description);
+            assert!(
+                sent.ends_with(&format!(r#""alternative":{which}}}"#)),
+                "{sent}"
+            );
+            assert!(!sent.contains("resolved"));
+            let back = drawn_plan(&drawing, &format!("PLAN-{which}")).unwrap();
+            assert_eq!(back.resolved, Resolved::of(&spec, &layout));
             assert!(group.description.contains(r#""alternative":"#));
             assert!(group.description.contains(&spec.to_json()));
         }
         assert_eq!(drawing.groups().len(), 2);
+    }
+
+    /// ADR-0040 §3: what is drawn from a plan is drawn from the plan kept
+    /// with it — a brief that would now be laid out otherwise changes
+    /// nothing — and a plan that keeps none is refused, never laid out
+    /// again in its place.
+    #[test]
+    fn a_drawn_plan_is_read_back_as_drawn_never_laid_out_again() {
+        let spec = house();
+        let layout = solve(&spec).unwrap();
+        let kept = plan_description(&spec, &layout, Point2::ORIGIN, 1.0, 1);
+        let group_with = |description: String| {
+            let mut drawing = Drawing::new();
+            let mut t = drawing.transaction();
+            let id = t
+                .insert(LineEntity::new(Point2::ORIGIN, Point2::new(1.0, 0.0)))
+                .unwrap();
+            let mut group = Group::named("PLAN-1", vec![id]);
+            group.description = description;
+            t.add_group(group).unwrap();
+            t.commit();
+            drawing
+        };
+        // Another seed in the brief: laid out again, it would be another
+        // plan; read back, it is the plan drawn.
+        let reseeded = kept.replacen(r#""seed":0"#, r#""seed":987654321"#, 1);
+        assert_ne!(reseeded, kept);
+        let back = drawn_plan(&group_with(reseeded), "PLAN-1").unwrap();
+        assert_eq!(back.resolved, Resolved::of(&spec, &layout));
+        // The brief alone: refused.
+        let brief_only = for_the_ai(&kept);
+        assert_eq!(
+            drawn_plan(&group_with(brief_only), "PLAN-1").unwrap_err(),
+            "PLAN-1 does not keep the plan it was drawn as: draw it again with FLOORPLAN."
+        );
     }
 
     /// #324: a window in each room's outside walls when the brief gives

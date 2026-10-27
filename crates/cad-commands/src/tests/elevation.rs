@@ -67,7 +67,7 @@ fn a_front_elevation_by_the_plans_name_is_drawn_to_scale_as_one_undo() {
     // The wall outline: the footprint's width in millimetres, 3.5 m high
     // to the parapet.
     let plan = drawn_plan(h.session.drawing(), "PLAN-1").unwrap();
-    let width = plan.layout.footprint.w * 1000.0;
+    let width = plan.resolved.layout.footprint.w * 1000.0;
     let walls = on(&h, "ELEV-WALL");
     let Some(Entity::Polyline(outline)) = walls.first() else {
         panic!("{walls:?}");
@@ -87,7 +87,7 @@ fn a_front_elevation_by_the_plans_name_is_drawn_to_scale_as_one_undo() {
             .any(|p| p.distance_to(Point2::new(0.0, -12000.0)) < 1e-6)
     );
     // The front's openings: its windows and the way in.
-    let wanted = elevation(&plan.spec, &plan.layout, Side::Front)
+    let wanted = elevation(&plan.spec, &plan.resolved, Side::Front)
         .openings
         .len();
     assert_eq!(on(&h, "ELEV-OPENING").len(), wanted);
@@ -115,7 +115,7 @@ fn a_side_picked_from_the_plan_with_a_gable_roof_at_another_pitch() {
     let mut h = planned();
     let plan = drawn_plan(h.session.drawing(), "PLAN-1").unwrap();
     // A point on the building's outer face: its lower left corner.
-    let fp = plan.layout.footprint;
+    let fp = plan.resolved.layout.footprint;
     let corner = Point2::new(fp.x * 1000.0, fp.y * 1000.0);
     h.enter("ELEVATION");
     h.click_world(corner);
@@ -136,7 +136,7 @@ fn a_side_picked_from_the_plan_with_a_gable_roof_at_another_pitch() {
     let mut spec = plan.spec.clone();
     spec.building.roof = cad_layout::Roof::Gable;
     spec.building.roof_pitch = 35.0;
-    let facade = elevation(&spec, &plan.layout, Side::Left);
+    let facade = elevation(&spec, &plan.resolved, Side::Left);
     let top = on(&h, "ELEV-ROOF")
         .iter()
         .filter_map(|e| match e {

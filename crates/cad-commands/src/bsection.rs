@@ -9,9 +9,10 @@ use cad_document::{
     Entity, HatchEntity, HatchStyle, Justification, LineEntity, PolylineEntity, TextEntity,
 };
 use cad_geometry::Path;
+use cad_geometry::stair::Placement;
 use cad_layout::{Cut, Layout, Section, Spec};
 
-use crate::floorplan::{plan_stair, stairs};
+use crate::floorplan::plan_stair;
 
 pub const CUT: &str = "SECT-CUT";
 pub const HATCH: &str = "SECT-HATCH";
@@ -31,31 +32,93 @@ const LETTER_HEIGHT: f64 = 0.4;
 /// The cut hatch's spacing, metres: ANSI31's lines are 3.175 units apart.
 const HATCH_SPACING: f64 = 0.08;
 
-/// The stair's profile on the section, if the cut runs up its first
-/// flight: its treads and underside, in the section's metres.
-fn stair_profile(spec: &Spec, layout: &Layout, cut: Cut, section: &Section) -> Vec<Vec<Point2>> {
+/// How a cut meets a stair the plan drew.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Meets {
+    /// Not at all.
+    Clear,
+    /// Up its first flight, where its profile is drawn.
+    FirstFlight,
+    /// Anywhere else: across a flight, up the second, along a landing.
+    Elsewhere,
+}
+
+/// The stair `placed` as `spec` sizes it.
+fn stair_of(spec: &Spec, placed: &Placement) -> cad_geometry::stair::Stair {
+    cad_geometry::stair::Stair {
+        kind: placed.kind,
+        ..plan_stair(spec)
+    }
+}
+
+/// The way `placed` climbs, in plan, along and across the cut, and its
+/// foot's place along and across it. Its turn is a quarter turn, so the
+/// climb is along the cut or across it, never between.
+fn climb(placed: &Placement, cut: Cut) -> (f64, f64, f64, f64) {
+    let (sin, cos) = placed.turn.sin_cos();
+    let climb = Vec2::new(-sin, cos);
+    if cut.along_x {
+        (climb.x, climb.y, placed.foot.x, placed.foot.y)
+    } else {
+        (climb.y, climb.x, placed.foot.y, placed.foot.x)
+    }
+}
+
+fn meets(spec: &Spec, placed: &Placement, cut: Cut) -> Meets {
+    let stair = stair_of(spec, placed);
+    let Ok(footprint) = stair.footprint() else {
+        return Meets::Clear;
+    };
+    // The footprint across the cut, in plan.
+    let (sin, cos) = placed.turn.sin_cos();
+    let across = |q: Point2| {
+        let p = placed.foot + Vec2::new(q.x * cos - q.y * sin, q.x * sin + q.y * cos);
+        if cut.along_x { p.y } else { p.x }
+    };
+    let corners = footprint.corners().map(across);
+    let (lo, hi) = corners
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), &c| {
+            (l.min(c), h.max(c))
+        });
+    if !(cut.at > lo && cut.at < hi) {
+        return Meets::Clear;
+    }
+    let (along, _, _, foot_across) = climb(placed, cut);
+    if along.abs() > 0.5 && (cut.at - foot_across).abs() < stair.width / 2.0 {
+        Meets::FirstFlight
+    } else {
+        Meets::Elsewhere
+    }
+}
+
+/// Whether the cut meets a stair where its section is not drawn: such a
+/// cut is refused rather than drawn without the stair it passes through
+/// (ADR-0040 §4).
+pub fn meets_a_stair_elsewhere(spec: &Spec, stairs: &[(usize, Placement)], cut: Cut) -> bool {
+    stairs
+        .iter()
+        .any(|(_, placed)| meets(spec, placed, cut) == Meets::Elsewhere)
+}
+
+/// The stair's profile on the section, where the cut runs up its first
+/// flight: its treads and underside, in the section's metres. `stairs`
+/// are where the plan's stairs were drawn.
+fn stair_profile(
+    spec: &Spec,
+    stairs: &[(usize, Placement)],
+    cut: Cut,
+    section: &Section,
+) -> Vec<Vec<Point2>> {
     let mut out = Vec::new();
-    for (_, placed) in stairs(spec, layout) {
-        let Some(placed) = placed else { continue };
-        let stair = cad_geometry::stair::Stair {
-            kind: placed.kind,
-            ..plan_stair(spec)
-        };
-        // The way it climbs, in plan.
-        let (sin, cos) = placed.turn.sin_cos();
-        let climb = Vec2::new(-sin, cos);
-        let (along, across, foot_along, foot_across) = if cut.along_x {
-            (climb.x, climb.y, placed.foot.x, placed.foot.y)
-        } else {
-            (climb.y, climb.x, placed.foot.y, placed.foot.x)
-        };
-        // Up its first flight: climbing along the cut, the cut within it.
-        if across.abs() > 1e-9 || (cut.at - foot_across).abs() >= stair.width / 2.0 {
+    for (_, placed) in stairs {
+        if meets(spec, placed, cut) != Meets::FirstFlight {
             continue;
         }
-        let Ok(profile) = stair.cut_profile() else {
+        let Ok(profile) = stair_of(spec, placed).cut_profile() else {
             continue;
         };
+        let (along, _, foot_along, _) = climb(placed, cut);
         let u0 = section.u(foot_along);
         let sign = along.signum() * section.direction;
         out.extend(profile.into_iter().map(|line| {
@@ -72,7 +135,7 @@ fn stair_profile(spec: &Spec, layout: &Layout, cut: Cut, section: &Section) -> V
 /// metre, titled with `letter`.
 pub fn entities(
     spec: &Spec,
-    layout: &Layout,
+    stairs: &[(usize, Placement)],
     cut: Cut,
     section: &Section,
     letter: char,
@@ -105,7 +168,7 @@ pub fn entities(
     }
     let (a, b) = section.ground;
     out.push((3, LineEntity::new(place(a), place(b)).into()));
-    for line in stair_profile(spec, layout, cut, section) {
+    for line in stair_profile(spec, stairs, cut, section) {
         let points = line.into_iter().map(place).collect();
         out.push((4, PolylineEntity::new(points, false).into()));
     }

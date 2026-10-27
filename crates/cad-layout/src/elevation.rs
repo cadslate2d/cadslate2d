@@ -16,7 +16,7 @@
 
 use cad_core::Point2;
 
-use crate::{Layout, Rect, Roof, Spec, doors, windows};
+use crate::{Rect, Resolved, Roof, Spec};
 
 /// The sides a building is seen from: the front faces the street, along
 /// the terrain's x axis.
@@ -86,8 +86,10 @@ fn along(side: Side, outline: Rect, footprint: Rect, point: Point2, tolerance: f
     }
 }
 
-/// The façade of `layout` seen from `side`.
-pub fn elevation(spec: &Spec, layout: &Layout, side: Side) -> Elevation {
+/// The façade of the plan seen from `side`: its layout's and openings'
+/// as drawn (`Resolved`), the brief's heights and roof.
+pub fn elevation(spec: &Spec, plan: &Resolved, side: Side) -> Elevation {
+    let layout = &plan.layout;
     let building = spec.building;
     let footprint = layout.footprint;
     let outline = layout.outline;
@@ -187,7 +189,7 @@ pub fn elevation(spec: &Spec, layout: &Layout, side: Side) -> Elevation {
         let b = along(side, outline, footprint, to, tolerance)?;
         Some((a.min(b), a.max(b)))
     };
-    for window in windows(spec, layout) {
+    for window in &plan.windows {
         if let Some((u0, u1)) = span_of(window.from, window.to) {
             let (sill, head) = (building.sill, building.window_head);
             out.openings.push(rectangle(u0, sill, u1, head));
@@ -202,10 +204,7 @@ pub fn elevation(spec: &Spec, layout: &Layout, side: Side) -> Elevation {
                 .push(rectangle(u0 - FRAME, sill - FRAME, u1 + FRAME, sill));
         }
     }
-    for door in doors(spec, layout)
-        .into_iter()
-        .filter(|door| door.rooms.1.is_none())
-    {
+    for door in plan.doors.iter().filter(|door| door.rooms.1.is_none()) {
         if let Some((u0, u1)) = span_of(door.from, door.to) {
             let head = building.door_head;
             out.openings.push(rectangle(u0, 0.0, u1, head));
@@ -221,7 +220,7 @@ mod tests {
     use super::*;
     use crate::{Building, Room, Setbacks, Terrain, solve};
 
-    fn house(roof: Roof) -> (Spec, Layout) {
+    fn house(roof: Roof) -> (Spec, Resolved) {
         let spec = Spec {
             terrain: Terrain {
                 width: 14.0,
@@ -253,7 +252,8 @@ mod tests {
             seed: 0,
         };
         let layout = solve(&spec).unwrap();
-        (spec, layout)
+        let plan = Resolved::of(&spec, &layout);
+        (spec, plan)
     }
 
     fn close(a: f64, b: f64) -> bool {
@@ -274,12 +274,13 @@ mod tests {
 
     #[test]
     fn each_facade_is_the_buildings_side_with_its_openings_at_their_heights() {
-        let (spec, layout) = house(Roof::Flat);
+        let (spec, plan) = house(Roof::Flat);
+        let layout = &plan.layout;
         let fp = layout.footprint;
-        let all_windows = windows(&spec, &layout);
+        let all_windows = plan.windows.clone();
         let mut seen = 0;
         for side in Side::ALL {
-            let e = elevation(&spec, &layout, side);
+            let e = elevation(&spec, &plan, side);
             let width = if matches!(side, Side::Front | Side::Back) {
                 fp.w
             } else {
@@ -315,12 +316,15 @@ mod tests {
 
     #[test]
     fn a_window_is_where_the_plan_has_it_and_as_wide() {
-        let (spec, layout) = house(Roof::Flat);
-        let window = windows(&spec, &layout)
+        let (spec, plan) = house(Roof::Flat);
+        let layout = &plan.layout;
+        let window = plan
+            .windows
+            .clone()
             .into_iter()
             .find(|w| (w.from.y - layout.outline.y).abs() < 1e-6)
             .expect("a window in the front wall");
-        let e = elevation(&spec, &layout, Side::Front);
+        let e = elevation(&spec, &plan, Side::Front);
         let wanted = (
             window.from.x.min(window.to.x) - layout.footprint.x,
             window.from.x.max(window.to.x) - layout.footprint.x,
@@ -333,7 +337,8 @@ mod tests {
 
     #[test]
     fn a_gable_shows_its_eaves_along_the_ridge_and_its_slopes_end_on() {
-        let (spec, layout) = house(Roof::Gable);
+        let (spec, plan) = house(Roof::Gable);
+        let layout = &plan.layout;
         let fp = layout.footprint;
         let rise = 30_f64.to_radians().tan();
         // The ridge runs along the longer side.
@@ -344,11 +349,11 @@ mod tests {
         };
         let span = fp.w.min(fp.h);
         let ridge = 2.8 + span / 2.0 * rise;
-        let eaves = elevation(&spec, &layout, long_side);
+        let eaves = elevation(&spec, &plan, long_side);
         let (a, b, c, d) = bounds(&eaves.roof[0]);
         assert!(close(a, -0.5) && close(c, eaves.width + 0.5));
         assert!(close(b, 2.8 - 0.5 * rise) && close(d, ridge + ROOF_THICKNESS));
-        let end = elevation(&spec, &layout, end_side);
+        let end = elevation(&spec, &plan, end_side);
         // The gable wall's apex under the ridge, in the middle.
         assert!(
             end.walls[0]
@@ -360,19 +365,20 @@ mod tests {
 
     #[test]
     fn a_hip_roof_is_a_trapezoid_along_and_a_triangle_end_on() {
-        let (spec, layout) = house(Roof::Hip);
+        let (spec, plan) = house(Roof::Hip);
+        let layout = &plan.layout;
         let fp = layout.footprint;
         let (long_side, end_side) = if fp.w >= fp.h {
             (Side::Front, Side::Left)
         } else {
             (Side::Left, Side::Front)
         };
-        let along = elevation(&spec, &layout, long_side);
+        let along = elevation(&spec, &plan, long_side);
         assert_eq!(along.roof[0].len(), 4);
         let span = fp.w.min(fp.h);
         // The ridge stops a half-span from each end.
         assert!(along.roof[0].iter().any(|q| close(q.x, span / 2.0)));
-        let end = elevation(&spec, &layout, end_side);
+        let end = elevation(&spec, &plan, end_side);
         assert_eq!(end.roof[0].len(), 3);
         assert_eq!(end.walls[0].len(), 4, "a hipped end's wall is square");
     }
