@@ -80,11 +80,11 @@ fn the_current_colour_is_undone_and_enter_keeps_it() {
 fn text_that_is_not_a_colour_is_explained_and_asked_for_again() {
     let mut h = Harness::new();
     h.enter("COLOR");
-    for bad in ["0", "256", "purple", "2.5", "1,2"] {
+    for bad in ["0", "256", "mauve", "2.5", "1,2"] {
         h.enter(bad);
         assert_eq!(
             last(&h),
-            "A colour is a number from 1 to 255, or red, yellow, green, cyan, blue, magenta, or white. Or ByLayer, or ByBlock.",
+            "A colour is a number from 1 to 255, a name such as red, yellow, gold, or silver, or #RRGGBB. Or ByLayer, or ByBlock.",
             "{bad}"
         );
         assert_eq!(h.prompt(), format!("{PROMPT} <ByLayer>:"));

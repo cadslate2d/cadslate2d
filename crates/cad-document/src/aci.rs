@@ -83,11 +83,55 @@ const NAMES: [(&str, u8); 7] = [
     ("white", 7),
 ];
 
+/// Common colours by name, beyond the seven, as red, green, and blue: each
+/// read as the index colour nearest it (#348). Black is not among them: on
+/// the drawing it is the foreground, white, 7.
+const MORE_NAMES: [(&str, [u8; 3]); 26] = [
+    ("orange", [255, 165, 0]),
+    ("gold", [255, 215, 0]),
+    ("brown", [165, 42, 42]),
+    ("pink", [255, 192, 203]),
+    ("purple", [128, 0, 128]),
+    ("violet", [238, 130, 238]),
+    ("gray", [128, 128, 128]),
+    ("grey", [128, 128, 128]),
+    ("silver", [192, 192, 192]),
+    ("navy", [0, 0, 128]),
+    ("teal", [0, 128, 128]),
+    ("olive", [128, 128, 0]),
+    ("maroon", [128, 0, 0]),
+    ("lime", [0, 255, 0]),
+    ("crimson", [220, 20, 60]),
+    ("tan", [210, 180, 140]),
+    ("turquoise", [64, 224, 208]),
+    ("indigo", [75, 0, 130]),
+    ("coral", [255, 127, 80]),
+    ("salmon", [250, 128, 114]),
+    ("khaki", [240, 230, 140]),
+    ("bronze", [205, 127, 50]),
+    ("copper", [184, 115, 51]),
+    ("amber", [255, 191, 0]),
+    ("beige", [245, 245, 220]),
+    ("aqua", [0, 255, 255]),
+];
+
+/// `#RRGGBB`, as red, green, and blue.
+fn hex(text: &str) -> Option<[u8; 3]> {
+    let digits = text.strip_prefix('#')?;
+    if digits.len() != 6 || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let byte = |i: usize| u8::from_str_radix(&digits[i..i + 2], 16).ok();
+    Some([byte(0)?, byte(2)?, byte(4)?])
+}
+
 impl Color {
     /// Reads a colour as it is typed: a number from 1 to 255, one of the
     /// seven names (`red`, `yellow`, `green`, `cyan`, `blue`, `magenta`,
-    /// `white`), `ByLayer`, or `ByBlock`. Case does not count. `None` for
-    /// anything else, 0 and 256 included.
+    /// `white`), `ByLayer`, or `ByBlock`; or another common name (`gold`,
+    /// `orange`, `silver`, …) or `#RRGGBB`, either as the index colour
+    /// nearest it. Case does not count. `None` for anything else, 0 and
+    /// 256 included.
     pub fn parse(text: &str) -> Option<Self> {
         let text = text.trim();
         if text.eq_ignore_ascii_case("bylayer") {
@@ -101,6 +145,14 @@ impl Color {
             .find(|(name, _)| name.eq_ignore_ascii_case(text))
         {
             return Some(Color::Index(*index));
+        }
+        let rgb = MORE_NAMES
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(text))
+            .map(|(_, rgb)| *rgb)
+            .or_else(|| hex(text));
+        if let Some(rgb) = rgb {
+            return Some(Color::Index(nearest_index(rgb)));
         }
         // Digits only: "+3", "3.0", and " 3 " inside are not colour numbers.
         if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -299,7 +351,9 @@ mod tests {
             "+3",
             "3.0",
             "1e2",
-            "purple",
+            "#12345",
+            "#GGGGGG",
+            "ffd700",
             "re",
             "reds",
             "by layer",
@@ -309,6 +363,24 @@ mod tests {
         ] {
             assert_eq!(Color::parse(typed), None, "{typed:?}");
         }
+    }
+
+    /// Gold, orange, a hex colour: each is the index colour nearest it
+    /// (#348), so a drawing asked for in red and gold has both.
+    #[test]
+    fn common_names_and_hex_read_as_the_nearest_index_colour() {
+        let nearest = |rgb| Some(Color::Index(nearest_index(rgb)));
+        assert_eq!(Color::parse("gold"), nearest([255, 215, 0]));
+        assert_eq!(Color::parse("Gold"), Color::parse("#FFD700"));
+        assert_eq!(Color::parse("#ffd700"), nearest([255, 215, 0]));
+        assert_eq!(Color::parse("orange"), nearest([255, 165, 0]));
+        assert_eq!(Color::parse("#FF0000"), Some(Color::Index(1)));
+        // Gold is not plain yellow, nor red: a colour of its own.
+        let gold = Color::parse("gold").unwrap();
+        assert_ne!(gold, Color::Index(2));
+        assert_ne!(gold, Color::Index(1));
+        assert!(Color::parse("purple").is_some());
+        assert_eq!(Color::parse("black"), None);
     }
 
     #[test]

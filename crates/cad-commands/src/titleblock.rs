@@ -91,23 +91,61 @@ pub fn entities(
     let text = |x: f64, y: f64, height: f64, words: &str| -> Entity {
         TextEntity::new(place(x, y), height * scale, 0.0, words).into()
     };
-    let cell = |x: f64, y: f64, label: &str, value: &str, size: f64, out: &mut Vec<Entity>| {
-        out.push(text(
-            x + 1.5,
-            y + BLOCK_HEIGHT / 2.0 - LABEL - 1.5,
-            LABEL,
-            label,
-        ));
-        if !value.is_empty() {
-            out.push(text(x + 1.5, y + 2.0, size, value));
-        }
+    // A value at its size, or smaller where it would run past its box's
+    // right edge (#348): `wide` paper millimetres, less a margin each side.
+    let fitted = |x: f64, y: f64, size: f64, wide: f64, words: &str| -> Entity {
+        let room = (wide - 3.0) * scale;
+        let at_size = TextEntity::new(place(x, y), size * scale, 0.0, words);
+        let width = at_size.width();
+        let height = if width > room && width > 0.0 {
+            size * scale * room / width
+        } else {
+            size * scale
+        };
+        TextEntity::new(place(x, y), height, 0.0, words).into()
     };
-    cell(x0, middle, "TITLE", &fields.title, TITLE, &mut out);
-    cell(split, middle, "NUMBER", &fields.number, VALUE, &mut out);
-    cell(x0, y0, "DRAWN BY", &fields.drawn_by, SMALL, &mut out);
-    cell(x0 + 45.0, y0, "DATE", &fields.date, SMALL, &mut out);
-    cell(x0 + 80.0, y0, "SCALE", &fields.scale, SMALL, &mut out);
-    cell(split, y0, "SHEET", &fields.sheet, SMALL, &mut out);
+    let cell =
+        |x: f64, y: f64, wide: f64, label: &str, value: &str, size: f64, out: &mut Vec<Entity>| {
+            out.push(text(
+                x + 1.5,
+                y + BLOCK_HEIGHT / 2.0 - LABEL - 1.5,
+                LABEL,
+                label,
+            ));
+            if !value.is_empty() {
+                out.push(fitted(x + 1.5, y + 2.0, size, wide, value));
+            }
+        };
+    cell(
+        x0,
+        middle,
+        split - x0,
+        "TITLE",
+        &fields.title,
+        TITLE,
+        &mut out,
+    );
+    cell(
+        split,
+        middle,
+        x1 - split,
+        "NUMBER",
+        &fields.number,
+        VALUE,
+        &mut out,
+    );
+    cell(x0, y0, 45.0, "DRAWN BY", &fields.drawn_by, SMALL, &mut out);
+    cell(x0 + 45.0, y0, 35.0, "DATE", &fields.date, SMALL, &mut out);
+    cell(
+        x0 + 80.0,
+        y0,
+        split - x0 - 80.0,
+        "SCALE",
+        &fields.scale,
+        SMALL,
+        &mut out,
+    );
+    cell(split, y0, 35.0, "SHEET", &fields.sheet, SMALL, &mut out);
     out.extend(symbol(split + 35.0, y0, fields.first_angle, &place, scale));
     out
 }
@@ -277,5 +315,44 @@ mod tests {
         let cone_x = 297.0 - 10.0 - 180.0 + 110.0 + 35.0;
         assert!(circles_x(true) > cone_x + 17.0);
         assert!(circles_x(false) < cone_x + 17.0);
+    }
+
+    /// A value too long for its box is set smaller, never past the box's
+    /// right edge (#348): the Iron Man sheet's title ran out of its cell.
+    #[test]
+    fn a_long_value_is_set_smaller_to_stay_in_its_box() {
+        let fields = Fields {
+            title: "IRON MAN MK-III POWERED ARMOR — MECHANICAL SPECIFICATION".to_owned(),
+            number: "IM3-M-001-REV-A-SHEET-ONE".to_owned(),
+            ..Fields::default()
+        };
+        for scale in [1.0, 3.0] {
+            let out = entities(Paper::A0, true, &fields, Point2::ORIGIN, scale);
+            let (w, _) = sheet(Paper::A0, true);
+            let x0 = w - MARGIN - BLOCK_WIDTH;
+            let split = x0 + 110.0;
+            for entity in &out {
+                let Entity::Text(t) = entity else { continue };
+                let right = t.insertion.x + t.width();
+                let edge = if t.insertion.x < split * scale {
+                    split
+                } else {
+                    w - MARGIN
+                };
+                assert!(
+                    right <= edge * scale + 1e-9,
+                    "{:?} ends at {right}",
+                    t.content
+                );
+            }
+            let title = out
+                .iter()
+                .find_map(|e| match e {
+                    Entity::Text(t) if t.content.starts_with("IRON MAN") => Some(t),
+                    _ => None,
+                })
+                .unwrap();
+            assert!(title.height < TITLE * scale && title.height > 1.0 * scale);
+        }
     }
 }

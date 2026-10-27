@@ -522,7 +522,7 @@ fn qselect_refuses_what_makes_no_sense_and_asks_again() {
     assert_eq!(last(&h), "2 found.");
     h.enter_all(&["QS", "", "C", "< bylayer"]);
     assert_eq!(last(&h), "< and > compare colour numbers.");
-    h.enter("purple");
+    h.enter("mauve");
     assert_eq!(last(&h), "A colour is 1-255, a name, ByLayer, or ByBlock.");
     h.escape();
     h.enter_all(&["QS", "", "LW", "< default"]);

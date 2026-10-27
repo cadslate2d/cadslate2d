@@ -12,7 +12,7 @@ use crate::{Command, CommandContext, CommandInput, Prompt, Step};
 
 /// What is said when the text typed is not a colour.
 pub(super) const NOT_A_COLOR: &str =
-    "A colour is a number from 1 to 255, or red, yellow, green, cyan, blue, magenta, or white.";
+    "A colour is a number from 1 to 255, a name such as red, yellow, gold, or silver, or #RRGGBB.";
 
 #[derive(Debug)]
 pub(crate) struct ColorCommand {

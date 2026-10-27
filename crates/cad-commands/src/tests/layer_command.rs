@@ -155,11 +155,11 @@ fn color_gives_layers_a_colour_from_the_palette() {
     let mut h = with_layers();
     h.enter_all(&["LA", "C"]);
     assert_eq!(h.prompt(), "Enter colour (1-255 or a name):");
-    for bad in ["0", "256", "2.5", "-3", "purple"] {
+    for bad in ["0", "256", "2.5", "-3", "mauve"] {
         h.enter(bad);
         assert_eq!(
             last(&h),
-            "A colour is a number from 1 to 255, or red, yellow, green, cyan, blue, magenta, or white.",
+            "A colour is a number from 1 to 255, a name such as red, yellow, gold, or silver, or #RRGGBB.",
             "{bad}"
         );
         assert_eq!(h.prompt(), "Enter colour (1-255 or a name):");

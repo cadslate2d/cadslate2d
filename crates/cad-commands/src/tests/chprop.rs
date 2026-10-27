@@ -174,3 +174,22 @@ fn one_selected_object_shows_its_geometry_in_the_ui_state() {
     );
     assert_eq!(h.session.ui_state().linetypes, vec!["Continuous"]);
 }
+
+/// A colour by a common name or as hex is the index colour nearest it
+/// (#348): gold, asked for in a drawing of red and gold, is one.
+#[test]
+fn chprop_takes_gold_and_hex_as_the_nearest_index_colour() {
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "10,0", ""]);
+    h.enter_all(&["SELECT", "ALL", ""]);
+    h.enter_all(&["CHPROP", "C", "gold", ""]);
+    let gold = cad_document::Color::parse("gold").unwrap();
+    assert_eq!(h.properties()[0].color, gold, "{:?}", h.log());
+    h.enter_all(&["CHPROP", "C", "#FF0000", ""]);
+    assert_eq!(
+        h.properties()[0].color,
+        cad_document::Color::Index(1),
+        "{:?}",
+        h.log()
+    );
+}
