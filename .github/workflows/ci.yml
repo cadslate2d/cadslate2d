@@ -70,6 +70,21 @@ jobs:
           path: web/dist
           if-no-files-found: error
 
+      # What cadslate2d.com serves: the app built with the production AI
+      # service's address (the repository variable AI_SERVICE_URL).
+      - name: Build the published bundle
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: pnpm --dir web build
+        env:
+          VITE_AI_SERVICE_URL: ${{ vars.AI_SERVICE_URL || 'https://api.cadslate2d.com' }}
+
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: web-published
+          path: web/dist
+          if-no-files-found: error
+
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
@@ -78,3 +93,31 @@ jobs:
             web/playwright-report
             web/test-results
           if-no-files-found: ignore
+
+  # Publishes main to Cloudflare Pages once the account's token is set
+  # (scripts/deploy-pages.sh); until then it says so and passes.
+  publish:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: web-published
+          path: web/dist
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Publish to Cloudflare Pages
+        run: scripts/deploy-pages.sh web/dist
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

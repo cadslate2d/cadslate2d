@@ -351,6 +351,10 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md): start from an issue, run `make check`,
 
 `web/dist/` is fully static. Serve it from any file server or static host, under any base path. There is no server-side component.
 
+The production build carries a content-security policy in its page: scripts and WebAssembly from its own origin, connections only to it and to the AI service its build names (`VITE_AI_SERVICE_URL`). `web/e2e/security.spec.ts` fails on any violation.
+
+The official app is published from `main` to Cloudflare Pages, at cadslate2d.com, by CI's `publish` job (`scripts/deploy-pages.sh`). The job runs once the repository has the secret `CLOUDFLARE_API_TOKEN` and the variable `CLOUDFLARE_ACCOUNT_ID`; until then it says so and passes. The variable `AI_SERVICE_URL` names the production AI service, `https://api.cadslate2d.com` by default.
+
 ### Repository layout
 
 ```text
