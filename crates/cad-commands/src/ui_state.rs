@@ -89,6 +89,11 @@ pub struct UiState {
     /// The names of the loaded linetypes, in the order they were loaded:
     /// what a linetype field can offer.
     pub linetypes: Vec<String>,
+    /// How HATCH fills next (#346): the pattern's name, its angle in
+    /// degrees, and its scale.
+    pub hatch_pattern: String,
+    pub hatch_angle: f64,
+    pub hatch_scale: f64,
     /// The selection as the Properties panel shows it: counts and shared
     /// values, bounded whatever the selection's size.
     pub selection: SelectionSummary,

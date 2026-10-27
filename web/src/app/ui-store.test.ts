@@ -28,6 +28,9 @@ class FakeSource implements UiSource {
     through: false,
     layers: [],
     linetypes: [],
+    hatchPattern: "SOLID",
+    hatchAngle: 0,
+    hatchScale: 1,
     selection: {
       count: 0,
       headline: "No selection",

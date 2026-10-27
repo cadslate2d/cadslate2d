@@ -10,6 +10,7 @@ import { ImportReport } from "./ImportReport";
 import { Recovery } from "./Recovery";
 import { LayersPanel } from "./LayersPanel";
 import { About } from "./About";
+import { HatchDialog } from "./HatchDialog";
 import { AccountButton, AccountDialog } from "./AccountDialog";
 import { MenuBar } from "./MenuBar";
 import type { MenuAction, Panel } from "./menu-model";
@@ -74,6 +75,8 @@ function useVisibilityPreference(key: string, shownAtFirst = true): Visibility {
 export function App() {
   const [core, setCore] = useState<CoreState>({ status: "loading" });
   const [about, setAbout] = useState(false);
+  const [hatch, setHatch] = useState(false);
+  const closeHatch = useCallback(() => setHatch(false), []);
   const [account, setAccount] = useState(false);
   const closeAccount = useCallback(() => setAccount(false), []);
   const toolbar = useVisibilityPreference("cadslate2d.toolbar");
@@ -174,6 +177,7 @@ export function App() {
           ?.scrollIntoView({ block: "nearest" }),
       );
     } else if (action.dialog === "about") setAbout(true);
+    else if (action.dialog === "hatch") setHatch(true);
   };
   const panels = layers.visible || properties.visible || ai.visible;
   const shell = ["shell", toolbar.visible && "shell--with-toolbar", panels && "shell--with-panels"]
@@ -204,6 +208,7 @@ export function App() {
       <Recovery app={core.app} />
       <Failure app={core.app} />
       {about && <About version={core.version} onClose={() => setAbout(false)} />}
+      {hatch && <HatchDialog app={core.app} onClose={closeHatch} />}
       {account && (
         <AccountDialog
           assistant={core.assistant}

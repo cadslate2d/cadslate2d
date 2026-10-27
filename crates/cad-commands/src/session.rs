@@ -611,6 +611,11 @@ impl Session {
                 .iter()
                 .map(|(_, def)| def.name.clone())
                 .collect(),
+            hatch_pattern: cad_document::hatch_patterns()
+                .get(self.settings.hatch_pattern)
+                .map_or_else(|| "SOLID".to_owned(), |pattern| pattern.name.clone()),
+            hatch_angle: self.settings.hatch_angle.to_degrees(),
+            hatch_scale: self.settings.hatch_scale,
             selection: self.selection_summary(),
             text_editor: self
                 .active

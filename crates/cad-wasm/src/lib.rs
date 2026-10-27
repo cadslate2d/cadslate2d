@@ -52,6 +52,39 @@ pub fn panic_for_test() {
 }
 
 /// Version of the CAD core.
+/// One pattern of the program's hatch table as the hatch dialog shows it:
+/// its name, what it is for, and its swatch's lines, `[x0, y0, x1, y1, …]`
+/// in a unit square, y up.
+#[derive(serde::Serialize)]
+struct HatchSwatchDto {
+    name: String,
+    description: String,
+    solid: bool,
+    lines: Vec<f32>,
+}
+
+/// Every hatch pattern with its swatch, in one call when the dialog opens
+/// (#346): static program data, nothing of a drawing.
+#[wasm_bindgen]
+pub fn hatch_swatches() -> Result<JsValue, JsError> {
+    let swatches: Vec<HatchSwatchDto> = cad_document::hatch_patterns()
+        .iter()
+        .map(|pattern| HatchSwatchDto {
+            name: pattern.name.clone(),
+            description: pattern.description.clone(),
+            solid: pattern.is_solid(),
+            lines: cad_document::swatch(&pattern.name)
+                .unwrap_or_default()
+                .iter()
+                .flat_map(|line| [line.start, line.end])
+                .flat_map(|q| [q.x, q.y])
+                .map(|v| v as f32)
+                .collect(),
+        })
+        .collect();
+    Ok(serde_wasm_bindgen::to_value(&swatches)?)
+}
+
 #[wasm_bindgen]
 pub fn core_version() -> String {
     env!("CARGO_PKG_VERSION").to_owned()

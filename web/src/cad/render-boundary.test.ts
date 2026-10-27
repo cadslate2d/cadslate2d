@@ -115,7 +115,7 @@ describe("WASM API surface", () => {
     ]);
   });
 
-  test("the free functions are the module's version and the panic path", async () => {
+  test("the free functions are the module's version, the hatch swatches, and the panic path", async () => {
     const typings = await readFile(new URL("./pkg/cad_wasm.d.ts", import.meta.url), "utf8");
     const exported = [...typings.matchAll(/^export function (\w+)\(/gm)]
       .map((match) => match[1] ?? "")
@@ -123,6 +123,9 @@ describe("WASM API surface", () => {
       .sort();
     expect(exported).toEqual([
       "core_version",
+      // #346: the program's hatch patterns with their swatches, static data
+      // read once when the hatch dialog opens; nothing of a drawing.
+      "hatch_swatches",
       // wasm-bindgen's own: the module's synchronous loader.
       "initSync",
       // #176: the one call that makes the engine fail on purpose, reached only

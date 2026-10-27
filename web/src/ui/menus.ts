@@ -249,7 +249,7 @@ const DRAW: Menu = {
       command("M&easure", "MEASURE"),
     ]),
     SEPARATOR,
-    command("&Hatch...", "HATCH"),
+    { kind: "item", label: "&Hatch...", action: { dialog: "hatch" } },
     command("Bou&ndary...", "BOUNDARY"),
     command("&Wipeout", "WIPEOUT"),
     SEPARATOR,

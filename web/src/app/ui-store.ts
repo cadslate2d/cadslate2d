@@ -75,6 +75,10 @@ export interface UiSnapshot {
   /** The layers as the Layers panel shows them: presentation data, not the table. */
   readonly layers: readonly LayerRow[];
   readonly linetypes: readonly string[];
+  /** How HATCH fills next: pattern, angle in degrees, scale. */
+  readonly hatchPattern: string;
+  readonly hatchAngle: number;
+  readonly hatchScale: number;
   /** The selection as the Properties panel shows it: a summary, never the objects. */
   readonly selection: SelectionSummary;
   /** The text the paragraph editor opens with, while a command waits for a paragraph. */
@@ -131,6 +135,9 @@ const INITIAL: UiSnapshot = {
   failure: undefined,
   layers: [],
   linetypes: [],
+  hatchPattern: "SOLID",
+  hatchAngle: 0,
+  hatchScale: 1,
   selection: NO_SELECTION,
   textEditor: undefined,
   textEditorLine: false,
@@ -219,6 +226,9 @@ export class UiStore {
       failure: this.#failure,
       layers: state.layers,
       linetypes: state.linetypes,
+      hatchPattern: state.hatchPattern,
+      hatchAngle: state.hatchAngle,
+      hatchScale: state.hatchScale,
       selection: state.selection,
       textEditor: state.textEditor,
       textEditorLine: state.textEditorLine ?? false,

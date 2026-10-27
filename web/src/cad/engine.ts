@@ -7,6 +7,7 @@
 import init, {
   CadSession,
   core_version,
+  hatch_swatches,
   panic_for_test,
   panic_message,
   type InitInput,
@@ -185,6 +186,10 @@ export interface UiState {
   readonly layers: readonly LayerRow[];
   /** The names of the loaded linetypes, for a linetype field to offer. */
   readonly linetypes: readonly string[];
+  /** How HATCH fills next (#346): pattern, angle in degrees, scale. */
+  readonly hatchPattern: string;
+  readonly hatchAngle: number;
+  readonly hatchScale: number;
   /** The selection as the Properties panel shows it (#141). */
   readonly selection: SelectionSummary;
   /** The text to open the paragraph editor with, while a command waits for one (#144). */
@@ -428,6 +433,20 @@ export function wasmMemory(): WebAssembly.Memory {
 /** Version of the Rust core. Call only after `loadEngine()` resolves. */
 export function coreVersion(): string {
   return core_version();
+}
+
+/** A hatch pattern as the hatch dialog shows it (#346). */
+export interface HatchSwatch {
+  readonly name: string;
+  readonly description: string;
+  readonly solid: boolean;
+  /** The swatch's lines, `[x0, y0, x1, y1, …]` in a unit square, y up. */
+  readonly lines: readonly number[];
+}
+
+/** Every pattern of the program's table with its swatch: one call, static data. */
+export function hatchSwatches(): readonly HatchSwatch[] {
+  return hatch_swatches() as HatchSwatch[];
 }
 
 /** One open drawing. Create only after `loadEngine()` resolves. */

@@ -79,7 +79,7 @@ pub use entity::{
 pub use exploding::ExplodeError;
 pub use grips::{EntityGrip, GripKind};
 pub use group::{Group, GroupChange, GroupId, GroupTable};
-pub use hatch::{HatchEntity, HatchError, HatchStyle, MAX_PATTERN_PIECES};
+pub use hatch::{HatchEntity, HatchError, HatchStyle, MAX_PATTERN_PIECES, swatch};
 pub use hatch_pattern::{
     HatchPattern, PatternSyntax, hatch_pattern, hatch_patterns, parse_patterns,
 };

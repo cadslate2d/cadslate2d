@@ -398,6 +398,48 @@ fn closed(mut path: Path) -> Path {
     path
 }
 
+/// How many of its repeats a swatch shows, each way.
+const SWATCH_REPEATS: f64 = 4.0;
+
+/// The lines a hatch of `pattern`, at angle 0 and scale 1, draws over a
+/// square [`SWATCH_REPEATS`] of its repeats across — its widest spacing or
+/// dash period — given in a unit square: how a hatch dialog shows the
+/// pattern, by the same clipping a hatch uses (#346). Empty for `SOLID`;
+/// `None` for a name the table lacks.
+pub fn swatch(pattern: &str) -> Option<Vec<Segment>> {
+    let families = &hatch_pattern(pattern)?.families;
+    let repeat = families
+        .iter()
+        .map(|f| {
+            let period: f64 = f.dashes.iter().map(|d| d.abs()).sum();
+            f.spacing.abs().max(period)
+        })
+        .fold(0.0, f64::max);
+    if repeat <= 0.0 {
+        return Some(Vec::new());
+    }
+    let size = SWATCH_REPEATS * repeat;
+    let p = Point2::new;
+    let square = Path {
+        vertices: vec![p(0.0, 0.0), p(size, 0.0), p(size, size), p(0.0, size)],
+        bulges: Vec::new(),
+        closed: true,
+    };
+    let unit = |q: Point2| p(q.x / size, q.y / size);
+    let lines = HatchEntity::solid(vec![square])
+        .styled(HatchStyle::named(pattern, 0.0, 1.0))
+        .lines()?;
+    Some(
+        lines
+            .into_iter()
+            .map(|line| Segment {
+                start: unit(line.start),
+                end: unit(line.end),
+            })
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
@@ -677,5 +719,29 @@ mod tests {
             prop_assert!((moved.area() - hatch.area()).abs() < 1e-6 * hatch.area());
             prop_assert!(moved.contains(center + cad_core::Vec2::new(10.0, 20.0) + cad_core::Vec2::new(30.0, 0.0)) == hatch.contains(center + cad_core::Vec2::new(30.0, 0.0)));
         }
+    }
+
+    /// Every pattern of the table has a swatch, each piece inside the unit
+    /// square; SOLID's is empty and a name the table lacks has none (#346).
+    #[test]
+    fn every_pattern_has_a_swatch_inside_its_square() {
+        for pattern in crate::hatch_patterns() {
+            let lines = swatch(&pattern.name).expect(&pattern.name);
+            assert_eq!(lines.is_empty(), pattern.is_solid(), "{}", pattern.name);
+            for line in &lines {
+                for q in [line.start, line.end] {
+                    assert!(
+                        (-1e-9..=1.0 + 1e-9).contains(&q.x) && (-1e-9..=1.0 + 1e-9).contains(&q.y),
+                        "{}: {q:?}",
+                        pattern.name
+                    );
+                }
+            }
+        }
+        // Four repeats each way: a few lines of the sparsest pattern too.
+        assert!(swatch("ANSI31").unwrap().len() >= 4);
+        assert!(swatch("ANSI34").unwrap().len() >= 8);
+        assert!(swatch("GRASS").unwrap().len() >= 8);
+        assert_eq!(swatch("AR-CONC"), None);
     }
 }

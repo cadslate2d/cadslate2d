@@ -78,3 +78,54 @@ test.describe("hatch", () => {
     expect(group(hatches[0], 91)).toBe("2");
   });
 });
+
+// #346: Draw › Hatch... opens a dialog of every pattern as a swatch, with
+// the angle and the scale; Pick Points runs HATCH with them.
+test("the hatch dialog chooses the pattern, angle, and scale", async ({ page }) => {
+  const canvas = await openApp(page);
+  await page.keyboard.press("F7");
+  await enter(page, "PLINE", "-120,-60", "120,-60", "120,60", "-120,60", "C");
+  await page
+    .getByRole("menubar", { name: "Menus" })
+    .getByRole("menuitem", { name: "Draw" })
+    .click();
+  await page.getByRole("menuitem", { name: "Hatch...", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Hatch" });
+  await expect(dialog).toBeVisible();
+  const patterns = dialog.getByRole("radio");
+  expect(await patterns.count()).toBeGreaterThan(15);
+  await dialog.getByRole("radio", { name: "ANSI31" }).click();
+  await expect(dialog.getByRole("radio", { name: "ANSI31" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  await dialog.getByLabel("Angle").fill("15");
+  await dialog.getByLabel("Scale").fill("3");
+  await dialog.getByRole("button", { name: "Pick Points" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(prompt(page)).toHaveText("Pick internal point or [Select/Pattern/Angle/SCale]:");
+  await clickWorld(page, canvas, -70, 0);
+  await expect(prompt(page)).toHaveText("Command:");
+
+  const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+  const hatches = entities(file.text, "HATCH");
+  expect(hatches).toHaveLength(1);
+  expect(group(hatches[0], 2)).toBe("ANSI31");
+  // The pattern's angle and scale, as DXF writes them.
+  expect(Number(group(hatches[0], 52))).toBeCloseTo(15);
+  expect(Number(group(hatches[0], 41))).toBeCloseTo(3);
+
+  // Opened again, it offers what HATCH last used.
+  await page
+    .getByRole("menubar", { name: "Menus" })
+    .getByRole("menuitem", { name: "Draw" })
+    .click();
+  await page.getByRole("menuitem", { name: "Hatch...", exact: true }).click();
+  await expect(dialog.getByRole("radio", { name: "ANSI31" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  await expect(dialog.getByLabel("Scale")).toHaveValue("3");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+});
