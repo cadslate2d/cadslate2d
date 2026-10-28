@@ -196,7 +196,7 @@ pub(crate) fn validate(intent: &Intent) -> Result<(), IntentError> {
                 return Err(check.refuse("id", Reason::Repeated));
             }
             views.push(id);
-            for inner in operations {
+            for (k, inner) in operations.iter().enumerate() {
                 if matches!(inner, Operation::View { .. }) {
                     return Err(check.refuse("operations", Reason::Unwanted));
                 }
@@ -216,11 +216,29 @@ pub(crate) fn validate(intent: &Intent) -> Result<(), IntentError> {
                         ),
                     ));
                 }
+                // Said with where in the view it is: the view's operation
+                // index, so a model finds it among the view's own.
                 Check {
                     operation: index,
                     op: inner.name(),
                 }
-                .operation(inner)?;
+                .operation(inner)
+                .map_err(|error| match error {
+                    IntentError::Invalid {
+                        operation,
+                        op,
+                        field,
+                        reason,
+                    } => IntentError::Invalid {
+                        operation,
+                        op,
+                        field,
+                        reason: Reason::Told(format!(
+                            "{reason} (in view `{id}`, its operation {k}, {op})"
+                        )),
+                    },
+                    other => other,
+                })?;
             }
         }
     }
@@ -300,8 +318,21 @@ impl Check {
         for point in points {
             self.point(field, *point)?;
         }
-        if points.windows(2).any(|pair| same_point(pair[0], pair[1])) {
-            return Err(self.refuse(field, Reason::Coincident));
+        if let Some(i) = points
+            .windows(2)
+            .position(|pair| same_point(pair[0], pair[1]))
+        {
+            // Which two, and where: a long polyline is put right only if
+            // the model can find them (#358).
+            let [x, y] = points[i];
+            return Err(self.refuse(
+                field,
+                Reason::Told(format!(
+                    "{} and {} are both [{x}, {y}]: two points in a row must differ — leave one out",
+                    i,
+                    i + 1
+                )),
+            ));
         }
         Ok(())
     }
@@ -320,7 +351,23 @@ impl Check {
             }
         }
         let mapped: Vec<Point> = points.iter().map(|p| crate::iso_point(*p)).collect();
+        // Where they meet on the page is no coordinate the document gave,
+        // so the plain reason stands.
         self.points(field, &mapped, least)
+            .map_err(|error| match error {
+                IntentError::Invalid {
+                    operation,
+                    op,
+                    field,
+                    reason: Reason::Told(_),
+                } => IntentError::Invalid {
+                    operation,
+                    op,
+                    field,
+                    reason: Reason::Coincident,
+                },
+                other => other,
+            })
     }
 
     fn distinct(&self, field: &'static str, a: Point, b: Point) -> Result<(), IntentError> {

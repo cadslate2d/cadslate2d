@@ -257,8 +257,24 @@ fn what_is_refused_says_where_and_why() {
     invalid(
         r#"{"op": "line", "points": [[0, 0], [0, 0]]}"#,
         "points",
-        Reason::Coincident,
+        Reason::Told(
+            "0 and 1 are both [0, 0]: two points in a row must differ — leave one out".into(),
+        ),
     );
+    // In a view: where among the view's own operations.
+    match refused(
+        r#"{"op": "view", "id": "front", "placed": "principal", "operations": [
+            {"op": "line", "points": [[0, 0], [5, 0]]},
+            {"op": "polyline", "points": [[0, 0], [5, 5], [5, 5]]}]}"#,
+    ) {
+        IntentError::Invalid { reason, .. } => assert!(
+            reason
+                .to_string()
+                .ends_with("1 and 2 are both [5, 5]: two points in a row must differ — leave one out (in view `front`, its operation 1, polyline)"),
+            "{reason}"
+        ),
+        other => panic!("{other:?}"),
+    }
     invalid(
         r#"{"op": "circle", "center": [0, 0], "radius": 0}"#,
         "radius",

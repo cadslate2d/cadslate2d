@@ -2,7 +2,7 @@
   "name": "cadslate2d-web",
   "private": true,
   "license": "AGPL-3.0-or-later",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "type": "module",
   "scripts": {
     "wasm": "../scripts/build-wasm.sh",
