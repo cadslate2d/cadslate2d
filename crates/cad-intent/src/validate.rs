@@ -388,13 +388,31 @@ impl Check {
                 of,
                 looking,
                 ratio,
+                cut,
                 operations,
             } => {
                 if let Some(ratio) = ratio {
-                    if *placed != crate::ViewPlacement::Free {
+                    if !matches!(
+                        placed,
+                        crate::ViewPlacement::Free | crate::ViewPlacement::Section
+                    ) {
                         return Err(self.refuse("ratio", Reason::Unwanted));
                     }
                     self.positive("ratio", *ratio)?;
+                }
+                match (placed, cut) {
+                    (crate::ViewPlacement::Section, Some(cut)) => {
+                        self.name("cut.of", &cut.of)?;
+                        self.point("cut.from", cut.from)?;
+                        self.point("cut.to", cut.to)?;
+                        self.point("cut.toward", cut.toward)?;
+                        self.distinct("cut.to", cut.from, cut.to)?;
+                    }
+                    (crate::ViewPlacement::Section, None) => {
+                        return Err(self.refuse("cut", Reason::Missing));
+                    }
+                    (_, Some(_)) => return Err(self.refuse("cut", Reason::Unwanted)),
+                    (_, None) => {}
                 }
                 self.name("id", id)?;
                 if !id

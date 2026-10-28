@@ -70,6 +70,8 @@ pub struct ViewRecord {
     pub sheet: String,
     /// Paper to real, for a view at a scale of its own (#352).
     pub ratio: Option<f64>,
+    /// A section's letter and the view its cut crosses (#353).
+    pub section: Option<(char, String)>,
 }
 
 impl ViewRecord {
@@ -91,6 +93,7 @@ impl ViewRecord {
             "extent": [[self.extent.min().x, self.extent.min().y], [self.extent.max().x, self.extent.max().y]],
             "sheet": self.sheet,
             "ratio": self.ratio,
+            "section": self.section.as_ref().map(|(letter, of)| json!({"letter": letter.to_string(), "of": of})),
         })
         .to_string()
     }
@@ -115,6 +118,10 @@ impl ViewRecord {
             extent: Aabb::from_points(point(&v["extent"][0])?, point(&v["extent"][1])?),
             sheet: v["sheet"].as_str()?.to_owned(),
             ratio: v["ratio"].as_f64(),
+            section: v["section"]["letter"]
+                .as_str()
+                .and_then(|l| l.chars().next())
+                .zip(v["section"]["of"].as_str().map(str::to_owned)),
         })
     }
 }
@@ -141,6 +148,81 @@ pub struct NewView {
     /// Paper to real — 2 for 2:1 — for a free view at a scale of its own;
     /// the sheet's when absent (ADR-0041 §4, #352).
     pub ratio: Option<f64>,
+    /// For a section view, the cut it shows (#353).
+    pub cut: Option<Cut>,
+}
+
+/// Where a section view's cut is: across the view `of`, from `from` to
+/// `to`, its arrows toward `toward` — each in that view's own coordinates
+/// (ADR-0041 §5).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cut {
+    pub of: String,
+    pub from: Point2,
+    pub to: Point2,
+    pub toward: Point2,
+}
+
+/// The layer section markers are drawn on, in the CENTER linetype.
+pub const SECTION_LAYER: &str = "SECTION-MARKS";
+/// The prefix of a section marker's group: `SECTION-A`.
+pub const SECTION_GROUP: &str = "SECTION-";
+/// A marker's arrow, its head, and its letter, in paper millimetres.
+const ARROW: f64 = 10.0;
+const HEAD: f64 = 3.0;
+const LETTER: f64 = 5.0;
+
+/// The letters sections take, in order: I, O, and Q are skipped, being
+/// read as figures.
+fn section_letters() -> impl Iterator<Item = char> {
+    ('A'..='Z').filter(|c| !matches!(c, 'I' | 'O' | 'Q'))
+}
+
+/// A cut's marker, in its view's own coordinates scaled by the view's
+/// factor `k`: the cutting line, an arrow at each end looking toward
+/// `toward`, and the letter beyond each arrow; sizes in paper millimetres
+/// times `unit`. `None` when the cut has no length or `toward` is on it.
+fn marker(cut: &Cut, k: f64, unit: f64, letter: char) -> Option<Vec<Entity>> {
+    use cad_document::{LineEntity, PolylineEntity};
+    let (a, b, toward) = (
+        Point2::ORIGIN + (cut.from - Point2::ORIGIN) * k,
+        Point2::ORIGIN + (cut.to - Point2::ORIGIN) * k,
+        Point2::ORIGIN + (cut.toward - Point2::ORIGIN) * k,
+    );
+    let along = b - a;
+    let length = (along.x * along.x + along.y * along.y).sqrt();
+    if length.is_nan() || length <= 0.0 {
+        return None;
+    }
+    let mut normal = cad_core::Vec2::new(-along.y / length, along.x / length);
+    let side = (toward - a).x * normal.x + (toward - a).y * normal.y;
+    if side.abs() <= 1e-9 * length {
+        return None;
+    }
+    if side < 0.0 {
+        normal = normal * -1.0;
+    }
+    let across = cad_core::Vec2::new(along.x / length, along.y / length);
+    let mut out: Vec<Entity> = vec![LineEntity::new(a, b).into()];
+    for end in [a, b] {
+        let tip = end + normal * (ARROW * unit);
+        out.push(LineEntity::new(end, tip).into());
+        let back = tip - normal * (HEAD * unit);
+        out.push(
+            PolylineEntity::new(
+                vec![
+                    tip,
+                    back + across * (HEAD * unit / 3.0),
+                    back - across * (HEAD * unit / 3.0),
+                ],
+                true,
+            )
+            .into(),
+        );
+        let at = tip + normal * (2.0 * unit) - across * (LETTER * unit / 3.0);
+        out.push(TextEntity::new(at, LETTER * unit, 0.0, letter.to_string()).into());
+    }
+    Some(out)
 }
 
 /// A ratio as a drafter writes it: `2:1`, `1:5`.
@@ -182,6 +264,13 @@ fn at_ratio(entity: &Entity, k: f64, origin: Point2) -> Entity {
     scaled
 }
 
+fn shifted(b: &Aabb, origin: Point2) -> Aabb {
+    Aabb::from_points(
+        origin + (b.min() - Point2::ORIGIN),
+        origin + (b.max() - Point2::ORIGIN),
+    )
+}
+
 /// Whether `id` may name a view: letters, digits, `-` and `_`.
 pub fn valid_id(id: &str) -> bool {
     !id.is_empty()
@@ -205,6 +294,32 @@ pub fn compose(
     };
     let unit = sheet.frame.units_per_mm;
     let placed_before = views_on(drawing, &sheet.group);
+    // Each section's letter: the next the sheet has not used, in order.
+    let mut used: Vec<char> = placed_before
+        .iter()
+        .filter_map(|v| v.section.as_ref().map(|(letter, _)| *letter))
+        .collect();
+    let mut letters: Vec<Option<char>> = Vec::new();
+    for view in views {
+        let Some(cut) = &view.cut else {
+            letters.push(None);
+            continue;
+        };
+        if view.role != Role::Free {
+            return Err(format!(
+                "View {} is a section: it is placed where there is room, not projected.",
+                view.id
+            ));
+        }
+        if cut.of == view.id {
+            return Err(format!("Section {} cannot cut across itself.", view.id));
+        }
+        let Some(letter) = section_letters().find(|l| !used.contains(l)) else {
+            return Err("The sheet has used every section letter.".to_owned());
+        };
+        used.push(letter);
+        letters.push(Some(letter));
+    }
     let sheet_members: Vec<EntityId> = drawing
         .groups()
         .iter()
@@ -309,9 +424,13 @@ pub fn compose(
         );
         // The title, left-aligned under what the view holds; its scale
         // after it when it has its own.
-        let words = match view.ratio {
-            Some(r) => format!("{} ({})", view.title, ratio_text(r)),
+        let named = match letters[index] {
+            Some(letter) => format!("SECTION {letter}-{letter}"),
             None => view.title.clone(),
+        };
+        let words = match view.ratio {
+            Some(r) => format!("{named} ({})", ratio_text(r)),
+            None => named,
         };
         let title = TextEntity::new(
             Point2::new(
@@ -329,6 +448,38 @@ pub fn compose(
             extent: with_title,
         });
         titles.push(title);
+    }
+    // Each section's marker, in its parent's own coordinates; a parent
+    // placed with it is measured with its marker.
+    let mut markers: Vec<(usize, String, Vec<Entity>)> = Vec::new();
+    for (i, view) in views.iter().enumerate() {
+        let (Some(cut), Some(letter)) = (&view.cut, letters[i]) else {
+            continue;
+        };
+        let parent_k = if let Some(parent) = views.iter().find(|v| v.id == cut.of) {
+            parent.ratio.map_or(1.0, |r| r * unit)
+        } else if let Some(parent) = placed_before.iter().find(|v| v.id == cut.of) {
+            parent.ratio.map_or(1.0, |r| r * unit)
+        } else {
+            return Err(format!(
+                "Section {letter}'s cut is across view {}, which is not on the sheet.",
+                cut.of
+            ));
+        };
+        let Some(entities) = marker(cut, parent_k, unit, letter) else {
+            return Err(format!(
+                "Section {letter}'s cut has no length, or its arrows no side to look toward."
+            ));
+        };
+        if let Some(j) = views.iter().position(|v| v.id == cut.of) {
+            let reach = entities
+                .iter()
+                .map(|e| e.bounds(tables))
+                .reduce(|a, b| a.union(&b))
+                .expect("a marker has a line");
+            boxes[j].extent = boxes[j].extent.union(&reach);
+        }
+        markers.push((i, cut.of.clone(), entities));
     }
     let placed: Vec<Placed> = placed_before
         .iter()
@@ -378,6 +529,87 @@ pub fn compose(
             return Err(format!("There is a view {} already.", view.id));
         }
     }
+    // Each marker where its parent went; its cut must cross what the parent
+    // draws — its ends may, and usually do, reach past the outline.
+    let mut placed_markers: Vec<(usize, Vec<Entity>)> = Vec::new();
+    for (i, of, entities) in &markers {
+        let letter = letters[*i].expect("a section");
+        let (origin, geometry): (Point2, Vec<Entity>) =
+            if let Some(j) = views.iter().position(|v| &v.id == of) {
+                let origin = out
+                    .iter()
+                    .find(|p| &p.view.id == of)
+                    .expect("placed")
+                    .origin;
+                let by = Transform::translation(origin - views[j].origin);
+                (
+                    origin,
+                    prepared[j]
+                        .iter()
+                        .map(|(_, e)| e.transformed(&by))
+                        .collect(),
+                )
+            } else {
+                let record = placed_before.iter().find(|v| &v.id == of).expect("checked");
+                let members = drawing
+                    .groups()
+                    .iter()
+                    .find(|(_, g)| g.name == format!("{VIEW_GROUP}{of}"))
+                    .map(|(_, g)| g.members.clone())
+                    .unwrap_or_default();
+                (
+                    record.origin,
+                    members
+                        .iter()
+                        .filter_map(|id| drawing.entity(*id).cloned())
+                        .collect(),
+                )
+            };
+        let at = Transform::translation(origin - Point2::ORIGIN);
+        let absolute: Vec<Entity> = entities.iter().map(|e| e.transformed(&at)).collect();
+        let Entity::Line(cut) = &absolute[0] else {
+            unreachable!("a marker begins with its line")
+        };
+        let line = cad_geometry::Primitive::Segment(cad_geometry::Segment {
+            start: cut.start,
+            end: cut.end,
+        });
+        let crosses = geometry
+            .iter()
+            .filter(|e| !matches!(e, Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_)))
+            .flat_map(|e| e.primitives(tables))
+            .any(|p| !line.intersect(&p).as_slice().is_empty());
+        if !crosses {
+            return Err(format!(
+                "Section {letter}'s cut does not cross what view {of} draws."
+            ));
+        }
+        // A parent placed before: its marker must not run into another view.
+        if !views.iter().any(|v| &v.id == of) {
+            let reach = absolute
+                .iter()
+                .map(|e| e.bounds(tables))
+                .reduce(|a, b| a.union(&b))
+                .expect("a line");
+            let others = placed_before
+                .iter()
+                .filter(|v| &v.id != of)
+                .map(|v| (v.id.clone(), shifted(&v.extent, v.origin)))
+                .chain(out.iter().map(|p| (p.view.id.clone(), p.bounds())));
+            for (id, b) in others {
+                if reach.min().x < b.max().x
+                    && b.min().x < reach.max().x
+                    && reach.min().y < b.max().y
+                    && b.min().y < reach.max().y
+                {
+                    return Err(format!(
+                        "Section {letter}'s marker on view {of} would run into view {id}."
+                    ));
+                }
+            }
+        }
+        placed_markers.push((*i, absolute));
+    }
     let moved: Vec<(usize, Vec<(EntityId, Entity)>)> = views
         .iter()
         .enumerate()
@@ -398,6 +630,8 @@ pub fn compose(
         })
         .collect();
     let title_layer = drawing.layers().find(TITLE_LAYER);
+    let section_layer = drawing.layers().find(SECTION_LAYER);
+    let center = drawing.linetypes().find("CENTER");
     let mut transaction = drawing.transaction().in_space(space);
     let layer = match title_layer {
         Some(id) => id,
@@ -405,6 +639,50 @@ pub fn compose(
             .add_layer(Layer::named(TITLE_LAYER))
             .map_err(|e| e.to_string())?,
     };
+    let marks = match (placed_markers.is_empty(), section_layer) {
+        (true, _) => None,
+        (false, Some(id)) => Some(id),
+        (false, None) => {
+            let linetype = match center {
+                Some(id) => id,
+                None => transaction
+                    .add_linetype(
+                        cad_document::LinetypeDef::built_in_named("CENTER").expect("built in"),
+                    )
+                    .map_err(|e| e.to_string())?,
+            };
+            let mut layer = Layer::named(SECTION_LAYER);
+            layer.linetype = cad_document::Linetype::Named(linetype);
+            Some(transaction.add_layer(layer).map_err(|e| e.to_string())?)
+        }
+    };
+    for (i, entities) in placed_markers {
+        let letter = letters[i].expect("a section");
+        let mut members = Vec::new();
+        for entity in entities {
+            members.push(
+                transaction
+                    .insert_with(
+                        entity,
+                        Properties {
+                            layer: marks.expect("a layer for marks"),
+                            ..Properties::default()
+                        },
+                    )
+                    .map_err(|e| e.to_string())?,
+            );
+        }
+        let mut group = Group::named(format!("{SECTION_GROUP}{letter}"), members);
+        group.description = json!({
+            "letter": letter.to_string(),
+            "of": views[i].cut.as_ref().map(|c| c.of.clone()),
+            "view": views[i].id,
+            "sheet": sheet.group,
+        })
+        .to_string();
+        group.selectable = false;
+        transaction.add_group(group).map_err(|e| e.to_string())?;
+    }
     let mut styles: Vec<(usize, DimStyleId, DimStyleId)> = Vec::new();
     for (view, from, style) in derived {
         let made = transaction
@@ -447,6 +725,7 @@ pub fn compose(
             extent: placed.view.extent,
             sheet: sheet.group.clone(),
             ratio: view.ratio,
+            section: letters[i].zip(view.cut.as_ref().map(|c| c.of.clone())),
         }
         .to_json();
         group.selectable = false;

@@ -27,7 +27,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 16;
+pub const VERSION: u32 = 17;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -40,8 +40,8 @@ pub const VERSION: u32 = 16;
 /// `building` (#337); `building_section` (#338) came with it; version 13
 /// `part_views` (#339) and `title_block` (#340), version 14 `spline` and
 /// `hatch` (#345), version 15 `view` (#351, ADR-0041), version 16 a free
-/// view's `ratio` (#352).
-pub const READS: [u32; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+/// view's `ratio` (#352), version 17 a section view's `cut` (#353).
+pub const READS: [u32; 17] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -404,6 +404,13 @@ pub enum Operation {
         /// when absent.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         ratio: Option<f64>,
+        /// A section view's cut: across the view `of`, `from` and `to` in
+        /// that view's own coordinates — its ends may reach past the
+        /// outline, but it must cross what that view draws — its arrows
+        /// looking toward `toward`. The program draws the marker and the
+        /// letter, and titles the section to match.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cut: Option<SectionCut>,
         operations: Vec<Operation>,
     },
     /// A closed rectangle from two opposite corners.
@@ -1014,8 +1021,22 @@ pub enum ViewPlacement {
     Principal,
     /// Beside the view `of`, looking from a side.
     Projected,
-    /// Wherever there is room: an exploded view, a detail, a section.
+    /// Wherever there is room: an exploded view, a detail.
     Free,
+    /// A section: placed where there is room, its `cut` marked across the
+    /// view it cuts.
+    Section,
+}
+
+/// Where a section view's cut is (ADR-0041 §5).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SectionCut {
+    pub of: String,
+    pub from: Point,
+    pub to: Point,
+    pub toward: Point,
 }
 
 /// Where a projected view looks at the object from.

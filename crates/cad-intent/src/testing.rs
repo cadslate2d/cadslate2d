@@ -101,6 +101,7 @@ pub fn operation() -> impl Strategy<Value = Operation> {
                     of,
                     looking,
                     ratio: (kind == 2).then_some(2.0),
+                    cut: None,
                     operations: vec![Operation::Rectangle { corner, opposite }],
                 }
             }

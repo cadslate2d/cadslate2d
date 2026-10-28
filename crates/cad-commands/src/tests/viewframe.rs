@@ -316,3 +316,116 @@ fn a_two_to_one_detail_on_a_one_to_three_sheet_is_drawn_six_times_and_reads_true
         "A scale is paper to real, as 2:1 or 1:5, greater than zero."
     );
 }
+
+/// A section view (ADR-0041 §5, #353): its cut drawn across its parent —
+/// the cutting line on SECTION-MARKS in CENTER, an arrow and the letter at
+/// each end looking toward the side asked — titled to match, the next
+/// letter for the next; a cut that crosses nothing is refused.
+#[test]
+fn a_section_is_marked_across_its_parent_and_titled_to_match() {
+    let mut h = sheet();
+    let front = drawn(&mut h, 100.0, 60.0);
+    let section = drawn(&mut h, 60.0, 60.0);
+    h.session.select_only(&[front]);
+    h.enter_all(&["VIEWFRAME", "0,0", "front", "", "", "Yes"]);
+    h.session.select_only(&[section]);
+    h.enter_all(&[
+        "", "0,0", "cut", "", "Section", "front", "50,-10", "50,70", "100,30", "", "No",
+    ]);
+    assert!(
+        h.log().last().unwrap().starts_with("2 views placed"),
+        "{:?}",
+        h.log().last()
+    );
+    let (f, s) = (view(&h, "front"), view(&h, "cut"));
+    assert_eq!(s.section, Some(('A', "front".to_owned())));
+    assert!(
+        h.entities()
+            .iter()
+            .any(|e| matches!(e, cad_document::Entity::Text(t) if t.content == "SECTION A-A"))
+    );
+    let drawing = h.session.drawing();
+    let group = drawing
+        .groups()
+        .iter()
+        .find(|(_, g)| g.name == "SECTION-A")
+        .map(|(_, g)| g.members.clone())
+        .expect("the marker's group");
+    let layer = drawing
+        .layers()
+        .find(crate::compose::SECTION_LAYER)
+        .unwrap();
+    let marks: Vec<&cad_document::Entity> = group
+        .iter()
+        .map(|id| drawing.entity(*id).unwrap())
+        .collect();
+    assert_eq!(
+        marks.len(),
+        7,
+        "a line, two arrows of a shaft and a head, two letters"
+    );
+    for id in &group {
+        assert_eq!(drawing.properties(*id).unwrap().layer, layer);
+    }
+    let linetype = &drawing.layers().get(layer).unwrap().linetype;
+    assert!(matches!(linetype, cad_document::Linetype::Named(_)));
+    // The cut where it was asked, on the front as placed; the arrows look
+    // toward +x, the side asked.
+    let cad_document::Entity::Line(cut) = marks[0] else {
+        panic!("{:?}", marks[0])
+    };
+    assert_eq!(cut.start, f.origin + cad_core::Vec2::new(50.0, -10.0));
+    assert_eq!(cut.end, f.origin + cad_core::Vec2::new(50.0, 70.0));
+    let cad_document::Entity::Line(shaft) = marks[1] else {
+        panic!()
+    };
+    assert!(shaft.end.x > shaft.start.x);
+    assert_eq!(
+        marks
+            .iter()
+            .filter(|e| matches!(e, cad_document::Entity::Text(t) if t.content == "A"))
+            .count(),
+        2
+    );
+
+    // The next section takes B.
+    let again = drawn(&mut h, 20.0, 20.0);
+    h.session.select_only(&[again]);
+    h.enter_all(&[
+        "VIEWFRAME",
+        "0,0",
+        "cut2",
+        "",
+        "Section",
+        "front",
+        "-10,30",
+        "110,30",
+        "50,70",
+        "",
+        "No",
+    ]);
+    assert_eq!(view(&h, "cut2").section, Some(('B', "front".to_owned())));
+
+    // A cut that crosses nothing the view draws.
+    let stray = drawn(&mut h, 20.0, 20.0);
+    let revision = h.session.drawing().revision();
+    h.session.select_only(&[stray]);
+    h.enter_all(&[
+        "VIEWFRAME",
+        "0,0",
+        "cut3",
+        "",
+        "Section",
+        "front",
+        "200,-10",
+        "200,70",
+        "250,30",
+        "",
+        "No",
+    ]);
+    assert_eq!(
+        h.log().last().unwrap(),
+        "Section C's cut does not cross what view front draws."
+    );
+    assert_eq!(h.session.drawing().revision(), revision);
+}

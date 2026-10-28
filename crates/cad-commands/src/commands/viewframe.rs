@@ -11,12 +11,13 @@ use cad_geometry::composition::{Looking, Role};
 use cad_input::{ExpectedInput, InputKind, Keyword};
 
 use super::modify::selection_expected;
-use crate::compose::{NewView, compose, sheet_of, valid_id, views_on};
+use crate::compose::{Cut, NewView, compose, sheet_of, valid_id, views_on};
 use crate::{Command, CommandContext, CommandInput, Prompt, Step};
 
 const PRINCIPAL: Keyword = Keyword::new("Principal");
 const PROJECTED: Keyword = Keyword::new("PRojected");
 const FREE: Keyword = Keyword::new("Free");
+const SECTION: Keyword = Keyword::new("Section");
 const LEFT: Keyword = Keyword::new("Left");
 const RIGHT: Keyword = Keyword::new("Right");
 const ABOVE: Keyword = Keyword::new("Above");
@@ -34,6 +35,10 @@ enum State {
     Role,
     Of,
     Looking,
+    CutOf,
+    CutFrom,
+    CutTo,
+    CutToward,
     Ratio,
     Another,
 }
@@ -60,6 +65,7 @@ impl ViewFrameCommand {
                 entities: Vec::new(),
                 origin: Point2::ORIGIN,
                 ratio: None,
+                cut: None,
             },
             principal: None,
         }
@@ -88,6 +94,7 @@ impl ViewFrameCommand {
                 entities: Vec::new(),
                 origin: Point2::ORIGIN,
                 ratio: None,
+                cut: None,
             },
         );
         self.views.push(done);
@@ -166,6 +173,12 @@ impl Command for ViewFrameCommand {
                 }
             }
             State::Looking => Prompt::new("Looking from?"),
+            State::CutOf => Prompt::new("Cut across which view?"),
+            State::CutFrom => {
+                Prompt::new("Specify where the cut starts, in that view's own coordinates")
+            }
+            State::CutTo => Prompt::new("Specify where the cut ends"),
+            State::CutToward => Prompt::new("Specify a point on the side the arrows look toward"),
             State::Ratio => Prompt::new("Specify the view's scale, paper to real, as 2:1")
                 .with_default("the sheet's"),
             State::Another => Prompt::new("Another view?").with_default("No"),
@@ -176,10 +189,12 @@ impl Command for ViewFrameCommand {
         match self.state {
             State::Select => selection_expected(),
             State::Origin => ExpectedInput::point(),
-            State::Id | State::Title | State::Of | State::Ratio => ExpectedInput::text(),
-            State::Role => {
-                ExpectedInput::new(InputKind::Nothing).with_keywords(&[PRINCIPAL, PROJECTED, FREE])
+            State::Id | State::Title | State::Of | State::Ratio | State::CutOf => {
+                ExpectedInput::text()
             }
+            State::CutFrom | State::CutTo | State::CutToward => ExpectedInput::point(),
+            State::Role => ExpectedInput::new(InputKind::Nothing)
+                .with_keywords(&[PRINCIPAL, PROJECTED, FREE, SECTION]),
             State::Looking => ExpectedInput::new(InputKind::Nothing)
                 .with_keywords(&[LEFT, RIGHT, ABOVE, BELOW, REAR]),
             State::Another => ExpectedInput::new(InputKind::Nothing).with_keywords(&[YES, NO]),
@@ -239,6 +254,37 @@ impl Command for ViewFrameCommand {
             }
             (State::Role, CommandInput::Keyword(FREE)) => {
                 self.current.role = Role::Free;
+                self.state = State::Ratio;
+            }
+            (State::Role, CommandInput::Keyword(SECTION)) => {
+                self.current.role = Role::Free;
+                self.state = State::CutOf;
+            }
+            (State::CutOf, CommandInput::Text(of)) if !of.trim().is_empty() => {
+                self.current.cut = Some(Cut {
+                    of: of.trim().to_owned(),
+                    from: Point2::ORIGIN,
+                    to: Point2::ORIGIN,
+                    toward: Point2::ORIGIN,
+                });
+                self.state = State::CutFrom;
+            }
+            (State::CutFrom, CommandInput::Point(at)) => {
+                if let Some(cut) = &mut self.current.cut {
+                    cut.from = at;
+                }
+                self.state = State::CutTo;
+            }
+            (State::CutTo, CommandInput::Point(at)) => {
+                if let Some(cut) = &mut self.current.cut {
+                    cut.to = at;
+                }
+                self.state = State::CutToward;
+            }
+            (State::CutToward, CommandInput::Point(at)) => {
+                if let Some(cut) = &mut self.current.cut {
+                    cut.toward = at;
+                }
                 self.state = State::Ratio;
             }
             (State::Ratio, CommandInput::Accept) => self.finish_view(),

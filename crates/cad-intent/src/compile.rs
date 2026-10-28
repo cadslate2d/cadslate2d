@@ -183,6 +183,7 @@ fn viewframe_steps(views: &[Operation]) -> Vec<Step> {
             of,
             looking,
             ratio,
+            cut,
             ..
         } = view
         else {
@@ -205,8 +206,17 @@ fn viewframe_steps(views: &[Operation]) -> Vec<Step> {
         });
         match placed {
             crate::ViewPlacement::Principal => steps.push(keyword("Principal")),
-            crate::ViewPlacement::Free => {
-                steps.push(keyword("Free"));
+            crate::ViewPlacement::Free | crate::ViewPlacement::Section => {
+                match cut {
+                    Some(cut) => {
+                        steps.push(keyword("Section"));
+                        steps.push(answer(Answer::Text(cut.of.clone())));
+                        steps.push(at(cut.from));
+                        steps.push(at(cut.to));
+                        steps.push(at(cut.toward));
+                    }
+                    None => steps.push(keyword("Free")),
+                }
                 steps.push(match ratio {
                     Some(r) => answer(Answer::Text(format!("{r}"))),
                     None => enter(),

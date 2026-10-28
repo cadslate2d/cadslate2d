@@ -242,6 +242,9 @@ Recorded as each issue lands. Where the code chose among what the decision left 
   - A run of consecutive views compiles to each view's operations, drawn at its own origin as typed, then one `VIEWFRAME` placing them together. `VIEWFRAME` is the command a drafter types too: one view or several, never moving what is placed.
   - A principal view's block is centred in the drawing area where it fits, so views added later have room on every side.
   - The two passes of §2 are this: run as typed at the view's origin, measure what was made, place it, and move it by a pure translation.
+- **#353.** A section is a placement of `VIEWFRAME` (and `placed: "section"` with its `cut`, intent version 17), not a separate SECTIONMARK command. Its marker is drawn in the same transaction as the views: the cutting line on `SECTION-MARKS` in CENTER, an arrow and its letter at each end, a group `SECTION-A`.
+  - A parent placed with its section is measured with its marker. A marker on a parent placed earlier is refused if it would run into another view.
+  - The cut must cross a line, arc, or circle the parent draws, not its text or dimensions; its ends may lie outside.
 - **#352.** A free view's `ratio` (intent version 16) scales its geometry by k about its origin before it is measured. Text keeps its height and a hatch its pattern scale. Each of its dimensions takes a style made from its own: `<view>-<style>`, linear factor ÷ k, overall scale N, measured with that style before anything is committed. Its title says its scale, "DETAIL A (2:1)". The dimension style's linear factor is DIMLFAC (144), read and written; an angle is not scaled by it.
 
 ## Alternatives considered

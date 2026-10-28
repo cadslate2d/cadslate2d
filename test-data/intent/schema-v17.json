@@ -469,6 +469,17 @@
           "additionalProperties": false,
           "description": "A view of a composed sheet (ADR-0041): its `operations` draw it in\nits own coordinates, the object's reference point at the origin; the\nprogram then places it on the sheet the last `title_block` drew,\naligned with its parent when `projected`, and titles it. Views given\none after another are placed together. A view holds no view.",
           "properties": {
+            "cut": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SectionCut"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A section view's cut: across the view `of`, `from` and `to` in\nthat view's own coordinates — its ends may reach past the\noutline, but it must cross what that view draws — its arrows\nlooking toward `toward`. The program draws the marker and the\nletter, and titles the section to match."
+            },
             "id": {
               "type": "string"
             },
@@ -2646,6 +2657,49 @@
         }
       ]
     },
+    "SectionCut": {
+      "additionalProperties": false,
+      "description": "Where a section view's cut is (ADR-0041 §5).",
+      "properties": {
+        "from": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "of": {
+          "type": "string"
+        },
+        "to": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "toward": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "of",
+        "from",
+        "to",
+        "toward"
+      ],
+      "type": "object"
+    },
     "SelectionWord": {
       "description": "The one word [`Targets::Selection`] takes.",
       "enum": [
@@ -2759,7 +2813,12 @@
         },
         {
           "const": "free",
-          "description": "Wherever there is room: an exploded view, a detail, a section.",
+          "description": "Wherever there is room: an exploded view, a detail.",
+          "type": "string"
+        },
+        {
+          "const": "section",
+          "description": "A section: placed where there is room, its `cut` marked across the\nview it cuts.",
           "type": "string"
         }
       ]

@@ -1165,3 +1165,30 @@ fn a_detail_view_by_intent_is_drawn_at_its_ratio() {
     });
     assert!(shown.unwrap().starts_with("10.00"));
 }
+
+/// A section by intent (#353): its cut in the front view's own
+/// coordinates, marked there once both are placed, the section titled.
+#[test]
+fn a_section_view_by_intent_is_marked_across_its_parent() {
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    h.session
+        .run_intent(&document(
+            r#"
+        {"op": "title_block", "paper": "A3", "scale": 1, "title": "BLOCK", "projection": "third", "at": [0, 0]},
+        {"op": "view", "id": "front", "placed": "principal", "operations": [
+            {"op": "rectangle", "corner": [0, 0], "opposite": [100, 60]}]},
+        {"op": "view", "id": "aa", "placed": "section", "cut": {"of": "front", "from": [50, -10], "to": [50, 70], "toward": [100, 30]}, "operations": [
+            {"op": "rectangle", "corner": [0, 0], "opposite": [60, 60]},
+            {"op": "hatch", "inside": [30, 30], "pattern": "ANSI31"}]}
+    "#,
+        ))
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", h.log()));
+    let drawing = h.session.drawing();
+    assert!(drawing.groups().iter().any(|(_, g)| g.name == "SECTION-A"));
+    assert!(
+        h.entities()
+            .iter()
+            .any(|e| matches!(e, Entity::Text(t) if t.content == "SECTION A-A"))
+    );
+}
