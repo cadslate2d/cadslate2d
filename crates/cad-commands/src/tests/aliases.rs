@@ -101,6 +101,17 @@ fn what_the_host_kept_is_given_back_on_start() {
     assert_eq!(h.lines()[0].end.x, 10.0);
 }
 
+/// Unitless kept is unitless given back (#358): a first drawing starts in
+/// millimetres, so having chosen no unit is a choice to restore too.
+#[test]
+fn a_unitless_choice_is_given_back_to_a_drawing_in_millimetres() {
+    let mut h = Harness::with_drawing(
+        cad_document::Drawing::new().with_unit(Some(LengthUnit::Millimetres)),
+    );
+    h.session.restore_settings(Toggles::default(), None, "");
+    assert_eq!(h.session.ui_state().unit, None);
+}
+
 #[test]
 fn a_drawing_with_content_keeps_its_own_unit() {
     let mut h = Harness::new();

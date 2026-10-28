@@ -33,8 +33,23 @@ pub fn review(drawing: &Drawing) -> Vec<String> {
         .map(|(id, entity)| (id, entity, entity.bounds(tables)))
         .collect();
     let mut findings = Vec::new();
-    findings.extend(overlapping_texts(&boxed));
+    // Each text, and the figures of each dimension where its style lays
+    // them out: a callout over a dimension's figures is as unreadable as
+    // one over another text (#358).
+    let mut texts: Vec<(String, Aabb)> = boxed
+        .iter()
+        .filter_map(|(_, entity, b)| Some((words(entity)?.to_owned(), *b)))
+        .collect();
+    for (_, entity, _) in &boxed {
+        if let Entity::Dimension(dimension) = entity {
+            let layout = dimension.layout(tables.dim_style(dimension.style));
+            let figures = Entity::Text(layout.text.clone());
+            texts.push((layout.text.content.clone(), figures.bounds(tables)));
+        }
+    }
+    findings.extend(overlapping_texts(&texts));
     findings.extend(structure(drawing));
+    findings.extend(on_layer_zero(drawing));
     if let Some(sheet) = sheet(drawing, &boxed) {
         findings.extend(off_the_sheet(&sheet, &boxed));
         // A sheet with nothing drawn on it is one asked for alone — a title
@@ -47,6 +62,7 @@ pub fn review(drawing: &Drawing) -> Vec<String> {
             return findings;
         }
         findings.extend(sliver(&sheet, &boxed));
+        findings.extend(too_small(drawing, &sheet, &boxed));
         let dimensioned = boxed
             .iter()
             .any(|(_, entity, _)| matches!(entity, Entity::Dimension(_)));
@@ -439,11 +455,7 @@ fn inside(outer: &Aabb, inner: &Aabb) -> bool {
         && inner.max().y <= outer.max().y + tolerance
 }
 
-fn overlapping_texts(boxed: &[(EntityId, &Entity, Aabb)]) -> Vec<String> {
-    let texts: Vec<(&str, &Aabb)> = boxed
-        .iter()
-        .filter_map(|(_, entity, b)| Some((words(entity)?, b)))
-        .collect();
+fn overlapping_texts(texts: &[(String, Aabb)]) -> Vec<String> {
     let mut pairs = Vec::new();
     for (i, (a, box_a)) in texts.iter().enumerate() {
         for (b, box_b) in &texts[i + 1..] {
@@ -464,6 +476,109 @@ fn overlapping_texts(boxed: &[(EntityId, &Entity, Aabb)]) -> Vec<String> {
     }
     finding.push_str(". Move them apart, or set them smaller.");
     vec![finding]
+}
+
+/// Text too small to read on paper (#358): under 1.8 mm once the sheet's
+/// scale is taken out of its height. Said with the height on paper and
+/// the height that would read.
+fn too_small(drawing: &Drawing, sheet: &Sheet, boxed: &[(EntityId, &Entity, Aabb)]) -> Vec<String> {
+    let Some(frame) = crate::compose::sheet_of(drawing).map(|s| s.frame) else {
+        return Vec::new();
+    };
+    let per_mm = frame.units_per_mm;
+    let small: Vec<(String, f64)> = boxed
+        .iter()
+        .filter(|(id, _, _)| !sheet.members.contains(id))
+        .filter_map(|(_, entity, _)| {
+            let (words, height) = match entity {
+                Entity::Text(t) => (t.content.as_str(), t.height),
+                Entity::MText(m) => (m.content.as_str(), m.height),
+                _ => return None,
+            };
+            let on_paper = height / per_mm;
+            (on_paper < SMALLEST_TEXT).then(|| (words.to_owned(), on_paper))
+        })
+        .collect();
+    if small.is_empty() {
+        return Vec::new();
+    }
+    let named: Vec<String> = small
+        .iter()
+        .take(SPELLED_OUT)
+        .map(|(words, mm)| format!("\"{words}\" {mm:.1} mm"))
+        .collect();
+    let more = small.len().saturating_sub(SPELLED_OUT);
+    let and_more = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    vec![format!(
+        "Texts too small to read on paper: {}{and_more}. Give each at least 2.5 mm on paper — a `height` of {} at this sheet's scale.",
+        named.join(", "),
+        number(2.5 * per_mm)
+    )]
+}
+
+/// Text under this height on paper, in millimetres, cannot be read.
+const SMALLEST_TEXT: f64 = 1.8;
+
+/// The objects of a sheet's views left on layer 0 when the drawing has
+/// layers of its own for them (#358): stirrups drawn before their layer
+/// was made current, beside the one that was. Said by kind, so the model
+/// can tell which.
+fn on_layer_zero(drawing: &Drawing) -> Vec<String> {
+    use crate::compose::{VIEW_GROUP, sheet_of};
+    let Some(sheet) = sheet_of(drawing) else {
+        return Vec::new();
+    };
+    let zero = drawing.layers().find(cad_document::Layer::ZERO);
+    // Layers of the drawing's own: not 0, and not those the sheet's
+    // machinery is drawn on.
+    let machinery = [
+        crate::titleblock::LAYER,
+        crate::compose::TITLE_LAYER,
+        crate::compose::SECTION_LAYER,
+        crate::bom::TABLE_LAYER,
+        crate::bom::BALLOON_LAYER,
+        crate::commands::NOTES_LAYER,
+    ];
+    let own_layers = drawing.layers().iter().any(|(_, layer)| {
+        layer.name != cad_document::Layer::ZERO && !machinery.contains(&layer.name.as_str())
+    });
+    if zero.is_none() || !own_layers {
+        return Vec::new();
+    }
+    let mut kinds: Vec<(&'static str, usize)> = Vec::new();
+    for (_, group) in drawing.groups().iter() {
+        let of_sheet = serde_json::from_str::<serde_json::Value>(&group.description)
+            .is_ok_and(|v| v["sheet"].as_str() == Some(sheet.group.as_str()));
+        if !group.name.starts_with(VIEW_GROUP) || !of_sheet {
+            continue;
+        }
+        for id in &group.members {
+            let (Some(entity), Some(record)) = (drawing.entity(*id), drawing.record(*id)) else {
+                continue;
+            };
+            if Some(record.properties.layer) != zero {
+                continue;
+            }
+            let kind = entity.kind_name();
+            match kinds.iter_mut().find(|(k, _)| *k == kind) {
+                Some((_, n)) => *n += 1,
+                None => kinds.push((kind, 1)),
+            }
+        }
+    }
+    let total: usize = kinds.iter().map(|(_, n)| n).sum();
+    if total == 0 {
+        return Vec::new();
+    }
+    let listed: Vec<String> = kinds.iter().map(|(k, n)| format!("{n} {k}")).collect();
+    vec![format!(
+        "{total} objects of the views are on layer 0 ({}), beside layers made for them: make each kind's layer current with `layer` before drawing it, or move them onto it with `set_properties`.",
+        listed.join(", ")
+    )]
 }
 
 /// The sheet a title block drew: the largest closed outline of its group,
@@ -632,6 +747,57 @@ mod tests {
                 && !findings[0].contains(".."),
             "{findings:?}"
         );
+    }
+
+    /// What the beam and spillway sheets showed (#358): a label 0.5 mm high
+    /// on paper, stirrups left on layer 0 beside the layer made for them, a
+    /// callout over a dimension's figures — each a finding — and a detail
+    /// whose title says its scale already, not said twice.
+    #[test]
+    fn small_texts_layer_zero_and_callouts_on_dimensions_are_found() {
+        let document = cad_intent::parse(&format!(
+            r#"{{"version": {}, "operations": [
+                {{"op": "title_block", "paper": "A1", "scale": 100, "title": "B", "at": [0, 0]}},
+                {{"op": "layer", "name": "OUTLINE", "lineweight": "0.5"}},
+                {{"op": "view", "id": "front", "placed": "principal", "operations": [
+                    {{"op": "layer", "name": "OUTLINE", "current": true}},
+                    {{"op": "rectangle", "corner": [0, 0], "opposite": [20000, 6000]}},
+                    {{"op": "layer", "name": "0", "current": true}},
+                    {{"op": "rectangle", "corner": [1000, 1000], "opposite": [2000, 5000]}},
+                    {{"op": "dim_linear", "from": [0, 0], "to": [20000, 0], "orientation": "horizontal", "at": [10000, -1500]}},
+                    {{"op": "text", "at": [9000, -1450], "height": 300, "text": "BARS 3 PHI 20"}},
+                    {{"op": "text", "at": [500, 3000], "height": 50, "text": "COVER 30"}}]}},
+                {{"op": "view", "id": "detail", "title": "DETAIL (2:1)", "placed": "free", "ratio": 2, "operations": [
+                    {{"op": "rectangle", "corner": [0, 0], "opposite": [100, 100]}}]}}]}}"#,
+            cad_intent::VERSION
+        ))
+        .unwrap();
+        let findings = review_document(&document, Some("mm")).unwrap();
+        let found = |words: &str| findings.iter().any(|f| f.contains(words));
+        assert!(
+            found("Texts too small to read on paper: \"COVER 30\" 0.5 mm"),
+            "{findings:?}"
+        );
+        assert!(found("a `height` of 250"), "{findings:?}");
+        assert!(
+            found("5 objects of the views are on layer 0 (2 polyline, 1 dimension, 2 text)"),
+            "{findings:?}"
+        );
+        assert!(found("\"BARS 3 PHI 20\" and \"20000"), "{findings:?}");
+        // The detail's title as written, its scale said once.
+        let mut session = crate::Session::new();
+        session.submit_text("UNITS");
+        session.submit_text("mm");
+        session.run_intent(&document).unwrap();
+        let titles: Vec<String> = session
+            .drawing()
+            .entities()
+            .filter_map(|(_, e)| match e {
+                Entity::Text(t) if t.content.starts_with("DETAIL") => Some(t.content.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(titles, ["DETAIL (2:1)"]);
     }
 
     /// What the service reviews: the document on an empty drawing; one that

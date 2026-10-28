@@ -194,7 +194,7 @@ pub(crate) use mleaderstyle::MLeaderStyleCommand;
 pub(crate) use modify::EraseCommand;
 pub(crate) use mtext::MTextCommand;
 pub(crate) use mview::MviewCommand;
-pub(crate) use notes::NotesCommand;
+pub(crate) use notes::{NOTES_LAYER, NotesCommand};
 pub(crate) use offset::OffsetCommand;
 pub(crate) use opening::{OpeningCommand, OpeningKind};
 pub(crate) use osnap::OsnapCommand;

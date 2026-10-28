@@ -24,6 +24,8 @@ export type FileSystemAccess = "none" | "fake";
 
 export interface OpenOptions {
   readonly fileSystemAccess?: FileSystemAccess;
+  /** The first drawing as a person opening the app for the first time finds it: in millimetres. */
+  readonly millimetres?: boolean;
 }
 
 /** Removes the File System Access pickers before the app starts, so saves are downloads. */
@@ -34,11 +36,21 @@ export async function withoutFilePickers(page: Page): Promise<void> {
 /** Opens the app with debug counters enabled and waits for the first frame. */
 export async function openApp(page: Page, options: OpenOptions = {}): Promise<Locator> {
   await page.addInitScript(installFileSystemAccess, options.fileSystemAccess ?? "none");
+  // The flows were written for a unitless drawing: kept as the browser's
+  // chosen unit when it has kept nothing yet, as a person who chose it would
+  // have it. A first drawing is otherwise in millimetres (#358).
+  if (!options.millimetres) await page.addInitScript(keepUnitless);
   await page.goto("./?debug");
   const canvas = page.getByRole("region", { name: "Model space" }).locator("canvas");
   await expect(canvas).toBeVisible();
   await expect.poll(async () => (await rendererStats(page)).frames).toBeGreaterThan(0);
   return canvas;
+}
+
+/** Runs in the page before the app: unitless kept, unless settings are. */
+function keepUnitless(): void {
+  const key = "cadslate2d.settings";
+  if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ unit: "" }));
 }
 
 /** Runs in the page before the app: removes the pickers, or fakes them. */

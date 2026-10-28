@@ -373,10 +373,16 @@ impl CadSession {
 
 #[wasm_bindgen]
 impl CadSession {
+    /// The app's first drawing, in millimetres, as a metric template
+    /// starts one: what is drawn and exported says its unit (`$INSUNITS`)
+    /// from the start. NEW keeps the unit of the drawing it replaces;
+    /// UNITS changes it (#358).
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Self {
-            session: Session::new(),
+            session: Session::with_drawing(
+                cad_document::Drawing::new().with_unit(Some(LengthUnit::Millimetres)),
+            ),
             scene: SceneCache::new(),
             snapshot: None,
             overlay: OverlayFrame::new(),
@@ -1015,6 +1021,18 @@ mod tests {
     fn fixture(name: &str) -> Vec<u8> {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../test-data/");
         std::fs::read(format!("{path}{name}")).unwrap_or_else(|e| panic!("{name}: {e}"))
+    }
+
+    /// The app's first drawing is in millimetres, so what it exports says
+    /// so (`$INSUNITS` 4); NEW keeps it (#358).
+    #[test]
+    fn the_first_drawing_is_in_millimetres_and_new_keeps_it() {
+        let mut cad = CadSession::new();
+        assert_eq!(cad.session.drawing().unit(), Some(LengthUnit::Millimetres));
+        let text = cad_dxf::export(cad.session.drawing());
+        assert!(text.contains("$INSUNITS\n 70\n4\n"), "{}", &text[..400]);
+        cad.session.new_drawing();
+        assert_eq!(cad.session.drawing().unit(), Some(LengthUnit::Millimetres));
     }
 
     #[test]

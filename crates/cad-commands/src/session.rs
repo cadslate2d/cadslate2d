@@ -1274,10 +1274,10 @@ impl Session {
         aliases: &str,
     ) -> Dirty {
         self.toggles = toggles;
-        // A drawing nothing has happened to takes the unit silently; one
-        // with content or history is what it is.
-        if unit.is_some()
-            && self.drawing.is_empty()
+        // A drawing nothing has happened to takes the unit silently —
+        // unitless too, kept as a choice now that a first drawing starts
+        // in millimetres (#358); one with content or history is what it is.
+        if self.drawing.is_empty()
             && !self.drawing.can_undo()
             && self.drawing.revision() == self.saved_revision
         {

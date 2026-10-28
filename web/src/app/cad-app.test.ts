@@ -957,10 +957,11 @@ describe("settings", () => {
     app.submitText("CC, CIRCLE");
     await tick();
     expect(host.settings.kept.aliases).toBe("CC, CIRCLE\n");
+    // Not millimetres, which a first drawing is in already (#358).
     app.submitText("UNITS");
-    app.submitText("MM");
+    app.submitText("CM");
     await tick();
-    expect(host.settings.kept.unit).toBe("mm");
+    expect(host.settings.kept.unit).toBe("cm");
     expect(host.settings.saves).toBe(3);
 
     // Pointer movement and drawing change no setting: nothing more is written.

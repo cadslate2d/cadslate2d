@@ -555,9 +555,10 @@ pub fn compose(
             Some(letter) => format!("SECTION {letter}-{letter}"),
             None => view.title.clone(),
         };
+        // Its scale once: a title that says it already keeps its words.
         let words = match view.ratio {
-            Some(r) => format!("{named} ({})", ratio_text(r)),
-            None => named,
+            Some(r) if !named.contains(&ratio_text(r)) => format!("{named} ({})", ratio_text(r)),
+            _ => named,
         };
         let title = TextEntity::new(
             Point2::new(

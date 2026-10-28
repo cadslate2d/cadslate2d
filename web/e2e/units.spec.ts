@@ -13,6 +13,17 @@ import {
 const exported = async (page: Page) => await downloadFrom(page, () => enter(page, "DXFOUT"));
 
 test.describe("UNITS", () => {
+  test("a first drawing is in millimetres, and its file says so", async ({ page }) => {
+    await openApp(page, { millimetres: true });
+    await enter(page, "UNITS");
+    await expect(prompt(page)).toHaveText("Drawing unit? [Unitless/MM/CM/M/IN/FT] <MM>:");
+    await page.keyboard.press("Escape");
+    await enter(page, "LINE", "0,0", "25mm,0", "");
+    const file = await exported(page);
+    expect(file.text).toContain("$INSUNITS\n 70\n4\n");
+    expect(lines(file.text)).toHaveLength(1);
+  });
+
   test("a typed length with a unit is converted into the drawing's unit", async ({ page }) => {
     await openApp(page);
     await enter(page, "UNITS");
