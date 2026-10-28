@@ -5,7 +5,7 @@ members = ["crates/*", "benches"]
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.90"
 publish = false
@@ -61,3 +61,7 @@ opt-level = 3
 lto = true
 codegen-units = 1
 panic = "abort"
+
+[profile.dev]
+debug = 1
+incremental = false

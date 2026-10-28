@@ -102,7 +102,9 @@ pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Optio
                 Operation::TitleBlock { paper, .. } => Some(*paper),
                 _ => None,
             });
-            let fits = current.and_then(|paper| {
+            // Only a sheet without room is told of paper and scale.
+            let room = reason.contains("there is not that much room");
+            let fits = current.filter(|_| room).and_then(|paper| {
                 larger(paper).into_iter().find(|bigger| {
                     let mut tried = intent.clone();
                     for op in &mut tried.operations {
@@ -113,14 +115,16 @@ pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Optio
                     run(&tried).is_ok()
                 })
             });
+            let reason = reason.trim_end_matches('.');
             let advice = match fits {
                 Some(paper) => format!(
-                    "At this scale it composes on {paper:?}: use {paper:?}, or a smaller scale, narrower notes, or fewer views."
+                    " At this scale it composes on {paper:?}: use {paper:?}, or a smaller scale, narrower notes, or fewer views."
                 ),
-                None => "Not even A0 has room at this scale: choose a smaller scale, narrower notes, or fewer views.".to_owned(),
+                None if room => " Not even A0 has room at this scale: choose a smaller scale, narrower notes, or fewer views.".to_owned(),
+                None => String::new(),
             };
             Some(vec![format!(
-                "The sheet could not be composed: {reason}. {advice}"
+                "The sheet could not be composed: {reason}.{advice}"
             )])
         }
         // So is what a view's own drawing refuses — a hatch with no closed
@@ -138,8 +142,9 @@ pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Optio
                 cad_intent::Operation::View { id, .. } => id.clone(),
                 _ => String::new(),
             };
+            let reason = reason.trim_end_matches('.');
             Some(vec![format!(
-                "View {id} could not be drawn: {command} refused: {reason}. Draw the view's geometry so it does what is asked of it — a hatch inside a closed outline drawn in the same view, its point well inside that outline and outside any hole."
+                "View {id} could not be drawn: {command} refused: {reason}. Draw the view's geometry so that it does what is asked of it."
             )])
         }
         Err(_) => None,
@@ -516,7 +521,23 @@ mod tests {
         );
         let findings = review_document(&open, Some("mm")).unwrap();
         assert!(
-            findings[0].starts_with("View front could not be drawn: HATCH refused"),
+            findings[0].starts_with("View front could not be drawn: HATCH refused")
+                && !findings[0].contains(".."),
+            "{findings:?}"
+        );
+        // A refusal of the sheet that is not about room is told as it is,
+        // not with paper and scale.
+        let unlisted = parse(
+            r#"{"op": "title_block", "paper": "A3", "scale": 1, "title": "X", "at": [0, 0]},
+               {"op": "view", "id": "front", "placed": "principal", "operations": [
+                   {"op": "rectangle", "corner": [0, 0], "opposite": [50, 30]}]},
+               {"op": "balloon", "part": 9, "view": "front", "at": [25, 30], "to": [60, 50]}"#,
+        );
+        let findings = review_document(&unlisted, Some("mm")).unwrap();
+        assert!(
+            findings[0].starts_with("The sheet could not be composed: ")
+                && !findings[0].contains("scale")
+                && !findings[0].contains(".."),
             "{findings:?}"
         );
     }

@@ -196,6 +196,22 @@ pub(crate) fn validate(intent: &Intent) -> Result<(), IntentError> {
                 if matches!(inner, Operation::View { .. }) {
                     return Err(check.refuse("operations", Reason::Unwanted));
                 }
+                // What is placed on the sheet itself is not drawn in a view:
+                // NOTES, a table, and a balloon place a view of their own.
+                if matches!(
+                    inner,
+                    Operation::Notes { .. }
+                        | Operation::BillOfMaterials { .. }
+                        | Operation::Balloon { .. }
+                        | Operation::TitleBlock { .. }
+                ) {
+                    return Err(check.refuse(
+                        "operations",
+                        Reason::Said(
+                            "hold only what the view draws: `notes`, `bill_of_materials`, `balloon`, and `title_block` are placed on the sheet itself, so give them after the views, at the top level",
+                        ),
+                    ));
+                }
                 Check {
                     operation: index,
                     op: inner.name(),

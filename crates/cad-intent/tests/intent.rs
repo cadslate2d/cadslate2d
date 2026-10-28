@@ -264,6 +264,26 @@ fn what_is_refused_says_where_and_why() {
         "radius",
         Reason::NotPositive,
     );
+    // Notes drawn inside a view, as a model wrote an urban sheet: what is
+    // placed on the sheet goes after the views.
+    for inner in [
+        r#"{"op": "notes", "lines": ["Schematic."]}"#,
+        r#"{"op": "bill_of_materials", "parts": [{"number": 1, "name": "A", "quantity": 1}]}"#,
+        r#"{"op": "balloon", "part": 1, "view": "plan", "at": [0, 0], "to": [5, 5]}"#,
+        r#"{"op": "title_block", "paper": "A3", "scale": 1, "title": "X", "at": [0, 0]}"#,
+    ] {
+        match refused(&format!(
+            r#"{{"op": "view", "id": "plan", "placed": "principal", "operations": [
+                {{"op": "line", "points": [[0, 0], [10, 0]]}}, {inner}]}}"#
+        )) {
+            IntentError::Invalid {
+                field: "operations",
+                reason: reason @ Reason::Said(_),
+                ..
+            } => assert!(reason.to_string().contains("after the views"), "{inner}"),
+            other => panic!("{inner}: {other:?}"),
+        }
+    }
     // A hatch's region given twice is told which to keep.
     match refused(r#"{"op": "hatch", "inside": [0, 0], "targets": "selection"}"#) {
         IntentError::Invalid {
