@@ -6,7 +6,7 @@
 //! finding is a sentence a model can act on. Nothing here changes the
 //! drawing.
 
-use cad_core::{Aabb, EntityId};
+use cad_core::{Aabb, EntityId, Point2};
 use cad_document::{Drawing, Entity};
 
 use crate::titleblock::GROUP;
@@ -34,6 +34,7 @@ pub fn review(drawing: &Drawing) -> Vec<String> {
         .collect();
     let mut findings = Vec::new();
     findings.extend(overlapping_texts(&boxed));
+    findings.extend(structure(drawing));
     if let Some(sheet) = sheet(drawing, &boxed) {
         findings.extend(off_the_sheet(&sheet, &boxed));
         // A sheet with nothing drawn on it is one asked for alone — a title
@@ -72,6 +73,126 @@ pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Optio
     }
     session.run_intent(intent).ok()?;
     Some(review(session.drawing()))
+}
+
+/// What is wrong with a composed sheet's structure (ADR-0041 §7, #357):
+/// a view's objects outside its box, views overlapping, a projected view
+/// out of line with its parent, a section without its marker, a balloon
+/// for a part no bill has. A view moved by hand is where its title went.
+fn structure(drawing: &Drawing) -> Vec<String> {
+    use crate::compose::{SECTION_GROUP, VIEW_GROUP, parts_on, sheet_of, views_on};
+    use cad_geometry::composition::{Looking, Role};
+    let Some(sheet) = sheet_of(drawing) else {
+        return Vec::new();
+    };
+    let tables = drawing.tables();
+    let views = views_on(drawing, &sheet.group);
+    let group = |name: &str| {
+        drawing
+            .groups()
+            .iter()
+            .find(|(_, g)| g.name == name)
+            .map(|(_, g)| g.members.clone())
+    };
+    let tolerance = 1e-6 * (area(&sheet.frame.border).sqrt() + 1.0);
+    // Each view where it is now: moved as far as its title was.
+    let moved: Vec<(String, cad_core::Vec2, Aabb)> = views
+        .iter()
+        .map(|view| {
+            let members = group(&format!("{VIEW_GROUP}{}", view.id)).unwrap_or_default();
+            let title = members.iter().find_map(|id| match drawing.entity(*id) {
+                Some(Entity::Text(t)) if t.content == view.title => Some(t.insertion),
+                _ => None,
+            });
+            let by = match (title, view.title_at) {
+                (Some(now), Some(then)) => now - then,
+                _ => cad_core::Vec2::new(0.0, 0.0),
+            };
+            let at = view.origin + by;
+            let b = Aabb::from_points(
+                at + (view.extent.min() - Point2::ORIGIN),
+                at + (view.extent.max() - Point2::ORIGIN),
+            );
+            (view.id.clone(), by, b)
+        })
+        .collect();
+    let mut findings = Vec::new();
+    for (view, (_, _, b)) in views.iter().zip(&moved) {
+        let members = group(&format!("{VIEW_GROUP}{}", view.id)).unwrap_or_default();
+        let outside = members.iter().any(|id| {
+            drawing.entity(*id).is_some_and(|e| {
+                let e = e.bounds(tables);
+                e.min().x < b.min().x - tolerance
+                    || e.min().y < b.min().y - tolerance
+                    || e.max().x > b.max().x + tolerance
+                    || e.max().y > b.max().y + tolerance
+            })
+        });
+        if outside {
+            findings.push(format!(
+                "View {} has objects outside its frame: keep a view's drawing inside it, or draw the view again.",
+                view.id
+            ));
+        }
+    }
+    for (i, (a, _, box_a)) in moved.iter().enumerate() {
+        for (b, _, box_b) in &moved[i + 1..] {
+            if common(box_a, box_b) > 0.0 {
+                findings.push(format!("Views {a} and {b} overlap: place them apart."));
+            }
+        }
+    }
+    for (view, (_, by, _)) in views.iter().zip(&moved) {
+        let Role::Projected { of, looking } = &view.role else {
+            continue;
+        };
+        let Some(parent) = views.iter().position(|v| &v.id == of) else {
+            continue;
+        };
+        let here = view.origin + *by;
+        let there = views[parent].origin + moved[parent].1;
+        let off = match looking {
+            Looking::Above | Looking::Below => (here.x - there.x).abs(),
+            _ => (here.y - there.y).abs(),
+        };
+        if off > tolerance {
+            findings.push(format!(
+                "View {} is out of line with view {of}, which it is projected from: move it back in line.",
+                view.id
+            ));
+        }
+    }
+    for view in &views {
+        if let Some((letter, _)) = &view.section {
+            let marked = group(&format!("{SECTION_GROUP}{letter}"))
+                .is_some_and(|members| members.iter().any(|id| drawing.entity(*id).is_some()));
+            if !marked {
+                findings.push(format!(
+                    "Section {letter}-{letter} has no cutting line marked: draw the section again."
+                ));
+            }
+        }
+    }
+    let parts: Vec<u32> = parts_on(drawing, &sheet.group)
+        .iter()
+        .map(|p| p.number)
+        .collect();
+    for (_, g) in drawing.groups().iter() {
+        if !g.name.starts_with(crate::bom::BALLOON_GROUP) {
+            continue;
+        }
+        let part = serde_json::from_str::<serde_json::Value>(&g.description)
+            .ok()
+            .and_then(|v| v["part"].as_u64());
+        if let Some(part) = part
+            && !parts.contains(&(part as u32))
+        {
+            findings.push(format!(
+                "A balloon names part {part}, which no bill of materials on the sheet has."
+            ));
+        }
+    }
+    findings
 }
 
 /// The words of a text, for a finding.

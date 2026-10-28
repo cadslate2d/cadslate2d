@@ -260,6 +260,14 @@ Recorded as each issue lands. Where the code chose among what the decision left 
     - one declared for a view that does not use it.
 
     The last was §7's review finding; refused when the document is read, it is corrected by the service's correction ask.
+- **#357.** The review finds:
+  - a view's objects outside its frame;
+  - views overlapping;
+  - a projected view out of line with its parent;
+  - a section without its marker;
+  - a balloon for a part no bill has.
+
+  A view moved by hand is where its title went: each view records its title as drawn and where it was put. The datum check of §7 is made when the document is read (#361).
 - **#352.** A free view's `ratio` (intent version 16) scales its geometry by k about its origin before it is measured. Text keeps its height and a hatch its pattern scale. Each of its dimensions takes a style made from its own: `<view>-<style>`, linear factor ÷ k, overall scale N, measured with that style before anything is committed. Its title says its scale, "DETAIL A (2:1)". The dimension style's linear factor is DIMLFAC (144), read and written; an angle is not scaled by it.
 
 ## Alternatives considered

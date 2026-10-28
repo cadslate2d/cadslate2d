@@ -429,3 +429,99 @@ fn a_section_is_marked_across_its_parent_and_titled_to_match() {
     );
     assert_eq!(h.session.drawing().revision(), revision);
 }
+
+/// The review knows a composed sheet's structure (ADR-0041 §7, #357):
+/// nothing to say of one as composed; then each fault made by hand found.
+#[test]
+fn the_review_finds_what_breaks_a_composed_sheet() {
+    let structural = |h: &Harness| -> Vec<String> {
+        crate::review::review(h.session.drawing())
+            .into_iter()
+            .filter(|f| !f.contains("no dimensions") && !f.contains("fills only"))
+            .collect()
+    };
+    let mut h = sheet();
+    let front = drawn(&mut h, 100.0, 60.0);
+    let left = drawn(&mut h, 40.0, 60.0);
+    let cut = drawn(&mut h, 60.0, 60.0);
+    h.session.select_only(&[front]);
+    h.enter_all(&["VIEWFRAME", "0,0", "front", "", "", "Yes"]);
+    h.session.select_only(&[left]);
+    h.enter_all(&["", "0,0", "left", "", "PRojected", "front", "Left", "Yes"]);
+    h.session.select_only(&[cut]);
+    h.enter_all(&[
+        "", "0,0", "aa", "", "Section", "front", "50,-10", "50,70", "100,30", "", "No",
+    ]);
+    h.enter_all(&["BOMTABLE", "1, Block, 1", "", ""]);
+    let f = view(&h, "front");
+    let corner = f.origin + cad_core::Vec2::new(100.0, 60.0);
+    h.enter_all(&[
+        "BALLOON",
+        "1",
+        &format!("{},{}", corner.x, corner.y),
+        &format!("{},{}", corner.x + 20.0, corner.y + 15.0),
+        "",
+    ]);
+    assert_eq!(structural(&h), Vec::<String>::new());
+
+    // The left view moved by hand, out of line.
+    let members = |h: &Harness, name: &str| {
+        h.session
+            .drawing()
+            .groups()
+            .iter()
+            .find(|(_, g)| g.name == name)
+            .map(|(_, g)| g.members.clone())
+            .unwrap()
+    };
+    let left_view = members(&h, "VIEW-left");
+    h.session.select_only(&left_view);
+    h.enter_all(&["MOVE", "0,0", "0,20"]);
+    let found = structural(&h).join(" | ");
+    assert!(
+        found.contains("View left is out of line with view front"),
+        "{found}"
+    );
+    h.enter("U");
+
+    // One object of the front moved out of its frame.
+    h.session.select_only(&[front]);
+    h.enter_all(&["MOVE", "0,0", "0,-300"]);
+    let found = structural(&h).join(" | ");
+    assert!(
+        found.contains("View front has objects outside its frame"),
+        "{found}"
+    );
+    h.enter("U");
+
+    // The section's marker erased.
+    let marker = members(&h, "SECTION-A");
+    h.session.select_only(&marker);
+    h.enter("ERASE");
+    let found = structural(&h).join(" | ");
+    assert!(
+        found.contains("Section A-A has no cutting line marked"),
+        "{found}"
+    );
+    h.enter("U");
+
+    // The bill erased under its balloon.
+    let bill = members(&h, "VIEW-bom");
+    h.session.select_only(&bill);
+    h.enter("ERASE");
+    let found = structural(&h).join(" | ");
+    assert!(found.contains("A balloon names part 1"), "{found}");
+    h.enter("U");
+
+    // Two views pushed onto each other.
+    let section = members(&h, "VIEW-aa");
+    let (a, f) = (view(&h, "aa"), view(&h, "front"));
+    h.session.select_only(&section);
+    h.enter_all(&[
+        "MOVE",
+        &format!("{},{}", a.origin.x, a.origin.y),
+        &format!("{},{}", f.origin.x + 10.0, f.origin.y + 10.0),
+    ]);
+    let found = structural(&h).join(" | ");
+    assert!(found.contains("overlap"), "{found}");
+}

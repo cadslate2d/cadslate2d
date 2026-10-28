@@ -74,6 +74,9 @@ pub struct ViewRecord {
     pub section: Option<(char, String)>,
     /// The parts of a bill of materials it holds (#354).
     pub parts: Vec<crate::bom::Part>,
+    /// Where its title was put: how far the view has moved since is how
+    /// far its title has (#357).
+    pub title_at: Option<Point2>,
 }
 
 impl ViewRecord {
@@ -97,6 +100,7 @@ impl ViewRecord {
             "ratio": self.ratio,
             "section": self.section.as_ref().map(|(letter, of)| json!({"letter": letter.to_string(), "of": of})),
             "parts": self.parts.iter().map(crate::bom::Part::to_json).collect::<Vec<_>>(),
+            "title_at": self.title_at.map(|p| [p.x, p.y]),
         })
         .to_string()
     }
@@ -129,6 +133,7 @@ impl ViewRecord {
                 .as_array()
                 .map(|parts| parts.iter().filter_map(crate::bom::Part::read).collect())
                 .unwrap_or_default(),
+            title_at: point(&v["title_at"]),
         })
     }
 }
@@ -723,6 +728,7 @@ pub fn compose(
             members.push(id);
         }
         let title = titles[i].transformed(&Transform::translation(placed.origin - Point2::ORIGIN));
+        let title_at = title.insertion;
         let title = transaction
             .insert_with(
                 Entity::Text(title),
@@ -736,7 +742,7 @@ pub fn compose(
         let mut group = Group::named(format!("{VIEW_GROUP}{}", view.id), members);
         group.description = ViewRecord {
             id: view.id.clone(),
-            title: view.title.clone(),
+            title: titles[i].content.clone(),
             role: view.role.clone(),
             origin: placed.origin,
             extent: placed.view.extent,
@@ -744,6 +750,7 @@ pub fn compose(
             ratio: view.ratio,
             section: letters[i].zip(view.cut.as_ref().map(|c| c.of.clone())),
             parts: view.parts.clone(),
+            title_at: Some(title_at),
         }
         .to_json();
         group.selectable = false;
