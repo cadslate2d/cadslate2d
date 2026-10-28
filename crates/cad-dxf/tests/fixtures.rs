@@ -1761,6 +1761,45 @@ fn groups_from_another_writer_keep_their_members_and_round_trip() {
     assert!(text.contains("\n  3\nDOOR\n350\n"));
     assert!(text.contains("\n100\nAcDbGroup\n300\nThe front door\n 70\n0\n 71\n1\n340\n"));
     assert!(text.contains("\n100\nAcDbGroup\n300\n\n 70\n0\n 71\n0\n340\n"));
+    // Each member names its group among its persistent reactors, as
+    // AutoCAD writes them, so an audit has nothing to add (#358).
+    let pairs: Vec<(&str, &str)> = text
+        .lines()
+        .collect::<Vec<_>>()
+        .chunks(2)
+        .map(|pair| (pair[0].trim(), pair[1]))
+        .collect();
+    let mut records: Vec<Vec<(&str, &str)>> = Vec::new();
+    for pair in &pairs {
+        if pair.0 == "0" {
+            records.push(Vec::new());
+        }
+        if let Some(record) = records.last_mut() {
+            record.push(*pair);
+        }
+    }
+    fn handle<'a>(record: &[(&str, &'a str)]) -> Option<&'a str> {
+        record.iter().find(|(c, _)| *c == "5").map(|(_, h)| *h)
+    }
+    let mut named = 0;
+    for group in records.iter().filter(|r| r[0].1 == "GROUP") {
+        for (_, member) in group.iter().filter(|(c, _)| *c == "340") {
+            let entity = records.iter().find(|r| handle(r) == Some(*member)).unwrap();
+            let at = entity
+                .iter()
+                .position(|p| *p == ("102", "{ACAD_REACTORS"))
+                .unwrap();
+            assert!(
+                entity[at + 1..]
+                    .iter()
+                    .take_while(|(c, _)| *c == "330")
+                    .any(|(_, h)| Some(*h) == handle(group)),
+                "{entity:?}"
+            );
+            named += 1;
+        }
+    }
+    assert_eq!(named, 5);
     let back = cad_dxf::import(text.as_bytes()).unwrap();
     assert_eq!(back.report.groups, 3);
     assert_eq!(

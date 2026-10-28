@@ -1307,6 +1307,46 @@ fn a_dimension_chain_stands_beyond_the_geometry_and_the_chains_before() {
     );
 }
 
+/// A chain measures along the axis its points spread along, said to
+/// DIMLINEAR rather than left to where its line falls (#358): a point at
+/// the same place along it as the one before makes no dimension, and the
+/// chain draws the rest; a first dimension short beside the rest stays
+/// horizontal; a horizontal chain said to the right still measures across.
+#[test]
+fn a_chain_point_that_measures_nothing_is_left_out() {
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    h.session
+        .run_intent(&document(
+            r#"
+        {"op": "title_block", "paper": "A1", "scale": 50, "title": "PLATE", "at": [0, 0]},
+        {"op": "view", "id": "front", "placed": "principal", "operations": [
+            {"op": "rectangle", "corner": [0, 0], "opposite": [100, 60]},
+            {"op": "dim_chain", "points": [[0, 0], [40, 0], [40, 60], [100, 0]], "side": "below"}]},
+        {"op": "view", "id": "road", "placed": "free", "operations": [
+            {"op": "rectangle", "corner": [0, 0], "opposite": [20000, 300]},
+            {"op": "dim_chain", "points": [[0, 0], [3000, 0], [17000, 0], [20000, 0]], "side": "below"}]},
+        {"op": "view", "id": "reactor", "placed": "free", "operations": [
+            {"op": "circle", "center": [0, 0], "radius": 65},
+            {"op": "dim_chain", "points": [[-65, 0], [65, 0]], "side": "right"}]}
+    "#,
+        ))
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", h.log()));
+    let mut values: Vec<f64> = h
+        .entities()
+        .iter()
+        .filter_map(|e| match e {
+            Entity::Dimension(d) => Some(d.value()),
+            _ => None,
+        })
+        .collect();
+    values.sort_by(f64::total_cmp);
+    // And a road's chain, its first dimension short beside a long one: as
+    // an urban section's was, horizontal throughout.
+    // A diameter's chain said to the right still measures across it.
+    assert_eq!(values, [40.0, 60.0, 130.0, 3000.0, 3000.0, 14000.0]);
+}
+
 /// A layer with a colour and a linetype by intent (#356): CENTER, loaded
 /// from the program's own, and gold, the nearest index colour.
 #[test]

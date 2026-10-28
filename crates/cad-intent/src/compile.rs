@@ -199,12 +199,16 @@ fn commands_of(operation: &Operation) -> Vec<(&'static str, Vec<Step>)> {
     let Operation::DimChain { points, side } = operation else {
         return vec![steps_of(operation)];
     };
+    // Its direction said, not left to where the line's point falls.
+    let (axis, points) = crate::chain(points);
+    let points = &points;
     let all: Vec<Point2> = points.iter().map(|p| point(*p)).collect();
     let mut out = vec![(
         "DIMLINEAR",
         vec![
             at(points[0]),
             at(points[1]),
+            keyword(if axis == 0 { "Horizontal" } else { "Vertical" }),
             answer(Answer::Beyond {
                 side: *side,
                 points: all,

@@ -343,6 +343,15 @@ impl Export {
                 .map(|(id, _)| (id, handles.take()))
                 .collect(),
         });
+        // A handle per group, taken before any entity is written, so a
+        // member can name its group among its reactors (#358).
+        let group_handles: Vec<Handle> = drawing.groups().iter().map(|_| handles.take()).collect();
+        let mut reactors: HashMap<EntityId, Vec<Handle>> = HashMap::new();
+        for ((_, group), handle) in drawing.groups().iter().zip(&group_handles) {
+            for member in &group.members {
+                reactors.entry(*member).or_default().push(*handle);
+            }
+        }
         let mut body = Writer {
             out: String::new(),
             groups: collect.then(Vec::new),
@@ -354,6 +363,9 @@ impl Export {
             viewport_links: HashMap::new(),
             grouped: HashSet::new(),
             member_handles: HashMap::new(),
+            group_handles,
+            reactors,
+            pending_reactors: Vec::new(),
             row_handles: HashMap::new(),
             layer_states: None,
             mleader_styles,
@@ -484,6 +496,9 @@ impl Export {
             viewport_links: HashMap::new(),
             grouped: HashSet::new(),
             member_handles: HashMap::new(),
+            group_handles: Vec::new(),
+            reactors: HashMap::new(),
+            pending_reactors: Vec::new(),
             row_handles: HashMap::new(),
             layer_states: None,
             mleader_styles: self.body.mleader_styles.take(),
@@ -581,6 +596,13 @@ struct Writer {
     /// under, which their GROUP objects name (#214).
     grouped: HashSet<EntityId>,
     member_handles: HashMap<EntityId, Handle>,
+    /// Each group's GROUP object's handle, in table order, and the groups
+    /// each member is in: a member names them as its persistent reactors,
+    /// as AutoCAD writes it, or an audit adds them (#358). The next
+    /// entity's, while its record is written.
+    group_handles: Vec<Handle>,
+    reactors: HashMap<EntityId, Vec<Handle>>,
+    pending_reactors: Vec<Handle>,
     /// The handles the LAYER and LTYPE rows were written under, by kind
     /// and upper-case name, which a layer state names them by (#228).
     row_handles: HashMap<(&'static str, String), Handle>,
@@ -628,6 +650,28 @@ fn dimensions_in_write_order(drawing: &Drawing) -> Vec<(DimensionEntity, Propert
 }
 
 /// The name of the n-th dimension's anonymous block, counting from one.
+/// A value as an AC1015 file holds it: ASCII as it is, every other
+/// character as AutoCAD writes it, `\U+XXXX` — one per UTF-16 unit — since
+/// the file declares the Windows-1252 code page and a reader decodes it so
+/// (#358). Read back by the import as the characters they were.
+fn escaped(value: &str) -> std::borrow::Cow<'_, str> {
+    if value.is_ascii() {
+        return std::borrow::Cow::Borrowed(value);
+    }
+    let mut out = String::with_capacity(value.len() + 8);
+    for c in value.chars() {
+        if c.is_ascii() {
+            out.push(c);
+        } else {
+            let mut units = [0u16; 2];
+            for unit in c.encode_utf16(&mut units) {
+                write!(out, "\\U+{unit:04X}").expect("writing to a String cannot fail");
+            }
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 fn dimension_block_name(n: usize) -> String {
     format!("*D{n}")
 }
@@ -702,9 +746,10 @@ fn layout_groups_as_now(groups: &[(i32, String)], layout: &Layout) -> Vec<(i32, 
 impl Writer {
     /// One group: the code right-aligned in three columns, then the value.
     fn group(&mut self, code: i32, value: &str) {
+        let value = escaped(value);
         writeln!(self.out, "{code:>3}\n{value}").expect("writing to a String cannot fail");
         if let Some(groups) = &mut self.groups {
-            groups.push((code, value.to_owned()));
+            groups.push((code, value.into_owned()));
         }
     }
 
@@ -1281,7 +1326,9 @@ impl Writer {
         if self.grouped.contains(&id) {
             self.member_handles.insert(id, Handle(self.handles.0));
         }
+        self.pending_reactors = self.reactors.get(&id).cloned().unwrap_or_default();
         self.record(record, owner, drawing);
+        self.pending_reactors.clear();
     }
 
     fn record(&mut self, record: &EntityRecord, owner: Handle, drawing: &Drawing) {
@@ -1740,12 +1787,16 @@ impl Writer {
         }
         self.group(3, &style);
         match dimension.measure {
+            // The rotation in AcDbAlignedDimension and AcDbRotatedDimension
+            // empty, as AutoCAD writes them: the reference puts 50 in the
+            // second, and a reader that follows AutoCAD's files reads none,
+            // so a vertical dimension measured nothing there (#358).
             Measure::Linear { a, b, rotation } => {
                 self.group(100, "AcDbAlignedDimension");
                 self.point(13, a);
                 self.point(14, b);
-                self.group(100, "AcDbRotatedDimension");
                 self.real(50, rotation.to_degrees());
+                self.group(100, "AcDbRotatedDimension");
             }
             Measure::Aligned { a, b } => {
                 self.group(100, "AcDbAlignedDimension");
@@ -1809,6 +1860,14 @@ impl Writer {
     ) {
         self.group(0, kind);
         self.handle(5, handle);
+        let reactors = std::mem::take(&mut self.pending_reactors);
+        if !reactors.is_empty() {
+            self.group(102, "{ACAD_REACTORS");
+            for reactor in reactors {
+                self.handle(330, reactor);
+            }
+            self.group(102, "}");
+        }
         self.handle(330, owner);
         self.group(100, "AcDbEntity");
         if self.paper {
@@ -2119,10 +2178,11 @@ impl Writer {
 
         self.dictionary(structure.groups, structure.root);
         // Each group by name, then its GROUP object (#214).
-        let groups: Vec<(Handle, &Group)> = drawing
-            .groups()
-            .iter()
-            .map(|(_, group)| (self.handles.take(), group))
+        let groups: Vec<(Handle, &Group)> = self
+            .group_handles
+            .clone()
+            .into_iter()
+            .zip(drawing.groups().iter().map(|(_, group)| group))
             .collect();
         for (handle, group) in &groups {
             self.group(3, &group.name);
@@ -2827,6 +2887,45 @@ mod tests {
             .into_iter()
             .find(|record| value(record, 2) == Some(name))
             .unwrap_or_else(|| panic!("no {kind} {name}"))
+    }
+
+    /// A vertical dimension's rotation is in AcDbAlignedDimension, the
+    /// AcDbRotatedDimension marker after it empty, as AutoCAD and every
+    /// independent writer of our fixtures put it; and it reads back (#358).
+    #[test]
+    fn a_rotated_dimension_writes_its_angle_where_autocad_does() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.insert(DimensionEntity::new(
+            Measure::Linear {
+                a: Point2::new(0.0, 0.0),
+                b: Point2::new(0.0, 300.0),
+                rotation: std::f64::consts::FRAC_PI_2,
+            },
+            Point2::new(-20.0, 150.0),
+        ))
+        .unwrap();
+        tx.commit();
+        let text = export(&drawing);
+        let dimension = &records(&text, "DIMENSION")[0];
+        let at = |marker: &str| {
+            dimension
+                .iter()
+                .position(|(c, v)| *c == 100 && *v == marker)
+                .unwrap()
+        };
+        let angle = dimension.iter().position(|(c, _)| *c == 50).unwrap();
+        assert!(at("AcDbAlignedDimension") < angle && angle < at("AcDbRotatedDimension"));
+        assert_eq!(value(dimension, 50), Some("90.0"));
+        let back = crate::import::import(text.as_bytes()).unwrap().drawing;
+        let read = back
+            .entities()
+            .find_map(|(_, e)| match e {
+                Entity::Dimension(d) => Some(d.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(read.value(), 300.0);
     }
 
     #[test]

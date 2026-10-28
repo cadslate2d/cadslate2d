@@ -374,7 +374,11 @@ export function dxfRecords(text: string): DxfRecord[] {
   const records: DxfRecord[] = [];
   for (let at = 0; at + 1 < lines.length; at += 2) {
     const code = Number(lines[at]);
-    const value = lines[at + 1] ?? "";
+    // Characters past ASCII are written \U+XXXX, as AutoCAD writes them
+    // in a Windows-1252 file; read as a DXF reader reads them.
+    const value = (lines[at + 1] ?? "").replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, hex: string) =>
+      String.fromCharCode(parseInt(hex, 16)),
+    );
     if (code === 0) records.push({ type: value, groups: [] });
     else records.at(-1)?.groups.push([code, value]);
   }

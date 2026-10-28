@@ -14,9 +14,10 @@
 //! HATCHEDIT picks a hatch and changes its pattern, angle, or scale, each
 //! change replacing it, until Enter; the invocation is one undo step.
 
+use cad_core::tolerance::LinearTolerance;
 use cad_core::{EntityId, Point2};
 use cad_document::{Entity, HatchEntity, join};
-use cad_geometry::{Path, flatten_path, ring_contains, signed_area};
+use cad_geometry::{Path, Segment, flatten_path, ring_contains, signed_area};
 use cad_input::{ExpectedInput, Keyword};
 
 use super::hatch_look::{Look, LookOptions, OPTIONS};
@@ -54,6 +55,36 @@ impl Candidate {
 
     fn contains(&self, point: Point2) -> bool {
         ring_contains(&self.ring, point)
+    }
+
+    /// Whether `point` is on this loop's boundary, to the tolerance of its
+    /// coordinates.
+    fn touches(&self, point: Point2) -> bool {
+        let tolerance = LinearTolerance::DEFAULT.around(&[point]);
+        let n = self.ring.len();
+        (0..n).any(|i| {
+            let side = Segment {
+                start: self.ring[i],
+                end: self.ring[(i + 1) % n],
+            };
+            tolerance.is_zero(side.distance_to_point(point))
+        })
+    }
+
+    /// Whether `other` lies within this loop, an island of it: smaller,
+    /// and each of its vertices and the middle of each side inside or on
+    /// this loop. A loop that only shares a corner or a side — the parcel
+    /// beside, the site round them all — is not one (#358).
+    fn encloses(&self, other: &Self) -> bool {
+        let n = other.ring.len();
+        other.area() < self.area()
+            && (0..n).all(|i| {
+                let a = other.ring[i];
+                let b = other.ring[(i + 1) % n];
+                [a, Point2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)]
+                    .into_iter()
+                    .all(|q| self.contains(q) || self.touches(q))
+            })
     }
 }
 
@@ -157,11 +188,7 @@ pub(crate) fn region_at(candidates: &[Candidate], point: Point2) -> Option<Vec<P
     let boundary = &candidates[outer];
     let mut loops = vec![boundary.path.clone()];
     for (index, candidate) in candidates.iter().enumerate() {
-        let inside = candidate
-            .ring
-            .first()
-            .is_some_and(|probe| boundary.contains(*probe));
-        if index != outer && inside && !candidate.contains(point) {
+        if index != outer && boundary.encloses(candidate) && !candidate.contains(point) {
             loops.push(candidate.path.clone());
         }
     }

@@ -74,6 +74,34 @@ fn debug_loops() {
     }
 }
 
+/// Parcels side by side inside the site that holds them, as an urban
+/// sheet drew them (#358): a parcel's hatch is that parcel alone. The site
+/// and the parcel beside only share its corners and sides; they are not
+/// islands of it. A plot inside the parcel, touching its side, is.
+#[test]
+fn a_loop_that_only_shares_a_side_or_a_corner_is_not_an_island() {
+    let rectangle = |x0: f64, y0: f64, x1: f64, y1: f64| -> Entity {
+        PolylineEntity::new(vec![p(x0, y0), p(x1, y0), p(x1, y1), p(x0, y1)], true).into()
+    };
+    let mut h = Harness::with_entities([
+        rectangle(0.0, 0.0, 400.0, 300.0),
+        rectangle(0.0, 0.0, 38.0, 140.0),
+        rectangle(38.0, 0.0, 76.0, 140.0),
+        rectangle(0.0, 100.0, 10.0, 120.0),
+    ]);
+    h.enter_all(&["HATCH", "20,50"]);
+    let all = hatches(&h);
+    let [hatch] = all.as_slice() else {
+        panic!("one hatch: {:?}", h.log());
+    };
+    assert_eq!(hatch.loops.len(), 2, "the parcel and the plot inside it");
+    assert!(
+        (hatch.area() - (38.0 * 140.0 - 200.0)).abs() < 1e-6,
+        "{}",
+        hatch.area()
+    );
+}
+
 #[test]
 fn a_point_inside_finds_the_smallest_loop_around_it_and_the_loops_within() {
     let mut h = Harness::with_entities(plate());

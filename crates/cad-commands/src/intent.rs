@@ -412,10 +412,13 @@ impl Session {
             .expect("a chain has points");
         let unit = crate::compose::sheet_of(self.drawing()).map_or(1.0, |s| s.frame.units_per_mm);
         let off = 10.0 * unit;
-        let n = points.len() as f64;
+        // Over the first dimension, between its two points: DIMLINEAR
+        // turns by where the line's point is, and a point off to one side —
+        // the middle of a long chain — made it vertical, measuring nothing,
+        // and DIMCONTINUE refused the rest (#358).
         let mid = Point2::new(
-            points.iter().map(|p| p.x).sum::<f64>() / n,
-            points.iter().map(|p| p.y).sum::<f64>() / n,
+            (points[0].x + points[1].x) / 2.0,
+            (points[0].y + points[1].y) / 2.0,
         );
         match side {
             cad_intent::ChainSide::Below => Point2::new(mid.x, extent.min().y - off),

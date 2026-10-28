@@ -238,14 +238,66 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
     if bytes.starts_with(BINARY_SENTINEL) {
         return Err(DxfError::BinaryDxf);
     }
-    // Pre-2007 files use a legacy code page. Only text — layer and linetype
-    // names — could be affected, and a name that does not decode is still
-    // a name, so lossy decoding is safe here.
-    let text = String::from_utf8_lossy(bytes);
+    let text = decoded(bytes);
 
     let mut reader = Reader::new(Groups::new(&text, limits.max_value_bytes), limits);
     reader.read_file()?;
     reader.finish()
+}
+
+/// The file's text. A file of 2007 or later is UTF-8; an earlier one is in
+/// its code page — Windows-1252 in practice — with every other character
+/// written `\U+XXXX` (#358). Bytes that are not UTF-8 are read as
+/// Windows-1252, and each escape as the character it stands for. An escape
+/// for a control character is left as it is, so no line is split.
+fn decoded(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
+    let text = match std::str::from_utf8(bytes) {
+        Ok(text) => std::borrow::Cow::Borrowed(text),
+        Err(_) => std::borrow::Cow::Owned(bytes.iter().map(|&b| windows_1252(b)).collect()),
+    };
+    if !text.contains("\\U+") {
+        return text;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest: &str = &text;
+    while let Some(at) = rest.find("\\U+") {
+        out.push_str(&rest[..at]);
+        let digits = rest.get(at + 3..at + 7);
+        match digits
+            .filter(|d| d.bytes().all(|b| b.is_ascii_hexdigit()))
+            .and_then(|d| u32::from_str_radix(d, 16).ok())
+            .and_then(char::from_u32)
+            .filter(|c| !c.is_control())
+        {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[at + 7..];
+            }
+            None => {
+                out.push_str("\\U+");
+                rest = &rest[at + 3..];
+            }
+        }
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
+}
+
+/// A Windows-1252 byte as its character: ASCII and Latin-1 as they are,
+/// and the twenty-seven printable characters of 0x80 to 0x9F where that
+/// code page puts them (the five it leaves undefined as Latin-1's).
+fn windows_1252(byte: u8) -> char {
+    const HIGH: [char; 32] = [
+        '\u{20AC}', '\u{81}', '\u{201A}', '\u{192}', '\u{201E}', '\u{2026}', '\u{2020}',
+        '\u{2021}', '\u{2C6}', '\u{2030}', '\u{160}', '\u{2039}', '\u{152}', '\u{8D}', '\u{17D}',
+        '\u{8F}', '\u{90}', '\u{2018}', '\u{2019}', '\u{201C}', '\u{201D}', '\u{2022}', '\u{2013}',
+        '\u{2014}', '\u{2DC}', '\u{2122}', '\u{161}', '\u{203A}', '\u{153}', '\u{9D}', '\u{17E}',
+        '\u{178}',
+    ];
+    match byte {
+        0x80..=0x9F => HIGH[usize::from(byte - 0x80)],
+        _ => char::from(byte),
+    }
 }
 
 /// One DXF group: a code and its value, with the line the code was on.
@@ -4623,6 +4675,17 @@ mod tests {
         let mut bytes = b"999\ncaf\xe9\n".to_vec();
         bytes.extend_from_slice(entities(&LINE_0_0_TO_10_5).as_bytes());
         assert_eq!(import(&bytes).unwrap().report.lines, 1);
+    }
+
+    /// Text of a file before 2007: the code page's bytes, and `\\U+`
+    /// escapes for the rest, read as the characters they are (#358).
+    #[test]
+    fn code_page_bytes_and_unicode_escapes_read_as_their_characters() {
+        assert_eq!(decoded(b"caf\xe9 \x96 2 m\xb2"), "café – 2 m²");
+        assert_eq!(decoded(b"A\\U+2014B \\U+2192"), "A—B →");
+        // Not an escape, or one for a control character: left as written.
+        assert_eq!(decoded(b"\\U+12 \\U+000A"), "\\U+12 \\U+000A");
+        assert_eq!(decoded("plain ²".as_bytes()), "plain ²");
     }
 
     // ── hostile files (§43, #156): every bound is reached by a test ──

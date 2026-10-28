@@ -1111,6 +1111,33 @@ pub enum ChainSide {
     Right,
 }
 
+/// The axis a chain of dimensions measures along, 0 for x and 1 for y —
+/// the one its points spread further along, whatever side its line is on
+/// — and the points it dimensions: each that moves along that axis from
+/// the last kept. A point at the same place along it would make a
+/// dimension of nothing, which DIMCONTINUE refuses (#358).
+pub fn chain(points: &[Point]) -> (usize, Vec<Point>) {
+    let spread = |axis: usize| {
+        let values = points.iter().map(|p| p[axis]);
+        values.clone().fold(f64::NEG_INFINITY, f64::max) - values.fold(f64::INFINITY, f64::min)
+    };
+    let axis = usize::from(spread(1) > spread(0));
+    let mut kept: Vec<Point> = Vec::with_capacity(points.len());
+    for point in points {
+        let moves = kept.last().is_none_or(|last| {
+            let tolerance = cad_core::tolerance::LinearTolerance::DEFAULT.around(&[
+                cad_core::Point2::new(last[0], last[1]),
+                cad_core::Point2::new(point[0], point[1]),
+            ]);
+            !tolerance.is_zero(point[axis] - last[axis])
+        });
+        if moves {
+            kept.push(*point);
+        }
+    }
+    (axis, kept)
+}
+
 /// A part of a bill of materials.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
