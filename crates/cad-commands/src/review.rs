@@ -63,6 +63,37 @@ pub fn review(drawing: &Drawing) -> Vec<String> {
 /// The commands that compose a sheet: what they refuse is the layout.
 const COMPOSING: [&str; 4] = ["VIEWFRAME", "BOMTABLE", "NOTES", "BALLOON"];
 
+/// The scales a drafter gives a sheet, 1:N, in order.
+const STANDARD_SCALES: [f64; 19] = [
+    1.0, 2.0, 5.0, 10.0, 20.0, 25.0, 50.0, 75.0, 100.0, 125.0, 200.0, 250.0, 500.0, 1000.0, 1250.0,
+    2000.0, 2500.0, 5000.0, 10000.0,
+];
+
+/// `intent` with its sheet on `paper` at 1:`to`, and a dimension scale
+/// that was the sheet's moved with it.
+fn rescaled(
+    intent: &cad_intent::Intent,
+    paper: cad_intent::PaperSize,
+    from: f64,
+    to: f64,
+) -> cad_intent::Intent {
+    use cad_intent::Operation;
+    let mut tried = intent.clone();
+    for op in &mut tried.operations {
+        match op {
+            Operation::TitleBlock {
+                paper: on, scale, ..
+            } => {
+                *on = paper;
+                *scale = Some(to);
+            }
+            Operation::DimScale { scale } if (*scale - from).abs() < 1e-9 => *scale = to,
+            _ => {}
+        }
+    }
+    tried
+}
+
 /// A document reviewed as a sheet of its own: run on an empty drawing in
 /// `unit` (a suffix, `mm`), as the AI service does before it answers with
 /// it. `None` when it does not run there — it acts on objects of a drawing
@@ -118,13 +149,42 @@ pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Optio
                     run(&tried).is_ok()
                 })
             });
+            // No paper large enough at this scale: the first standard scale,
+            // on this paper or on A0, at which it does compose — a number to
+            // give back, as a detail is told the ratio that fits (#358).
+            let scaled = (room && fits.is_none())
+                .then(|| {
+                    let (paper, scale) = intent.operations.iter().find_map(|op| match op {
+                        Operation::TitleBlock { paper, scale, .. } => {
+                            Some((*paper, scale.unwrap_or(1.0)))
+                        }
+                        _ => None,
+                    })?;
+                    let papers = if paper == PaperSize::A0 {
+                        vec![paper]
+                    } else {
+                        vec![paper, PaperSize::A0]
+                    };
+                    papers.into_iter().find_map(|on| {
+                        STANDARD_SCALES
+                            .iter()
+                            .copied()
+                            .filter(|n| *n > scale)
+                            .find(|n| run(&rescaled(intent, on, scale, *n)).is_ok())
+                            .map(|n| (on, n))
+                    })
+                })
+                .flatten();
             let reason = reason.trim_end_matches('.');
-            let advice = match fits {
-                Some(paper) => format!(
+            let advice = match (fits, scaled) {
+                (Some(paper), _) => format!(
                     " At this scale it composes on {paper:?}: use {paper:?}, or a smaller scale, narrower notes, or fewer views."
                 ),
-                None if room => " Not even A0 has room at this scale: choose a smaller scale, narrower notes, or fewer views.".to_owned(),
-                None => String::new(),
+                (None, Some((paper, n))) => format!(
+                    " Not even A0 has room at this scale. On {paper:?} it composes at 1:{n}: give the title block `paper` {paper:?} and `scale` {n}, and `dim_scale` {n}."
+                ),
+                (None, None) if room => " Not even A0 has room at this scale: choose a smaller scale, narrower notes, or fewer views.".to_owned(),
+                (None, None) => String::new(),
             };
             Some(vec![format!(
                 "The sheet could not be composed: {reason}.{advice}"
@@ -526,6 +586,20 @@ mod tests {
         assert!(
             findings[0].starts_with("View front could not be drawn: HATCH refused")
                 && !findings[0].contains(".."),
+            "{findings:?}"
+        );
+        // A plan too large for A0 at 1:20, as a culvert's was (#358): told
+        // the first standard scale at which it composes, not only to choose
+        // a smaller one.
+        let culvert = parse(
+            r#"{"op": "title_block", "paper": "A0", "scale": 20, "title": "H01", "at": [0, 0]},
+               {"op": "dim_scale", "scale": 20},
+               {"op": "view", "id": "plan", "placed": "free", "looking": "from_above", "operations": [
+                   {"op": "rectangle", "corner": [0, 0], "opposite": [18000, 18400]}]}"#,
+        );
+        let findings = review_document(&culvert, Some("mm")).unwrap();
+        assert!(
+            findings[0].contains("Not even A0 has room at this scale. On A0 it composes at 1:25"),
             "{findings:?}"
         );
         // A detail too large at its own scale is told the ratio that fits,
