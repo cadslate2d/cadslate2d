@@ -126,6 +126,7 @@ const INSERT: Menu = {
     command("Bill of &Materials...", "BOMTABLE"),
     command("Balloo&n", "BALLOON"),
     command("N&otes...", "NOTES"),
+    command("Center View&s", "CENTERVIEWS"),
   ],
 };
 

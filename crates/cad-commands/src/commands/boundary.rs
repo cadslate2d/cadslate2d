@@ -11,14 +11,14 @@ use cad_core::Point2;
 use cad_document::PolylineEntity;
 use cad_input::{ExpectedInput, Keyword};
 
-use super::hatch::{Candidate, candidates, region_at};
+use super::hatch::Boundaries;
 use crate::{Command, CommandContext, CommandInput, Prompt, Step};
 
 const ISLANDS: Keyword = Keyword::new("Islands");
 
 #[derive(Debug)]
 pub(crate) struct BoundaryCommand {
-    candidates: Vec<Candidate>,
+    boundaries: Boundaries,
     /// Whether the loops inside the boundary are drawn too.
     islands: bool,
 }
@@ -26,7 +26,7 @@ pub(crate) struct BoundaryCommand {
 impl BoundaryCommand {
     pub(crate) fn new() -> Self {
         Self {
-            candidates: Vec::new(),
+            boundaries: Boundaries::default(),
             islands: true,
         }
     }
@@ -34,7 +34,7 @@ impl BoundaryCommand {
 
 impl Command for BoundaryCommand {
     fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
-        self.candidates = candidates(ctx);
+        self.boundaries = Boundaries::of(ctx);
         Step::Continue
     }
 
@@ -49,7 +49,7 @@ impl Command for BoundaryCommand {
     fn step(&mut self, input: CommandInput, ctx: &mut CommandContext<'_>) -> Step {
         match input {
             CommandInput::Point(point) => {
-                let Some(mut loops) = region_at(&self.candidates, point) else {
+                let Some(mut loops) = self.boundaries.region_at(point) else {
                     ctx.message("No closed boundary surrounds that point.");
                     return Step::Continue;
                 };
@@ -70,7 +70,7 @@ impl Command for BoundaryCommand {
                     format!("BOUNDARY created {count} polylines.")
                 });
                 // What it drew bounds what is picked next, as HATCH sees it.
-                self.candidates = candidates(ctx);
+                self.boundaries = Boundaries::of(ctx);
             }
             CommandInput::Keyword(_) => {
                 self.islands = !self.islands;

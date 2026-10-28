@@ -2710,29 +2710,42 @@ fn linetype_name(linetype: Linetype, table: &LinetypeTable) -> String {
     }
 }
 
-/// A text's words as TEXT codes: a `%`, which a reader takes as the start
-/// of a `%%` code, is written `%%%`, the code for itself (a fuzzer finding,
-/// #177: a run of them read back shorter).
+/// A text's words as TEXT codes: two `%` in a row start a `%%` code, so a
+/// run of them is written each as `%%%`, the code for itself (a fuzzer
+/// finding, #177: a run read back shorter). A `%` alone starts no code and
+/// is written as it is — `1.0%`, not `1.0%%%`, which a reader that does not
+/// know the code shows (#358).
 fn text_codes(content: &str) -> String {
-    content.replace('%', "%%%")
+    percents(content, |c, out| out.push(c))
+}
+
+/// `content` with each character written by `write`, but a run of two or
+/// more `%`, written `%%%` each.
+fn percents(content: &str, mut write: impl FnMut(char, &mut String)) -> String {
+    let chars: Vec<char> = content.chars().collect();
+    let mut out = String::with_capacity(content.len());
+    for (i, &c) in chars.iter().enumerate() {
+        let in_run = c == '%' && (i > 0 && chars[i - 1] == '%' || chars.get(i + 1) == Some(&'%'));
+        if in_run {
+            out.push_str("%%%");
+        } else {
+            write(c, &mut out);
+        }
+    }
+    out
 }
 
 /// A paragraph's words as MTEXT codes: a line break is `\P`, and the
 /// characters MTEXT reads as the start of a code — a backslash, a brace,
 /// a `%` — are escaped.
 fn mtext_codes(content: &str) -> String {
-    let mut out = String::with_capacity(content.len());
-    for c in content.chars() {
-        match c {
-            '\n' => out.push_str("\\P"),
-            '\\' => out.push_str("\\\\"),
-            '{' => out.push_str("\\{"),
-            '}' => out.push_str("\\}"),
-            '%' => out.push_str("%%%"),
-            other => out.push(other),
-        }
-    }
-    out
+    percents(content, |c, out| match c {
+        '\n' => out.push_str("\\P"),
+        '\\' => out.push_str("\\\\"),
+        '{' => out.push_str("\\{"),
+        '}' => out.push_str("\\}"),
+        other => out.push(other),
+    })
 }
 
 /// The `$INSUNITS` code of a unit.
@@ -3584,7 +3597,8 @@ mod tests {
         .unwrap();
         tx.commit();
         let text = export(&drawing);
-        assert!(text.contains("\n100%%% sure, 50%%%%%% more, %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%\n"));
+        // A `%` alone as it is; a run of them escaped each (#177, #358).
+        assert!(text.contains("\n100% sure, 50%%%%%% more, %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%\n"));
         let back = crate::import(text.as_bytes()).unwrap();
         let mut contents: Vec<String> = back
             .drawing

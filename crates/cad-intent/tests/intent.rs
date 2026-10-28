@@ -503,9 +503,9 @@ fn what_is_refused_says_where_and_why() {
         IntentError::Json { .. }
     ));
     assert!(matches!(
-        parse(r#"{"version": 23, "operations": []}"#).unwrap_err(),
+        parse(r#"{"version": 24, "operations": []}"#).unwrap_err(),
         IntentError::Version {
-            found: 23,
+            found: 24,
             expected: VERSION
         }
     ));
@@ -549,7 +549,7 @@ fn what_is_refused_says_where_and_why() {
 fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../test-data/intent/schema-v22.json"
+        "/../../test-data/intent/schema-v23.json"
     );
     let generated = serde_json::to_string_pretty(&schema()).unwrap() + "\n";
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
@@ -561,7 +561,7 @@ fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
         "the schema changed: bump cad_intent::VERSION, re-record with UPDATE_SNAPSHOTS=1, and name the file after the new version"
     );
     assert!(generated.contains(r#""version""#));
-    assert_eq!(VERSION, 22);
+    assert_eq!(VERSION, 23);
 }
 
 proptest! {
@@ -581,8 +581,9 @@ proptest! {
             // A chain of more than two points is its first dimension and
             // DIMCONTINUE.
             let commands = |op: &cad_intent::Operation| match op {
-                cad_intent::Operation::DimChain { points, .. } if points.len() > 2 => 2,
+                cad_intent::Operation::DimChain { points, .. } if cad_intent::chain(points).1.len() > 2 => 2,
                 cad_intent::Operation::Datum { .. } => 0,
+                cad_intent::Operation::Segments { segments } => segments.len(),
                 _ => 1,
             };
             match operation {
@@ -596,13 +597,27 @@ proptest! {
                 }
             }
         }
+        // A document that composes a sheet ends centred on its paper.
+        let composes = intent.operations.iter().any(|op| matches!(
+            op,
+            cad_intent::Operation::View { .. }
+                | cad_intent::Operation::Notes { .. }
+                | cad_intent::Operation::BillOfMaterials { .. }
+        ));
+        let sheet = intent
+            .operations
+            .iter()
+            .any(|op| matches!(op, cad_intent::Operation::TitleBlock { .. }));
+        wanted += usize::from(composes && sheet);
         prop_assert_eq!(compiled.len(), wanted);
         let mut last = 0;
         for c in &compiled {
-            prop_assert!(c.operation >= last || c.command == "VIEWFRAME");
+            // VIEWFRAME is its run's first view's, CENTERVIEWS the title
+            // block's, and asks nothing.
+            prop_assert!(c.operation >= last || ["VIEWFRAME", "CENTERVIEWS"].contains(&c.command));
             last = last.max(c.operation);
             prop_assert!(COMMANDS.contains(&c.command));
-            prop_assert!(!c.steps.is_empty());
+            prop_assert!(!c.steps.is_empty() || c.command == "CENTERVIEWS");
         }
     }
 
@@ -631,6 +646,6 @@ fn the_selection_word_and_an_intent_serialise_as_the_document_says() {
     };
     assert_eq!(
         serde_json::to_string(&intent).unwrap(),
-        r#"{"version":22,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
+        r#"{"version":23,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
     );
 }

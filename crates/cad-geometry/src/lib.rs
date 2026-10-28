@@ -18,6 +18,7 @@ mod curve_fillet;
 mod dimension;
 pub mod ellipse;
 mod extend;
+pub mod faces;
 pub mod intersect;
 mod join;
 mod lengthen;

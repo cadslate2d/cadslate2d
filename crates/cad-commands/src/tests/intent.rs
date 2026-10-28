@@ -1343,8 +1343,13 @@ fn a_chain_point_that_measures_nothing_is_left_out() {
     values.sort_by(f64::total_cmp);
     // And a road's chain, its first dimension short beside a long one: as
     // an urban section's was, horizontal throughout.
-    // A diameter's chain said to the right still measures across it.
-    assert_eq!(values, [40.0, 60.0, 130.0, 3000.0, 3000.0, 14000.0]);
+    // A diameter's chain said to the right still measures across it. To a
+    // hundredth: the sheet is moved to the middle of its paper after.
+    let wanted = [40.0, 60.0, 130.0, 3000.0, 3000.0, 14000.0];
+    assert_eq!(values.len(), wanted.len(), "{values:?}");
+    for (value, wanted) in values.iter().zip(wanted) {
+        assert!((value - wanted).abs() < 0.01, "{values:?}");
+    }
 }
 
 /// An operation that makes nothing — a layer — leaves the selection as it
@@ -1362,6 +1367,65 @@ fn a_layer_made_between_keeps_what_the_line_before_it_made_selected() {
             .entities()
             .all(|(id, _)| drawing.record(id).unwrap().properties.layer == center)
     );
+}
+
+/// A layer's lineweight by intent (version 23, #358): outlines at 0.5 mm,
+/// set as LAYER's LWeight does; and the sheet's own layers drawn with the
+/// weights their lines take — section marks heavier than a table's rules.
+#[test]
+fn a_layer_is_given_its_lineweight_and_the_sheet_layers_theirs() {
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    h.session
+        .run_intent(&document(
+            r#"{"op": "layer", "name": "OUTLINE", "lineweight": "0.5", "current": true},
+               {"op": "title_block", "paper": "A3", "scale": 1, "title": "X", "at": [0, 0]},
+               {"op": "view", "id": "front", "placed": "principal", "operations": [
+                   {"op": "rectangle", "corner": [0, 0], "opposite": [60, 40]}]},
+               {"op": "view", "id": "aa", "placed": "section", "cut": {"of": "front", "from": [30, -5], "to": [30, 45], "toward": [40, 20]},
+                "operations": [{"op": "rectangle", "corner": [0, 0], "opposite": [20, 40]}]},
+               {"op": "notes", "lines": ["Schematic."]}"#,
+        ))
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", h.log()));
+    let drawing = h.session.drawing();
+    let weight = |name: &str| {
+        drawing
+            .layers()
+            .get(drawing.layers().find(name).unwrap())
+            .unwrap()
+            .lineweight
+    };
+    use cad_document::Lineweight::Hundredths;
+    assert_eq!(weight("OUTLINE"), Hundredths(50));
+    assert_eq!(weight("SECTION-MARKS"), Hundredths(50));
+    assert_eq!(weight("VIEW-TITLES"), Hundredths(35));
+    assert_eq!(weight("NOTES"), Hundredths(25));
+}
+
+/// Separate segments (version 23, #358): a row of parcel boundaries drawn
+/// as pairs, each a line of its own — no line from one boundary's top to
+/// the next one's foot, which a `line` through the same points draws.
+#[test]
+fn segments_are_lines_joined_to_nothing() {
+    let h = run(
+        r#"{"op": "segments", "segments": [[[38, 0], [38, 140]], [[76, 0], [76, 140]], [[114, 0], [114, 140]]]}"#,
+    );
+    let lines: Vec<(Point2, Point2)> = h
+        .entities()
+        .iter()
+        .filter_map(|e| match e {
+            Entity::Line(l) => Some((l.start, l.end)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(lines.len(), 3);
+    assert!(
+        lines.iter().all(|(a, b)| a.x == b.x),
+        "all vertical: {lines:?}"
+    );
+    // The same points as one `line`: a chain, its diagonals among it.
+    let chain = run(r#"{"op": "line", "points": [[38, 0], [38, 140], [76, 0], [76, 140]]}"#);
+    assert_eq!(chain.entities().len(), 3);
 }
 
 /// A layer with a colour and a linetype by intent (#356): CENTER, loaded

@@ -38,6 +38,96 @@ pub struct Sheet {
     pub frame: SheetFrame,
 }
 
+impl Sheet {
+    /// The sheet as the composition sees it: the border to place in, the
+    /// title block to keep clear of, the gap between views.
+    fn area(&self) -> composition::Sheet {
+        composition::Sheet {
+            area: self.frame.border,
+            obstacles: vec![self.frame.block],
+            gap: GAP * self.frame.units_per_mm,
+            angle: if self.frame.first_angle {
+                Angle::First
+            } else {
+                Angle::Third
+            },
+        }
+    }
+}
+
+/// Moves what is composed on the sheet — its views, sections and their
+/// marks, tables, notes, and balloons — as one toward the middle of its
+/// drawing area, clear of the title block (#358); each view's record moved
+/// with it. The number of views moved, or `None` when they are where they
+/// should be already. One transaction.
+pub fn centre(drawing: &mut Drawing, space: LayoutId) -> Result<Option<usize>, String> {
+    let Some(sheet) = sheet_of(drawing) else {
+        return Err("There is no sheet to centre: draw one with TITLEBLOCK first.".to_owned());
+    };
+    let of_sheet = |description: &str| {
+        serde_json::from_str::<serde_json::Value>(description)
+            .is_ok_and(|v| v["sheet"].as_str() == Some(sheet.group.as_str()))
+    };
+    let mut members: Vec<EntityId> = Vec::new();
+    let mut views: Vec<(cad_document::GroupId, Group)> = Vec::new();
+    for (id, group) in drawing.groups().iter() {
+        let view = group.name.starts_with(VIEW_GROUP) && of_sheet(&group.description);
+        let marks = group.name.starts_with(SECTION_GROUP) && of_sheet(&group.description);
+        if view || marks || group.name.starts_with(crate::bom::BALLOON_GROUP) {
+            members.extend(group.members.iter().copied());
+        }
+        if view {
+            views.push((id, group.clone()));
+        }
+    }
+    members.sort();
+    members.dedup();
+    let tables = drawing.tables();
+    let boxes: Vec<Aabb> = members
+        .iter()
+        .filter_map(|id| drawing.entity(*id))
+        .map(|e| e.bounds(tables))
+        .collect();
+    let Some(by) = composition::centring(&sheet.area(), &boxes) else {
+        return Ok(None);
+    };
+    let shift = Transform::translation(by);
+    let moved: Vec<(EntityId, Entity)> = members
+        .iter()
+        .filter_map(|id| Some((*id, drawing.entity(*id)?.transformed(&shift))))
+        .collect();
+    let mut transaction = drawing.transaction().in_space(space);
+    for (id, entity) in moved {
+        transaction.replace(id, entity).map_err(|e| e.to_string())?;
+    }
+    for (id, mut group) in views.iter().cloned() {
+        if let Some(mut record) = ViewRecord::read(&group.description) {
+            record.origin = record.origin + by;
+            record.title_at = record.title_at.map(|p| p + by);
+            group.description = record.to_json();
+            transaction
+                .replace_group(id, group)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    transaction.commit();
+    Ok(Some(views.len()))
+}
+
+/// A layer the sheet's machinery is drawn on, made with the lineweight
+/// its kind of line takes on a drawing sheet (#358): titles and section
+/// marks 0.35 and 0.50 mm, a table's rules, notes, and balloons 0.25 mm.
+pub(crate) fn sheet_layer(name: &str) -> Layer {
+    let mut layer = Layer::named(name);
+    let hundredths = match name {
+        SECTION_LAYER => 50,
+        TITLE_LAYER => 35,
+        _ => 25,
+    };
+    layer.lineweight = cad_document::Lineweight::Hundredths(hundredths);
+    layer
+}
+
 /// The sheet in `drawing`: the title block group with the highest number.
 pub fn sheet_of(drawing: &Drawing) -> Option<Sheet> {
     drawing
@@ -529,16 +619,7 @@ pub fn compose(
             origin: v.origin,
         })
         .collect();
-    let area = composition::Sheet {
-        area: sheet.frame.border,
-        obstacles: vec![sheet.frame.block],
-        gap: GAP * unit,
-        angle: if sheet.frame.first_angle {
-            Angle::First
-        } else {
-            Angle::Third
-        },
-    };
+    let area = sheet.area();
     let out = composition::place(&area, &placed, &boxes).map_err(|error| match error {
         composition::PlaceError::NoRoom { view, size } => {
             let (w, h) = (size.x / unit, size.y / unit);
@@ -715,7 +796,7 @@ pub fn compose(
     let layer = match title_layer {
         Some(id) => id,
         None => transaction
-            .add_layer(Layer::named(TITLE_LAYER))
+            .add_layer(sheet_layer(TITLE_LAYER))
             .map_err(|e| e.to_string())?,
     };
     let marks = match (placed_markers.is_empty(), section_layer) {
@@ -730,7 +811,7 @@ pub fn compose(
                     )
                     .map_err(|e| e.to_string())?,
             };
-            let mut layer = Layer::named(SECTION_LAYER);
+            let mut layer = sheet_layer(SECTION_LAYER);
             layer.linetype = cad_document::Linetype::Named(linetype);
             Some(transaction.add_layer(layer).map_err(|e| e.to_string())?)
         }
@@ -770,7 +851,7 @@ pub fn compose(
         let id = match found {
             Some(id) => id,
             None => transaction
-                .add_layer(Layer::named(name))
+                .add_layer(sheet_layer(name))
                 .map_err(|e| e.to_string())?,
         };
         fresh_layer_ids.push((name, id));

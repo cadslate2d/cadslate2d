@@ -29,7 +29,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 22;
+pub const VERSION: u32 = 23;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -47,9 +47,9 @@ pub const VERSION: u32 = 22;
 /// `dim_chain` and `notes` (#355), version 20 a layer's `color` and
 /// `linetype` (#356), version 21 `datum` and a coordinate given as one
 /// (#361), version 22 a section or free view `looking` `from_front`
-/// (#358).
-pub const READS: [u32; 22] = [
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+/// (#358), version 23 `segments` and a layer's `lineweight` (#358).
+pub const READS: [u32; 23] = [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
 ];
 
 /// A point, `[x, y]`, in the document's units.
@@ -360,9 +360,16 @@ pub enum Color {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
     // ── draw ──
-    /// Line segments through the points, in order: one object per segment.
+    /// Line segments through the points, in order: one object per segment,
+    /// each joined to the next — a chain.
     Line {
         points: Vec<Point>,
+    },
+    /// Separate line segments, each its own pair of points, joined to
+    /// nothing: a row of parcel boundaries, stripes, curbs (version 23,
+    /// #358). A `line` through such points would join each to the next.
+    Segments {
+        segments: Vec<[Point; 2]>,
     },
     /// One polyline through the points, closed back to the first or not.
     Polyline {
@@ -633,9 +640,11 @@ pub enum Operation {
         scale: f64,
     },
     /// A layer by name, made if it does not exist, and made current when
-    /// asked; given a colour and a linetype when asked — `CENTER` for
-    /// centre lines, `HIDDEN` for hidden edges, `PHANTOM`, `DASHED`, loaded
-    /// from the program's own when the drawing has none of that name.
+    /// asked; given a colour, a linetype, and a lineweight when asked —
+    /// `CENTER` for centre lines, `HIDDEN` for hidden edges, `PHANTOM`,
+    /// `DASHED`, loaded from the program's own when the drawing has none of
+    /// that name; a lineweight in millimetres, `0.5` for outlines (version
+    /// 23, #358).
     Layer {
         name: String,
         #[serde(default)]
@@ -644,6 +653,9 @@ pub enum Operation {
         color: Option<Color>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         linetype: Option<String>,
+        /// A lineweight in millimetres, or `default`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lineweight: Option<String>,
     },
     /// Changes the layer, colour, linetype, or lineweight of the targets;
     /// whatever is given, at least one.
@@ -1194,6 +1206,7 @@ impl Operation {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Line { .. } => "line",
+            Self::Segments { .. } => "segments",
             Self::Polyline { .. } => "polyline",
             Self::Spline { .. } => "spline",
             Self::View { .. } => "view",

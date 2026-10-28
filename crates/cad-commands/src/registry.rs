@@ -12,29 +12,29 @@ use crate::Command;
 use crate::commands::{
     AliasEditCommand, AlignCommand, ArcCommand, AreaCommand, ArrayCommand, ArrayGridCommand,
     ArrayPathCommand, AttdefCommand, AtteditCommand, BOLT_CIRCLE, BalloonCommand, BlockCommand,
-    BomTableCommand, BoundaryCommand, BreakCommand, BuildingSectionCommand, ChpropCommand,
-    CircleCommand, ColorCommand, ConcentricCommand, ConstraintDisplayCommand, CopyClipCommand,
-    CornerCommand, DelConstraintCommand, DimAngularCommand, DimChainCommand, DimConstraintCommand,
-    DimLinearCommand, DimOrdinateCommand, DimRadialCommand, DimStyleCommand, DistCommand,
-    DivideCommand, DonutCommand, DrawOrderCommand, DxfOutCommand, EdgeCommand, ElevationCommand,
-    EllipseCommand, EraseCommand, ExplodeCommand, ExportCommand, FLANGE, FindCommand,
-    FloorPlanCommand, Form, GeneratorCommand, Geom, GeomConstraintCommand, GridCommand,
-    GroupCommand, HOLE_PATTERN, HatchCommand, HatchEditCommand, IdCommand, InsertCommand,
-    IsoplaneCommand, JoinCommand, LayIsoCommand, LayUnisoCommand, LayerAllCommand, LayerCommand,
-    LayerMergeCommand, LayerPickCommand, LayerStateCommand, LayoutCommand, LeaderCommand,
-    LengthenCommand, LineCommand, LinetypeCommand, ListCommand, LtscaleCommand, LweightCommand,
-    MLeaderCommand, MLeaderEditCommand, MLeaderStyleCommand, MTextCommand, MatchpropCommand,
-    MeasureCommand, MembersCommand, MirrorCommand, ModelCommand, MspaceCommand, MviewCommand,
-    NewCommand, NotesCommand, OffsetCommand, OpenCommand, OpeningCommand, OpeningKind,
-    OsnapCommand, OverkillCommand, PLATE, PanCommand, ParametersCommand, PartViewsCommand,
-    PasteClipCommand, PeditCommand, PickStyleCommand, PlineCommand, PlotCommand, PointCommand,
-    PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand, QdimCommand,
-    QselectCommand, RayCommand, RectangCommand, RedoCommand, RenameCommand, RevCloudCommand, SLOT,
-    SaveCommand, SelectCommand, SettingsCommand, SketchCommand, SnapCommand, SplineCommand,
-    SplineEditCommand, StairCommand, StretchCommand, StyleCommand, TanArcCommand, TextCommand,
-    TextEditCommand, TextToFrontCommand, TitleBlockCommand, TransformCommand, UndoCommand,
-    UngroupCommand, UnitsCommand, ViewCommand, ViewFrameCommand, WBlockCommand, WipeoutCommand,
-    XLineCommand, ZoomCommand,
+    BomTableCommand, BoundaryCommand, BreakCommand, BuildingSectionCommand, CenterViewsCommand,
+    ChpropCommand, CircleCommand, ColorCommand, ConcentricCommand, ConstraintDisplayCommand,
+    CopyClipCommand, CornerCommand, DelConstraintCommand, DimAngularCommand, DimChainCommand,
+    DimConstraintCommand, DimLinearCommand, DimOrdinateCommand, DimRadialCommand, DimStyleCommand,
+    DistCommand, DivideCommand, DonutCommand, DrawOrderCommand, DxfOutCommand, EdgeCommand,
+    ElevationCommand, EllipseCommand, EraseCommand, ExplodeCommand, ExportCommand, FLANGE,
+    FindCommand, FloorPlanCommand, Form, GeneratorCommand, Geom, GeomConstraintCommand,
+    GridCommand, GroupCommand, HOLE_PATTERN, HatchCommand, HatchEditCommand, IdCommand,
+    InsertCommand, IsoplaneCommand, JoinCommand, LayIsoCommand, LayUnisoCommand, LayerAllCommand,
+    LayerCommand, LayerMergeCommand, LayerPickCommand, LayerStateCommand, LayoutCommand,
+    LeaderCommand, LengthenCommand, LineCommand, LinetypeCommand, ListCommand, LtscaleCommand,
+    LweightCommand, MLeaderCommand, MLeaderEditCommand, MLeaderStyleCommand, MTextCommand,
+    MatchpropCommand, MeasureCommand, MembersCommand, MirrorCommand, ModelCommand, MspaceCommand,
+    MviewCommand, NewCommand, NotesCommand, OffsetCommand, OpenCommand, OpeningCommand,
+    OpeningKind, OsnapCommand, OverkillCommand, PLATE, PanCommand, ParametersCommand,
+    PartViewsCommand, PasteClipCommand, PeditCommand, PickStyleCommand, PlineCommand, PlotCommand,
+    PointCommand, PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand,
+    QdimCommand, QselectCommand, RayCommand, RectangCommand, RedoCommand, RenameCommand,
+    RevCloudCommand, SLOT, SaveCommand, SelectCommand, SettingsCommand, SketchCommand, SnapCommand,
+    SplineCommand, SplineEditCommand, StairCommand, StretchCommand, StyleCommand, TanArcCommand,
+    TextCommand, TextEditCommand, TextToFrontCommand, TitleBlockCommand, TransformCommand,
+    UndoCommand, UngroupCommand, UnitsCommand, ViewCommand, ViewFrameCommand, WBlockCommand,
+    WipeoutCommand, XLineCommand, ZoomCommand,
 };
 use crate::session::select_keywords;
 
@@ -71,7 +71,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 179] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 180] = [
             ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
             ("RAY", &[], || Box::new(RayCommand::new())),
             ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
@@ -209,6 +209,7 @@ impl CommandRegistry {
             ("BOMTABLE", &["BOM"], || Box::new(BomTableCommand::new())),
             ("BALLOON", &[], || Box::new(BalloonCommand::new())),
             ("NOTES", &[], || Box::new(NotesCommand::new())),
+            ("CENTERVIEWS", &[], || Box::new(CenterViewsCommand::new())),
             ("DCLINEAR", &[], || {
                 Box::new(DimConstraintCommand::of(Form::Linear))
             }),

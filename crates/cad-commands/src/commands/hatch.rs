@@ -17,7 +17,10 @@
 use cad_core::tolerance::LinearTolerance;
 use cad_core::{EntityId, Point2};
 use cad_document::{Entity, HatchEntity, join};
-use cad_geometry::{Path, Segment, flatten_path, ring_contains, signed_area};
+use cad_geometry::faces::Faces;
+use cad_geometry::{
+    Arc, Path, Primitive, Segment, arc_chords, flatten_path, ring_contains, signed_area,
+};
 use cad_input::{ExpectedInput, Keyword};
 
 use super::hatch_look::{Look, LookOptions, OPTIONS};
@@ -91,9 +94,10 @@ impl Candidate {
 #[derive(Debug)]
 pub(crate) struct HatchCommand {
     state: State,
-    /// The loops the shown objects make, found when the command starts:
-    /// what a picked point is looked up in, and what the preview uses.
-    candidates: Vec<Candidate>,
+    /// The loops and faces the shown objects make, found when the command
+    /// starts: what a picked point is looked up in, and what the preview
+    /// uses.
+    boundaries: Boundaries,
     options: LookOptions,
 }
 
@@ -103,7 +107,7 @@ impl HatchCommand {
     pub(crate) fn new() -> Self {
         Self {
             state: State::Inside,
-            candidates: Vec::new(),
+            boundaries: Boundaries::default(),
             options: LookOptions::new(Look {
                 pattern: 0,
                 angle: 0.0,
@@ -119,7 +123,7 @@ impl HatchCommand {
     }
 
     fn region_at(&self, point: Point2) -> Option<Vec<Path>> {
-        region_at(&self.candidates, point)
+        self.boundaries.region_at(point)
     }
 
     /// Commits a hatch of `loops` and finishes, or explains why not.
@@ -144,15 +148,89 @@ impl HatchCommand {
     }
 }
 
-/// The loops the objects shown in the current space make: what a point is
-/// looked up in by HATCH and BOUNDARY (#229).
-pub(crate) fn candidates(ctx: &CommandContext<'_>) -> Vec<Candidate> {
-    let shown: Vec<&Entity> = ctx
-        .drawing
-        .shown_in(ctx.space)
-        .map(|(_, entity)| entity)
-        .collect();
-    loops_of(&shown).into_iter().map(Candidate::new).collect()
+/// What a point is looked up in by HATCH and BOUNDARY: the closed loops
+/// the shown objects make (#229), and the faces their edges make where
+/// they cross — a block's outline divided by lines into parcels (#358).
+#[derive(Debug, Default)]
+pub(crate) struct Boundaries {
+    loops: Vec<Candidate>,
+    faces: Faces,
+}
+
+impl Boundaries {
+    /// Found when a command starts, from what the current space shows.
+    pub(crate) fn of(ctx: &CommandContext<'_>) -> Self {
+        let tables = ctx.drawing.tables();
+        let shown: Vec<&Entity> = ctx
+            .drawing
+            .shown_in(ctx.space)
+            .map(|(_, entity)| entity)
+            .collect();
+        let mut edges: Vec<Segment> = Vec::new();
+        for entity in &shown {
+            if entity.is_unbounded() || matches!(entity, Entity::Text(_) | Entity::MText(_)) {
+                continue;
+            }
+            for primitive in entity.primitives(tables) {
+                match primitive {
+                    Primitive::Segment(segment) => edges.push(segment),
+                    Primitive::Arc(arc) => edges.extend(chords(&arc)),
+                    Primitive::Circle(circle) => edges.extend(chords(&Arc {
+                        center: circle.center,
+                        radius: circle.radius,
+                        start: 0.0,
+                        sweep: std::f64::consts::TAU,
+                    })),
+                }
+            }
+        }
+        Self {
+            loops: loops_of(&shown).into_iter().map(Candidate::new).collect(),
+            faces: Faces::of(&edges),
+        }
+    }
+
+    /// The region around `point`: the smallest closed loop around it, or
+    /// the smallest face the edges make where that is smaller still — the
+    /// parcel, not the block it is cut from — then every loop inside it.
+    pub(crate) fn region_at(&self, point: Point2) -> Option<Vec<Path>> {
+        let loop_area = self
+            .loops
+            .iter()
+            .filter(|candidate| candidate.contains(point))
+            .map(Candidate::area)
+            .min_by(f64::total_cmp);
+        if let Some((area, ring)) = self.faces.around(point)
+            && loop_area.is_none_or(|outer| area < outer * (1.0 - 1e-9))
+        {
+            let boundary = Candidate::new(Path {
+                vertices: ring.to_vec(),
+                bulges: vec![0.0; ring.len()],
+                closed: true,
+            });
+            let mut loops = vec![boundary.path.clone()];
+            for candidate in &self.loops {
+                if boundary.encloses(candidate) && !candidate.contains(point) {
+                    loops.push(candidate.path.clone());
+                }
+            }
+            return Some(loops);
+        }
+        region_at(&self.loops, point)
+    }
+}
+
+/// An arc as the chords a picked point is tested against.
+fn chords(arc: &Arc) -> Vec<Segment> {
+    let mut points = vec![arc.point_at(arc.start)];
+    points.extend(arc_chords(arc, CHORD_STEP, false));
+    points
+        .windows(2)
+        .map(|pair| Segment {
+            start: pair[0],
+            end: pair[1],
+        })
+        .collect()
 }
 
 /// The loops what is shown makes, but for `skip`: a boundary its own
@@ -253,7 +331,7 @@ pub(crate) fn loops_of(entities: &[&Entity]) -> Vec<Path> {
 
 impl Command for HatchCommand {
     fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
-        self.candidates = candidates(ctx);
+        self.boundaries = Boundaries::of(ctx);
         self.options = LookOptions::new(Look::remembered(ctx));
         Step::Continue
     }

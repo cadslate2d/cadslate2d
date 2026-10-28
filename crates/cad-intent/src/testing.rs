@@ -80,6 +80,14 @@ fn three_distinct() -> impl Strategy<Value = (Point, Point, Point)> {
 pub fn operation() -> impl Strategy<Value = Operation> {
     prop_oneof![
         points(2).prop_map(|points| Operation::Line { points }),
+        prop::collection::vec((point(), (1.0..500.0f64, 1.0..500.0f64)), 1..5).prop_map(|pairs| {
+            Operation::Segments {
+                segments: pairs
+                    .into_iter()
+                    .map(|(a, (dx, dy))| [a, [a[0] + dx, a[1] + dy]])
+                    .collect(),
+            }
+        }),
         (points(3), any::<bool>())
             .prop_map(|(points, closed)| Operation::Polyline { points, closed }),
         points(2).prop_map(|points| Operation::Spline { points }),
@@ -272,8 +280,9 @@ pub fn operation() -> impl Strategy<Value = Operation> {
             .prop_map(|(name, current, color, linetype)| Operation::Layer {
                 name,
                 current,
-                color,
                 linetype,
+                lineweight: color.is_some().then(|| "0.5".to_owned()),
+                color,
             }),
         (0.1f64..20.0).prop_map(|scale| Operation::DimScale { scale }),
         (

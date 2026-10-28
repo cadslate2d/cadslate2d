@@ -7,7 +7,7 @@
 //! along its leader. Each one undo.
 
 use cad_core::{EntityId, Point2};
-use cad_document::{Entity, Group, Layer, LayerId, Properties};
+use cad_document::{Entity, Group, LayerId, Properties};
 use cad_geometry::composition::Role;
 use cad_input::ExpectedInput;
 use serde_json::json;
@@ -25,7 +25,7 @@ fn layer(
     match found {
         Some(id) => Ok(id),
         None => transaction
-            .add_layer(Layer::named(name))
+            .add_layer(crate::compose::sheet_layer(name))
             .map_err(|e| e.to_string()),
     }
 }

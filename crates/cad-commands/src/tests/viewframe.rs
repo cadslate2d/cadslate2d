@@ -147,6 +147,56 @@ fn a_view_added_later_takes_its_slot_and_moves_nothing_placed() {
     assert!(t.origin.y > f.origin.y);
 }
 
+/// CENTERVIEWS (#358): a sheet's free views, placed from the top left,
+/// moved as one to the middle of the drawing area — each view's record
+/// with it, so the review finds nothing out of place — in one undo; and
+/// nothing said or done when there is nothing to move.
+#[test]
+fn centerviews_moves_the_sheet_to_the_middle_of_its_area() {
+    let mut h = sheet();
+    let a = drawn(&mut h, 60.0, 30.0);
+    let b = drawn(&mut h, 40.0, 30.0);
+    h.session.select_only(&[a]);
+    h.enter_all(&["VIEWFRAME", "0,0", "a", "", "Free", "", "Yes"]);
+    h.session.select_only(&[b]);
+    h.enter_all(&["", "0,0", "b", "", "Free", "", "No"]);
+    let before = (view(&h, "a").origin, view(&h, "b").origin);
+    let border = sheet_of(h.session.drawing()).unwrap().frame.border;
+    let revision = h.session.drawing().revision();
+    h.enter("CENTERVIEWS");
+    assert_eq!(h.log().last().unwrap(), "2 views centred on the sheet.");
+    let after = (view(&h, "a").origin, view(&h, "b").origin);
+    // Moved as one: the same distance each.
+    let by = after.0 - before.0;
+    assert!((after.1 - before.1 - by).x.abs() < 1e-9 && (after.1 - before.1 - by).y.abs() < 1e-9);
+    assert!(by.y < 0.0, "down from the top: {by:?}");
+    // Their objects with them, and the review sees nothing out of place.
+    let middle = border.min() + (border.max() - border.min()) * 0.5;
+    let objects = h
+        .entities()
+        .iter()
+        .filter(|e| matches!(e, cad_document::Entity::Polyline(_)))
+        .map(|e| e.bounds(h.session.drawing().tables()))
+        .reduce(|x, y| x.union(&y))
+        .unwrap();
+    assert!(objects.min().y < middle.y && objects.max().y > middle.y);
+    assert!(
+        crate::review::review(h.session.drawing())
+            .iter()
+            .all(|f| !f.contains("outside its frame") && !f.contains("overlap")),
+        "{:?}",
+        crate::review::review(h.session.drawing())
+    );
+    // One undo puts them back; and in the middle already, nothing to do.
+    h.enter("U");
+    assert_eq!(view(&h, "a").origin, before.0);
+    h.enter_all(&["REDO"]);
+    let revision_centred = h.session.drawing().revision();
+    assert_ne!(revision_centred, revision);
+    h.enter("CENTERVIEWS");
+    assert_eq!(h.session.drawing().revision(), revision_centred);
+}
+
 #[test]
 fn what_cannot_be_placed_is_refused_and_nothing_moves() {
     // No sheet.

@@ -392,7 +392,7 @@
       "oneOf": [
         {
           "additionalProperties": false,
-          "description": "Line segments through the points, in order: one object per segment.",
+          "description": "Line segments through the points, in order: one object per segment,\neach joined to the next — a chain.",
           "properties": {
             "op": {
               "const": "line",
@@ -421,6 +421,45 @@
           "required": [
             "op",
             "points"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Separate line segments, each its own pair of points, joined to\nnothing: a row of parcel boundaries, stripes, curbs (version 23,\n#358). A `line` through such points would join each to the next.",
+          "properties": {
+            "op": {
+              "const": "segments",
+              "type": "string"
+            },
+            "segments": {
+              "items": {
+                "items": {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "format": "double",
+                        "type": "number"
+                      },
+                      {
+                        "$ref": "#/$defs/DatumRef"
+                      }
+                    ]
+                  },
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "type": "array"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "segments"
           ],
           "type": "object"
         },
@@ -1641,7 +1680,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "A layer by name, made if it does not exist, and made current when\nasked; given a colour and a linetype when asked — `CENTER` for\ncentre lines, `HIDDEN` for hidden edges, `PHANTOM`, `DASHED`, loaded\nfrom the program's own when the drawing has none of that name.",
+          "description": "A layer by name, made if it does not exist, and made current when\nasked; given a colour, a linetype, and a lineweight when asked —\n`CENTER` for centre lines, `HIDDEN` for hidden edges, `PHANTOM`,\n`DASHED`, loaded from the program's own when the drawing has none of\nthat name; a lineweight in millimetres, `0.5` for outlines (version\n23, #358).",
           "properties": {
             "color": {
               "anyOf": [
@@ -1658,6 +1697,13 @@
               "type": "boolean"
             },
             "linetype": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lineweight": {
+              "description": "A lineweight in millimetres, or `default`.",
               "type": [
                 "string",
                 "null"

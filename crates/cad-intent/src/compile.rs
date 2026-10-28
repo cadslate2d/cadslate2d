@@ -79,7 +79,8 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 54] = [
+pub const COMMANDS: [&str; 55] = [
+    "CENTERVIEWS",
     "DIMCONTINUE",
     "NOTES",
     "BOMTABLE",
@@ -186,6 +187,28 @@ pub fn compile(intent: &Intent) -> Vec<Compiled> {
             view: None,
         });
     }
+    // A sheet composed by the document ends centred on its paper (#358):
+    // views are placed from the top left so that its tables and notes find
+    // room, and the finished sheet is moved to the middle.
+    let composed = operations.iter().any(|op| {
+        matches!(
+            op,
+            Operation::View { .. } | Operation::Notes { .. } | Operation::BillOfMaterials { .. }
+        )
+    });
+    if let Some(sheet) = operations
+        .iter()
+        .position(|op| matches!(op, Operation::TitleBlock { .. }))
+        .filter(|_| composed)
+    {
+        out.push(Compiled {
+            operation: sheet,
+            op: "title_block",
+            command: "CENTERVIEWS",
+            steps: Vec::new(),
+            view: None,
+        });
+    }
     out
 }
 
@@ -195,6 +218,13 @@ fn commands_of(operation: &Operation) -> Vec<(&'static str, Vec<Step>)> {
     // A datum is read into the coordinates that name it: it runs nothing.
     if matches!(operation, Operation::Datum { .. }) {
         return Vec::new();
+    }
+    // Separate segments: a LINE each, ended before the next begins.
+    if let Operation::Segments { segments } = operation {
+        return segments
+            .iter()
+            .map(|[a, b]| ("LINE", vec![at(*a), at(*b), enter()]))
+            .collect();
     }
     let Operation::DimChain { points, side } = operation else {
         return vec![steps_of(operation)];
@@ -339,6 +369,8 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
             steps.push(enter());
             ("LINE", steps)
         }
+        // Compiled a LINE per segment (`commands_of`).
+        Operation::Segments { .. } => ("LINE", Vec::new()),
         Operation::Polyline { points, closed } => {
             let mut steps: Vec<Step> = points.iter().map(|p| at(*p)).collect();
             steps.push(if *closed { keyword("Close") } else { enter() });
@@ -676,6 +708,7 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
             current,
             color,
             linetype,
+            lineweight,
         } => {
             let mut steps = vec![keyword("New"), answer(Answer::Text(name.clone()))];
             if let Some(color) = color {
@@ -689,6 +722,11 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
             if let Some(linetype) = linetype {
                 steps.push(keyword("LType"));
                 steps.push(answer(Answer::Text(linetype.clone())));
+                steps.push(answer(Answer::Text(name.clone())));
+            }
+            if let Some(lineweight) = lineweight {
+                steps.push(keyword("LWeight"));
+                steps.push(answer(Answer::Text(lineweight.clone())));
                 steps.push(answer(Answer::Text(name.clone())));
             }
             if *current {

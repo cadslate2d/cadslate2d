@@ -460,6 +460,28 @@ impl Check {
     fn operation(&self, operation: &Operation) -> Result<(), IntentError> {
         match operation {
             Operation::Line { points } => self.points("points", points, 2),
+            Operation::Segments { segments } => {
+                if segments.is_empty() {
+                    return Err(self.refuse("segments", Reason::TooFew(1)));
+                }
+                if segments.len() > limits::POINTS / 2 {
+                    return Err(self.refuse("segments", Reason::TooMany(limits::POINTS / 2)));
+                }
+                for (i, [a, b]) in segments.iter().enumerate() {
+                    self.point("segments", *a)?;
+                    self.point("segments", *b)?;
+                    if same_point(*a, *b) {
+                        return Err(self.refuse(
+                            "segments",
+                            Reason::Told(format!(
+                                "{i} has both ends at [{}, {}]: a segment's two points must differ",
+                                a[0], a[1]
+                            )),
+                        ));
+                    }
+                }
+                Ok(())
+            }
             Operation::IsoLine { points } => self.iso_points("points", points, 2),
             Operation::IsoPolyline { points, closed } => {
                 self.iso_points("points", points, if *closed { 3 } else { 2 })
@@ -851,9 +873,13 @@ impl Check {
                 name,
                 color,
                 linetype,
+                lineweight,
                 ..
             } => {
                 self.name("name", name)?;
+                if let Some(lineweight) = lineweight {
+                    self.name("lineweight", lineweight)?;
+                }
                 match color {
                     Some(Color::Index(index)) if !(1..=255).contains(index) => {
                         return Err(self.refuse("color", Reason::OutOfRange));

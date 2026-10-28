@@ -578,6 +578,40 @@ fn lay_out(
     Ok(out)
 }
 
+/// How far to move `boxes`, as one, toward the middle of the drawing
+/// area: the whole way where every box stays inside it and clear of its
+/// obstacles, else as far as it can — three quarters, half, a quarter, or
+/// along one axis alone. `None` when no move fits or none is wanted (#358).
+pub fn centring(sheet: &Sheet, boxes: &[Aabb]) -> Option<Vec2> {
+    let group = boxes.iter().copied().reduce(|a, b| a.union(&b))?;
+    let middle = |b: &Aabb| b.min() + size(b) * 0.5;
+    let toward = middle(&sheet.area) - middle(&group);
+    if toward.x.abs() < sheet.gap / 2.0 && toward.y.abs() < sheet.gap / 2.0 {
+        return None;
+    }
+    let clear = sheet.gap / 2.0 - 1e-9;
+    let fits = |by: Vec2| {
+        boxes.iter().all(|b| {
+            let moved = shifted(b, by);
+            within(&sheet.area, &moved)
+                && !sheet
+                    .obstacles
+                    .iter()
+                    .any(|t| overlap(&grown(t, clear), &grown(&moved, clear)))
+        })
+    };
+    [1.0, 0.75, 0.5, 0.25]
+        .into_iter()
+        .flat_map(|f| {
+            [
+                toward * f,
+                Vec2::new(toward.x * f, 0.0),
+                Vec2::new(0.0, toward.y * f),
+            ]
+        })
+        .find(|by| fits(*by))
+}
+
 /// The lower left corner that centres `block` in the drawing area, when it
 /// is free there.
 fn centred(sheet: &Sheet, taken: &[Aabb], block: &Aabb) -> Option<Point2> {
@@ -655,6 +689,38 @@ mod tests {
 
     fn origin(out: &[Placed], id: &str) -> Point2 {
         out.iter().find(|p| p.view.id == id).unwrap().origin
+    }
+
+    /// A sheet's views laid from the top left are moved as one toward the
+    /// middle of the area (#358): the whole way where they fit, clear of
+    /// the title block; part of the way where the whole would meet it.
+    #[test]
+    fn a_composed_sheet_is_moved_toward_the_middle_clear_of_the_title_block() {
+        let views = [
+            view("plan", Role::Free, 120.0, 50.0),
+            view("aa", Role::Free, 120.0, 40.0),
+            view("bb", Role::Free, 50.0, 40.0),
+        ];
+        let sheet = a3(Angle::First);
+        let out = place(&sheet, &[], &views).unwrap();
+        let boxes: Vec<Aabb> = out.iter().map(Placed::bounds).collect();
+        let by = centring(&sheet, &boxes).unwrap();
+        let moved: Vec<Aabb> = boxes.iter().map(|b| shifted(b, by)).collect();
+        let group = moved.iter().copied().reduce(|a, b| a.union(&b)).unwrap();
+        let middle = |b: &Aabb| b.min() + size(b) * 0.5;
+        let off = middle(&group) - middle(&sheet.area);
+        assert!(off.x.abs() < 1.0 && off.y.abs() < 1.0, "{off:?}");
+        for b in &moved {
+            assert!(within(&sheet.area, b) && !overlap(b, &sheet.obstacles[0]));
+        }
+        // Centred already: no move.
+        assert_eq!(centring(&sheet, &moved), None);
+        // A block as wide as the area cannot pass the title block at the
+        // bottom: it goes only as far as it clears it.
+        let wide = [Aabb::from_points(p(20.0, 230.0), p(410.0, 287.0))];
+        let by = centring(&sheet, &wide).unwrap();
+        let moved = shifted(&wide[0], by);
+        assert!(by.y < 0.0 && moved.min().y >= 42.0 + 5.0 - 1e-9, "{by:?}");
     }
 
     #[test]

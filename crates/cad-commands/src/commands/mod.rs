@@ -33,6 +33,7 @@ mod boundary;
 #[path = "break_.rs"]
 mod break_command;
 mod bsection;
+mod centerviews;
 mod chprop;
 mod circle;
 mod clipboard;
@@ -138,6 +139,7 @@ pub(crate) use bomtable::{BalloonCommand, BomTableCommand};
 pub(crate) use boundary::BoundaryCommand;
 pub(crate) use break_command::BreakCommand;
 pub(crate) use bsection::BuildingSectionCommand;
+pub(crate) use centerviews::CenterViewsCommand;
 pub(crate) use chprop::ChpropCommand;
 pub(crate) use circle::CircleCommand;
 pub(crate) use clipboard::{Clipboard, CopyClipCommand, PasteClipCommand};

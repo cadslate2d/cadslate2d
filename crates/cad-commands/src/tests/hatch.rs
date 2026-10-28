@@ -77,7 +77,8 @@ fn debug_loops() {
 /// Parcels side by side inside the site that holds them, as an urban
 /// sheet drew them (#358): a parcel's hatch is that parcel alone. The site
 /// and the parcel beside only share its corners and sides; they are not
-/// islands of it. A plot inside the parcel, touching its side, is.
+/// islands of it. A plot inside the parcel, touching its side, is left
+/// out of it.
 #[test]
 fn a_loop_that_only_shares_a_side_or_a_corner_is_not_an_island() {
     let rectangle = |x0: f64, y0: f64, x1: f64, y1: f64| -> Entity {
@@ -94,12 +95,45 @@ fn a_loop_that_only_shares_a_side_or_a_corner_is_not_an_island() {
     let [hatch] = all.as_slice() else {
         panic!("one hatch: {:?}", h.log());
     };
-    assert_eq!(hatch.loops.len(), 2, "the parcel and the plot inside it");
+    // The parcel less the plot inside it — as a hole, or cut from its
+    // outline where the plot touches its side: the same region.
+    assert!(hatch.contains(p(20.0, 50.0)) && !hatch.contains(p(5.0, 110.0)));
     assert!(
         (hatch.area() - (38.0 * 140.0 - 200.0)).abs() < 1e-6,
         "{}",
         hatch.area()
     );
+}
+
+/// A block's outline divided into parcels by lines from its top to its
+/// foot, as an urban sheet drew it (#358): each parcel's hatch is that
+/// parcel, found among where the lines cross, not the whole block.
+#[test]
+fn a_hatch_in_a_parcel_divided_by_lines_fills_that_parcel() {
+    let mut entities: Vec<Entity> = vec![
+        PolylineEntity::new(
+            vec![p(0.0, 0.0), p(190.0, 0.0), p(190.0, 140.0), p(0.0, 140.0)],
+            true,
+        )
+        .into(),
+    ];
+    for x in [38.0, 76.0, 114.0, 152.0] {
+        entities.push(LineEntity::new(p(x, 0.0), p(x, 140.0)).into());
+    }
+    let mut h = Harness::with_entities(entities);
+    for x in [19.0, 57.0, 95.0, 133.0, 171.0] {
+        h.enter_all(&["HATCH", &format!("{x},70")]);
+    }
+    let all = hatches(&h);
+    assert_eq!(all.len(), 5, "{:?}", h.log());
+    for (hatch, x) in all.iter().zip([19.0, 57.0, 95.0, 133.0, 171.0]) {
+        assert!(
+            (hatch.area() - 38.0 * 140.0).abs() < 1e-6,
+            "{}",
+            hatch.area()
+        );
+        assert!(hatch.contains(p(x, 70.0)) && !hatch.contains(p(x + 38.0, 70.0)));
+    }
 }
 
 #[test]
