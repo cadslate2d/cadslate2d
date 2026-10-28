@@ -1402,6 +1402,38 @@ fn a_layer_is_given_its_lineweight_and_the_sheet_layers_theirs() {
     assert_eq!(weight("NOTES"), Hundredths(25));
 }
 
+/// A view is staged clear of the sheet (#358): an A0 sheet at 1:1000 is
+/// over a million millimetres wide, and its border and title block reached
+/// into a view staged a million units away, cutting the hatch of a parcel
+/// there into a strip.
+#[test]
+fn a_view_on_a_large_sheet_is_drawn_clear_of_the_sheet_itself() {
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    h.session
+        .run_intent(&document(
+            r#"{"op": "title_block", "paper": "A0", "scale": 1000, "title": "U01", "at": [0, 0]},
+               {"op": "view", "id": "plan", "placed": "free", "looking": "from_above", "operations": [
+                   {"op": "rectangle", "corner": [0, 0], "opposite": [190000, 140000]},
+                   {"op": "segments", "segments": [[[38000, 0], [38000, 140000]], [[152000, 0], [152000, 140000]]]},
+                   {"op": "hatch", "inside": [171000, 20000], "pattern": "ANSI31", "scale": 1000}]}"#,
+        ))
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", h.log()));
+    let hatch = h
+        .entities()
+        .into_iter()
+        .find_map(|e| match e {
+            Entity::Hatch(hatch) => Some(hatch),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        (hatch.area() - 38000.0 * 140000.0).abs() < 1.0,
+        "{}",
+        hatch.area()
+    );
+}
+
 /// Separate segments (version 23, #358): a row of parcel boundaries drawn
 /// as pairs, each a line of its own — no line from one boundary's top to
 /// the next one's foot, which a `line` through the same points draws.

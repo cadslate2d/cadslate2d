@@ -168,7 +168,20 @@ impl Boundaries {
             .collect();
         let mut edges: Vec<Segment> = Vec::new();
         for entity in &shown {
-            if entity.is_unbounded() || matches!(entity, Entity::Text(_) | Entity::MText(_)) {
+            // What bounds a region is geometry: not a text, a dimension, a
+            // leader, a hatch already drawn — its pattern lines would cut
+            // the next one into strips — or what has no end.
+            let geometry = matches!(
+                entity,
+                Entity::Line(_)
+                    | Entity::Circle(_)
+                    | Entity::Arc(_)
+                    | Entity::Ellipse(_)
+                    | Entity::Spline(_)
+                    | Entity::Polyline(_)
+                    | Entity::BlockRef(_)
+            );
+            if !geometry {
                 continue;
             }
             for primitive in entity.primitives(tables) {

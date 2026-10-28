@@ -121,8 +121,11 @@ fn a_hatch_in_a_parcel_divided_by_lines_fills_that_parcel() {
         entities.push(LineEntity::new(p(x, 0.0), p(x, 140.0)).into());
     }
     let mut h = Harness::with_entities(entities);
+    // A dimension across the parcels does not cut them; nor does the hatch
+    // of the parcel beside, its pattern lines and all.
+    h.enter_all(&["DIMLINEAR", "0,0", "190,0", "95,70"]);
     for x in [19.0, 57.0, 95.0, 133.0, 171.0] {
-        h.enter_all(&["HATCH", &format!("{x},70")]);
+        h.enter_all(&["HATCH", "P", "ANSI31", &format!("{x},70")]);
     }
     let all = hatches(&h);
     assert_eq!(all.len(), 5, "{:?}", h.log());

@@ -99,6 +99,9 @@ pub struct Ran {
 /// view's size, in drawing units.
 const STAGING: f64 = 1.0e6;
 
+/// Past the widest sheet at 1:1, in millimetres: an A0's 1189 and room.
+const SHEET_REACH: f64 = 2500.0;
+
 /// Where an operation draws: moved by `offset` when it is a view's, and
 /// where each view of the document was drawn.
 struct Place<'a> {
@@ -122,13 +125,31 @@ impl Session {
         // Each view drawn in a place of its own, far from the others', so
         // a view's operations — a hatch's region, a trim's edges, a snap —
         // meet only its own objects before VIEWFRAME places them (#358).
+        // Clear of the sheet too: a title block at 1:N is that many times
+        // its paper, and an A0 sheet at 1:1000 reached into the first view
+        // staged a million units away, its border and table cutting the
+        // hatches of the parcels there. Each view a step past what the
+        // drawing holds, the step past the largest sheet the document draws.
+        let largest_sheet = intent
+            .operations
+            .iter()
+            .filter_map(|op| match op {
+                cad_intent::Operation::TitleBlock { scale: n, .. } => Some(n.unwrap_or(1.0)),
+                _ => None,
+            })
+            .fold(1.0_f64, f64::max);
+        let step = STAGING.max(SHEET_REACH * largest_sheet * scale);
+        let past = self
+            .drawing()
+            .extents()
+            .map_or(0.0, |extents| extents.max().x.max(0.0));
         let mut staging: Vec<(String, Vec2)> = Vec::new();
         for compiled in &compiled_all {
             if let Some(view) = &compiled.view
                 && !staging.iter().any(|(id, _)| id == view)
             {
                 let k = staging.len() as f64 + 1.0;
-                staging.push((view.clone(), Vec2::new(STAGING * k, 0.0)));
+                staging.push((view.clone(), Vec2::new(past + step * k, 0.0)));
             }
         }
         for compiled in compiled_all {
