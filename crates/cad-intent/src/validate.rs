@@ -162,18 +162,44 @@ pub(crate) fn validate(intent: &Intent) -> Result<(), IntentError> {
             expected: VERSION,
         });
     }
-    if intent.operations.len() > limits::OPERATIONS {
+    // A view's operations count with the rest.
+    let count: usize = intent
+        .operations
+        .iter()
+        .map(|operation| match operation {
+            Operation::View { operations, .. } => 1 + operations.len(),
+            _ => 1,
+        })
+        .sum();
+    if count > limits::OPERATIONS {
         return Err(IntentError::TooManyOperations {
-            count: intent.operations.len(),
+            count,
             limit: limits::OPERATIONS,
         });
     }
+    let mut views: Vec<&str> = Vec::new();
     for (index, operation) in intent.operations.iter().enumerate() {
         let check = Check {
             operation: index,
             op: operation.name(),
         };
         check.operation(operation)?;
+        if let Operation::View { id, operations, .. } = operation {
+            if views.contains(&id.as_str()) {
+                return Err(check.refuse("id", Reason::Repeated));
+            }
+            views.push(id);
+            for inner in operations {
+                if matches!(inner, Operation::View { .. }) {
+                    return Err(check.refuse("operations", Reason::Unwanted));
+                }
+                Check {
+                    operation: index,
+                    op: inner.name(),
+                }
+                .operation(inner)?;
+            }
+        }
     }
     Ok(())
 }
@@ -355,6 +381,49 @@ impl Check {
                 self.points("points", points, if *closed { 3 } else { 2 })
             }
             Operation::Spline { points } => self.points("points", points, 2),
+            Operation::View {
+                id,
+                title,
+                placed,
+                of,
+                looking,
+                operations,
+            } => {
+                self.name("id", id)?;
+                if !id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                    || id.len() > 40
+                {
+                    return Err(self.refuse("id", Reason::BadName));
+                }
+                if !title.is_empty() {
+                    self.text("title", title)?;
+                }
+                match placed {
+                    crate::ViewPlacement::Projected => {
+                        match of {
+                            Some(of) => self.name("of", of)?,
+                            None => return Err(self.refuse("of", Reason::Missing)),
+                        }
+                        if looking.is_none() {
+                            return Err(self.refuse("looking", Reason::Missing));
+                        }
+                    }
+                    _ => {
+                        if of.is_some() {
+                            return Err(self.refuse("of", Reason::Unwanted));
+                        }
+                        if looking.is_some() {
+                            return Err(self.refuse("looking", Reason::Unwanted));
+                        }
+                    }
+                }
+                if operations.is_empty() {
+                    return Err(self.refuse("operations", Reason::TooFew(1)));
+                }
+                Ok(())
+            }
             Operation::Hatch {
                 inside,
                 targets,

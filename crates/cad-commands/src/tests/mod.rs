@@ -87,6 +87,7 @@ mod tracking;
 mod transform;
 mod units;
 mod view;
+mod viewframe;
 mod viewport;
 mod wblock;
 mod zoom;

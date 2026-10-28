@@ -1,0 +1,231 @@
+//! VIEWFRAME (ADR-0041, #351): views placed on a sheet by what they hold,
+//! projected views aligned with their parent, one undo, never crowded.
+
+use cad_core::{EntityId, Point2};
+use cad_geometry::composition::{Looking, Role};
+
+use crate::compose::{ViewRecord, sheet_of, views_on};
+use crate::testing::Harness;
+
+/// An A3 landscape sheet at 1:1, third angle, its corner at the origin.
+fn sheet() -> Harness {
+    let mut h = Harness::new();
+    h.enter_all(&[
+        "UNITS",
+        "mm",
+        "TITLEBLOCK",
+        "A3",
+        "Landscape",
+        "1",
+        "PART",
+        "",
+        "",
+        "",
+        "",
+        "Third",
+        "0,0",
+    ]);
+    h
+}
+
+/// A rectangle drawn at its view's own origin; its id.
+fn drawn(h: &mut Harness, w: f64, ht: f64) -> EntityId {
+    h.enter_all(&["RECTANG", "0,0", &format!("{w},{ht}")]);
+    *h.ids().last().unwrap()
+}
+
+fn view(h: &Harness, id: &str) -> ViewRecord {
+    let sheet = sheet_of(h.session.drawing()).unwrap();
+    views_on(h.session.drawing(), &sheet.group)
+        .into_iter()
+        .find(|v| v.id == id)
+        .unwrap_or_else(|| panic!("no view {id}: {:?}", h.log()))
+}
+
+#[test]
+fn a_front_and_its_left_view_are_placed_in_line_as_one_undo() {
+    let mut h = sheet();
+    let front = drawn(&mut h, 100.0, 60.0);
+    let left = drawn(&mut h, 40.0, 60.0);
+    h.session.select_only(&[front]);
+    h.enter_all(&["VIEWFRAME", "0,0", "front", "", ""]);
+    assert_eq!(h.prompt(), "Another view? [Yes/No] <No>:");
+    h.enter("Yes");
+    h.session.select_only(&[left]);
+    h.enter_all(&[
+        "",
+        "0,0",
+        "left",
+        "LEFT SIDE",
+        "PRojected",
+        "front",
+        "Left",
+        "No",
+    ]);
+    assert_eq!(
+        h.log().last().unwrap(),
+        "2 views placed on TITLE-1: front, left."
+    );
+
+    let (f, l) = (view(&h, "front"), view(&h, "left"));
+    assert_eq!(f.role, Role::Principal);
+    assert_eq!(
+        l.role,
+        Role::Projected {
+            of: "front".into(),
+            looking: Looking::Left
+        }
+    );
+    // In line, by their origins; third angle: the left view on the left.
+    assert_eq!(l.origin.y, f.origin.y);
+    assert!(l.origin.x < f.origin.x);
+    // The objects moved with their views, and the titles are drawn.
+    let drawing = h.session.drawing();
+    let corner = |id: EntityId| match drawing.entity(id) {
+        Some(cad_document::Entity::Polyline(p)) => p
+            .vertices
+            .iter()
+            .fold(Point2::new(f64::MAX, f64::MAX), |a, v| {
+                Point2::new(a.x.min(v.x), a.y.min(v.y))
+            }),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(corner(front), f.origin);
+    assert_eq!(corner(left), l.origin);
+    assert!(
+        h.entities()
+            .iter()
+            .any(|e| matches!(e, cad_document::Entity::Text(t) if t.content == "LEFT SIDE"))
+    );
+    assert!(
+        h.entities()
+            .iter()
+            .any(|e| matches!(e, cad_document::Entity::Text(t) if t.content == "FRONT"))
+    );
+    // Inside the border, clear of the block.
+    let frame = sheet_of(drawing).unwrap().frame;
+    for v in [&f, &l] {
+        let b = cad_core::Aabb::from_points(
+            v.origin + (v.extent.min() - Point2::ORIGIN),
+            v.origin + (v.extent.max() - Point2::ORIGIN),
+        );
+        assert!(b.min().x >= frame.border.min().x && b.max().x <= frame.border.max().x);
+        assert!(b.min().y >= frame.border.min().y && b.max().y <= frame.border.max().y);
+    }
+
+    // One undo: back where they were drawn, no views.
+    h.enter("U");
+    assert_eq!(corner_of(&h, front), Point2::ORIGIN);
+    assert!(views_on(h.session.drawing(), "TITLE-1").is_empty());
+}
+
+fn corner_of(h: &Harness, id: EntityId) -> Point2 {
+    match h.session.drawing().entity(id) {
+        Some(cad_document::Entity::Polyline(p)) => p
+            .vertices
+            .iter()
+            .fold(Point2::new(f64::MAX, f64::MAX), |a, v| {
+                Point2::new(a.x.min(v.x), a.y.min(v.y))
+            }),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_view_added_later_takes_its_slot_and_moves_nothing_placed() {
+    let mut h = sheet();
+    let front = drawn(&mut h, 100.0, 60.0);
+    h.session.select_only(&[front]);
+    h.enter_all(&["VIEWFRAME", "0,0", "front", "", "", "No"]);
+    let before = view(&h, "front");
+    let top = drawn(&mut h, 100.0, 40.0);
+    h.session.select_only(&[top]);
+    h.enter_all(&["VIEWFRAME", "0,0", "top", "", "", "", "Above", "No"]);
+    let (f, t) = (view(&h, "front"), view(&h, "top"));
+    assert_eq!(f, before, "the front did not move");
+    assert_eq!(t.origin.x, f.origin.x, "a column shares widths");
+    assert!(t.origin.y > f.origin.y);
+}
+
+#[test]
+fn what_cannot_be_placed_is_refused_and_nothing_moves() {
+    // No sheet.
+    let mut h = Harness::new();
+    let id = drawn(&mut h, 10.0, 10.0);
+    h.session.select_only(&[id]);
+    h.enter("VIEWFRAME");
+    assert_eq!(
+        h.log().last().unwrap(),
+        "There is no sheet to place views on: draw one with TITLEBLOCK first."
+    );
+
+    // Too large for the sheet: said in paper millimetres; nothing moved.
+    let mut h = sheet();
+    let huge = drawn(&mut h, 900.0, 60.0);
+    let revision = h.session.drawing().revision();
+    h.session.select_only(&[huge]);
+    h.enter_all(&["VIEWFRAME", "0,0", "front", "", "", "No"]);
+    let said = h.log().last().unwrap().clone();
+    assert!(said.starts_with("View front needs 900 ×"), "{said}");
+    assert_eq!(h.session.drawing().revision(), revision);
+
+    // A second view projected into a taken slot.
+    let mut h = sheet();
+    let a = drawn(&mut h, 50.0, 50.0);
+    let b = drawn(&mut h, 20.0, 50.0);
+    let c = drawn(&mut h, 20.0, 50.0);
+    h.session.select_only(&[a]);
+    h.enter_all(&["VIEWFRAME", "0,0", "front", "", "", "Yes"]);
+    h.session.select_only(&[b]);
+    h.enter_all(&["", "0,0", "l1", "", "PRojected", "front", "Left", "Yes"]);
+    h.session.select_only(&[c]);
+    h.enter_all(&["", "0,0", "l2", "", "PRojected", "front", "Left", "No"]);
+    assert!(
+        h.log()
+            .last()
+            .unwrap()
+            .contains("would take the place of another view of front from the left"),
+        "{:?}",
+        h.log().last()
+    );
+    assert!(views_on(h.session.drawing(), "TITLE-1").is_empty());
+}
+
+/// What a view's dimensions reach is measured with it (ADR-0041 §2): a
+/// front view dimensioned well below its geometry is placed with its
+/// dimension clear of the view beneath it, and the box it was placed by is
+/// where its objects are.
+#[test]
+fn a_view_is_placed_by_what_it_draws_dimensions_and_all() {
+    let mut h = sheet();
+    h.enter_all(&["RECTANG", "0,0", "100,60"]);
+    h.enter_all(&["DIMLINEAR", "0,0", "100,0", "50,-40"]);
+    let front: Vec<EntityId> = h.ids();
+    let front: Vec<EntityId> = front[front.len() - 2..].to_vec();
+    let below = drawn(&mut h, 100.0, 30.0);
+    h.session.select_only(&front);
+    h.enter_all(&["VIEWFRAME", "0,0", "front", "", "", "Yes"]);
+    h.session.select_only(&[below]);
+    h.enter_all(&["", "0,0", "bottom", "", "PRojected", "front", "Below", "No"]);
+    let (f, b) = (view(&h, "front"), view(&h, "bottom"));
+    // The front's box reaches its dimension, 40 below its geometry and more.
+    assert!(f.extent.min().y <= -40.0, "{:?}", f.extent);
+    let drawing = h.session.drawing();
+    let tables = drawing.tables();
+    let dimension = drawing.entity(front[1]).unwrap().bounds(tables);
+    let bottom_top = b.origin.y + b.extent.max().y;
+    assert!(
+        dimension.min().y >= bottom_top + 10.0 - 1e-9,
+        "{dimension:?} over {bottom_top}"
+    );
+    // What was measured is where it is: the front's objects inside its box.
+    let placed = cad_core::Aabb::from_points(
+        f.origin + (f.extent.min() - Point2::ORIGIN),
+        f.origin + (f.extent.max() - Point2::ORIGIN),
+    );
+    for id in &front {
+        let b = drawing.entity(*id).unwrap().bounds(tables);
+        assert!(b.min().x >= placed.min().x - 1e-9 && b.max().x <= placed.max().x + 1e-9);
+        assert!(b.min().y >= placed.min().y - 1e-9 && b.max().y <= placed.max().y + 1e-9);
+    }
+}

@@ -45,6 +45,9 @@ pub enum Step {
     /// Pick an object where the command asks for one, at its point nearest
     /// `near`.
     Pick(Pick),
+    /// Make what the operations of the view `id` made the selection (#351):
+    /// before the command starts when it is the first step.
+    SelectView(String),
 }
 
 /// An operation compiled: the command to start, then the steps.
@@ -57,11 +60,14 @@ pub struct Compiled {
     /// The registered command, by its name.
     pub command: &'static str,
     pub steps: Vec<Step>,
+    /// The view whose operations this is one of, if any (#351).
+    pub view: Option<String>,
 }
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 49] = [
+pub const COMMANDS: [&str; 50] = [
+    "VIEWFRAME",
     "LINE",
     "PLINE",
     "SPLINE",
@@ -115,20 +121,105 @@ pub const COMMANDS: [&str; 49] = [
 
 /// Compiles every operation of a validated document, in order.
 pub fn compile(intent: &Intent) -> Vec<Compiled> {
-    intent
-        .operations
-        .iter()
-        .enumerate()
-        .map(|(index, operation)| {
-            let (command, steps) = steps_of(operation);
-            Compiled {
+    let operations = &intent.operations;
+    let mut out = Vec::new();
+    let mut index = 0;
+    while index < operations.len() {
+        if !matches!(operations[index], Operation::View { .. }) {
+            let (command, steps) = steps_of(&operations[index]);
+            out.push(Compiled {
                 operation: index,
-                op: operation.name(),
+                op: operations[index].name(),
                 command,
                 steps,
+                view: None,
+            });
+            index += 1;
+            continue;
+        }
+        // A run of views: each one's operations, drawn in its own
+        // coordinates, then one VIEWFRAME placing them together (ADR-0041).
+        let first = index;
+        while index < operations.len() && matches!(operations[index], Operation::View { .. }) {
+            index += 1;
+        }
+        let views = &operations[first..index];
+        for (offset, view) in views.iter().enumerate() {
+            let Operation::View { id, operations, .. } = view else {
+                unreachable!("a run of views")
+            };
+            for inner in operations {
+                let (command, steps) = steps_of(inner);
+                out.push(Compiled {
+                    operation: first + offset,
+                    op: inner.name(),
+                    command,
+                    steps,
+                    view: Some(id.clone()),
+                });
             }
-        })
-        .collect()
+        }
+        out.push(Compiled {
+            operation: first,
+            op: "view",
+            command: "VIEWFRAME",
+            steps: viewframe_steps(views),
+            view: None,
+        });
+    }
+    out
+}
+
+/// VIEWFRAME's answers for a run of views: each view's objects, its origin
+/// at the drawing's origin, its id, title, and placement; another view, or
+/// done.
+fn viewframe_steps(views: &[Operation]) -> Vec<Step> {
+    let mut steps = Vec::new();
+    for (k, view) in views.iter().enumerate() {
+        let Operation::View {
+            id,
+            title,
+            placed,
+            of,
+            looking,
+            ..
+        } = view
+        else {
+            unreachable!("a run of views")
+        };
+        if k > 0 {
+            steps.push(keyword("Yes"));
+        }
+        steps.push(Step::SelectView(id.clone()));
+        if k > 0 {
+            // The selection made, the objects prompt is done.
+            steps.push(enter());
+        }
+        steps.push(at([0.0, 0.0]));
+        steps.push(answer(Answer::Text(id.clone())));
+        steps.push(if title.trim().is_empty() {
+            enter()
+        } else {
+            answer(Answer::Text(title.clone()))
+        });
+        match placed {
+            crate::ViewPlacement::Principal => steps.push(keyword("Principal")),
+            crate::ViewPlacement::Free => steps.push(keyword("Free")),
+            crate::ViewPlacement::Projected => {
+                steps.push(keyword("Projected"));
+                steps.push(answer(Answer::Text(of.clone().unwrap_or_default())));
+                steps.push(keyword(match looking {
+                    Some(crate::ViewLooking::FromLeft) => "Left",
+                    Some(crate::ViewLooking::FromRight) => "Right",
+                    Some(crate::ViewLooking::FromAbove) => "Above",
+                    Some(crate::ViewLooking::FromBelow) => "Below",
+                    Some(crate::ViewLooking::FromBehind) | None => "Rear",
+                }));
+            }
+        }
+    }
+    steps.push(keyword("No"));
+    steps
 }
 
 fn answer(answer: Answer) -> Step {
@@ -164,6 +255,8 @@ fn pick(pick: &Pick) -> Step {
 
 fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
     match operation {
+        // Compiled with the run of views it is in (`compile`).
+        Operation::View { .. } => ("VIEWFRAME", Vec::new()),
         Operation::Line { points } => {
             let mut steps: Vec<Step> = points.iter().map(|p| at(*p)).collect();
             steps.push(enter());

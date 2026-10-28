@@ -83,6 +83,27 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         (points(3), any::<bool>())
             .prop_map(|(points, closed)| Operation::Polyline { points, closed }),
         points(2).prop_map(|points| Operation::Spline { points }),
+        (corners(), prop_oneof![Just(0u8), Just(1), Just(2)]).prop_map(
+            |((corner, opposite), kind)| {
+                let (placed, of, looking) = match kind {
+                    0 => (crate::ViewPlacement::Principal, None, None),
+                    1 => (
+                        crate::ViewPlacement::Projected,
+                        Some("front".to_owned()),
+                        Some(crate::ViewLooking::FromLeft),
+                    ),
+                    _ => (crate::ViewPlacement::Free, None, None),
+                };
+                Operation::View {
+                    id: format!("v{kind}"),
+                    title: String::new(),
+                    placed,
+                    of,
+                    looking,
+                    operations: vec![Operation::Rectangle { corner, opposite }],
+                }
+            }
+        ),
         (
             prop_oneof![point().prop_map(Ok), targets().prop_map(Err)],
             prop_oneof![Just("SOLID"), Just("ANSI31"), Just("EARTH")],
@@ -754,9 +775,17 @@ pub fn intent(most: usize) -> impl Strategy<Value = Intent> {
         ]),
         proptest::collection::vec(operation(), 0..=most),
     )
-        .prop_map(|(units, operations)| Intent {
-            version: VERSION,
-            units,
-            operations,
+        .prop_map(|(units, mut operations)| {
+            // Each view its own id.
+            for (index, operation) in operations.iter_mut().enumerate() {
+                if let Operation::View { id, .. } = operation {
+                    *id = format!("{id}-{index}");
+                }
+            }
+            Intent {
+                version: VERSION,
+                units,
+                operations,
+            }
         })
 }

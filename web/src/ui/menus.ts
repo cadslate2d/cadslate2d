@@ -122,6 +122,7 @@ const INSERT: Menu = {
     cascade("&Layout", [command("&New Layout", { command: "LAYOUT", steps: ["N"] })]),
     // A sheet's border and title block (#340).
     command("&Title Block...", "TITLEBLOCK"),
+    command("&View Frame...", "VIEWFRAME"),
   ],
 };
 

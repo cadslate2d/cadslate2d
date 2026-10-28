@@ -11,6 +11,7 @@ pub mod aids;
 pub mod bsection;
 mod command;
 mod commands;
+pub mod compose;
 pub mod constraint_display;
 mod dirty;
 pub mod elevation;

@@ -9,7 +9,7 @@
 //! and the projection's symbol across the bottom, each field's name small
 //! in its box's corner.
 
-use cad_core::{Point2, Vec2};
+use cad_core::{Aabb, Point2, Vec2};
 use cad_document::{CircleEntity, Entity, LineEntity, PolylineEntity, TextEntity};
 use serde_json::json;
 
@@ -51,6 +51,51 @@ pub fn sheet(paper: Paper, landscape: bool) -> (f64, f64) {
 
 fn rectangle(a: Point2, b: Point2) -> Vec<Point2> {
     vec![a, Point2::new(b.x, a.y), b, Point2::new(a.x, b.y)]
+}
+
+/// A sheet a title block drew, read back from its group's description:
+/// the area inside its border and the block in its corner, in drawing
+/// units, its projection, and how many drawing units a paper millimetre is
+/// (ADR-0041).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SheetFrame {
+    pub border: Aabb,
+    pub block: Aabb,
+    pub first_angle: bool,
+    pub units_per_mm: f64,
+}
+
+impl SheetFrame {
+    /// The frame of a title block drawn with these, `at` its lower left.
+    pub fn of(paper: Paper, landscape: bool, at: Point2, scale: f64, first_angle: bool) -> Self {
+        let (w, h) = sheet(paper, landscape);
+        let place = |x: f64, y: f64| at + Vec2::new(x * scale, y * scale);
+        Self {
+            border: Aabb::from_points(place(LEFT_MARGIN, MARGIN), place(w - MARGIN, h - MARGIN)),
+            block: Aabb::from_points(
+                place(w - MARGIN - BLOCK_WIDTH, MARGIN),
+                place(w - MARGIN, MARGIN + BLOCK_HEIGHT),
+            ),
+            first_angle,
+            units_per_mm: scale,
+        }
+    }
+
+    /// Read from a title block group's description; `None` when it is not one.
+    pub fn read(description: &str) -> Option<Self> {
+        let value: serde_json::Value = serde_json::from_str(description).ok()?;
+        let paper = Paper::ALL
+            .into_iter()
+            .find(|p| Some(p.name()) == value["paper"].as_str())?;
+        let at = Point2::new(value["at"][0].as_f64()?, value["at"][1].as_f64()?);
+        Some(Self::of(
+            paper,
+            value["landscape"].as_bool()?,
+            at,
+            value["units_per_mm"].as_f64()?,
+            value["projection"].as_str()? == "first",
+        ))
+    }
 }
 
 /// The sheet's border and block as entities, in paper millimetres times

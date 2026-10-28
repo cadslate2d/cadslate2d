@@ -1057,3 +1057,76 @@ fn a_hatch_fills_its_boundary_with_its_pattern() {
     }
     assert_eq!(h.prompt(), "Command:");
 }
+
+/// A composed sheet by intent (#351, ADR-0041): each view's operations
+/// drawn in its own coordinates, then placed together — the same sheet as
+/// typing them and VIEWFRAME makes.
+#[test]
+fn views_of_a_sheet_are_drawn_in_their_own_coordinates_and_placed_together() {
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    h.session
+        .run_intent(&document(
+            r#"
+        {"op": "title_block", "paper": "A3", "scale": 1, "title": "BLOCK", "projection": "third", "at": [0, 0]},
+        {"op": "view", "id": "front", "placed": "principal", "operations": [
+            {"op": "rectangle", "corner": [0, 0], "opposite": [100, 60]}]},
+        {"op": "view", "id": "left", "title": "LEFT SIDE", "placed": "projected", "of": "front", "looking": "from_left", "operations": [
+            {"op": "rectangle", "corner": [-40, 0], "opposite": [0, 60]}]},
+        {"op": "view", "id": "top", "placed": "projected", "of": "front", "looking": "from_above", "operations": [
+            {"op": "rectangle", "corner": [0, 0], "opposite": [100, 40]}]}
+    "#,
+        ))
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", h.log()));
+    let sheet = crate::compose::sheet_of(h.session.drawing()).unwrap();
+    let views = crate::compose::views_on(h.session.drawing(), &sheet.group);
+    let at = |id: &str| views.iter().find(|v| v.id == id).unwrap().origin;
+    assert_eq!(views.len(), 3);
+    assert_eq!(at("left").y, at("front").y);
+    assert_eq!(at("top").x, at("front").x);
+    assert!(at("left").x < at("front").x && at("top").y > at("front").y);
+
+    // Typed: the same.
+    let mut t = Harness::new();
+    t.enter_all(&[
+        "UNITS",
+        "mm",
+        "TITLEBLOCK",
+        "A3",
+        "Landscape",
+        "1",
+        "BLOCK",
+        "",
+        "",
+        "",
+        "",
+        "Third",
+        "0,0",
+    ]);
+    t.enter_all(&["RECTANG", "0,0", "100,60"]);
+    let front = *t.ids().last().unwrap();
+    t.enter_all(&["RECTANG", "-40,0", "0,60"]);
+    let left = *t.ids().last().unwrap();
+    t.enter_all(&["RECTANG", "0,0", "100,40"]);
+    let top = *t.ids().last().unwrap();
+    t.session.select_only(&[front]);
+    t.enter_all(&["VIEWFRAME", "0,0", "front", "", "Principal", "Yes"]);
+    t.session.select_only(&[left]);
+    t.enter_all(&[
+        "",
+        "0,0",
+        "left",
+        "LEFT SIDE",
+        "PRojected",
+        "front",
+        "Left",
+        "Yes",
+    ]);
+    t.session.select_only(&[top]);
+    t.enter_all(&["", "0,0", "top", "", "PRojected", "front", "Above", "No"]);
+    let typed = crate::compose::views_on(t.session.drawing(), "TITLE-1");
+    for view in &views {
+        let same = typed.iter().find(|v| v.id == view.id).unwrap();
+        assert_eq!(same.origin, view.origin, "{}", view.id);
+    }
+}

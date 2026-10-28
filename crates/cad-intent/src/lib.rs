@@ -27,7 +27,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 14;
+pub const VERSION: u32 = 15;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -39,8 +39,8 @@ pub const VERSION: u32 = 14;
 /// isometric operations (#336), version 12 `elevation` and a brief's
 /// `building` (#337); `building_section` (#338) came with it; version 13
 /// `part_views` (#339) and `title_block` (#340), version 14 `spline` and
-/// `hatch` (#345).
-pub const READS: [u32; 14] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+/// `hatch` (#345), version 15 `view` (#351, ADR-0041).
+pub const READS: [u32; 15] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -380,6 +380,24 @@ pub enum Operation {
         angle: f64,
         #[serde(default = "default_one")]
         scale: f64,
+    },
+    /// A view of a composed sheet (ADR-0041): its `operations` draw it in
+    /// its own coordinates, the object's reference point at the origin; the
+    /// program then places it on the sheet the last `title_block` drew,
+    /// aligned with its parent when `projected`, and titles it. Views given
+    /// one after another are placed together. A view holds no view.
+    View {
+        id: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        title: String,
+        placed: ViewPlacement,
+        /// The view a projected view is beside.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        of: Option<String>,
+        /// Where a projected view looks from.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        looking: Option<ViewLooking>,
+        operations: Vec<Operation>,
     },
     /// A closed rectangle from two opposite corners.
     Rectangle {
@@ -980,6 +998,31 @@ fn default_true() -> bool {
     true
 }
 
+/// How a view is placed on its sheet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ViewPlacement {
+    /// The front: the root of the projection, one per sheet.
+    Principal,
+    /// Beside the view `of`, looking from a side.
+    Projected,
+    /// Wherever there is room: an exploded view, a detail, a section.
+    Free,
+}
+
+/// Where a projected view looks at the object from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ViewLooking {
+    FromLeft,
+    FromRight,
+    FromAbove,
+    FromBelow,
+    FromBehind,
+}
+
 fn default_solid() -> String {
     "SOLID".to_owned()
 }
@@ -999,6 +1042,7 @@ impl Operation {
             Self::Line { .. } => "line",
             Self::Polyline { .. } => "polyline",
             Self::Spline { .. } => "spline",
+            Self::View { .. } => "view",
             Self::Hatch { .. } => "hatch",
             Self::Rectangle { .. } => "rectangle",
             Self::Circle { .. } => "circle",

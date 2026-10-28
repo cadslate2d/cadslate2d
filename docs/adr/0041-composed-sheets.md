@@ -234,6 +234,15 @@ The corpus level for composed sheets (#358) judges each case on four scores, and
 
 A beautiful sheet that fails any of them fails.
 
+## As built
+
+Recorded as each issue lands. Where the code chose among what the decision left open:
+- **#351.** The sheet is the title block, `title_block`, already in the IR: it keeps paper, scale, and projection, so there is no separate `sheet` operation.
+  - A view's drawing operations are its own `operations`, not an `in` field on every operation. The engine then gets a view's contents as one unit to measure, and sixty operations keep their shape.
+  - A run of consecutive views compiles to each view's operations, drawn at its own origin as typed, then one `VIEWFRAME` placing them together. `VIEWFRAME` is the command a drafter types too: one view or several, never moving what is placed.
+  - A principal view's block is centred in the drawing area where it fits, so views added later have room on every side.
+  - The two passes of §2 are this: run as typed at the view's origin, measure what was made, place it, and move it by a pure translation.
+
 ## Alternatives considered
 
 - **More review, no structure.** Let the model keep doing layout, and catch more of it. Rejected as the main path: each finding costs a revision call, and alignment is not something a review makes a model get right.

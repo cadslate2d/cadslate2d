@@ -91,6 +91,8 @@ pub struct Ran {
     pub changed: bool,
     /// The log lines the operation wrote, the echoes of its answers included.
     pub log: Vec<String>,
+    /// What it made.
+    pub made: Vec<EntityId>,
 }
 
 impl Session {
@@ -103,8 +105,17 @@ impl Session {
             self.drawing().unit(),
         );
         let mut ran = Vec::new();
+        // What each view's operations made, for its VIEWFRAME (#351).
+        let mut views: Vec<(String, Vec<EntityId>)> = Vec::new();
         for compiled in cad_intent::compile(intent) {
-            ran.push(self.run_compiled(&compiled, scale)?);
+            let done = self.run_compiled(&compiled, scale, &views)?;
+            if let Some(view) = &compiled.view {
+                match views.iter_mut().find(|(id, _)| id == view) {
+                    Some((_, made)) => made.extend(&done.made),
+                    None => views.push((view.clone(), done.made.clone())),
+                }
+            }
+            ran.push(done);
         }
         Ok(ran)
     }
@@ -112,7 +123,12 @@ impl Session {
     /// One operation: what it made is the selection afterwards, so the next
     /// operation's "selection" is it. A run that stops leaves no command
     /// in progress.
-    fn run_compiled(&mut self, compiled: &Compiled, scale: f64) -> Result<Ran, RunError> {
+    fn run_compiled(
+        &mut self,
+        compiled: &Compiled,
+        scale: f64,
+        views: &[(String, Vec<EntityId>)],
+    ) -> Result<Ran, RunError> {
         let operation = compiled.operation;
         let command = compiled.command;
         if !self.is_registered(command) {
@@ -126,7 +142,7 @@ impl Session {
         let log_from = self.log_total();
         let revision = self.drawing().revision();
         let first_new = self.drawing().next_entity_id();
-        let result = self.run_steps(compiled, scale);
+        let result = self.run_steps(compiled, scale, views);
         // The command's own words for what it refused: the last line it
         // wrote that is a sentence, not the echo of a prompt and answer.
         let reason = self
@@ -173,10 +189,29 @@ impl Session {
             command,
             changed,
             log: self.log_since(log_from),
+            made,
         })
     }
 
-    fn run_steps(&mut self, compiled: &Compiled, scale: f64) -> Result<(), RunError> {
+    fn run_steps(
+        &mut self,
+        compiled: &Compiled,
+        scale: f64,
+        views: &[(String, Vec<EntityId>)],
+    ) -> Result<(), RunError> {
+        // What a view's operations made, still there.
+        let view_made = |session: &Self, id: &str| -> Vec<EntityId> {
+            views
+                .iter()
+                .find(|(view, _)| view == id)
+                .map(|(_, made)| {
+                    made.iter()
+                        .copied()
+                        .filter(|e| session.drawing().entity(*e).is_some())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
         let operation = compiled.operation;
         let command = compiled.command;
         let mut steps = compiled.steps.iter().peekable();
@@ -189,6 +224,15 @@ impl Session {
                 self.select_targets(operation, targets)?;
                 steps.next();
                 self.selection().iter().collect()
+            }
+            Some(Step::SelectView(id)) => {
+                let made = view_made(self, id);
+                if made.is_empty() {
+                    return Err(RunError::NothingSelected { operation });
+                }
+                self.select_only(&made);
+                steps.next();
+                made
             }
             _ => {
                 self.clear_selection();
@@ -209,6 +253,13 @@ impl Session {
                 break;
             }
             match step {
+                Step::SelectView(id) => {
+                    let made = view_made(self, id);
+                    if made.is_empty() {
+                        return Err(RunError::NothingSelected { operation });
+                    }
+                    self.select_only(&made);
+                }
                 Step::Select(Targets::Selection(_)) if self.selection().is_empty() => {
                     if before.is_empty() {
                         return Err(RunError::NothingSelected { operation });

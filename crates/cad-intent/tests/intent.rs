@@ -18,6 +18,7 @@ fn answers(steps: &[Step]) -> Vec<String> {
             Step::Select(Targets::Selection(_)) => "select:selection".to_string(),
             Step::Select(Targets::Ids(ids)) => format!("select:{ids:?}"),
             Step::Pick(Pick { id, near }) => format!("pick:{id}:{near:?}"),
+            Step::SelectView(id) => format!("view:{id}"),
             Step::Answer { answer, when } => {
                 let text = match answer {
                     Answer::Point(p) => format!("{},{}", p.x, p.y),
@@ -412,9 +413,9 @@ fn what_is_refused_says_where_and_why() {
         IntentError::Json { .. }
     ));
     assert!(matches!(
-        parse(r#"{"version": 15, "operations": []}"#).unwrap_err(),
+        parse(r#"{"version": 16, "operations": []}"#).unwrap_err(),
         IntentError::Version {
-            found: 15,
+            found: 16,
             expected: VERSION
         }
     ));
@@ -458,7 +459,7 @@ fn what_is_refused_says_where_and_why() {
 fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../test-data/intent/schema-v14.json"
+        "/../../test-data/intent/schema-v15.json"
     );
     let generated = serde_json::to_string_pretty(&schema()).unwrap() + "\n";
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
@@ -470,7 +471,7 @@ fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
         "the schema changed: bump cad_intent::VERSION, re-record with UPDATE_SNAPSHOTS=1, and name the file after the new version"
     );
     assert!(generated.contains(r#""version""#));
-    assert_eq!(VERSION, 14);
+    assert_eq!(VERSION, 15);
 }
 
 proptest! {
@@ -482,9 +483,27 @@ proptest! {
         let back = parse(&text).unwrap();
         prop_assert_eq!(&back, &intent);
         let compiled = compile(&back);
-        prop_assert_eq!(compiled.len(), intent.operations.len());
-        for (index, c) in compiled.iter().enumerate() {
-            prop_assert_eq!(c.operation, index);
+        // Every operation compiles to one command, but a view: its own
+        // operations, and a run of views one VIEWFRAME (#351).
+        let mut wanted = 0;
+        let mut in_views = false;
+        for operation in &intent.operations {
+            match operation {
+                cad_intent::Operation::View { operations, .. } => {
+                    wanted += operations.len() + usize::from(!in_views);
+                    in_views = true;
+                }
+                _ => {
+                    wanted += 1;
+                    in_views = false;
+                }
+            }
+        }
+        prop_assert_eq!(compiled.len(), wanted);
+        let mut last = 0;
+        for c in &compiled {
+            prop_assert!(c.operation >= last || c.command == "VIEWFRAME");
+            last = last.max(c.operation);
             prop_assert!(COMMANDS.contains(&c.command));
             prop_assert!(!c.steps.is_empty());
         }
@@ -515,6 +534,6 @@ fn the_selection_word_and_an_intent_serialise_as_the_document_says() {
     };
     assert_eq!(
         serde_json::to_string(&intent).unwrap(),
-        r#"{"version":14,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
+        r#"{"version":15,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
     );
 }

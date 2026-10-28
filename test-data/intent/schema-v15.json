@@ -467,6 +467,56 @@
         },
         {
           "additionalProperties": false,
+          "description": "A view of a composed sheet (ADR-0041): its `operations` draw it in\nits own coordinates, the object's reference point at the origin; the\nprogram then places it on the sheet the last `title_block` drew,\naligned with its parent when `projected`, and titles it. Views given\none after another are placed together. A view holds no view.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "looking": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ViewLooking"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Where a projected view looks from."
+            },
+            "of": {
+              "description": "The view a projected view is beside.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "op": {
+              "const": "view",
+              "type": "string"
+            },
+            "operations": {
+              "items": {
+                "$ref": "#/$defs/Operation"
+              },
+              "type": "array"
+            },
+            "placed": {
+              "$ref": "#/$defs/ViewPlacement"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "id",
+            "placed",
+            "operations"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "A closed rectangle from two opposite corners.",
           "properties": {
             "corner": {
@@ -2674,6 +2724,37 @@
         "ft"
       ],
       "type": "string"
+    },
+    "ViewLooking": {
+      "description": "Where a projected view looks at the object from.",
+      "enum": [
+        "from_left",
+        "from_right",
+        "from_above",
+        "from_below",
+        "from_behind"
+      ],
+      "type": "string"
+    },
+    "ViewPlacement": {
+      "description": "How a view is placed on its sheet.",
+      "oneOf": [
+        {
+          "const": "principal",
+          "description": "The front: the root of the projection, one per sheet.",
+          "type": "string"
+        },
+        {
+          "const": "projected",
+          "description": "Beside the view `of`, looking from a side.",
+          "type": "string"
+        },
+        {
+          "const": "free",
+          "description": "Wherever there is room: an exploded view, a detail, a section.",
+          "type": "string"
+        }
+      ]
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
