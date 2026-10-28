@@ -8,6 +8,7 @@ mod array;
 mod attributes;
 mod block_commands;
 mod blocks;
+mod bom;
 mod boundary;
 #[path = "break_.rs"]
 mod break_command;

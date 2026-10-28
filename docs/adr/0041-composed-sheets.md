@@ -245,6 +245,9 @@ Recorded as each issue lands. Where the code chose among what the decision left 
 - **#353.** A section is a placement of `VIEWFRAME` (and `placed: "section"` with its `cut`, intent version 17), not a separate SECTIONMARK command. Its marker is drawn in the same transaction as the views: the cutting line on `SECTION-MARKS` in CENTER, an arrow and its letter at each end, a group `SECTION-A`.
   - A parent placed with its section is measured with its marker. A marker on a parent placed earlier is refused if it would run into another view.
   - The cut must cross a line, arc, or circle the parent draws, not its text or dimensions; its ends may lie outside.
+- **#354.** One operation, `bill_of_materials`, declares the parts and draws the table (`BOMTABLE`), placed as a free view whose group keeps the parts. That is simpler for the model than a `parts` declaration and a separate `table` view.
+  - `balloon` (`BALLOON`) names a part by number and gives its point and the balloon's place in a view's own coordinates. A new answer kind resolves them once the view is placed (intent version 18).
+  - A balloon is moved out along its leader until it clears the others.
 - **#352.** A free view's `ratio` (intent version 16) scales its geometry by k about its origin before it is measured. Text keeps its height and a hatch its pattern scale. Each of its dimensions takes a style made from its own: `<view>-<style>`, linear factor ÷ k, overall scale N, measured with that style before anything is committed. Its title says its scale, "DETAIL A (2:1)". The dimension style's linear factor is DIMLFAC (144), read and written; an angle is not scaled by it.
 
 ## Alternatives considered

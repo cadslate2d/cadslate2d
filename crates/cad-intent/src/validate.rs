@@ -381,6 +381,48 @@ impl Check {
                 self.points("points", points, if *closed { 3 } else { 2 })
             }
             Operation::Spline { points } => self.points("points", points, 2),
+            Operation::BillOfMaterials { parts, title } => {
+                if parts.is_empty() {
+                    return Err(self.refuse("parts", Reason::TooFew(1)));
+                }
+                if parts.len() > 100 {
+                    return Err(self.refuse("parts", Reason::TooMany(100)));
+                }
+                for (i, part) in parts.iter().enumerate() {
+                    if part.number == 0 {
+                        return Err(self.refuse("parts.number", Reason::NotPositive));
+                    }
+                    if parts[..i].iter().any(|p| p.number == part.number) {
+                        return Err(self.refuse("parts.number", Reason::Repeated));
+                    }
+                    if part.quantity == 0 {
+                        return Err(self.refuse("parts.quantity", Reason::NotPositive));
+                    }
+                    self.text("parts.name", &part.name)?;
+                    // A part is typed as its fields between commas.
+                    if part.name.contains(',') {
+                        return Err(self.refuse("parts.name", Reason::BadName));
+                    }
+                    if !part.material.is_empty() {
+                        self.text("parts.material", &part.material)?;
+                        if part.material.contains(',') {
+                            return Err(self.refuse("parts.material", Reason::BadName));
+                        }
+                    }
+                }
+                if !title.is_empty() {
+                    self.text("title", title)?;
+                }
+                Ok(())
+            }
+            Operation::Balloon { part, view, at, to } => {
+                if *part == 0 {
+                    return Err(self.refuse("part", Reason::NotPositive));
+                }
+                self.name("view", view)?;
+                self.point("at", *at)?;
+                self.point("to", *to)
+            }
             Operation::View {
                 id,
                 title,

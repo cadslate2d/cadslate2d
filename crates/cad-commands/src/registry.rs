@@ -11,10 +11,10 @@ use cad_input::{CommandAliases, DuplicateCommandName};
 use crate::Command;
 use crate::commands::{
     AliasEditCommand, AlignCommand, ArcCommand, AreaCommand, ArrayCommand, ArrayGridCommand,
-    ArrayPathCommand, AttdefCommand, AtteditCommand, BOLT_CIRCLE, BlockCommand, BoundaryCommand,
-    BreakCommand, BuildingSectionCommand, ChpropCommand, CircleCommand, ColorCommand,
-    ConcentricCommand, ConstraintDisplayCommand, CopyClipCommand, CornerCommand,
-    DelConstraintCommand, DimAngularCommand, DimChainCommand, DimConstraintCommand,
+    ArrayPathCommand, AttdefCommand, AtteditCommand, BOLT_CIRCLE, BalloonCommand, BlockCommand,
+    BomTableCommand, BoundaryCommand, BreakCommand, BuildingSectionCommand, ChpropCommand,
+    CircleCommand, ColorCommand, ConcentricCommand, ConstraintDisplayCommand, CopyClipCommand,
+    CornerCommand, DelConstraintCommand, DimAngularCommand, DimChainCommand, DimConstraintCommand,
     DimLinearCommand, DimOrdinateCommand, DimRadialCommand, DimStyleCommand, DistCommand,
     DivideCommand, DonutCommand, DrawOrderCommand, DxfOutCommand, EdgeCommand, ElevationCommand,
     EllipseCommand, EraseCommand, ExplodeCommand, ExportCommand, FLANGE, FindCommand,
@@ -71,7 +71,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 176] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 178] = [
             ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
             ("RAY", &[], || Box::new(RayCommand::new())),
             ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
@@ -206,6 +206,8 @@ impl CommandRegistry {
             ("PARTVIEWS", &[], || Box::new(PartViewsCommand::new())),
             ("TITLEBLOCK", &[], || Box::new(TitleBlockCommand::new())),
             ("VIEWFRAME", &["VF"], || Box::new(ViewFrameCommand::new())),
+            ("BOMTABLE", &["BOM"], || Box::new(BomTableCommand::new())),
+            ("BALLOON", &[], || Box::new(BalloonCommand::new())),
             ("DCLINEAR", &[], || {
                 Box::new(DimConstraintCommand::of(Form::Linear))
             }),

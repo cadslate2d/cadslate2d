@@ -66,6 +66,7 @@ impl ViewFrameCommand {
                 origin: Point2::ORIGIN,
                 ratio: None,
                 cut: None,
+                parts: Vec::new(),
             },
             principal: None,
         }
@@ -95,6 +96,7 @@ impl ViewFrameCommand {
                 origin: Point2::ORIGIN,
                 ratio: None,
                 cut: None,
+                parts: Vec::new(),
             },
         );
         self.views.push(done);

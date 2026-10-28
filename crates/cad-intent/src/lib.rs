@@ -27,7 +27,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 17;
+pub const VERSION: u32 = 18;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -40,8 +40,11 @@ pub const VERSION: u32 = 17;
 /// `building` (#337); `building_section` (#338) came with it; version 13
 /// `part_views` (#339) and `title_block` (#340), version 14 `spline` and
 /// `hatch` (#345), version 15 `view` (#351, ADR-0041), version 16 a free
-/// view's `ratio` (#352), version 17 a section view's `cut` (#353).
-pub const READS: [u32; 17] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+/// view's `ratio` (#352), version 17 a section view's `cut` (#353),
+/// version 18 `bill_of_materials` and `balloon` (#354).
+pub const READS: [u32; 18] = [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -412,6 +415,23 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cut: Option<SectionCut>,
         operations: Vec<Operation>,
+    },
+    /// A composed sheet's bill of materials (ADR-0041 §5): its parts drawn
+    /// as a table — item, name, quantity, material — and placed on the
+    /// sheet where there is room.
+    BillOfMaterials {
+        parts: Vec<BomPart>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        title: String,
+    },
+    /// A balloon: part `part` of the bill of materials, a leader from `at`
+    /// on the part to the balloon at `to`, both in the view `view`'s own
+    /// coordinates. A part the bill does not have is refused.
+    Balloon {
+        part: u32,
+        view: String,
+        at: Point,
+        to: Point,
     },
     /// A closed rectangle from two opposite corners.
     Rectangle {
@@ -1028,6 +1048,18 @@ pub enum ViewPlacement {
     Section,
 }
 
+/// A part of a bill of materials.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BomPart {
+    pub number: u32,
+    pub name: String,
+    pub quantity: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub material: String,
+}
+
 /// Where a section view's cut is (ADR-0041 §5).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -1071,6 +1103,8 @@ impl Operation {
             Self::Polyline { .. } => "polyline",
             Self::Spline { .. } => "spline",
             Self::View { .. } => "view",
+            Self::BillOfMaterials { .. } => "bill_of_materials",
+            Self::Balloon { .. } => "balloon",
             Self::Hatch { .. } => "hatch",
             Self::Rectangle { .. } => "rectangle",
             Self::Circle { .. } => "circle",

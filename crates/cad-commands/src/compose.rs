@@ -72,6 +72,8 @@ pub struct ViewRecord {
     pub ratio: Option<f64>,
     /// A section's letter and the view its cut crosses (#353).
     pub section: Option<(char, String)>,
+    /// The parts of a bill of materials it holds (#354).
+    pub parts: Vec<crate::bom::Part>,
 }
 
 impl ViewRecord {
@@ -94,6 +96,7 @@ impl ViewRecord {
             "sheet": self.sheet,
             "ratio": self.ratio,
             "section": self.section.as_ref().map(|(letter, of)| json!({"letter": letter.to_string(), "of": of})),
+            "parts": self.parts.iter().map(crate::bom::Part::to_json).collect::<Vec<_>>(),
         })
         .to_string()
     }
@@ -122,8 +125,20 @@ impl ViewRecord {
                 .as_str()
                 .and_then(|l| l.chars().next())
                 .zip(v["section"]["of"].as_str().map(str::to_owned)),
+            parts: v["parts"]
+                .as_array()
+                .map(|parts| parts.iter().filter_map(crate::bom::Part::read).collect())
+                .unwrap_or_default(),
         })
     }
+}
+
+/// The parts the sheet's bills of materials hold.
+pub fn parts_on(drawing: &Drawing, sheet: &str) -> Vec<crate::bom::Part> {
+    views_on(drawing, sheet)
+        .into_iter()
+        .flat_map(|view| view.parts)
+        .collect()
 }
 
 /// The views placed on `sheet`.
@@ -150,6 +165,8 @@ pub struct NewView {
     pub ratio: Option<f64>,
     /// For a section view, the cut it shows (#353).
     pub cut: Option<Cut>,
+    /// For a bill of materials, its parts (#354).
+    pub parts: Vec<crate::bom::Part>,
 }
 
 /// Where a section view's cut is: across the view `of`, from `from` to
@@ -726,6 +743,7 @@ pub fn compose(
             sheet: sheet.group.clone(),
             ratio: view.ratio,
             section: letters[i].zip(view.cut.as_ref().map(|c| c.of.clone())),
+            parts: view.parts.clone(),
         }
         .to_json();
         group.selectable = false;

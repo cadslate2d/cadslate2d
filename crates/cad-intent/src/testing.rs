@@ -83,6 +83,21 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         (points(3), any::<bool>())
             .prop_map(|(points, closed)| Operation::Polyline { points, closed }),
         points(2).prop_map(|points| Operation::Spline { points }),
+        (1u32..50, 1u32..5).prop_map(|(number, quantity)| Operation::BillOfMaterials {
+            parts: vec![crate::BomPart {
+                number,
+                name: "Shell".to_owned(),
+                quantity,
+                material: String::new(),
+            }],
+            title: String::new(),
+        }),
+        (1u32..50, point(), point()).prop_map(|(part, at, to)| Operation::Balloon {
+            part,
+            view: "front".to_owned(),
+            at,
+            to,
+        }),
         (corners(), prop_oneof![Just(0u8), Just(1), Just(2)]).prop_map(
             |((corner, opposite), kind)| {
                 let (placed, of, looking) = match kind {

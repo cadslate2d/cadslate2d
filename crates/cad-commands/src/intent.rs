@@ -275,7 +275,13 @@ impl Session {
                     {
                         continue;
                     }
-                    let text = format_answer(answer, scale);
+                    let text = match answer {
+                        Answer::InView { view, point } => {
+                            let at = self.in_view(operation, command, view, *point, scale)?;
+                            format_answer(&Answer::Point(at), 1.0)
+                        }
+                        _ => format_answer(answer, scale),
+                    };
                     self.submit_text(&text);
                 }
                 // Where an end, a centre, or a vertex is asked for, the
@@ -300,6 +306,32 @@ impl Session {
             }
         }
         Ok(())
+    }
+
+    /// Where `point`, in the placed view `view`'s own coordinates, is on
+    /// the sheet: the view's origin, the point in the drawing's units scaled
+    /// by the view's factor (ADR-0041 §4).
+    fn in_view(
+        &self,
+        operation: usize,
+        command: &'static str,
+        view: &str,
+        point: Point2,
+        scale: f64,
+    ) -> Result<Point2, RunError> {
+        let refused = |reason: String| RunError::Refused {
+            operation,
+            command,
+            reason,
+        };
+        let sheet = crate::compose::sheet_of(self.drawing())
+            .ok_or_else(|| refused("There is no sheet.".to_owned()))?;
+        let record = crate::compose::views_on(self.drawing(), &sheet.group)
+            .into_iter()
+            .find(|v| v.id == view)
+            .ok_or_else(|| refused(format!("There is no view {view} on the sheet.")))?;
+        let k = record.ratio.map_or(1.0, |r| r * sheet.frame.units_per_mm);
+        Ok(record.origin + (point - Point2::ORIGIN) * (scale * k))
     }
 
     fn select_targets(&mut self, operation: usize, targets: &Targets) -> Result<Dirty, RunError> {
@@ -368,6 +400,10 @@ fn unit_scale(document: Option<LengthUnit>, drawing: Option<LengthUnit>) -> f64 
 /// drawing's units.
 fn format_answer(answer: &Answer, scale: f64) -> String {
     match answer {
+        // Resolved by the session, which knows where the view went.
+        Answer::InView { point, .. } => {
+            format!("{},{}", number(point.x * scale), number(point.y * scale))
+        }
         Answer::Point(p) => format!("{},{}", number(p.x * scale), number(p.y * scale)),
         Answer::Length(v) => number(v * scale),
         Answer::Number(v) | Answer::Angle(v) => number(*v),

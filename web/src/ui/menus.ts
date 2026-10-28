@@ -123,6 +123,8 @@ const INSERT: Menu = {
     // A sheet's border and title block (#340).
     command("&Title Block...", "TITLEBLOCK"),
     command("&View Frame...", "VIEWFRAME"),
+    command("Bill of &Materials...", "BOMTABLE"),
+    command("Balloo&n", "BALLOON"),
   ],
 };
 

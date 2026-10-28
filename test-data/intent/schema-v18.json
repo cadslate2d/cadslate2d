@@ -1,5 +1,33 @@
 {
   "$defs": {
+    "BomPart": {
+      "additionalProperties": false,
+      "description": "A part of a bill of materials.",
+      "properties": {
+        "material": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "number": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "quantity": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "number",
+        "name",
+        "quantity"
+      ],
+      "type": "object"
+    },
     "Brief": {
       "additionalProperties": false,
       "description": "A floor plan's brief (ADR-0039 §1), in metres: what `FLOORPLAN` reads.\nAbsent fields take the generator's defaults.",
@@ -531,6 +559,74 @@
             "id",
             "placed",
             "operations"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A composed sheet's bill of materials (ADR-0041 §5): its parts drawn\nas a table — item, name, quantity, material — and placed on the\nsheet where there is room.",
+          "properties": {
+            "op": {
+              "const": "bill_of_materials",
+              "type": "string"
+            },
+            "parts": {
+              "items": {
+                "$ref": "#/$defs/BomPart"
+              },
+              "type": "array"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "parts"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A balloon: part `part` of the bill of materials, a leader from `at`\non the part to the balloon at `to`, both in the view `view`'s own\ncoordinates. A part the bill does not have is refused.",
+          "properties": {
+            "at": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "op": {
+              "const": "balloon",
+              "type": "string"
+            },
+            "part": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "to": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "view": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "part",
+            "view",
+            "at",
+            "to"
           ],
           "type": "object"
         },

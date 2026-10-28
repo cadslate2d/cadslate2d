@@ -1192,3 +1192,63 @@ fn a_section_view_by_intent_is_marked_across_its_parent() {
             .any(|e| matches!(e, Entity::Text(t) if t.content == "SECTION A-A"))
     );
 }
+
+/// A bill of materials and a balloon by intent (#354): the balloon's
+/// leader starts where the front view put the point on the part, given in
+/// the view's own coordinates; a part not in the bill is refused.
+#[test]
+fn a_bill_of_materials_and_a_balloon_by_intent() {
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    h.session
+        .run_intent(&document(
+            r#"
+        {"op": "title_block", "paper": "A3", "scale": 1, "title": "BLOCK", "projection": "third", "at": [0, 0]},
+        {"op": "view", "id": "front", "placed": "principal", "operations": [
+            {"op": "rectangle", "corner": [0, 0], "opposite": [100, 60]}]},
+        {"op": "bill_of_materials", "parts": [{"number": 1, "name": "Block", "quantity": 1, "material": "Steel"}]},
+        {"op": "balloon", "part": 1, "view": "front", "at": [100, 60], "to": [130, 80]}
+    "#,
+        ))
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", h.log()));
+    let front = crate::compose::views_on(h.session.drawing(), "TITLE-1")
+        .into_iter()
+        .find(|v| v.id == "front")
+        .unwrap();
+    let drawing = h.session.drawing();
+    let leader = drawing
+        .groups()
+        .iter()
+        .find(|(_, g)| g.name == "BALLOON-1-1")
+        .and_then(|(_, g)| drawing.entity(g.members[0]))
+        .unwrap();
+    let Entity::Line(leader) = leader else {
+        panic!("{leader:?}")
+    };
+    assert_eq!(
+        leader.start,
+        front.origin + cad_core::Vec2::new(100.0, 60.0)
+    );
+
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    let refused = h.session.run_intent(&document(
+        r#"
+        {"op": "title_block", "paper": "A3", "scale": 1, "title": "BLOCK", "at": [0, 0]},
+        {"op": "view", "id": "front", "placed": "principal", "operations": [
+            {"op": "rectangle", "corner": [0, 0], "opposite": [100, 60]}]},
+        {"op": "bill_of_materials", "parts": [{"number": 1, "name": "Block", "quantity": 1}]},
+        {"op": "balloon", "part": 2, "view": "front", "at": [0, 0], "to": [10, 10]}
+    "#,
+    ));
+    assert!(
+        matches!(
+            refused,
+            Err(RunError::Refused {
+                command: "BALLOON",
+                ..
+            })
+        ),
+        "{refused:?}"
+    );
+}

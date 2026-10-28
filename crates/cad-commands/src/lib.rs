@@ -8,6 +8,7 @@
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
 pub mod aids;
+pub mod bom;
 pub mod bsection;
 mod command;
 mod commands;

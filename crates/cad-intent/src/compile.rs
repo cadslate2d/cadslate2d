@@ -27,6 +27,9 @@ pub enum Answer {
     Text(String),
     /// Enter with nothing typed: a default taken, a list ended.
     Enter,
+    /// A point in a placed view's own coordinates (#354): where it is on
+    /// the sheet the engine works out from the view's placement.
+    InView { view: String, point: Point2 },
 }
 
 /// One step of a compiled operation.
@@ -66,7 +69,9 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 50] = [
+pub const COMMANDS: [&str; 52] = [
+    "BOMTABLE",
+    "BALLOON",
     "VIEWFRAME",
     "LINE",
     "PLINE",
@@ -284,6 +289,40 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
             steps.push(if *closed { keyword("Close") } else { enter() });
             ("PLINE", steps)
         }
+        Operation::BillOfMaterials { parts, title } => {
+            let mut steps: Vec<Step> = parts
+                .iter()
+                .map(|p| {
+                    let mut line = format!("{}, {}, {}", p.number, p.name, p.quantity);
+                    if !p.material.is_empty() {
+                        line.push_str(&format!(", {}", p.material));
+                    }
+                    answer(Answer::Text(line))
+                })
+                .collect();
+            steps.push(enter());
+            steps.push(if title.trim().is_empty() {
+                enter()
+            } else {
+                answer(Answer::Text(title.clone()))
+            });
+            ("BOMTABLE", steps)
+        }
+        Operation::Balloon { part, view, at, to } => (
+            "BALLOON",
+            vec![
+                answer(Answer::Text(part.to_string())),
+                answer(Answer::InView {
+                    view: view.clone(),
+                    point: point(*at),
+                }),
+                answer(Answer::InView {
+                    view: view.clone(),
+                    point: point(*to),
+                }),
+                enter(),
+            ],
+        ),
         Operation::Spline { points } => {
             let mut steps: Vec<Step> = points.iter().map(|p| at(*p)).collect();
             steps.push(enter());
