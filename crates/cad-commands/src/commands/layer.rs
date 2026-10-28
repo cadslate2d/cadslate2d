@@ -479,7 +479,22 @@ impl Command for LayerCommand {
                     Some(_) => {
                         ctx.message("A layer needs a linetype of its own, not ByLayer or ByBlock.");
                     }
-                    None => ctx.message(unknown_linetype(text.trim())),
+                    // A built-in linetype a layer is given is loaded with it
+                    // (ADR-0041 §4): centre lines and hidden edges a layer
+                    // away.
+                    None => match cad_document::LinetypeDef::built_in_named(text.trim()) {
+                        Some(def) => {
+                            let mut transaction = ctx.transaction();
+                            match transaction.add_linetype(def) {
+                                Ok(id) => {
+                                    transaction.commit();
+                                    self.state = State::LtypeLayers(Linetype::Named(id));
+                                }
+                                Err(error) => ctx.message(error.to_string()),
+                            }
+                        }
+                        None => ctx.message(unknown_linetype(text.trim())),
+                    },
                 }
             }
             (_, CommandInput::Text(text)) => self.text(&text, ctx),

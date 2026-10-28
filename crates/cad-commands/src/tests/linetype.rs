@@ -156,26 +156,19 @@ fn a_linetype_in_use_is_not_deleted_and_continuous_never_is() {
 }
 
 #[test]
-fn a_layer_is_given_a_loaded_linetype_of_its_own() {
+fn a_layer_is_given_a_linetype_of_its_own_a_built_in_one_loaded_with_it() {
     let mut h = Harness::new();
-    h.enter_all(&["LA", "N", "walls", "LT", "Dashed"]);
-    assert_eq!(
-        last(&h),
-        "Linetype \"Dashed\" is not loaded: load it with LINETYPE first."
-    );
-    // Asked again, until a linetype or Enter.
-    assert_eq!(h.prompt(), "Enter linetype (a loaded name):");
-    h.enter("ByLayer");
+    h.enter_all(&["LA", "N", "walls", "LT", "ByLayer"]);
     assert_eq!(
         last(&h),
         "A layer needs a linetype of its own, not ByLayer or ByBlock."
     );
+    // Asked again, until a linetype or Enter.
+    assert_eq!(h.prompt(), "Enter linetype (a loaded name):");
     h.enter("nothing");
     assert_eq!(last(&h), "There is no linetype \"nothing\".");
-    h.enter_all(&["", ""]);
-    assert_eq!(h.prompt(), "Command:");
-    h.enter_all(&["LT", "L", "Dashed", ""]);
-    h.enter_all(&["LA", "LT", "dashed"]);
+    // A built-in linetype not loaded yet is loaded with it (ADR-0041 §4).
+    h.enter("dashed");
     assert_eq!(h.prompt(), "Enter name(s) of layer(s) for that linetype:");
     h.enter("walls,0");
     assert_eq!(last(&h), "2 layers set to linetype Dashed.");
@@ -192,6 +185,9 @@ fn a_layer_is_given_a_loaded_linetype_of_its_own() {
     let dashed = Linetype::Named(LinetypeId::from_raw(1));
     let layers = h.session.drawing().layers();
     assert!(layers.iter().all(|(_, layer)| layer.linetype == dashed));
+    // One undo takes the layer, its linetype, and the linetype loaded.
+    h.undo();
+    assert_eq!(h.session.drawing().linetypes().len(), 1);
 }
 
 #[test]

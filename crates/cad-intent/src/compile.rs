@@ -655,8 +655,26 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
             "DIMSTYLE",
             vec![keyword("SCale"), answer(Answer::Number(*scale)), enter()],
         ),
-        Operation::Layer { name, current } => {
+        Operation::Layer {
+            name,
+            current,
+            color,
+            linetype,
+        } => {
             let mut steps = vec![keyword("New"), answer(Answer::Text(name.clone()))];
+            if let Some(color) = color {
+                steps.push(keyword("Color"));
+                steps.push(answer(Answer::Text(match color {
+                    Color::Index(index) => index.to_string(),
+                    Color::Name(name) => name.clone(),
+                })));
+                steps.push(answer(Answer::Text(name.clone())));
+            }
+            if let Some(linetype) = linetype {
+                steps.push(keyword("LType"));
+                steps.push(answer(Answer::Text(linetype.clone())));
+                steps.push(answer(Answer::Text(name.clone())));
+            }
             if *current {
                 steps.push(keyword("Set"));
                 steps.push(answer(Answer::Text(name.clone())));

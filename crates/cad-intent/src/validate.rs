@@ -719,7 +719,25 @@ impl Check {
                 Ok(())
             }
             Operation::DimScale { scale } => self.positive("scale", *scale),
-            Operation::Layer { name, .. } => self.name("name", name),
+            Operation::Layer {
+                name,
+                color,
+                linetype,
+                ..
+            } => {
+                self.name("name", name)?;
+                match color {
+                    Some(Color::Index(index)) if !(1..=255).contains(index) => {
+                        return Err(self.refuse("color", Reason::OutOfRange));
+                    }
+                    Some(Color::Name(name)) => self.name("color", name)?,
+                    _ => {}
+                }
+                if let Some(linetype) = linetype {
+                    self.name("linetype", linetype)?;
+                }
+                Ok(())
+            }
             Operation::SetProperties {
                 targets,
                 layer,

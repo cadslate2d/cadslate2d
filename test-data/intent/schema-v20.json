@@ -1439,11 +1439,27 @@
         },
         {
           "additionalProperties": false,
-          "description": "A layer by name, made if it does not exist, and made current when\nasked.",
+          "description": "A layer by name, made if it does not exist, and made current when\nasked; given a colour and a linetype when asked — `CENTER` for\ncentre lines, `HIDDEN` for hidden edges, `PHANTOM`, `DASHED`, loaded\nfrom the program's own when the drawing has none of that name.",
           "properties": {
+            "color": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Color"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "current": {
               "default": false,
               "type": "boolean"
+            },
+            "linetype": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "name": {
               "type": "string"

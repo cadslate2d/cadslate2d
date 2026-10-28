@@ -257,7 +257,18 @@ pub fn operation() -> impl Strategy<Value = Operation> {
                     rotate,
                 }
             ),
-        (name(), any::<bool>()).prop_map(|(name, current)| Operation::Layer { name, current }),
+        (
+            name(),
+            any::<bool>(),
+            proptest::option::of((1u16..=255).prop_map(Color::Index)),
+            proptest::option::of(Just("CENTER".to_owned()))
+        )
+            .prop_map(|(name, current, color, linetype)| Operation::Layer {
+                name,
+                current,
+                color,
+                linetype,
+            }),
         (0.1f64..20.0).prop_map(|scale| Operation::DimScale { scale }),
         (
             targets(),

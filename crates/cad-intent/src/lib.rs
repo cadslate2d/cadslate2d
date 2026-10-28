@@ -27,7 +27,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 19;
+pub const VERSION: u32 = 20;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -42,9 +42,10 @@ pub const VERSION: u32 = 19;
 /// `hatch` (#345), version 15 `view` (#351, ADR-0041), version 16 a free
 /// view's `ratio` (#352), version 17 a section view's `cut` (#353),
 /// version 18 `bill_of_materials` and `balloon` (#354), version 19
-/// `dim_chain` and `notes` (#355).
-pub const READS: [u32; 19] = [
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+/// `dim_chain` and `notes` (#355), version 20 a layer's `color` and
+/// `linetype` (#356).
+pub const READS: [u32; 20] = [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
 ];
 
 /// A point, `[x, y]`, in the document's units.
@@ -614,11 +615,17 @@ pub enum Operation {
         scale: f64,
     },
     /// A layer by name, made if it does not exist, and made current when
-    /// asked.
+    /// asked; given a colour and a linetype when asked — `CENTER` for
+    /// centre lines, `HIDDEN` for hidden edges, `PHANTOM`, `DASHED`, loaded
+    /// from the program's own when the drawing has none of that name.
     Layer {
         name: String,
         #[serde(default)]
         current: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<Color>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        linetype: Option<String>,
     },
     /// Changes the layer, colour, linetype, or lineweight of the targets;
     /// whatever is given, at least one.

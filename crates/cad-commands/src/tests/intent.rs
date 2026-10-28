@@ -1306,3 +1306,29 @@ fn a_dimension_chain_stands_beyond_the_geometry_and_the_chains_before() {
             .any(|e| matches!(e, Entity::MText(m) if m.content == "All dimensions in mm."))
     );
 }
+
+/// A layer with a colour and a linetype by intent (#356): CENTER, loaded
+/// from the program's own, and gold, the nearest index colour.
+#[test]
+fn a_layer_is_made_with_a_colour_and_a_linetype_loaded_for_it() {
+    let h = run(
+        r#"{"op": "layer", "name": "CENTRE-LINES", "color": "gold", "linetype": "CENTER", "current": true}"#,
+    );
+    let drawing = h.session.drawing();
+    let layer = drawing
+        .layers()
+        .get(drawing.layers().find("CENTRE-LINES").unwrap())
+        .unwrap();
+    assert_eq!(layer.color, cad_document::Color::parse("gold").unwrap());
+    let cad_document::Linetype::Named(id) = layer.linetype else {
+        panic!("{:?}", layer.linetype)
+    };
+    assert_eq!(
+        drawing.linetypes().get(id).unwrap().name.to_uppercase(),
+        "CENTER"
+    );
+    assert_eq!(
+        drawing.current_layer(),
+        drawing.layers().find("CENTRE-LINES").unwrap()
+    );
+}
