@@ -178,7 +178,8 @@ fn what_cannot_be_placed_is_refused_and_nothing_moves() {
     let said = h.log().last().unwrap().clone();
     assert!(
         said.starts_with("View detail, at its own scale 2:1, needs 600 ×")
-            && said.contains("its ratio alone sets its size on paper"),
+            && said.contains("its ratio alone sets its size on paper")
+            && said.ends_with("A ratio of 0.5 (1:2) or smaller fits."),
         "{said}"
     );
 

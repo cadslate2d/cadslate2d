@@ -252,6 +252,12 @@ fn marker(cut: &Cut, k: f64, unit: f64, letter: char) -> Option<Vec<Entity>> {
     Some(out)
 }
 
+/// The scales a drafter gives a view, largest first, paper to real.
+const STANDARD_RATIOS: [f64; 19] = [
+    10.0, 5.0, 2.0, 1.0, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001, 0.0005, 0.0002,
+    0.0001, 0.00005, 0.00002, 0.00001,
+];
+
 /// A ratio as a drafter writes it: `2:1`, `1:5`.
 pub fn ratio_text(ratio: f64) -> String {
     let plain = |v: f64| {
@@ -540,10 +546,25 @@ pub fn compose(
             // whatever the sheet's: say so, or a larger sheet scale is
             // tried and changes nothing.
             match views.iter().find(|v| v.id == view).and_then(|v| v.ratio) {
-                Some(ratio) => format!(
-                    "View {view}, at its own scale {}, needs {w:.0} × {h:.0} mm of the sheet free, and there is not that much room: its ratio alone sets its size on paper, whatever the sheet's scale — give it a smaller ratio, paper to real (0.05 for 1:20), or a larger sheet.",
-                    ratio_text(ratio)
-                ),
+                Some(ratio) => {
+                    // The largest standard scale at which it takes no more
+                    // than half the sheet each way: a number to give back.
+                    let border = sheet.frame.border;
+                    let room = ((border.max().x - border.min().x) / unit / 2.0 / w)
+                        .min((border.max().y - border.min().y) / unit / 2.0 / h);
+                    let fits = ratio * room;
+                    let suggestion = STANDARD_RATIOS
+                        .iter()
+                        .copied()
+                        .find(|r| *r <= fits)
+                        .map_or_else(String::new, |r| {
+                            format!(" A ratio of {r} ({}) or smaller fits.", ratio_text(r))
+                        });
+                    format!(
+                        "View {view}, at its own scale {}, needs {w:.0} × {h:.0} mm of the sheet free, and there is not that much room: its ratio alone sets its size on paper, whatever the sheet's scale — give it a smaller ratio, paper to real, or a larger sheet.{suggestion}",
+                        ratio_text(ratio)
+                    )
+                }
                 None => format!(
                     "View {view} needs {w:.0} × {h:.0} mm of the sheet free, and there is not that much room: choose a larger sheet or scale."
                 ),

@@ -103,7 +103,10 @@ pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Optio
                 _ => None,
             });
             // Only a sheet without room is told of paper and scale.
-            let room = reason.contains("there is not that much room");
+            // A view at its own scale is told in the reason what fits:
+            // the sheet's paper and scale do not size it.
+            let room = reason.contains("there is not that much room")
+                && !reason.contains("its ratio alone sets its size");
             let fits = current.filter(|_| room).and_then(|paper| {
                 larger(paper).into_iter().find(|bigger| {
                     let mut tried = intent.clone();
@@ -523,6 +526,21 @@ mod tests {
         assert!(
             findings[0].starts_with("View front could not be drawn: HATCH refused")
                 && !findings[0].contains(".."),
+            "{findings:?}"
+        );
+        // A detail too large at its own scale is told the ratio that fits,
+        // and nothing of the sheet's scale, which does not size it.
+        let detail = parse(
+            r#"{"op": "title_block", "paper": "A3", "scale": 100, "title": "X", "at": [0, 0]},
+               {"op": "view", "id": "front", "placed": "principal", "operations": [
+                   {"op": "rectangle", "corner": [0, 0], "opposite": [20000, 5000]}]},
+               {"op": "view", "id": "sill", "placed": "free", "ratio": 2, "operations": [
+                   {"op": "rectangle", "corner": [0, 0], "opposite": [500, 1000]}]}"#,
+        );
+        let findings = review_document(&detail, Some("mm")).unwrap();
+        assert!(
+            findings[0].contains("at its own scale 2:1")
+                && findings[0].ends_with("A ratio of 0.1 (1:10) or smaller fits."),
             "{findings:?}"
         );
         // A refusal of the sheet that is not about room is told as it is,
