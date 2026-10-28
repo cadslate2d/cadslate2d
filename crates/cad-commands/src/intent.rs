@@ -280,6 +280,15 @@ impl Session {
                             let at = self.in_view(operation, command, view, *point, scale)?;
                             format_answer(&Answer::Point(at), 1.0)
                         }
+                        Answer::Beyond { side, points } => {
+                            let drawn = compiled
+                                .view
+                                .as_ref()
+                                .map(|id| view_made(self, id))
+                                .unwrap_or_default();
+                            let at = self.beyond(&drawn, *side, points, scale);
+                            format_answer(&Answer::Point(at), 1.0)
+                        }
                         _ => format_answer(answer, scale),
                     };
                     self.submit_text(&text);
@@ -332,6 +341,44 @@ impl Session {
             .ok_or_else(|| refused(format!("There is no view {view} on the sheet.")))?;
         let k = record.ratio.map_or(1.0, |r| r * sheet.frame.units_per_mm);
         Ok(record.origin + (point - Point2::ORIGIN) * (scale * k))
+    }
+
+    /// Where a chain's dimension line goes (#355): on `side` of the
+    /// points, 10 paper millimetres beyond everything the view has drawn
+    /// there — its geometry and the chains already on that side.
+    fn beyond(
+        &self,
+        drawn: &[EntityId],
+        side: cad_intent::ChainSide,
+        points: &[Point2],
+        scale: f64,
+    ) -> Point2 {
+        let points: Vec<Point2> = points
+            .iter()
+            .map(|p| Point2::new(p.x * scale, p.y * scale))
+            .collect();
+        let tables = self.drawing().tables();
+        let extent = drawn
+            .iter()
+            .filter_map(|id| self.drawing().entity(*id))
+            .filter(|e| !e.is_unbounded())
+            .map(|e| e.bounds(tables))
+            .chain(points.iter().map(|p| cad_core::Aabb::from_points(*p, *p)))
+            .reduce(|a, b| a.union(&b))
+            .expect("a chain has points");
+        let unit = crate::compose::sheet_of(self.drawing()).map_or(1.0, |s| s.frame.units_per_mm);
+        let off = 10.0 * unit;
+        let n = points.len() as f64;
+        let mid = Point2::new(
+            points.iter().map(|p| p.x).sum::<f64>() / n,
+            points.iter().map(|p| p.y).sum::<f64>() / n,
+        );
+        match side {
+            cad_intent::ChainSide::Below => Point2::new(mid.x, extent.min().y - off),
+            cad_intent::ChainSide::Above => Point2::new(mid.x, extent.max().y + off),
+            cad_intent::ChainSide::Left => Point2::new(extent.min().x - off, mid.y),
+            cad_intent::ChainSide::Right => Point2::new(extent.max().x + off, mid.y),
+        }
     }
 
     fn select_targets(&mut self, operation: usize, targets: &Targets) -> Result<Dirty, RunError> {
@@ -400,10 +447,14 @@ fn unit_scale(document: Option<LengthUnit>, drawing: Option<LengthUnit>) -> f64 
 /// drawing's units.
 fn format_answer(answer: &Answer, scale: f64) -> String {
     match answer {
-        // Resolved by the session, which knows where the view went.
+        // Resolved by the session, which knows where the view went and what
+        // it has drawn.
         Answer::InView { point, .. } => {
             format!("{},{}", number(point.x * scale), number(point.y * scale))
         }
+        Answer::Beyond { points, .. } => points.first().map_or_else(String::new, |p| {
+            format!("{},{}", number(p.x * scale), number(p.y * scale))
+        }),
         Answer::Point(p) => format!("{},{}", number(p.x * scale), number(p.y * scale)),
         Answer::Length(v) => number(v * scale),
         Answer::Number(v) | Answer::Angle(v) => number(*v),

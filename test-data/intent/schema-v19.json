@@ -271,6 +271,16 @@
       ],
       "type": "object"
     },
+    "ChainSide": {
+      "description": "Which side of the geometry a chain of dimensions runs along.",
+      "enum": [
+        "below",
+        "above",
+        "left",
+        "right"
+      ],
+      "type": "string"
+    },
     "Color": {
       "anyOf": [
         {
@@ -627,6 +637,68 @@
             "view",
             "at",
             "to"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A chain of linear dimensions between `points`, in order, along one\nside of what is drawn: the program puts the dimension line beyond\nthe geometry on that side, and beyond the chains already there.",
+          "properties": {
+            "op": {
+              "const": "dim_chain",
+              "type": "string"
+            },
+            "points": {
+              "items": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "side": {
+              "$ref": "#/$defs/ChainSide"
+            }
+          },
+          "required": [
+            "op",
+            "points",
+            "side"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A block of notes on the sheet: its lines, wrapped to `width` paper\nmillimetres (120 when absent), placed where there is room.",
+          "properties": {
+            "lines": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "op": {
+              "const": "notes",
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "width": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "lines"
           ],
           "type": "object"
         },

@@ -30,6 +30,13 @@ pub enum Answer {
     /// A point in a placed view's own coordinates (#354): where it is on
     /// the sheet the engine works out from the view's placement.
     InView { view: String, point: Point2 },
+    /// Where a chain's dimension line goes (#355): on `side` of `points`,
+    /// beyond what the operation's view has drawn there — worked out by
+    /// the engine, which knows.
+    Beyond {
+        side: crate::ChainSide,
+        points: Vec<Point2>,
+    },
 }
 
 /// One step of a compiled operation.
@@ -69,7 +76,9 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 52] = [
+pub const COMMANDS: [&str; 54] = [
+    "DIMCONTINUE",
+    "NOTES",
     "BOMTABLE",
     "BALLOON",
     "VIEWFRAME",
@@ -131,14 +140,15 @@ pub fn compile(intent: &Intent) -> Vec<Compiled> {
     let mut index = 0;
     while index < operations.len() {
         if !matches!(operations[index], Operation::View { .. }) {
-            let (command, steps) = steps_of(&operations[index]);
-            out.push(Compiled {
-                operation: index,
-                op: operations[index].name(),
-                command,
-                steps,
-                view: None,
-            });
+            for (command, steps) in commands_of(&operations[index]) {
+                out.push(Compiled {
+                    operation: index,
+                    op: operations[index].name(),
+                    command,
+                    steps,
+                    view: None,
+                });
+            }
             index += 1;
             continue;
         }
@@ -154,14 +164,15 @@ pub fn compile(intent: &Intent) -> Vec<Compiled> {
                 unreachable!("a run of views")
             };
             for inner in operations {
-                let (command, steps) = steps_of(inner);
-                out.push(Compiled {
-                    operation: first + offset,
-                    op: inner.name(),
-                    command,
-                    steps,
-                    view: Some(id.clone()),
-                });
+                for (command, steps) in commands_of(inner) {
+                    out.push(Compiled {
+                        operation: first + offset,
+                        op: inner.name(),
+                        command,
+                        steps,
+                        view: Some(id.clone()),
+                    });
+                }
             }
         }
         out.push(Compiled {
@@ -171,6 +182,35 @@ pub fn compile(intent: &Intent) -> Vec<Compiled> {
             steps: viewframe_steps(views),
             view: None,
         });
+    }
+    out
+}
+
+/// The commands an operation runs: one, but a chain of dimensions — its
+/// first dimension, then DIMCONTINUE for the rest (#355).
+fn commands_of(operation: &Operation) -> Vec<(&'static str, Vec<Step>)> {
+    let Operation::DimChain { points, side } = operation else {
+        return vec![steps_of(operation)];
+    };
+    let all: Vec<Point2> = points.iter().map(|p| point(*p)).collect();
+    let mut out = vec![(
+        "DIMLINEAR",
+        vec![
+            at(points[0]),
+            at(points[1]),
+            answer(Answer::Beyond {
+                side: *side,
+                points: all,
+            }),
+        ],
+    )];
+    if points.len() > 2 {
+        let mut steps: Vec<Step> = points[2..].iter().map(|p| at(*p)).collect();
+        // Enter at the point asks for another dimension to continue, as
+        // typed; Enter again ends.
+        steps.push(enter());
+        steps.push(enter());
+        out.push(("DIMCONTINUE", steps));
     }
     out
 }
@@ -323,6 +363,29 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
                 enter(),
             ],
         ),
+        // Compiled by `commands_of`, as two commands.
+        Operation::DimChain { .. } => ("DIMLINEAR", Vec::new()),
+        Operation::Notes {
+            lines,
+            width,
+            title,
+        } => {
+            let mut steps: Vec<Step> = lines
+                .iter()
+                .map(|l| answer(Answer::Text(l.clone())))
+                .collect();
+            steps.push(enter());
+            steps.push(match width {
+                Some(w) => answer(Answer::Number(*w)),
+                None => enter(),
+            });
+            steps.push(if title.trim().is_empty() {
+                enter()
+            } else {
+                answer(Answer::Text(title.clone()))
+            });
+            ("NOTES", steps)
+        }
         Operation::Spline { points } => {
             let mut steps: Vec<Step> = points.iter().map(|p| at(*p)).collect();
             steps.push(enter());

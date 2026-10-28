@@ -27,6 +27,7 @@ fn answers(steps: &[Step]) -> Vec<String> {
                     Answer::Text(t) => t.clone(),
                     Answer::Enter => String::new(),
                     Answer::InView { view, point } => format!("{view}@{},{}", point.x, point.y),
+                    Answer::Beyond { side, points } => format!("beyond:{side:?}:{}", points.len()),
                 };
                 match when {
                     Some(prefix) => format!("{text}?{prefix}"),
@@ -414,9 +415,9 @@ fn what_is_refused_says_where_and_why() {
         IntentError::Json { .. }
     ));
     assert!(matches!(
-        parse(r#"{"version": 19, "operations": []}"#).unwrap_err(),
+        parse(r#"{"version": 20, "operations": []}"#).unwrap_err(),
         IntentError::Version {
-            found: 19,
+            found: 20,
             expected: VERSION
         }
     ));
@@ -460,7 +461,7 @@ fn what_is_refused_says_where_and_why() {
 fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../test-data/intent/schema-v18.json"
+        "/../../test-data/intent/schema-v19.json"
     );
     let generated = serde_json::to_string_pretty(&schema()).unwrap() + "\n";
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
@@ -472,7 +473,7 @@ fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
         "the schema changed: bump cad_intent::VERSION, re-record with UPDATE_SNAPSHOTS=1, and name the file after the new version"
     );
     assert!(generated.contains(r#""version""#));
-    assert_eq!(VERSION, 18);
+    assert_eq!(VERSION, 19);
 }
 
 proptest! {
@@ -489,13 +490,19 @@ proptest! {
         let mut wanted = 0;
         let mut in_views = false;
         for operation in &intent.operations {
+            // A chain of more than two points is its first dimension and
+            // DIMCONTINUE.
+            let commands = |op: &cad_intent::Operation| match op {
+                cad_intent::Operation::DimChain { points, .. } if points.len() > 2 => 2,
+                _ => 1,
+            };
             match operation {
                 cad_intent::Operation::View { operations, .. } => {
-                    wanted += operations.len() + usize::from(!in_views);
+                    wanted += operations.iter().map(commands).sum::<usize>() + usize::from(!in_views);
                     in_views = true;
                 }
-                _ => {
-                    wanted += 1;
+                other => {
+                    wanted += commands(other);
                     in_views = false;
                 }
             }
@@ -535,6 +542,6 @@ fn the_selection_word_and_an_intent_serialise_as_the_document_says() {
     };
     assert_eq!(
         serde_json::to_string(&intent).unwrap(),
-        r#"{"version":18,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
+        r#"{"version":19,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
     );
 }

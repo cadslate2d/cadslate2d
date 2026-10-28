@@ -1252,3 +1252,57 @@ fn a_bill_of_materials_and_a_balloon_by_intent() {
         "{refused:?}"
     );
 }
+
+/// A chain of dimensions by intent (#355): DIMLINEAR then DIMCONTINUE, the
+/// dimension line beyond the view's geometry on the side asked; a second
+/// chain on that side beyond the first. And notes, placed as a view.
+#[test]
+fn a_dimension_chain_stands_beyond_the_geometry_and_the_chains_before() {
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    h.session
+        .run_intent(&document(
+            r#"
+        {"op": "title_block", "paper": "A3", "scale": 1, "title": "PLATE", "at": [0, 0]},
+        {"op": "view", "id": "front", "placed": "principal", "operations": [
+            {"op": "rectangle", "corner": [0, 0], "opposite": [100, 60]},
+            {"op": "dim_chain", "points": [[0, 0], [40, 0], [100, 0]], "side": "below"},
+            {"op": "dim_chain", "points": [[0, 0], [100, 0]], "side": "below"}]},
+        {"op": "notes", "lines": ["All dimensions in mm."], "width": 60}
+    "#,
+        ))
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", h.log()));
+    let drawing = h.session.drawing();
+    let mut dims: Vec<&cad_document::DimensionEntity> = drawing
+        .entities()
+        .filter_map(|(_, e)| match e {
+            Entity::Dimension(d) => Some(d),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(dims.len(), 3);
+    let mut values: Vec<f64> = dims.iter().map(|d| d.value()).collect();
+    values.sort_by(f64::total_cmp);
+    assert_eq!(values, [40.0, 60.0, 100.0]);
+    let front = crate::compose::views_on(drawing, "TITLE-1")
+        .into_iter()
+        .find(|v| v.id == "front")
+        .unwrap();
+    // The chain's two dimensions on one line, 10 below the plate; the
+    // overall one further out.
+    dims.sort_by(|a, b| a.value().total_cmp(&b.value()));
+    let below = |d: &cad_document::DimensionEntity| front.origin.y - d.line_point.y;
+    assert!((below(dims[0]) - below(dims[1])).abs() < 1e-9);
+    assert!(below(dims[0]) >= 10.0 - 1e-9);
+    assert!(
+        below(dims[2]) > below(dims[0]) + 5.0,
+        "{} {}",
+        below(dims[2]),
+        below(dims[0])
+    );
+    assert!(
+        h.entities()
+            .iter()
+            .any(|e| matches!(e, Entity::MText(m) if m.content == "All dimensions in mm."))
+    );
+}

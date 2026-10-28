@@ -415,6 +415,34 @@ impl Check {
                 }
                 Ok(())
             }
+            Operation::DimChain { points, .. } => {
+                if points.len() > 50 {
+                    return Err(self.refuse("points", Reason::TooMany(50)));
+                }
+                self.points("points", points, 2)
+            }
+            Operation::Notes {
+                lines,
+                width,
+                title,
+            } => {
+                if lines.is_empty() {
+                    return Err(self.refuse("lines", Reason::TooFew(1)));
+                }
+                if lines.len() > 60 {
+                    return Err(self.refuse("lines", Reason::TooMany(60)));
+                }
+                for line in lines {
+                    self.text("lines", line)?;
+                }
+                if let Some(width) = width {
+                    self.positive("width", *width)?;
+                }
+                if !title.is_empty() {
+                    self.text("title", title)?;
+                }
+                Ok(())
+            }
             Operation::Balloon { part, view, at, to } => {
                 if *part == 0 {
                     return Err(self.refuse("part", Reason::NotPositive));

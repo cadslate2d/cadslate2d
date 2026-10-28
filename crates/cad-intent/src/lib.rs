@@ -27,7 +27,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 18;
+pub const VERSION: u32 = 19;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -41,9 +41,10 @@ pub const VERSION: u32 = 18;
 /// `part_views` (#339) and `title_block` (#340), version 14 `spline` and
 /// `hatch` (#345), version 15 `view` (#351, ADR-0041), version 16 a free
 /// view's `ratio` (#352), version 17 a section view's `cut` (#353),
-/// version 18 `bill_of_materials` and `balloon` (#354).
-pub const READS: [u32; 18] = [
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+/// version 18 `bill_of_materials` and `balloon` (#354), version 19
+/// `dim_chain` and `notes` (#355).
+pub const READS: [u32; 19] = [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
 ];
 
 /// A point, `[x, y]`, in the document's units.
@@ -432,6 +433,22 @@ pub enum Operation {
         view: String,
         at: Point,
         to: Point,
+    },
+    /// A chain of linear dimensions between `points`, in order, along one
+    /// side of what is drawn: the program puts the dimension line beyond
+    /// the geometry on that side, and beyond the chains already there.
+    DimChain {
+        points: Vec<Point>,
+        side: ChainSide,
+    },
+    /// A block of notes on the sheet: its lines, wrapped to `width` paper
+    /// millimetres (120 when absent), placed where there is room.
+    Notes {
+        lines: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width: Option<f64>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        title: String,
     },
     /// A closed rectangle from two opposite corners.
     Rectangle {
@@ -1048,6 +1065,17 @@ pub enum ViewPlacement {
     Section,
 }
 
+/// Which side of the geometry a chain of dimensions runs along.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ChainSide {
+    Below,
+    Above,
+    Left,
+    Right,
+}
+
 /// A part of a bill of materials.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -1105,6 +1133,8 @@ impl Operation {
             Self::View { .. } => "view",
             Self::BillOfMaterials { .. } => "bill_of_materials",
             Self::Balloon { .. } => "balloon",
+            Self::DimChain { .. } => "dim_chain",
+            Self::Notes { .. } => "notes",
             Self::Hatch { .. } => "hatch",
             Self::Rectangle { .. } => "rectangle",
             Self::Circle { .. } => "circle",

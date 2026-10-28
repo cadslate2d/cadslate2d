@@ -83,6 +83,19 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         (points(3), any::<bool>())
             .prop_map(|(points, closed)| Operation::Polyline { points, closed }),
         points(2).prop_map(|points| Operation::Spline { points }),
+        points(3).prop_map(|points| Operation::DimChain {
+            points,
+            side: crate::ChainSide::Below,
+        }),
+        (
+            proptest::collection::vec(text(), 1..4),
+            proptest::option::of(10.0..200.0f64)
+        )
+            .prop_map(|(lines, width)| Operation::Notes {
+                lines,
+                width,
+                title: String::new(),
+            }),
         (1u32..50, 1u32..5).prop_map(|(number, quantity)| Operation::BillOfMaterials {
             parts: vec![crate::BomPart {
                 number,

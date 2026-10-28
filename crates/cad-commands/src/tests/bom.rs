@@ -131,3 +131,38 @@ fn without_a_sheet_or_a_bill_nothing_is_made() {
         "The sheet has no bill of materials: make one with BOMTABLE first."
     );
 }
+
+/// NOTES (#355): the lines wrapped to the width in paper millimetres, 3.5
+/// high, titled, placed as a view.
+#[test]
+fn notes_are_a_wrapped_block_placed_as_a_view() {
+    let mut h = sheet();
+    h.enter_all(&[
+        "NOTES",
+        "Shell 4 mm titanium alloy.",
+        "Joint clearance 15 mm.",
+        "",
+        "80",
+        "",
+    ]);
+    assert_eq!(h.log().last().unwrap(), "Notes placed on TITLE-1 as notes.");
+    let notes = h
+        .entities()
+        .into_iter()
+        .find_map(|e| match e {
+            Entity::MText(m) => Some(m),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(notes.width, 80.0);
+    assert_eq!(notes.height, 3.5);
+    assert_eq!(
+        notes.content,
+        "Shell 4 mm titanium alloy.\nJoint clearance 15 mm."
+    );
+    assert!(
+        h.entities()
+            .iter()
+            .any(|e| matches!(e, Entity::Text(t) if t.content == "NOTES"))
+    );
+}
