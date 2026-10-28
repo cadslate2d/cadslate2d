@@ -122,7 +122,7 @@ Apply these with judgement. The goal is code that is easy to change, not ceremon
 
 ## Commands
 
-Build, test, and lint commands are listed in [`README.md`](README.md#development); the root `Makefile` wraps them (`make` lists the targets). A target only calls a script or a pnpm script — put new logic in `scripts/`, not in the Makefile. Run the full check before every push:
+Build, test, and lint commands are listed in [`docs/development.md`](docs/development.md); the root `Makefile` wraps them (`make` lists the targets). A target only calls a script or a pnpm script — put new logic in `scripts/`, not in the Makefile. Run the full check before every push:
 
 ```bash
 make check
@@ -141,7 +141,7 @@ make e2e
 - One issue per commit where practical. Reference the issue in the commit message and close it with `Closes #N` once every acceptance criterion is met.
 - Never push with failing checks.
 - The program has one version, semantic from 0.1.0: the workspace's in `Cargo.toml` (the About box's "Core version") and `web/package.json`, kept equal by `scripts/check-version.sh`. Raise the minor version when a milestone closes, the patch for a release of fixes; the AI service's own `Cargo.toml` follows the same numbers.
-- Keep `README.md`, `AGENTS.md`, and `CLAUDE.md` accurate in the same commit as the change that affects them.
+- Keep `README.md`, `docs/commands.md` (the command reference: every command's row), `docs/development.md`, `AGENTS.md`, and `CLAUDE.md` accurate in the same commit as the change that affects them.
 - Decisions that resolve a PROVISIONAL or EXPERIMENT item, or change the baseline, get an ADR with evidence.
 - A dependency version is taken only once it has been published for two weeks: pnpm refuses younger ones (`minimumReleaseAge` in `web/pnpm-workspace.yaml`), and Dependabot waits as long (`cooldown` in `.github/dependabot.yml`). Cargo has no such setting: check a crate's release date by hand before raising a version in `Cargo.toml`. A security fix younger than that — or a version the maintainer chooses to take early — is taken deliberately, saying so in the commit; in the web project as an exact version under `minimumReleaseAgeExclude`, with the date it may come out.
 

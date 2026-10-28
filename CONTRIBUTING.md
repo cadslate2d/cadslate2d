@@ -12,7 +12,7 @@ Thank you. CadSlate2D is a free, browser-native, local-first 2D CAD program in t
 
 | Step | Command |
 | --- | --- |
-| Prerequisites | Rust (rustup), `wasm-bindgen-cli` at the pinned version, Node 22+, pnpm 10+: see [README.md#development](README.md#development) |
+| Prerequisites | Rust (rustup), `wasm-bindgen-cli` at the pinned version, Node 22+, pnpm 10+: see [docs/development.md](docs/development.md) |
 | First run | `make install`, then `make dev` |
 | The full check | `make check` |
 | End-to-end tests | `make e2e` |
@@ -23,7 +23,7 @@ Every pull request must pass `make check`. CI runs it too.
 ## What a change needs
 
 - **Tests, in the same commit** (DESIGN §41): geometry changes need unit and property tests and a regression case per fixed bug; commands need headless tests through `Session`; DXF changes need fixtures; UI changes need Vitest or Playwright coverage. [`AGENTS.md`](AGENTS.md#where-things-go) says which for each kind of change.
-- **Documentation, in the same commit:** `README.md`, `AGENTS.md`, the DXF or modify matrices, and `docs/roadmap.md` where they are affected.
+- **Documentation, in the same commit:** `docs/commands.md` (a command's row), `README.md`, `AGENTS.md`, the DXF or modify matrices, and `docs/roadmap.md` where they are affected.
 - **A commit message that says what and why,** referencing the issue, and `Closes #N` when every acceptance criterion is met.
 - **No new logic in the Makefile** — put it in `scripts/`.
 

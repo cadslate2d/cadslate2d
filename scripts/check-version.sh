@@ -10,4 +10,9 @@ if [ -z "$core" ] || [ "$core" != "$web" ]; then
   echo "Cargo.toml says ${core:-nothing}, web/package.json ${web:-nothing}: one version, set in both." >&2
   exit 1
 fi
+# The README's version badge says the same.
+if ! grep -q "version-$core-" README.md; then
+  echo "README.md's version badge does not say $core: update the badge." >&2
+  exit 1
+fi
 echo "version $core"

@@ -14,7 +14,7 @@ if [[ "${1:-}" == "--release" ]]; then
 fi
 
 if ! command -v wasm-bindgen >/dev/null; then
-  echo "error: wasm-bindgen-cli is not installed. See README.md → Development → Prerequisites." >&2
+  echo "error: wasm-bindgen-cli is not installed. See docs/development.md → Prerequisites." >&2
   exit 1
 fi
 
