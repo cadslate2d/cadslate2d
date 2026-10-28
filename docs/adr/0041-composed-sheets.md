@@ -1,14 +1,23 @@
 # ADR-0041: A sheet is composed by operations that place and tie its parts; the model draws inside them
 
-**Status:** Proposed (2026-10-27). Asked for on 2026-10-27 ("proceed"), after the Iron Man and spillway sheets. Revised the same day after the maintainer's review, which accepted the direction and asked for six changes before acceptance. Their resolution:
-- shared geometric references (§3);
-- the scale contract (§4);
-- placement that knows the annotations (§2);
-- projection declared precisely (§1);
-- references validated and the sheet kept (§6, §7);
-- the boundary stated rightly (§8).
+**Status:** Proposed (2026-10-27). Asked for on 2026-10-27 ("proceed"), after the Iron Man and spillway sheets.
 
-It also asked for L5 to score four things apart (§9).  
+Revised twice the same day after the maintainer's reviews.
+- **The first** accepted the direction and asked for six changes:
+  - shared references (§3);
+  - the scale contract (§4);
+  - placement that knows the annotations (§2);
+  - projection declared precisely (§1);
+  - references validated and the sheet kept (§6, §7);
+  - the boundary stated rightly (§8);
+  - and L5 scored four ways (§9).
+- **The second** (8.5/10) asked for three more, the first two blocking:
+  - signed orientation transforms, and alignment by reference coordinates (§1);
+  - measurement of what will be drawn, at its final scale (§2);
+  - tables and notes sized in paper (§1).
+
+  It also made four smaller corrections, taken in: datum coverage (§7), section cuts (§6), LTSCALE on a drawing that has other content (§4), and how datums are kept (§3, §6).
+
 **Date:** 2026-10-27  
 **Issue:** #350 · **Epic:** #360, milestone M25  
 **Kind:** Architecture and the intent IR (new operations, version 15; no new crate)  
@@ -29,90 +38,141 @@ Most of this is layout, arithmetic, and bookkeeping, which a program does better
 
 ## Decision
 
-### 1. The sheet's structure is declared, and projection precisely
+### 1. The sheet's structure is declared, in one object frame
 
-- **`sheet`**: `paper`, `portrait`, `scale` N of 1:N, `projection` (`first` or `third` angle), and the title block's fields. It draws the title block and defines the drawing area inside the border, less the block.
-- **`view`**: a unique `id` (letters, digits, `-`), a `title`, a `size` (the extent of its geometry, real units), and its placement, one of the following.
-  - **Principal**: the root view, the front, usually. One per sheet at most.
-  - **Projected**: `of` a parent view and `looking` `from_left`, `from_right`, `from_above`, `from_below`, or `from_behind`.
-    - The slot follows the sheet's projection. In third angle a view from the left goes left of its parent and a view from above goes above. In first angle each goes on the opposite side.
-    - A view from behind goes beyond the side view, on the far side of whichever side view its row has.
-    - A horizontal neighbour shares its parent's heights; a vertical neighbour shares its widths.
-    - A projected view takes its parent's scale; another scale is refused.
-  - **Free**: `section`, `detail`, `table`, or `notes` views. They are packed into the space the projected views leave.
+**The object frame.** Everything a composed sheet shows is of one object, described in one right-handed frame of real units:
+- **width** (W), positive to the right as the front view shows it;
+- **depth** (D), positive away from the front, the front face at D = 0;
+- **height** (H), positive up.
 
-  `ratio` (paper : real, such as `2` for 2:1) is a free view's own. Every other view is at the sheet's scale.
+The origin is the object's reference point: wherever the request puts 0, 0, 0, and by default the lowest, leftmost, frontmost corner.
+
+**`sheet`**: `paper`, `portrait`, `scale` N of 1:N, `projection` (`first` or `third` angle), and the title block's fields. It draws the title block and defines the drawing area inside the border, less the block.
+
+**`view`** has a unique `id` (letters, digits, `-`) and a `title`, and is one of:
+- **Principal**: the front, `looking` `from_front`. One per sheet.
+- **Projected**: `of` a parent view, `looking` `from_left`, `from_right`, `from_above`, `from_below`, or `from_behind`.
+  - The slot follows the sheet's projection. In third angle a view from the left goes left of its parent and a view from above goes above. In first angle each goes on the opposite side.
+  - A view from behind goes beyond the side view, on the far side of whichever side view its row has.
+  - A projected view takes its parent's scale; another is refused.
+- **Section** or **detail**: free views at their own `ratio` (paper : real, such as `2` for 2:1).
+  - A section is `looking` as its arrows point (§5).
+  - A detail is `looking` as the view it enlarges.
+- **Table** or **notes**: free views of a `size` in **paper millimetres**, with no ratio. They hold paper objects, a bill of materials or lines of text, whose column widths and wrapping do not depend on the size of what is drawn. Their extent on the sheet is that size × N model units.
+
+**Each orientation maps the object frame to the view's own coordinates (u, v)**, signed:
+
+| `looking` | u (right on the page) | v (up on the page) |
+| --- | --- | --- |
+| `from_front` | +W | +H |
+| `from_behind` | −W | +H |
+| `from_left` | −D | +H |
+| `from_right` | +D | +H |
+| `from_above` | +W | +D |
+| `from_below` | +W | −D |
+
+Every view's (u, v) origin is the image of the object's origin. A feature at width +200 is at u = +200 in the front view and at u = −200 in the rear view. A feature at depth 170 is at u = −170 from the left and at u = +170 from the right.
+
+An operation inside a view gives its coordinates in that view's (u, v). A coordinate given as a datum (§3) is mapped through the table, sign included.
+
+**Alignment is by reference coordinates, not boxes.** Projected neighbours share an axis of the object frame:
+- a row (front, side, rear) shares H, so the image of H = 0 is at the same height on the sheet in each;
+- a column (top, front, bottom) shares W, so the image of W = 0 is at the same distance across.
+
+Boxes, the measured extents of §2, decide only the spacing along the other axis, and whether the views fit.
 
 Projected views form a tree rooted at the principal view. The following are refused, each saying which:
 - a cycle;
 - an unknown parent;
 - two views in one slot;
 - a projected view at a scale other than its parent's;
-- a second principal view.
+- a second principal view;
+- a table or notes view given a ratio.
 
-**Position is not geometry.** A view placed from the left of the front is positioned as that view is in the projection. The program does not draw what is seen from the left: the model does, inside it. §3 is what makes the two agree where it matters.
+**Position is not geometry.** A view placed from the left of the front is positioned and oriented as that view is in the projection. The program does not draw what is seen from the left: the model does, inside it. §3 makes the views agree where it matters.
 
-### 2. Views are placed in two passes, knowing their annotations
+### 2. What will be drawn is measured, then placed, and nothing is drawn twice
 
-Declared extents are not rendered extents: dimensions, balloons, labels, and section letters reach past the geometry. Placement is therefore done by the engine, not when the document is compiled.
+Declared extents are not rendered extents: dimensions, balloons, labels, and section letters reach past the geometry. And a detail view's size depends on its scale. So the engine places views from what they will actually draw, at its final size, in four steps.
 
-1. **Measure.** Each view's operations are run on a scratch drawing at the view's own origin. Their rendered bounds are measured: `Entity::bounds` with the drawing's tables, so dimension text and leaders count. The view's title is added.
-2. **Place.** The views are placed by a pure function of the sheet, the projection tree, and the measured boxes. Each projected view goes in its slot, aligned on the shared axis, with a gap of 10 paper mm. Free views are packed into the space left, largest first, in rows.
-3. **Draw.** The operations run again on the drawing itself, each view's moved to its place. This is one transaction, one undo.
+1. **Resolve.** Each view's operations are made final, at the view's own origin, before anything runs:
+   - datums are replaced by their signed values (§1, §3);
+   - geometry is scaled by the view's factor k (§4);
+   - text heights, dimension styles (overall scale N, linear factor 1/k), and hatch scales are set as §4 says.
 
-Placement never overlaps two views. If a view cannot be placed, the sheet is refused, saying which view and how much room it lacks. It is never drawn crowded.
+   What is left is a list of ordinary operations whose only difference from the final drawing is where the view's origin is.
+2. **Run once, and measure.** The resolved operations run once, through their commands as typed, on a scratch copy of the drawing's tables at the view's origin. The view's title is added. The entities they made are measured: `Entity::bounds` with the tables, so dimension text and leaders count.
+3. **Place.** A pure function of the sheet, the projection tree, the reference alignment (§1), and the measured boxes gives each view its origin on the sheet.
+   - Projected views go in their slots with a gap of 10 paper mm between boxes.
+   - Free views are packed into the space left, largest first, in rows.
+   - Nothing overlaps. A view that cannot be placed refuses the sheet, saying which view and how much room it lacks.
+4. **Bring in.** The entities made in step 2 are brought into the drawing as the clipboard brings objects in (`TransactionBuilder::bring_in`, rows matched by name). Each view's entities are moved by the translation to its placed origin, a pure translation, so what was measured is exactly what is drawn. This is one transaction, one undo.
 
-The function is deterministic and has property tests: projected neighbours share their axis exactly; no two placed boxes overlap; every box is inside the drawing area.
+The placement function has property tests:
+- projected neighbours share their reference coordinate exactly;
+- no two placed boxes overlap;
+- every box is inside the drawing area.
 
 ### 3. Shared references: datums
 
-A **`datum`** names a value of the object being drawn, real units:
+A **`datum`** names a value of the object, in real units:
 - `name`;
-- `axis`: `height`, `width`, or `depth`;
-- `value`.
+- `axis`: `width`, `depth`, or `height`;
+- `value`;
+- optionally `views`: the ids of the views the feature it marks is meant to appear in.
 
-For example, the shoulder at height 1450, the reactor's centre at width 0, the chest's front face at depth 170.
+For example, the shoulder at height 1450, the reactor's centre at width 0, the chest's front face at depth 0.
 
-Any coordinate of an operation inside a view may be given as `{"datum": "shoulder"}` instead of a number. The view's orientation decides which datums apply to which axis:
-- a front view's x is width and y is height;
-- a side view's x is depth and y is height;
-- a top view's x is width and y is depth.
+Any coordinate of an operation inside a view may be given as `{"datum": "shoulder"}` instead of a number. Which datums a coordinate may name follows the view's orientation (§1):
+- u of a front or rear view is width, v is height;
+- u of a side view is depth, v is height;
+- u of a top or bottom view is width, v is depth.
 
-A datum used on an axis the view does not show is refused. Datums are resolved when the document runs; they are not kept (not associativity, ADR-0040 §1).
+The datum's value is mapped with the sign the table gives. A datum on an axis the view does not show is refused.
 
-**What is guaranteed, and what is not.** A feature drawn at a datum in two views is at the same place in both: one number, used twice. A feature drawn with raw numbers in two views is not checked against itself. Cross-view agreement is guaranteed exactly as far as datums are used. The service's instructions ask the model to declare a datum for every size the request gives and every feature more than one view shows. The review (§7) reports a datum declared and used in only one view of several that show its axis.
+**Kept as metadata, not as constraints.** Datums are resolved into numbers when the document runs. They are kept in the sheet's description (§6), so a later request can draw at the same datums. They are never live: editing a line drawn at a datum moves that line only (ADR-0040 §1).
+
+**What is guaranteed, and what is not.** A feature drawn at a datum in two views is at the same place in both: one number, used twice, with the right sign. A feature drawn with raw numbers in two views is not checked against itself. Agreement across views is guaranteed exactly as far as datums are used. The service's instructions ask the model to declare a datum for every size the request gives and every feature more than one view shows, with `views` naming them.
 
 There is no constraint solver between views, and none is needed: a datum is a name for a number.
 
 ### 4. The scale contract
 
 Units:
-- **Real units**: the drawing's unit (`mm`). A view's geometry is given in real units, in its own coordinates.
+- **Real units**: the drawing's unit (`mm`). A view's geometry is given in real units, in its own (u, v).
 - **Paper millimetres**: what is printed.
-- **Model units**: where entities are stored. The sheet is 1:N, so one paper millimetre is N model units: the sheet's border is `paper size × N`.
+- **Model units**: where entities are stored. The sheet is 1:N, so one paper millimetre is N model units: the border is `paper size × N`.
 
 A view at ratio r (paper : real) shows a real length L as L·r paper mm, which is L·r·N model units. So the view's **geometry factor is k = r·N**. A view at the sheet's own scale has r = 1/N, so k = 1, and its geometry is stored true size, as #348 asked.
 
 Transformation order, for each point of a view's geometry:
-1. resolve datums;
+1. resolve datums, signed;
 2. scale by k about the view's origin;
-3. translate to the view's placed origin.
+3. translate to the view's placed origin, after measurement (§2).
 
-Nothing is rotated.
+Nothing is rotated: orientation is the (u, v) mapping of §1, applied by the model and the datums, not a transform of drawn geometry.
 
-What is sized by paper and not by k:
+What is sized by paper, not by k, and set when the operations are resolved, before measuring:
 - **Text, dimension text and arrows, balloons, and labels** are given in paper millimetres. They are multiplied by N, so they print the same size in every view, whatever its ratio.
-- **Dimensions** in a view use a dimension style made for it: overall scale N, and **linear factor 1/k** (DIMLFAC, DXF group 144). Its numbers read true size: in a 2:1 detail of a 1:3 sheet, k = 6, and a 10 mm feature drawn 60 units long reads 10.
-- **Hatch** spacing is set for paper: a view's hatch scale is multiplied by N, not k, so every view's hatch prints alike.
-- **Linetypes**: the drawing's LTSCALE is N, so dashes print alike everywhere. A linetype scale per object is not in the program (DESIGN, M5) and is not needed under this rule.
+- **Dimensions.** A view's dimensions use a dimension style made for it: overall scale N and **linear factor 1/k** (DIMLFAC, DXF group 144). Their numbers read true size: in a 2:1 detail of a 1:3 sheet, k = 6, and a 10 mm feature drawn 60 units long reads 10.
+- **Hatch** spacing is set for paper: a view's hatch scale is multiplied by N, not k.
+- **Linetypes.**
+  - **On a drawing with nothing else in it**, the composer sets LTSCALE to N, so dashes print alike in every view.
+  - **On a drawing that already holds objects with a dashed linetype** under another LTSCALE, the composer leaves LTSCALE alone, and the reply says the sheet's dashes print at the drawing's scale. Changing a global setting under the drafter's own objects would be a silent edit. A linetype scale per object (CELTSCALE) would remove this case; it is not in the program and not in this milestone.
 
 ### 5. What a sheet's parts refer to, they refer to by name
 
-- **`section`** is a free view with `cut`: a parent view's `id` and two points in that view's coordinates. The program draws the cutting-plane line, the arrows, and the letters in the parent, and titles the section ("SECTION A-A"). Letters are given in order, skipping I, O, and Q.
-- **`parts`** declares the bill of materials: unique positive `number`, `name`, positive integer `quantity`, optional `material`. A **`table`** view draws it.
-- **`balloon`**: a `part` number, a view, and a point there. It is drawn with a leader and a circle; balloons are kept clear of each other by the placement of their circles.
+- **`section`** is a section view with `cut`: a parent view's `id` and two points in that view's (u, v), and `looking` as its arrows point. The program draws the cutting-plane line, the arrows, and the letters in the parent, and titles the section ("SECTION A-A"). Letters are given in order, skipping I, O, and Q.
+- **`parts`** declares the bill of materials:
+  - a unique positive `number`;
+  - `name`;
+  - a positive integer `quantity`;
+  - an optional `material`.
+
+  A **`table`** view draws it, columns sized in paper millimetres.
+- **`balloon`**: a `part` number, a view, and a point there. It is drawn with a leader and a circle in paper millimetres; balloons are kept clear of each other by the placement of their circles.
 - **`dim_chain`**: points along one side of a view, chained, offset from the view's geometry by the program (DIMCONTINUE, as typed).
-- **`notes`**: lines of text in a `notes` view, wrapped to its width.
+- **`notes`**: lines of text in a `notes` view, wrapped to its paper width.
 
 ### 6. References are validated; the sheet is kept
 
@@ -120,14 +180,20 @@ The following are refused, each saying which:
 - a duplicate view id;
 - an unknown view, parent, or part;
 - a cycle;
-- a section whose cut is not inside its parent's geometry;
+- a section whose cut does not cross its parent's geometry (the cutting line may, and usually does, reach past the outline; it must intersect what it cuts);
 - a section letter used twice;
 - a balloon for a part not declared;
 - a part number that is not unique, or not positive;
 - a quantity that is not a positive integer;
-- a datum unknown, or on an axis the view does not show.
+- a datum unknown, on an axis the view does not show, or naming in `views` a view that does not exist.
 
-A composed sheet is kept as ADR-0040 keeps a generator's description: a group `SHEET-n` whose description holds the declaration. That is the sheet, its views with their placed origins, ratios, and geometry factors, its datums, and its parts. Each view's entities are also a group, `VIEW-id`. A later request, by the AI or typed, reads them to add to a view in its own coordinates, or to balloon another part.
+A composed sheet is kept as ADR-0040 keeps a generator's description: a group `SHEET-n` whose description holds the declaration as metadata:
+- the sheet;
+- its views, with their placed origins, orientations, ratios, and geometry factors;
+- its datums;
+- its parts.
+
+Each view's entities are also a group, `VIEW-id`. A later request, by the AI or typed, reads them to add to a view in its own coordinates, at its datums, or to balloon another part. None of it is live; it is a record of how the sheet was made.
 
 **Typed commands never move what is placed.**
 - `VIEWFRAME` adds a view to an existing sheet in the space left, or refuses, saying how much room it needs.
@@ -137,12 +203,14 @@ A composed sheet is kept as ADR-0040 keeps a generator's description: a group `S
 ### 7. The review checks the structure
 
 The sheet review (#349) gains structural checks:
-- geometry outside its view's frame;
+- geometry outside its view's box;
 - views overlapping;
-- a projected view out of line with its parent;
+- a projected view out of line with its parent, by reference coordinates;
 - a section without its marker;
 - a balloon without its part;
-- a datum used in one view of several that show its axis.
+- a datum declared with `views` and not used in one of them.
+
+A datum used in one view only, with no `views` declared, is not reported. The feature may genuinely be hidden or absent in the others.
 
 ### 8. The boundary, and what validity means
 
@@ -169,13 +237,14 @@ A beautiful sheet that fails any of them fails.
 - **More review, no structure.** Let the model keep doing layout, and catch more of it. Rejected as the main path: each finding costs a revision call, and alignment is not something a review makes a model get right.
 - **A constraint solver between views.** Relate features across views by constraints and solve them, as ADR-0038 does within a drawing. Rejected: datums, names for numbers, give the agreement that matters without a solver, and keep the scope a sheet composer.
 - **Placement at compile time from declared sizes.** The first version of this ADR. Rejected after review: declared extents leave out annotations, so views placed by them collide.
+- **Measuring, then running the commands again at the placed origin.** The first revision. Rejected after the second review: the two runs could differ, and a detail view measured before scaling is packed too small. One run, measured, and moved, cannot differ from itself.
 - **Views as viewports on a layout** (ADR-0029, ADR-0030). The professional way to print several scales on one sheet, and it needs no DIMLFAC. Not now: the AI's proposals, the corpus's judge, and the review all work in model space, and a layout puts the sheet where the user at the model tab does not look. Noted for later; the scale contract (§4) maps onto viewports directly, k being a viewport's scale.
 - **A generator per kind of sheet.** Rejected: there is no end of kinds.
 
 ## Consequences
 
 - **Intent version 15:** `sheet`, `view`, `datum`, `parts`, `balloon`, `dim_chain`, and `notes`; `in` on drawing operations; coordinates that may name a datum; `layer` gains `color` and `linetype`.
-- **The engine composes.** `cad-commands` gains the two-pass placement (the measuring run, then the drawing run) as one transaction. The placement function is pure and has its property tests.
+- **The engine composes.** `cad-commands` gains the composition: resolve, run once and measure, place, bring in, as one transaction. The placement function is pure and has its property tests.
 - **New commands,** typed as well as compiled to: `SHEET`, `VIEWFRAME`, `SECTIONMARK`, `BALLOON`, `BOMTABLE`, `NOTES`. Each is registered, tested headless, and on a menu.
 - **Dimension styles** gain a linear factor, with its DXF group (144).
 - **The corpus** gains L5, scored as §9 says, in English and Portuguese, the spillway and the armour among its cases.
