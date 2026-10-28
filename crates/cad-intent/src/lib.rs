@@ -27,7 +27,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 15;
+pub const VERSION: u32 = 16;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -39,8 +39,9 @@ pub const VERSION: u32 = 15;
 /// isometric operations (#336), version 12 `elevation` and a brief's
 /// `building` (#337); `building_section` (#338) came with it; version 13
 /// `part_views` (#339) and `title_block` (#340), version 14 `spline` and
-/// `hatch` (#345), version 15 `view` (#351, ADR-0041).
-pub const READS: [u32; 15] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+/// `hatch` (#345), version 15 `view` (#351, ADR-0041), version 16 a free
+/// view's `ratio` (#352).
+pub const READS: [u32; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 
 /// A point, `[x, y]`, in the document's units.
 pub type Point = [f64; 2];
@@ -397,6 +398,12 @@ pub enum Operation {
         /// Where a projected view looks from.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         looking: Option<ViewLooking>,
+        /// A free view's own scale, paper to real: 2 for a detail at 2:1.
+        /// Its operations still draw true size; the program enlarges the
+        /// geometry and its dimensions still read true. The sheet's scale
+        /// when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ratio: Option<f64>,
         operations: Vec<Operation>,
     },
     /// A closed rectangle from two opposite corners.

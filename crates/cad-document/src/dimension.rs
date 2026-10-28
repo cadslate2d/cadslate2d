@@ -566,7 +566,12 @@ impl DimensionEntity {
         if let Some(text) = &self.text_override {
             return text.clone();
         }
-        let value = style.format(self.value());
+        // A length reads through the style's linear factor; an angle does not.
+        let shown = match self.measure {
+            Measure::Angular { .. } => self.value(),
+            _ => self.value() * style.linear_factor,
+        };
+        let value = style.format(shown);
         match self.measure {
             Measure::Linear { .. } | Measure::Aligned { .. } | Measure::Ordinate { .. } => value,
             Measure::Angular { .. } => format!("{value}°"),
@@ -1719,6 +1724,7 @@ mod tests {
                         String::new()
                     },
                     scale: 1.0,
+                    linear_factor: 1.0,
                 },
             )
     }
@@ -1938,5 +1944,33 @@ mod tests {
             prop_assert_eq!(layout.text.content, moved.text.content);
             prop_assert!((layout.value - moved.value).abs() < 1e-6 * (1.0 + layout.value.abs()));
         }
+    }
+
+    /// A style's linear factor shows a length through it, an angle not
+    /// (#352): a 2:1 detail of a 1:3 sheet is drawn six times true, and its
+    /// 10 mm feature, 60 units long, reads 10.
+    #[test]
+    fn the_linear_factor_reads_a_length_true_and_leaves_an_angle() {
+        let mut style = standard();
+        style.linear_factor = 1.0 / 6.0;
+        let feature = horizontal(
+            Point2::new(0.0, 0.0),
+            Point2::new(60.0, 0.0),
+            Point2::new(30.0, -10.0),
+        );
+        let text = feature.layout(&style).text.content;
+        assert!(text.starts_with("10.00"), "{text}");
+        let angle = DimensionEntity::new(
+            Measure::Angular {
+                vertex: Point2::new(0.0, 0.0),
+                a: Point2::new(10.0, 0.0),
+                b: Point2::new(0.0, 10.0),
+            },
+            Point2::new(7.0, 7.0),
+        );
+        let text = angle.layout(&style).text.content;
+        assert!(text.starts_with("90"), "{text}");
+        style.linear_factor = 0.0;
+        assert!(style.check().is_err());
     }
 }

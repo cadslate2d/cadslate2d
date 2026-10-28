@@ -387,8 +387,15 @@ impl Check {
                 placed,
                 of,
                 looking,
+                ratio,
                 operations,
             } => {
+                if let Some(ratio) = ratio {
+                    if *placed != crate::ViewPlacement::Free {
+                        return Err(self.refuse("ratio", Reason::Unwanted));
+                    }
+                    self.positive("ratio", *ratio)?;
+                }
                 self.name("id", id)?;
                 if !id
                     .chars()

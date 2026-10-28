@@ -43,6 +43,10 @@ pub struct DimStyle {
     /// What every size above is multiplied by when a dimension is drawn
     /// (DIMSCALE). Positive; 1 by default.
     pub scale: f64,
+    /// What a measured length is multiplied by before it is shown
+    /// (DIMLFAC): 1/k in a view drawn k times its true size, so it reads
+    /// true (ADR-0041 §4, #352). Angles are not. Positive; 1 by default.
+    pub linear_factor: f64,
 }
 
 /// Why a style cannot be as given.
@@ -91,6 +95,7 @@ impl DimStyle {
             decimals: 2,
             suffix: String::new(),
             scale: 1.0,
+            linear_factor: 1.0,
         }
     }
 
@@ -140,6 +145,7 @@ impl DimStyle {
         not_negative(self.extension_offset, "extension line offset")?;
         not_negative(self.extension_overshoot, "extension line overshoot")?;
         not_negative(self.baseline_spacing, "baseline spacing")?;
+        positive(self.linear_factor, "linear scale factor")?;
         if self.decimals > Self::MAX_DECIMALS {
             return Err(DimStyleError::TooManyDecimals);
         }

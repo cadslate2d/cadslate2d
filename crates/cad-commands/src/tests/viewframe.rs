@@ -229,3 +229,90 @@ fn a_view_is_placed_by_what_it_draws_dimensions_and_all() {
         assert!(b.min().y >= placed.min().y - 1e-9 && b.max().y <= placed.max().y + 1e-9);
     }
 }
+
+/// A detail at its own scale (ADR-0041 §4, #352): a 2:1 detail on a 1:3
+/// sheet is drawn k = 6 times true size; its dimension reads true through a
+/// style made for it — linear factor 1/6, overall scale 3 — its text keeps
+/// its height, and its title says its scale.
+#[test]
+fn a_two_to_one_detail_on_a_one_to_three_sheet_is_drawn_six_times_and_reads_true() {
+    let mut h = Harness::new();
+    h.enter_all(&[
+        "UNITS",
+        "mm",
+        "TITLEBLOCK",
+        "A3",
+        "Landscape",
+        "3",
+        "SHAFT",
+        "",
+        "",
+        "",
+        "",
+        "Third",
+        "0,0",
+    ]);
+    h.enter_all(&["LINE", "0,0", "10,0", ""]);
+    h.enter_all(&["DIMLINEAR", "0,0", "10,0", "5,-5"]);
+    h.enter_all(&["TEXT", "0,5", "2.5", "0", "KEY"]);
+    let ids = h.ids();
+    let detail: Vec<EntityId> = ids[ids.len() - 3..].to_vec();
+    h.session.select_only(&detail);
+    h.enter_all(&[
+        "VIEWFRAME",
+        "0,0",
+        "detail",
+        "DETAIL A",
+        "Free",
+        "2:1",
+        "No",
+    ]);
+    assert!(
+        h.log().last().unwrap().starts_with("1 view placed"),
+        "{:?}",
+        h.log()
+    );
+    let v = view(&h, "detail");
+    assert_eq!(v.ratio, Some(2.0));
+    let drawing = h.session.drawing();
+    let tables = drawing.tables();
+    let (line, dimension, text) = (
+        drawing.entity(detail[0]).unwrap(),
+        drawing.entity(detail[1]).unwrap(),
+        drawing.entity(detail[2]).unwrap(),
+    );
+    match line {
+        cad_document::Entity::Line(l) => assert!((l.start.distance_to(l.end) - 60.0).abs() < 1e-9),
+        other => panic!("{other:?}"),
+    }
+    let cad_document::Entity::Dimension(d) = dimension else {
+        panic!("{dimension:?}")
+    };
+    let style = tables.dim_style(d.style);
+    assert_eq!(style.name, "detail-Standard");
+    assert!((style.linear_factor - 1.0 / 6.0).abs() < 1e-12);
+    assert_eq!(style.scale, 3.0);
+    assert!(
+        d.layout(style).text.content.starts_with("10.00"),
+        "{}",
+        d.layout(style).text.content
+    );
+    match text {
+        cad_document::Entity::Text(t) => assert_eq!(t.height, 2.5, "a text keeps its height"),
+        other => panic!("{other:?}"),
+    }
+    assert!(
+        h.entities()
+            .iter()
+            .any(|e| matches!(e, cad_document::Entity::Text(t) if t.content == "DETAIL A (2:1)"))
+    );
+    // Only a free view has a scale of its own.
+    let mut h = sheet();
+    let id = drawn(&mut h, 10.0, 10.0);
+    h.session.select_only(&[id]);
+    h.enter_all(&["VIEWFRAME", "0,0", "front", "", "Free", "nonsense"]);
+    assert_eq!(
+        h.log().last().unwrap(),
+        "A scale is paper to real, as 2:1 or 1:5, greater than zero."
+    );
+}

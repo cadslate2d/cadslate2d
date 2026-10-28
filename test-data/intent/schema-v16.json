@@ -503,6 +503,14 @@
             "placed": {
               "$ref": "#/$defs/ViewPlacement"
             },
+            "ratio": {
+              "description": "A free view's own scale, paper to real: 2 for a detail at 2:1.\nIts operations still draw true size; the program enlarges the\ngeometry and its dimensions still read true. The sheet's scale\nwhen absent.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
             "title": {
               "type": "string"
             }

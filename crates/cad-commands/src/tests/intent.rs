@@ -1130,3 +1130,38 @@ fn views_of_a_sheet_are_drawn_in_their_own_coordinates_and_placed_together() {
         assert_eq!(same.origin, view.origin, "{}", view.id);
     }
 }
+
+/// A detail at its own scale by intent (#352): drawn true size, enlarged
+/// by the program, its dimension reading true.
+#[test]
+fn a_detail_view_by_intent_is_drawn_at_its_ratio() {
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    h.session
+        .run_intent(&document(
+            r#"
+        {"op": "title_block", "paper": "A3", "scale": 3, "title": "SHAFT", "projection": "third", "at": [0, 0]},
+        {"op": "view", "id": "detail", "title": "DETAIL A", "placed": "free", "ratio": 2, "operations": [
+            {"op": "line", "points": [[0, 0], [10, 0]]},
+            {"op": "dim_linear", "from": [0, 0], "to": [10, 0], "at": [5, -5]}]}
+    "#,
+        ))
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", h.log()));
+    let drawing = h.session.drawing();
+    let members = drawing
+        .groups()
+        .iter()
+        .find(|(_, g)| g.name == "VIEW-detail")
+        .map(|(_, g)| g.members.clone())
+        .unwrap();
+    let line = members.iter().find_map(|id| match drawing.entity(*id) {
+        Some(Entity::Line(l)) => Some(l.start.distance_to(l.end)),
+        _ => None,
+    });
+    assert!((line.unwrap() - 60.0).abs() < 1e-9);
+    let shown = drawing.entities().find_map(|(_, e)| match e {
+        Entity::Dimension(d) => Some(d.layout(drawing.tables().dim_style(d.style)).text.content),
+        _ => None,
+    });
+    assert!(shown.unwrap().starts_with("10.00"));
+}

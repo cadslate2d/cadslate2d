@@ -1683,6 +1683,12 @@ impl<'a> Reader<'a> {
         take(&mut style.scale, body.radius, defaults.scale, true);
         take(&mut style.text_gap, body.dim_gap, defaults.text_gap, false);
         take(
+            &mut style.linear_factor,
+            body.dim_linear_factor,
+            defaults.linear_factor,
+            true,
+        );
+        take(
             &mut style.extension_offset,
             body.scale_y,
             defaults.extension_offset,
@@ -2740,6 +2746,7 @@ struct RecordBody {
     dim_overshoot: Option<f64>,
     dim_text_height: Option<f64>,
     dim_gap: Option<f64>,
+    dim_linear_factor: Option<f64>,
     dim_decimals: Option<i64>,
     /// Group 43: an LWPOLYLINE's constant width, which is dropped; a
     /// reference's Z scale, which a plane does without.
@@ -2818,6 +2825,7 @@ impl RecordBody {
             44 => self.dim_overshoot = Some(real(group)?),
             140 => self.dim_text_height = Some(real(group)?),
             147 => self.dim_gap = Some(real(group)?),
+            144 => self.dim_linear_factor = Some(real(group)?),
             271 => self.dim_decimals = group.value.parse().ok(),
             66 => self.follow = group.value.trim() != "0",
             70 => self.flags = group.value.parse().unwrap_or(0),

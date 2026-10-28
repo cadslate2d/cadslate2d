@@ -242,6 +242,7 @@ Recorded as each issue lands. Where the code chose among what the decision left 
   - A run of consecutive views compiles to each view's operations, drawn at its own origin as typed, then one `VIEWFRAME` placing them together. `VIEWFRAME` is the command a drafter types too: one view or several, never moving what is placed.
   - A principal view's block is centred in the drawing area where it fits, so views added later have room on every side.
   - The two passes of §2 are this: run as typed at the view's origin, measure what was made, place it, and move it by a pure translation.
+- **#352.** A free view's `ratio` (intent version 16) scales its geometry by k about its origin before it is measured. Text keeps its height and a hatch its pattern scale. Each of its dimensions takes a style made from its own: `<view>-<style>`, linear factor ÷ k, overall scale N, measured with that style before anything is committed. Its title says its scale, "DETAIL A (2:1)". The dimension style's linear factor is DIMLFAC (144), read and written; an angle is not scaled by it.
 
 ## Alternatives considered
 

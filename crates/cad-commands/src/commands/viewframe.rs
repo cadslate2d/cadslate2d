@@ -34,6 +34,7 @@ enum State {
     Role,
     Of,
     Looking,
+    Ratio,
     Another,
 }
 
@@ -58,6 +59,7 @@ impl ViewFrameCommand {
                 role: Role::Free,
                 entities: Vec::new(),
                 origin: Point2::ORIGIN,
+                ratio: None,
             },
             principal: None,
         }
@@ -85,6 +87,7 @@ impl ViewFrameCommand {
                 role: Role::Free,
                 entities: Vec::new(),
                 origin: Point2::ORIGIN,
+                ratio: None,
             },
         );
         self.views.push(done);
@@ -163,6 +166,8 @@ impl Command for ViewFrameCommand {
                 }
             }
             State::Looking => Prompt::new("Looking from?"),
+            State::Ratio => Prompt::new("Specify the view's scale, paper to real, as 2:1")
+                .with_default("the sheet's"),
             State::Another => Prompt::new("Another view?").with_default("No"),
         }
     }
@@ -171,7 +176,7 @@ impl Command for ViewFrameCommand {
         match self.state {
             State::Select => selection_expected(),
             State::Origin => ExpectedInput::point(),
-            State::Id | State::Title | State::Of => ExpectedInput::text(),
+            State::Id | State::Title | State::Of | State::Ratio => ExpectedInput::text(),
             State::Role => {
                 ExpectedInput::new(InputKind::Nothing).with_keywords(&[PRINCIPAL, PROJECTED, FREE])
             }
@@ -234,8 +239,16 @@ impl Command for ViewFrameCommand {
             }
             (State::Role, CommandInput::Keyword(FREE)) => {
                 self.current.role = Role::Free;
-                self.finish_view();
+                self.state = State::Ratio;
             }
+            (State::Ratio, CommandInput::Accept) => self.finish_view(),
+            (State::Ratio, CommandInput::Text(text)) => match parse_ratio(&text) {
+                Some(ratio) => {
+                    self.current.ratio = Some(ratio);
+                    self.finish_view();
+                }
+                None => ctx.message("A scale is paper to real, as 2:1 or 1:5, greater than zero."),
+            },
             (State::Of, CommandInput::Text(of)) if !of.trim().is_empty() => {
                 self.current.role = Role::Projected {
                     of: of.trim().to_owned(),
@@ -276,4 +289,19 @@ impl Command for ViewFrameCommand {
         }
         Step::Continue
     }
+}
+
+/// A scale as a drafter types it: `2:1`, `1:5`, or a number, paper to real.
+fn parse_ratio(text: &str) -> Option<f64> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let ratio = match text.split_once(':') {
+        Some((paper, real)) => {
+            paper.trim().parse::<f64>().ok()? / real.trim().parse::<f64>().ok()?
+        }
+        None => text.parse::<f64>().ok()?,
+    };
+    (ratio.is_finite() && ratio > 0.0).then_some(ratio)
 }

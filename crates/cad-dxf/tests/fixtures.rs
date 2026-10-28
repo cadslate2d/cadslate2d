@@ -1969,6 +1969,44 @@ fn a_dimension_style_scale_from_another_writer_scales_its_sizes() {
     assert_eq!(export(&back.drawing), text, "export → import → export");
 }
 
+/// DIMLFAC from another writer (#352): ezdxf's `DETAIL` style shows a
+/// length at half: a 60-unit line's dimension reads 30, as a view drawn at
+/// twice its size reads true; written back and read the same.
+#[test]
+fn a_dimension_style_linear_factor_from_another_writer_scales_the_value_shown() {
+    let import = load("valid", "ezdxf-r2010-dimlfac.dxf").unwrap();
+    let drawing = &import.drawing;
+    let styles = drawing.dim_styles();
+    let detail = styles.get(styles.find("DETAIL").unwrap()).unwrap();
+    assert_eq!(detail.linear_factor, 0.5);
+    assert_eq!(styles.get(DimStyleId::FIRST).unwrap().linear_factor, 1.0);
+    let dimension = drawing
+        .entities()
+        .find_map(|(_, entity)| match entity {
+            cad_document::Entity::Dimension(dimension) => Some(dimension),
+            _ => None,
+        })
+        .expect("the dimension");
+    let layout = dimension.layout(drawing.tables().dim_style(dimension.style));
+    assert!(
+        layout.text.content.starts_with("30"),
+        "{}",
+        layout.text.content
+    );
+    let text = export(drawing);
+    assert!(text.contains("144\n0.5\n"), "DIMLFAC written as group 144");
+    let back = cad_dxf::import(text.as_bytes()).unwrap();
+    let again = back.drawing.dim_styles();
+    assert_eq!(
+        again
+            .get(again.find("DETAIL").unwrap())
+            .unwrap()
+            .linear_factor,
+        0.5
+    );
+    assert_eq!(export(&back.drawing), text, "export → import → export");
+}
+
 /// DIMENSION from another writer (ADR-0020, #166): every kind the drawing
 /// has a measure for, read from its points; its style, made when the file
 /// did not define it; the drafter's text and turned text; the anonymous

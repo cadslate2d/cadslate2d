@@ -11,7 +11,10 @@
 //! already on the sheet are read from those groups and never moved.
 
 use cad_core::{Aabb, EntityId, Point2};
-use cad_document::{Drawing, Entity, Group, Layer, LayoutId, Properties, TextEntity};
+use cad_document::{
+    DimStyle, DimStyleId, Drawing, Entity, Group, HatchStyle, Layer, LayoutId, Properties,
+    TextEntity,
+};
 use cad_geometry::Transform;
 use cad_geometry::composition::{self, Angle, Looking, Placed, Role, ViewBox};
 use serde_json::json;
@@ -65,6 +68,8 @@ pub struct ViewRecord {
     pub extent: Aabb,
     /// The sheet's group.
     pub sheet: String,
+    /// Paper to real, for a view at a scale of its own (#352).
+    pub ratio: Option<f64>,
 }
 
 impl ViewRecord {
@@ -85,6 +90,7 @@ impl ViewRecord {
             "origin": [self.origin.x, self.origin.y],
             "extent": [[self.extent.min().x, self.extent.min().y], [self.extent.max().x, self.extent.max().y]],
             "sheet": self.sheet,
+            "ratio": self.ratio,
         })
         .to_string()
     }
@@ -108,6 +114,7 @@ impl ViewRecord {
             origin: point(&v["origin"])?,
             extent: Aabb::from_points(point(&v["extent"][0])?, point(&v["extent"][1])?),
             sheet: v["sheet"].as_str()?.to_owned(),
+            ratio: v["ratio"].as_f64(),
         })
     }
 }
@@ -131,6 +138,48 @@ pub struct NewView {
     pub role: Role,
     pub entities: Vec<EntityId>,
     pub origin: Point2,
+    /// Paper to real — 2 for 2:1 — for a free view at a scale of its own;
+    /// the sheet's when absent (ADR-0041 §4, #352).
+    pub ratio: Option<f64>,
+}
+
+/// A ratio as a drafter writes it: `2:1`, `1:5`.
+pub fn ratio_text(ratio: f64) -> String {
+    let plain = |v: f64| {
+        let text = format!("{v:.3}");
+        text.trim_end_matches('0').trim_end_matches('.').to_owned()
+    };
+    if ratio >= 1.0 {
+        format!("{}:1", plain(ratio))
+    } else {
+        format!("1:{}", plain(1.0 / ratio))
+    }
+}
+
+/// `entity` of a view drawn k times its true size about `origin`: its
+/// geometry scaled, what is sized for paper — a text's height, a hatch's
+/// pattern — as it was (ADR-0041 §4). A dimension's style is changed later.
+fn at_ratio(entity: &Entity, k: f64, origin: Point2) -> Entity {
+    let Some(scaling) = Transform::scaling(origin, k) else {
+        return entity.clone();
+    };
+    let mut scaled = entity.transformed(&scaling);
+    match (&mut scaled, entity) {
+        (Entity::Text(t), Entity::Text(o)) => t.height = o.height,
+        (Entity::MText(m), Entity::MText(o)) => {
+            m.height = o.height;
+            m.width = o.width;
+        }
+        (Entity::Hatch(h), Entity::Hatch(o)) => {
+            if let (HatchStyle::Pattern { scale, .. }, HatchStyle::Pattern { scale: was, .. }) =
+                (&mut h.style, &o.style)
+            {
+                *scale = *was;
+            }
+        }
+        _ => {}
+    }
+    scaled
 }
 
 /// Whether `id` may name a view: letters, digits, `-` and `_`.
@@ -171,7 +220,12 @@ pub fn compose(
     let tables = drawing.tables();
     let mut boxes = Vec::new();
     let mut titles = Vec::new();
-    for view in views {
+    // Each view's objects as they will be drawn, at its ratio, before they
+    // are placed; and the dimension styles a view at its own ratio needs —
+    // the style each of its dimensions had, its lengths read through 1/k.
+    let mut prepared: Vec<Vec<(EntityId, Entity)>> = Vec::new();
+    let mut derived: Vec<(usize, DimStyleId, DimStyle)> = Vec::new();
+    for (index, view) in views.iter().enumerate() {
         if !valid_id(&view.id) {
             return Err(format!(
                 "\"{}\" cannot name a view: use letters, digits, - and _.",
@@ -181,7 +235,24 @@ pub fn compose(
         if view.entities.is_empty() {
             return Err(format!("View {} has nothing in it.", view.id));
         }
+        let k = match view.ratio {
+            None => 1.0,
+            Some(_) if view.role != Role::Free => {
+                return Err(format!(
+                    "View {} takes the sheet's scale: only a free view has one of its own.",
+                    view.id
+                ));
+            }
+            Some(r) if r.is_finite() && r > 0.0 => r * unit,
+            Some(_) => {
+                return Err(format!(
+                    "View {}'s scale must be greater than zero.",
+                    view.id
+                ));
+            }
+        };
         let mut extent: Option<Aabb> = None;
+        let mut objects = Vec::new();
         for &id in &view.entities {
             let Some(entity) = drawing.entity(id) else {
                 return Err(format!(
@@ -204,15 +275,44 @@ pub fn compose(
                     view.id
                 ));
             }
-            let b = entity.bounds(tables);
+            let drawn = if view.ratio.is_none() {
+                entity.clone()
+            } else {
+                at_ratio(entity, k, view.origin)
+            };
+            let b = match &drawn {
+                Entity::Dimension(d) if view.ratio.is_some() => {
+                    let mut style = tables.dim_style(d.style).clone();
+                    // Read true through 1/k; sized for the sheet, N (§4).
+                    style.linear_factor /= k;
+                    style.scale = unit;
+                    style.name = format!("{}-{}", view.id, style.name);
+                    let b = d.layout(&style).bounds();
+                    if !derived
+                        .iter()
+                        .any(|(v, from, _)| *v == index && *from == d.style)
+                    {
+                        derived.push((index, d.style, style));
+                    }
+                    b
+                }
+                _ => drawn.bounds(tables),
+            };
             extent = Some(extent.map_or(b, |e| e.union(&b)));
+            objects.push((id, drawn));
         }
+        prepared.push(objects);
         let extent = extent.expect("not empty");
         let relative = Aabb::from_points(
             Point2::ORIGIN + (extent.min() - view.origin),
             Point2::ORIGIN + (extent.max() - view.origin),
         );
-        // The title, left-aligned under what the view holds.
+        // The title, left-aligned under what the view holds; its scale
+        // after it when it has its own.
+        let words = match view.ratio {
+            Some(r) => format!("{} ({})", view.title, ratio_text(r)),
+            None => view.title.clone(),
+        };
         let title = TextEntity::new(
             Point2::new(
                 relative.min().x,
@@ -220,7 +320,7 @@ pub fn compose(
             ),
             TITLE * unit,
             0.0,
-            view.title.clone(),
+            words,
         );
         let with_title = relative.union(&Entity::Text(title.clone()).bounds(tables));
         boxes.push(ViewBox {
@@ -290,9 +390,9 @@ pub fn compose(
             let by = Transform::translation(at - view.origin);
             (
                 i,
-                view.entities
+                prepared[i]
                     .iter()
-                    .map(|&id| (id, drawing.entity(id).expect("read above").transformed(&by)))
+                    .map(|(id, entity)| (*id, entity.transformed(&by)))
                     .collect(),
             )
         })
@@ -305,11 +405,25 @@ pub fn compose(
             .add_layer(Layer::named(TITLE_LAYER))
             .map_err(|e| e.to_string())?,
     };
+    let mut styles: Vec<(usize, DimStyleId, DimStyleId)> = Vec::new();
+    for (view, from, style) in derived {
+        let made = transaction
+            .add_dim_style(style)
+            .map_err(|e| e.to_string())?;
+        styles.push((view, from, made));
+    }
     for (i, entities) in moved {
         let view = &views[i];
         let placed = out.iter().find(|p| p.view.id == view.id).expect("placed");
         let mut members = Vec::new();
-        for (id, entity) in entities {
+        for (id, mut entity) in entities {
+            if let Entity::Dimension(d) = &mut entity
+                && let Some((_, _, to)) = styles
+                    .iter()
+                    .find(|(v, from, _)| *v == i && *from == d.style)
+            {
+                d.style = *to;
+            }
             transaction.replace(id, entity).map_err(|e| e.to_string())?;
             members.push(id);
         }
@@ -332,6 +446,7 @@ pub fn compose(
             origin: placed.origin,
             extent: placed.view.extent,
             sheet: sheet.group.clone(),
+            ratio: view.ratio,
         }
         .to_json();
         group.selectable = false;
