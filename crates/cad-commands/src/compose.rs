@@ -534,11 +534,21 @@ pub fn compose(
         },
     };
     let out = composition::place(&area, &placed, &boxes).map_err(|error| match error {
-        composition::PlaceError::NoRoom { view, size } => format!(
-            "View {view} needs {:.0} × {:.0} mm of the sheet free, and there is not that much room: choose a larger sheet or scale.",
-            size.x / unit,
-            size.y / unit
-        ),
+        composition::PlaceError::NoRoom { view, size } => {
+            let (w, h) = (size.x / unit, size.y / unit);
+            // A view at its own scale is as large as that scale makes it,
+            // whatever the sheet's: say so, or a larger sheet scale is
+            // tried and changes nothing.
+            match views.iter().find(|v| v.id == view).and_then(|v| v.ratio) {
+                Some(ratio) => format!(
+                    "View {view}, at its own scale {}, needs {w:.0} × {h:.0} mm of the sheet free, and there is not that much room: its ratio alone sets its size on paper, whatever the sheet's scale — give it a smaller ratio, paper to real (0.05 for 1:20), or a larger sheet.",
+                    ratio_text(ratio)
+                ),
+                None => format!(
+                    "View {view} needs {w:.0} × {h:.0} mm of the sheet free, and there is not that much room: choose a larger sheet or scale."
+                ),
+            }
+        }
         other => {
             let mut said = other.to_string();
             if let Some(first) = said.get_mut(0..1) {

@@ -169,6 +169,19 @@ fn what_cannot_be_placed_is_refused_and_nothing_moves() {
     assert!(said.starts_with("View front needs 900 ×"), "{said}");
     assert_eq!(h.session.drawing().revision(), revision);
 
+    // A detail too large at its own scale is told that its ratio sets its
+    // size, not the sheet's scale.
+    let mut h = sheet();
+    let detail = drawn(&mut h, 300.0, 100.0);
+    h.session.select_only(&[detail]);
+    h.enter_all(&["VIEWFRAME", "0,0", "detail", "", "Free", "2:1", "No"]);
+    let said = h.log().last().unwrap().clone();
+    assert!(
+        said.starts_with("View detail, at its own scale 2:1, needs 600 ×")
+            && said.contains("its ratio alone sets its size on paper"),
+        "{said}"
+    );
+
     // A second view projected into a taken slot.
     let mut h = sheet();
     let a = drawn(&mut h, 50.0, 50.0);
