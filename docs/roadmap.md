@@ -31,7 +31,7 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M22 — Floor-Plan Generator | Complete and closed ([review](reviews/m22-exit-review.md)): floor plans from a brief by a deterministic multi-start search (ADR-0039) — walls, doors, and labels as ordinary geometry; `FLOORPLAN` with alternatives; briefs and revisions through the AI. |
 | M23 — AI Plans and Billing | Complete and closed in Stripe's test mode (its review is in the service's repository): Free and Pro, bought, managed, and cancelled through Stripe, the service enforcing what each allows; the account and the way to Pro in the app (#289). Going live — production, Stripe's live mode, a real payment, the terms read by a lawyer — needs the maintainer, and is in the service's repository. |
 | M24 — General-Purpose Drawings | Complete and closed ([review](reviews/m24-exit-review.md)): isometric drafting, a plan's elevations and sections, a part's orthographic and section views, title blocks, and staircases — 2D views drawn by generators from descriptions, nothing 3D kept ([ADR-0040](adr/0040-general-purpose-drawings.md), accepted); by command and through the AI, at a new corpus level, L4. |
-| M25 — Composed Sheets | Open (epic #360): sheets composed by operations that place and tie their parts, the model drawing inside each view ([ADR-0041](adr/0041-composed-sheets.md), accepted after two reviews). |
+| M25 — Composed Sheets | Complete and closed ([review](reviews/m25-exit-review.md)): sheets composed by operations that place and tie their parts — views aligned by projection, datums shared across them, details at their own scale, sections marked, a bill of materials and balloons, chains and notes — while the model draws inside each view, and the engine's review asks it again ([ADR-0041](adr/0041-composed-sheets.md), accepted after two reviews); a new corpus level, L5, judged four ways. |
 
 ## What is planned next
 
@@ -40,6 +40,26 @@ Filed on 2026-10-18 and 2026-10-19. What remains needs a person.
 | Milestone | What | Epic |
 | --- | --- | --- |
 | Open Source Release | The main repository public under a licence decided by ADR (§44), with a trademark, a contributor agreement, audited history, dependencies, and assets, and the service kept private. Done before the repository goes public; independent of the milestones above. | #291 |
+
+## M25, Composed Sheets
+
+The maintainer's Iron Man and spillway sheets of 2026-10-27, drawn by the model operation by operation: views that disagree, labels that collide, and a sheet's machinery as loose text. The epic is #360.
+
+### Order of work
+
+1. **The ADR** (#350): [ADR-0041](adr/0041-composed-sheets.md) — what the program composes and what the model draws, the orientation table, the scale contract, two-pass placement, datums, and L5 scored four ways.
+2. **Views** (#351): `VIEWFRAME`, placed and aligned by projection.
+3. **Datums** (#361): shared positions, read into signed numbers.
+4. **Details at a scale** (#352): DIMLFAC and a style per view.
+5. **Sections** (#353): marked across their parents.
+6. **Parts** (#354): `BOMTABLE` and `BALLOON`.
+7. **Chains and notes** (#355): `dim_chain` and `NOTES`.
+8. **Layers through the AI** (#356): a colour and a linetype.
+9. **The review** (#357): the sheet's structure.
+10. **L5** (#358): bracket, spillway, armour, and pump sheets, in English and Portuguese.
+11. **The exit** (#359): `web/e2e/m25-scenario.spec.ts` and [the review](reviews/m25-exit-review.md).
+
+M25 is closed.
 
 ## M24, General-Purpose Drawings
 
