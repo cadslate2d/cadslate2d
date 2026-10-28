@@ -574,6 +574,7 @@ impl Check {
                 self.point("at", *at)?;
                 self.point("to", *to)
             }
+            // A `scale` as written was read into `ratio` with the document.
             Operation::View {
                 id,
                 title,
@@ -583,6 +584,7 @@ impl Check {
                 ratio,
                 cut,
                 operations,
+                ..
             } => {
                 if let Some(ratio) = ratio {
                     if !matches!(

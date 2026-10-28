@@ -640,10 +640,10 @@ pub fn compose(
                         .copied()
                         .find(|r| *r <= fits)
                         .map_or_else(String::new, |r| {
-                            format!(" A ratio of {r} ({}) or smaller fits.", ratio_text(r))
+                            format!(" A `scale` of \"{}\" or smaller fits.", ratio_text(r))
                         });
                     format!(
-                        "View {view}, at its own scale {}, needs {w:.0} × {h:.0} mm of the sheet free, and there is not that much room: its ratio alone sets its size on paper, whatever the sheet's scale — give it a smaller ratio, paper to real, or a larger sheet.{suggestion}",
+                        "View {view}, at its own scale {}, needs {w:.0} × {h:.0} mm of the sheet free, and there is not that much room: its own scale alone sets its size on paper, whatever the sheet's — give it a smaller one, paper to real, or a larger sheet.{suggestion}",
                         ratio_text(ratio)
                     )
                 }

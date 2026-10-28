@@ -327,6 +327,33 @@ fn what_is_refused_says_where_and_why() {
         ),
         other => panic!("{other:?}"),
     }
+    // A detail's scale as a drafter writes it, read into its ratio (#358):
+    // "1:20" a twentieth, "2:1" twice; not with a ratio too, and not
+    // what is not two numbers.
+    let detail = |scale: &str| {
+        format!(
+            r#"{{"op": "view", "id": "d", "placed": "free", {scale}, "operations": [{{"op": "line", "points": [[0, 0], [10, 0]]}}]}}"#
+        )
+    };
+    let ratio_of = |text: &str| match &parse(&document(text)).unwrap().operations[0] {
+        cad_intent::Operation::View { ratio, scale, .. } => {
+            assert_eq!(*scale, None);
+            *ratio
+        }
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(ratio_of(&detail(r#""scale": "1:20""#)), Some(0.05));
+    assert_eq!(ratio_of(&detail(r#""scale": "2:1""#)), Some(2.0));
+    for bad in [
+        r#""scale": "1:20", "ratio": 0.05"#,
+        r#""scale": "five""#,
+        r#""scale": "0:1""#,
+    ] {
+        match refused(&detail(bad)) {
+            IntentError::Invalid { field: "scale", .. } => {}
+            other => panic!("{bad}: {other:?}"),
+        }
+    }
     // A section given an `of` is told where its parent goes.
     match refused(
         r#"{"op": "view", "id": "aa", "placed": "section", "of": "plan", "cut": {"of": "plan", "from": [0, 0], "to": [10, 0], "toward": [5, 5]},
@@ -503,9 +530,9 @@ fn what_is_refused_says_where_and_why() {
         IntentError::Json { .. }
     ));
     assert!(matches!(
-        parse(r#"{"version": 24, "operations": []}"#).unwrap_err(),
+        parse(r#"{"version": 25, "operations": []}"#).unwrap_err(),
         IntentError::Version {
-            found: 24,
+            found: 25,
             expected: VERSION
         }
     ));
@@ -549,7 +576,7 @@ fn what_is_refused_says_where_and_why() {
 fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../test-data/intent/schema-v23.json"
+        "/../../test-data/intent/schema-v24.json"
     );
     let generated = serde_json::to_string_pretty(&schema()).unwrap() + "\n";
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
@@ -561,7 +588,7 @@ fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
         "the schema changed: bump cad_intent::VERSION, re-record with UPDATE_SNAPSHOTS=1, and name the file after the new version"
     );
     assert!(generated.contains(r#""version""#));
-    assert_eq!(VERSION, 23);
+    assert_eq!(VERSION, 24);
 }
 
 proptest! {
@@ -646,6 +673,6 @@ fn the_selection_word_and_an_intent_serialise_as_the_document_says() {
     };
     assert_eq!(
         serde_json::to_string(&intent).unwrap(),
-        r#"{"version":23,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
+        r#"{"version":24,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
     );
 }

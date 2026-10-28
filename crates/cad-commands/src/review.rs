@@ -153,7 +153,7 @@ pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Optio
             // A view at its own scale is told in the reason what fits:
             // the sheet's paper and scale do not size it.
             let room = reason.contains("there is not that much room")
-                && !reason.contains("its ratio alone sets its size");
+                && !reason.contains("its own scale alone sets its size");
             let fits = current.filter(|_| room).and_then(|paper| {
                 larger(paper).into_iter().find(|bigger| {
                     let mut tried = intent.clone();
@@ -729,7 +729,7 @@ mod tests {
         let findings = review_document(&detail, Some("mm")).unwrap();
         assert!(
             findings[0].contains("at its own scale 2:1")
-                && findings[0].ends_with("A ratio of 0.1 (1:10) or smaller fits."),
+                && findings[0].ends_with("A `scale` of \"1:10\" or smaller fits."),
             "{findings:?}"
         );
         // A refusal of the sheet that is not about room is told as it is,

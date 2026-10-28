@@ -29,7 +29,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 23;
+pub const VERSION: u32 = 24;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -47,9 +47,10 @@ pub const VERSION: u32 = 23;
 /// `dim_chain` and `notes` (#355), version 20 a layer's `color` and
 /// `linetype` (#356), version 21 `datum` and a coordinate given as one
 /// (#361), version 22 a section or free view `looking` `from_front`
-/// (#358), version 23 `segments` and a layer's `lineweight` (#358).
-pub const READS: [u32; 23] = [
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+/// (#358), version 23 `segments` and a layer's `lineweight` (#358),
+/// version 24 a view's `scale` as written, "1:20" (#358).
+pub const READS: [u32; 24] = [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
 ];
 
 /// A point, `[x, y]`, in the document's units.
@@ -420,6 +421,12 @@ pub enum Operation {
         /// when absent.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         ratio: Option<f64>,
+        /// A free view's own scale as a drafter writes it, paper to real:
+        /// `"1:20"`, `"2:1"` — the view's own, never relative to the
+        /// sheet's (version 24, #358). Read into `ratio` when the document
+        /// is read; one or the other.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale: Option<String>,
         /// A section view's cut: across the view `of`, `from` and `to` in
         /// that view's own coordinates — its ends may reach past the
         /// outline, but it must cross what that view draws — its arrows
@@ -1283,6 +1290,8 @@ pub fn parse(text: &str) -> Result<Intent, IntentError> {
     // Datums are read into the numbers they stand for, so every operation
     // keeps its plain coordinates (#361).
     datums::resolve(&mut value)?;
+    // A view's scale as written, "1:20", is read into its ratio (#358).
+    read_scales(&mut value)?;
     let intent: Intent = serde_json::from_value(value).map_err(|error| IntentError::Json {
         line: 1,
         column: 1,
@@ -1290,6 +1299,54 @@ pub fn parse(text: &str) -> Result<Intent, IntentError> {
     })?;
     validate::validate(&intent)?;
     Ok(intent)
+}
+
+/// Each view's `scale`, `"1:20"` or `"2:1"`, read into its `ratio`, paper
+/// to real; refused when it is not two numbers greater than zero, or comes
+/// with a `ratio` of its own.
+fn read_scales(document: &mut serde_json::Value) -> Result<(), IntentError> {
+    let Some(operations) = document
+        .get_mut("operations")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return Ok(());
+    };
+    for (index, op) in operations.iter_mut().enumerate() {
+        if op["op"] != "view" {
+            continue;
+        }
+        let Some(object) = op.as_object_mut() else {
+            continue;
+        };
+        let Some(scale) = object.remove("scale") else {
+            continue;
+        };
+        if scale.is_null() {
+            continue;
+        }
+        let refuse = |reason: Reason| IntentError::Invalid {
+            operation: index,
+            op: "view",
+            field: "scale",
+            reason,
+        };
+        if object.get("ratio").is_some_and(|r| !r.is_null()) {
+            return Err(refuse(Reason::Both("ratio")));
+        }
+        let ratio = scale.as_str().and_then(|text| {
+            let (paper, real) = text.split_once(':')?;
+            let paper: f64 = paper.trim().parse().ok()?;
+            let real: f64 = real.trim().parse().ok()?;
+            (paper > 0.0 && real > 0.0 && (paper / real).is_finite()).then(|| paper / real)
+        });
+        let Some(ratio) = ratio else {
+            return Err(refuse(Reason::Said(
+                "is paper to real as a drafter writes it: \"1:20\" for a twentieth, \"2:1\" for twice true size",
+            )));
+        };
+        object.insert("ratio".to_owned(), serde_json::json!(ratio));
+    }
+    Ok(())
 }
 
 /// The JSON Schema of [`Intent`], for a model's structured output

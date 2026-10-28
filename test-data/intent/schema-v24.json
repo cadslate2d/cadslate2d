@@ -642,6 +642,13 @@
                 "null"
               ]
             },
+            "scale": {
+              "description": "A free view's own scale as a drafter writes it, paper to real:\n`\"1:20\"`, `\"2:1\"` — the view's own, never relative to the\nsheet's (version 24, #358). Read into `ratio` when the document\nis read; one or the other.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "title": {
               "type": "string"
             }
