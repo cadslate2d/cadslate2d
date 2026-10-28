@@ -31,6 +31,7 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M22 — Floor-Plan Generator | Complete and closed ([review](reviews/m22-exit-review.md)): floor plans from a brief by a deterministic multi-start search (ADR-0039) — walls, doors, and labels as ordinary geometry; `FLOORPLAN` with alternatives; briefs and revisions through the AI. |
 | M23 — AI Plans and Billing | Complete and closed in Stripe's test mode (its review is in the service's repository): Free and Pro, bought, managed, and cancelled through Stripe, the service enforcing what each allows; the account and the way to Pro in the app (#289). Going live — production, Stripe's live mode, a real payment, the terms read by a lawyer — needs the maintainer, and is in the service's repository. |
 | M24 — General-Purpose Drawings | Complete and closed ([review](reviews/m24-exit-review.md)): isometric drafting, a plan's elevations and sections, a part's orthographic and section views, title blocks, and staircases — 2D views drawn by generators from descriptions, nothing 3D kept ([ADR-0040](adr/0040-general-purpose-drawings.md), accepted); by command and through the AI, at a new corpus level, L4. |
+| M25 — Composed Sheets | Open (epic #360): sheets composed by operations that place and tie their parts, the model drawing inside each view ([ADR-0041](adr/0041-composed-sheets.md), proposed, for the maintainer's review first). |
 
 ## What is planned next
 
