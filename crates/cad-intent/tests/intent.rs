@@ -270,7 +270,7 @@ fn what_is_refused_says_where_and_why() {
         IntentError::Invalid { reason, .. } => assert!(
             reason
                 .to_string()
-                .ends_with("1 and 2 are both [5, 5]: two points in a row must differ — leave one out (in view `front`, its operation 1, polyline)"),
+                .ends_with("1 and 2 are both [5, 5]: two points in a row must differ — leave one out (in view `front`, its operation 1, polyline)."),
             "{reason}"
         ),
         other => panic!("{other:?}"),
@@ -310,6 +310,21 @@ fn what_is_refused_says_where_and_why() {
             reason: reason @ Reason::Said(_),
             ..
         } => assert!(reason.to_string().contains("principal view"), "{reason}"),
+        other => panic!("{other:?}"),
+    }
+    // In a view from behind, a reminder that a width datum is negated.
+    match refused(
+        r#"{"op": "datum", "name": "w", "axis": "width", "value": 5},
+           {"op": "view", "id": "rear", "placed": "free", "looking": "from_behind", "operations": [
+            {"op": "polyline", "points": [[-5, 0], [{"datum": "w"}, 0], [0, 5]]}]}"#,
+    ) {
+        IntentError::Invalid { reason, .. } => assert!(
+            reason.to_string().starts_with("0 and 1 are both [-5, 0]")
+                && reason.to_string().ends_with(
+                    "This view looks from behind: x is minus the width, so a width datum is drawn at minus its value."
+                ),
+            "{reason}"
+        ),
         other => panic!("{other:?}"),
     }
     // A section given an `of` is told where its parent goes.

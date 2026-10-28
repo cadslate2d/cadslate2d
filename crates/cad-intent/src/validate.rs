@@ -191,7 +191,28 @@ pub(crate) fn validate(intent: &Intent) -> Result<(), IntentError> {
             op: operation.name(),
         };
         check.operation(operation)?;
-        if let Operation::View { id, operations, .. } = operation {
+        if let Operation::View {
+            id,
+            operations,
+            looking,
+            ..
+        } = operation
+        {
+            // Where a datum's value is drawn negated in this view: said
+            // with an error in it, since what a reason quotes is the number
+            // the datum became (#358).
+            let negated = match looking {
+                Some(crate::ViewLooking::FromBehind) => {
+                    " This view looks from behind: x is minus the width, so a width datum is drawn at minus its value."
+                }
+                Some(crate::ViewLooking::FromLeft) => {
+                    " This view looks from the left: x is minus the depth, so a depth datum is drawn at minus its value."
+                }
+                Some(crate::ViewLooking::FromBelow) => {
+                    " This view looks from below: y is minus the depth, so a depth datum is drawn at minus its value."
+                }
+                _ => "",
+            };
             if views.contains(&id.as_str()) {
                 return Err(check.refuse("id", Reason::Repeated));
             }
@@ -234,7 +255,7 @@ pub(crate) fn validate(intent: &Intent) -> Result<(), IntentError> {
                         op,
                         field,
                         reason: Reason::Told(format!(
-                            "{reason} (in view `{id}`, its operation {k}, {op})"
+                            "{reason} (in view `{id}`, its operation {k}, {op}).{negated}"
                         )),
                     },
                     other => other,

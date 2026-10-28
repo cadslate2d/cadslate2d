@@ -131,6 +131,14 @@ impl SheetWanted {
             return Ok(Some("structure: no sheet".to_owned()));
         };
         let views = crate::compose::views_on(drawing, &sheet.group);
+        let free_looking = |id: &str| {
+            intent.operations.iter().find_map(|op| match op {
+                cad_intent::Operation::View {
+                    id: view, looking, ..
+                } if view == id => *looking,
+                _ => None,
+            })
+        };
         let kind = |v: &crate::compose::ViewRecord| -> &'static str {
             if !v.parts.is_empty() {
                 return "bill";
@@ -149,7 +157,16 @@ impl SheetWanted {
                     Looking::Front => "front",
                 },
                 Role::Free if v.ratio.is_some() => "detail",
-                Role::Free => "free",
+                // A free view says where it looks from in the document: one
+                // from behind is a rear view, wherever it is placed.
+                Role::Free => match free_looking(&v.id) {
+                    Some(cad_intent::ViewLooking::FromBehind) => "rear",
+                    Some(cad_intent::ViewLooking::FromLeft) => "left",
+                    Some(cad_intent::ViewLooking::FromRight) => "right",
+                    Some(cad_intent::ViewLooking::FromAbove) => "top",
+                    Some(cad_intent::ViewLooking::FromBelow) => "bottom",
+                    _ => "free",
+                },
             }
         };
         // 1. Structure.
@@ -226,10 +243,20 @@ impl SheetWanted {
             let agreeing = views
                 .iter()
                 .filter(|view| {
+                    // A free view or a section that says where it looks
+                    // from has its axes as a projected view does.
                     let looking = match &view.role {
                         Role::Principal => Looking::Front,
                         Role::Projected { looking, .. } => *looking,
-                        Role::Free => return false,
+                        Role::Free => match free_looking(&view.id) {
+                            Some(cad_intent::ViewLooking::FromFront) => Looking::Front,
+                            Some(cad_intent::ViewLooking::FromBehind) => Looking::Behind,
+                            Some(cad_intent::ViewLooking::FromLeft) => Looking::Left,
+                            Some(cad_intent::ViewLooking::FromRight) => Looking::Right,
+                            Some(cad_intent::ViewLooking::FromAbove) => Looking::Above,
+                            Some(cad_intent::ViewLooking::FromBelow) => Looking::Below,
+                            None => return false,
+                        },
                     };
                     let Some((index, sign)) = along(looking, axis) else {
                         return false;

@@ -318,6 +318,11 @@ fn a_sheet_is_judged_on_structure_agreement_dimensions_and_print_scale() {
     let lowered = r#",{"op": "view", "id": "left", "placed": "projected", "of": "front", "looking": "from_left", "operations": [
                 {"op": "rectangle", "corner": [-40, -30], "opposite": [0, 30]}]}"#;
     assert_eq!(miss(sheet(lowered, r#"["front"]"#, 80.0, 1)), None);
+    // A side view placed free, saying it looks from the left, is the left
+    // view and agrees as one: structure and agreement read its `looking`.
+    let free_left = r#",{"op": "view", "id": "left", "placed": "free", "looking": "from_left", "operations": [
+                {"op": "rectangle", "corner": [-40, 0], "opposite": [0, 60]}]}"#;
+    assert_eq!(miss(sheet(free_left, r#"["front"]"#, 80.0, 1)), None);
     // A circle centred at the height is at it: a hub round a shaft.
     let hub = r#",{"op": "view", "id": "left", "placed": "projected", "of": "front", "looking": "from_left", "operations": [
                 {"op": "rectangle", "corner": [-40, 0], "opposite": [0, 30]},
