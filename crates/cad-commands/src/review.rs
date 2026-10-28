@@ -36,6 +36,15 @@ pub fn review(drawing: &Drawing) -> Vec<String> {
     findings.extend(overlapping_texts(&boxed));
     if let Some(sheet) = sheet(drawing, &boxed) {
         findings.extend(off_the_sheet(&sheet, &boxed));
+        // A sheet with nothing drawn on it is one asked for alone — a title
+        // block round views already drawn, which the review does not see:
+        // only what is drawn on the sheet can be too small or undimensioned.
+        let drawn = boxed
+            .iter()
+            .any(|(id, entity, _)| !sheet.members.contains(id) && words(entity).is_none());
+        if !drawn {
+            return findings;
+        }
         findings.extend(sliver(&sheet, &boxed));
         let dimensioned = boxed
             .iter()
@@ -174,7 +183,7 @@ fn sliver(sheet: &Sheet, boxed: &[(EntityId, &Entity, Aabb)]) -> Vec<String> {
         .map(|(_, _, b)| *b)
         .reduce(|a, b| a.union(&b));
     let Some(drawn) = drawn else {
-        return vec!["The sheet is empty: draw the views inside its border.".to_owned()];
+        return Vec::new();
     };
     let share = area(&drawn) / area(&sheet.edge);
     if share >= FILLED {
@@ -306,6 +315,31 @@ mod tests {
         ]);
         h.enter_all(&["RECTANG", "300,300", "2800,2200"]);
         h.enter_all(&["DIMLINEAR", "300,300", "2800,300", "1500,200"]);
+        assert_eq!(review(h.session.drawing()), Vec::<String>::new());
+    }
+
+    /// A title block asked for alone — round views the review does not see
+    /// — is not faulted for being empty or undimensioned; a note on it is
+    /// not a drawing either.
+    #[test]
+    fn a_sheet_asked_for_alone_is_not_faulted() {
+        let mut h = Harness::new();
+        h.enter_all(&[
+            "UNITS",
+            "mm",
+            "TITLEBLOCK",
+            "A3",
+            "Landscape",
+            "1",
+            "BRACKET",
+            "",
+            "",
+            "",
+            "",
+            "First",
+            "-150,-140",
+        ]);
+        h.enter_all(&["TEXT", "0,0", "5", "0", "GENERAL NOTES"]);
         assert_eq!(review(h.session.drawing()), Vec::<String>::new());
     }
 }
