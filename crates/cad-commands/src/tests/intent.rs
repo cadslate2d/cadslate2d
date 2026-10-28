@@ -1347,6 +1347,23 @@ fn a_chain_point_that_measures_nothing_is_left_out() {
     assert_eq!(values, [40.0, 60.0, 130.0, 3000.0, 3000.0, 14000.0]);
 }
 
+/// An operation that makes nothing — a layer — leaves the selection as it
+/// was (#358): a centre line drawn, its layer made, then the line moved onto
+/// it by "the selection", as a pump sheet's side view did.
+#[test]
+fn a_layer_made_between_keeps_what_the_line_before_it_made_selected() {
+    let h = run(r#"{"op": "line", "points": [[0, 0], [100, 0]]},
+           {"op": "layer", "name": "CENTER", "linetype": "CENTER"},
+           {"op": "set_properties", "targets": "selection", "layer": "CENTER"}"#);
+    let drawing = h.session.drawing();
+    let center = drawing.layers().find("CENTER").unwrap();
+    assert!(
+        drawing
+            .entities()
+            .all(|(id, _)| drawing.record(id).unwrap().properties.layer == center)
+    );
+}
+
 /// A layer with a colour and a linetype by intent (#356): CENTER, loaded
 /// from the program's own, and gold, the nearest index colour.
 #[test]

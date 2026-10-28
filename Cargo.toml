@@ -5,7 +5,7 @@ members = ["crates/*", "benches"]
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.2.7"
+version = "0.2.8"
 edition = "2024"
 rust-version = "1.90"
 publish = false

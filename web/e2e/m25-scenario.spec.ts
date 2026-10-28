@@ -58,9 +58,11 @@ test("the M25 scenario: a composed sheet asked for, accepted, edited, exported",
   // the table and the balloon on their layers.
   let text = await saved(page);
   const titles = on(text, "VIEW-TITLES").map((e) => group(e, 1));
-  expect(titles).toEqual(
-    expect.arrayContaining(["Front", "Left side", "Top", "Bill of materials"]),
-  );
+  // Each view and the table titled as the model words them: "Front",
+  // "Front View", … — the recording is re-made as instructions change.
+  for (const word of [/front/i, /left/i, /top/i, /bill of materials/i]) {
+    expect(titles.some((title) => word.test(title ?? ""))).toBe(true);
+  }
   expect(entities(text, "DIMENSION").length).toBeGreaterThanOrEqual(3);
   expect(on(text, "BOM").length).toBeGreaterThan(0);
   expect(on(text, "BALLOONS").length).toBeGreaterThan(0);

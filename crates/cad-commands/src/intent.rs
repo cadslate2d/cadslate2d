@@ -176,6 +176,14 @@ impl Session {
         let log_from = self.log_total();
         let revision = self.drawing().revision();
         let first_new = self.drawing().next_entity_id();
+        // An operation that acts on no objects and makes none — a layer, a
+        // setting — leaves the selection as it was, so "the selection"
+        // after it is still what the one before made (#358).
+        let selected_before: Vec<EntityId> = self.selection().iter().collect();
+        let acts_on_objects = compiled
+            .steps
+            .iter()
+            .any(|step| matches!(step, Step::Select(_) | Step::SelectView(_) | Step::Pick(_)));
         let result = self.run_steps(compiled, scale, views, place);
         // The command's own words for what it refused: the last line it
         // wrote that is a sentence, not the echo of a prompt and answer.
@@ -217,6 +225,12 @@ impl Session {
             .collect();
         if !made.is_empty() {
             self.select_only(&made);
+        } else if !acts_on_objects {
+            let still: Vec<EntityId> = selected_before
+                .into_iter()
+                .filter(|id| self.drawing().entity(*id).is_some())
+                .collect();
+            self.select_only(&still);
         }
         Ok(Ran {
             operation,
