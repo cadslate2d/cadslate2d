@@ -246,27 +246,6 @@ pub fn unused_datums(text: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The views each datum is drawn in: for the corpus's agreement score.
-pub fn datum_views(text: &str) -> Vec<(String, Vec<String>)> {
-    let Ok(mut value) = serde_json::from_str::<Value>(text) else {
-        return Vec::new();
-    };
-    let Ok((declared, used_in)) = datum_use(&mut value) else {
-        return Vec::new();
-    };
-    declared
-        .into_iter()
-        .map(|(name, _)| {
-            let views = used_in
-                .iter()
-                .filter(|(_, names)| names.contains(&name))
-                .map(|(id, _)| id.clone())
-                .collect();
-            (name, views)
-        })
-        .collect()
-}
-
 type Declared = Vec<(String, Vec<String>)>;
 type Used = Vec<(String, Vec<String>)>;
 
@@ -458,10 +437,6 @@ mod tests {
         let findings = crate::unused_datums(unused);
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert!(findings[0].contains("Datum shoulder is declared for view side"));
-        assert_eq!(
-            crate::datum_views(unused),
-            [("shoulder".to_owned(), vec!["front".to_owned()])]
-        );
         // Twice.
         assert!(refused(&format!("{shoulder}, {shoulder}")).contains("name"));
     }

@@ -84,6 +84,25 @@ pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Optio
         }) if COMPOSING.contains(&command) => Some(vec![format!(
             "The sheet could not be composed: {reason}. Give the views, notes, and table room on the sheet: a larger paper or scale, narrower notes, or fewer views."
         )]),
+        // So is what a view's own drawing refuses — a hatch with no closed
+        // boundary: the view's geometry, which the model draws again.
+        Err(crate::intent::RunError::Refused {
+            operation,
+            command,
+            reason,
+        }) if matches!(
+            intent.operations.get(operation),
+            Some(cad_intent::Operation::View { .. })
+        ) =>
+        {
+            let id = match &intent.operations[operation] {
+                cad_intent::Operation::View { id, .. } => id.clone(),
+                _ => String::new(),
+            };
+            Some(vec![format!(
+                "View {id} could not be drawn: {command} refused: {reason}. Draw the view's geometry so it does what is asked of it — a hatch inside a closed outline drawn in the same view, its point well inside that outline and outside any hole."
+            )])
+        }
         Err(_) => None,
     }
 }
@@ -379,6 +398,18 @@ mod tests {
                {"op": "fillet", "radius": 1, "first": {"id": 1, "near": [5, 0]}, "second": {"id": 2, "near": [5, 5]}}"#,
         );
         assert_eq!(review_document(&parallel, Some("mm")), None);
+        // A view whose own drawing is refused is a finding too.
+        let open = parse(
+            r#"{"op": "title_block", "paper": "A3", "scale": 1, "title": "X", "at": [0, 0]},
+               {"op": "view", "id": "front", "placed": "principal", "operations": [
+                   {"op": "line", "points": [[0, 0], [50, 0], [50, 30]]},
+                   {"op": "hatch", "pattern": "ANSI31", "inside": [25, 10]}]}"#,
+        );
+        let findings = review_document(&open, Some("mm")).unwrap();
+        assert!(
+            findings[0].starts_with("View front could not be drawn: HATCH refused"),
+            "{findings:?}"
+        );
     }
 
     /// What the service reviews: the document on an empty drawing; one that

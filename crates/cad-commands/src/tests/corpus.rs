@@ -292,9 +292,12 @@ fn a_sheet_is_judged_on_structure_agreement_dimensions_and_print_scale() {
     // Each score failed alone.
     let no_left = miss(sheet("", r#"["front"]"#, 80.0, 1)).unwrap();
     assert!(no_left.starts_with("structure: no left view"), "{no_left}");
-    // The side view types the height instead of drawing it at the datum.
+    // Typed instead of drawn at the datum, the height still agrees.
     let typed = left.replace(r#"{"datum": "h"}"#, "60");
-    let one_view = miss(sheet(&typed, r#"["front"]"#, 80.0, 1)).unwrap();
+    assert_eq!(miss(sheet(&typed, r#"["front"]"#, 80.0, 1)), None);
+    // The side view drawn to another height does not.
+    let taller = left.replace(r#"{"datum": "h"}"#, "65");
+    let one_view = miss(sheet(&taller, r#"["front"]"#, 80.0, 1)).unwrap();
     assert!(one_view.starts_with("agreement:"), "{one_view}");
     let wrong_size = miss(sheet(left, r#"["front", "left"]"#, 70.0, 1)).unwrap();
     assert!(

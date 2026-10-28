@@ -53,8 +53,6 @@ pub enum Expected {
     Sheet {
         wanted: Box<SheetWanted>,
         example: Intent,
-        /// The example as written, its datums unread.
-        example_text: String,
     },
 }
 
@@ -124,7 +122,7 @@ impl SheetWanted {
 
     /// The first of the four scores the sheet `intent` draws misses, said;
     /// `None` when it holds everything.
-    fn missed(&self, case: &Case, intent: &Intent, raw: &str) -> Result<Option<String>, String> {
+    fn missed(&self, case: &Case, intent: &Intent) -> Result<Option<String>, String> {
         use cad_geometry::composition::{Looking, Role};
         let mut h = start(case);
         h.session.run_intent(intent).map_err(|e| e.to_string())?;
@@ -204,30 +202,65 @@ impl SheetWanted {
                 )));
             }
         }
-        // 2. Geometric agreement: each datum, at its value, drawn in so
-        // many views — where it is drawn, read from the document as written.
-        let drawn_in = cad_intent::datum_views(raw);
-        for (axis, value, least) in &self.datums {
-            let held = intent.operations.iter().any(|op| match op {
-                cad_intent::Operation::Datum {
-                    name,
-                    axis: a,
-                    value: v,
-                    ..
-                } => {
-                    let views = drawn_in
-                        .iter()
-                        .find(|(n, _)| n == name)
-                        .map_or(0, |(_, views)| views.len());
-                    format!("{a:?}").eq_ignore_ascii_case(axis)
-                        && (v - value).abs() <= 1e-6 * value.abs().max(1.0)
-                        && views >= *least
+        // 2. Geometric agreement: each datum's value is where its axis is in
+        // so many views — some point of the view's geometry at it, along
+        // that axis, with the sign the view's orientation gives — whether
+        // drawn through a datum or with the number (ADR-0041 §9).
+        let tables_now = drawing.tables();
+        let along = |looking: Looking, axis: &str| -> Option<(usize, f64)> {
+            match (looking, axis) {
+                (Looking::Front, "width") => Some((0, 1.0)),
+                (Looking::Behind, "width") => Some((0, -1.0)),
+                (Looking::Left, "depth") => Some((0, -1.0)),
+                (Looking::Right, "depth") => Some((0, 1.0)),
+                (Looking::Above | Looking::Below, "width") => Some((0, 1.0)),
+                (Looking::Above, "depth") => Some((1, 1.0)),
+                (Looking::Below, "depth") => Some((1, -1.0)),
+                (Looking::Front | Looking::Behind | Looking::Left | Looking::Right, "height") => {
+                    Some((1, 1.0))
                 }
-                _ => false,
-            });
-            if !held {
+                _ => None,
+            }
+        };
+        for (axis, value, least) in &self.datums {
+            let agreeing = views
+                .iter()
+                .filter(|view| {
+                    let looking = match &view.role {
+                        Role::Principal => Looking::Front,
+                        Role::Projected { looking, .. } => *looking,
+                        Role::Free => return false,
+                    };
+                    let Some((index, sign)) = along(looking, axis) else {
+                        return false;
+                    };
+                    let members = drawing
+                        .groups()
+                        .iter()
+                        .find(|(_, g)| {
+                            g.name == format!("{}{}", crate::compose::VIEW_GROUP, view.id)
+                        })
+                        .map(|(_, g)| g.members.clone())
+                        .unwrap_or_default();
+                    let wanted = sign * value;
+                    members
+                        .iter()
+                        .filter_map(|id| drawing.entity(*id))
+                        .any(|e| {
+                            !matches!(e, Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_))
+                                && e.primitives(tables_now).iter().any(|p| {
+                                    let b = p.bounds();
+                                    [b.min(), b.max()].iter().any(|q| {
+                                        let local = [q.x - view.origin.x, q.y - view.origin.y];
+                                        (local[index] - wanted).abs() <= 1e-6 * value.abs().max(1.0)
+                                    })
+                                })
+                        })
+                })
+                .count();
+            if agreeing < *least {
                 return Ok(Some(format!(
-                    "agreement: no {axis} datum at {value} drawn in {least} views"
+                    "agreement: the {axis} {value} is drawn in {agreeing} views, not {least} or more"
                 )));
             }
         }
@@ -635,9 +668,6 @@ impl Corpus {
                     _ if case.get("sheet").is_some() => Expected::Sheet {
                         wanted: Box::new(SheetWanted::read(&case["sheet"]).map_err(at)?),
                         example: document(&case["example"]).map_err(at)?,
-                        example_text:
-                            json!({"version": cad_intent::VERSION, "operations": case["example"]})
-                                .to_string(),
                     },
                     _ if case.get("plan").is_some() => Expected::Plan {
                         wanted: Box::new(PlanWanted::read(&case["plan"]).map_err(at)?),
@@ -772,11 +802,7 @@ impl Corpus {
                         faults.push(format!("{}: the example has {missed}", case.name));
                     }
                 }
-                Expected::Sheet {
-                    wanted,
-                    example,
-                    example_text,
-                } => match wanted.missed(case, example, example_text) {
+                Expected::Sheet { wanted, example } => match wanted.missed(case, example) {
                     Ok(None) => {}
                     Ok(Some(missed)) => {
                         faults.push(format!("{}: the example: {missed}", case.name))
@@ -1173,7 +1199,7 @@ fn answer(recording: &Value) -> Result<(String, Option<Value>, Vec<Value>), Stri
 
 /// Whether one proposed document is what `case` wants; if so, the drawing
 /// it makes.
-fn wanted(case: &Case, intent: &Intent, raw: &str) -> Result<Vec<String>, String> {
+fn wanted(case: &Case, intent: &Intent) -> Result<Vec<String>, String> {
     match &case.expected {
         Expected::Drawing(alternatives) => {
             let wanted: Vec<Vec<String>> = alternatives
@@ -1202,7 +1228,7 @@ fn wanted(case: &Case, intent: &Intent, raw: &str) -> Result<Vec<String>, String
         }
         Expected::Sheet { wanted, .. } => {
             let made = outcome(case, intent).map_err(|error| error.to_string())?;
-            match wanted.missed(case, intent, raw)? {
+            match wanted.missed(case, intent)? {
                 None => Ok(made),
                 Some(missed) => Err(missed),
             }
@@ -1226,7 +1252,6 @@ fn judge(case: &Case, recording: &Value) -> Result<(), String> {
     let document = |value: Value| {
         parse(&value.to_string()).map_err(|error| format!("invalid document: {error}"))
     };
-    let raw = intent.as_ref().map(Value::to_string).unwrap_or_default();
     let intent = intent.map(document).transpose()?;
     let alternatives: Vec<Intent> = alternatives
         .into_iter()
@@ -1245,7 +1270,7 @@ fn judge(case: &Case, recording: &Value) -> Result<(), String> {
             }
             let mut made = Vec::new();
             for (index, option) in options.iter().enumerate() {
-                let drawing = wanted(case, option, "")
+                let drawing = wanted(case, option)
                     .map_err(|error| format!("option {}: {error}", index + 1))?;
                 if made.contains(&drawing) {
                     return Err(format!("option {} draws the same as another", index + 1));
@@ -1258,7 +1283,7 @@ fn judge(case: &Case, recording: &Value) -> Result<(), String> {
             (
                 Expected::Drawing(_) | Expected::Plan { .. } | Expected::Sheet { .. },
                 Some(intent),
-            ) => wanted(case, &intent, &raw).map(drop),
+            ) => wanted(case, &intent).map(drop),
             (Expected::Drawing(_) | Expected::Plan { .. } | Expected::Sheet { .. }, None) => {
                 Err(format!("nothing proposed: {reply}"))
             }
