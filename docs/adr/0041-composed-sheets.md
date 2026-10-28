@@ -1,6 +1,6 @@
 # ADR-0041: A sheet is composed by operations that place and tie its parts; the model draws inside them
 
-**Status:** Proposed (2026-10-27). Asked for on 2026-10-27 ("proceed"), after the Iron Man and spillway sheets.
+**Status:** Accepted (2026-10-27, by the maintainer: "approved, proceed"). Asked for on 2026-10-27 ("proceed"), after the Iron Man and spillway sheets.
 
 Revised twice the same day after the maintainer's reviews.
 - **The first** accepted the direction and asked for six changes:
@@ -17,6 +17,8 @@ Revised twice the same day after the maintainer's reviews.
   - tables and notes sized in paper (§1).
 
   It also made four smaller corrections, taken in: datum coverage (§7), section cuts (§6), LTSCALE on a drawing that has other content (§4), and how datums are kept (§3, §6).
+
+  The maintainer approved this revision.
 
 **Date:** 2026-10-27  
 **Issue:** #350 · **Epic:** #360, milestone M25  
