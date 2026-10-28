@@ -189,6 +189,10 @@ pub fn compile(intent: &Intent) -> Vec<Compiled> {
 /// The commands an operation runs: one, but a chain of dimensions — its
 /// first dimension, then DIMCONTINUE for the rest (#355).
 fn commands_of(operation: &Operation) -> Vec<(&'static str, Vec<Step>)> {
+    // A datum is read into the coordinates that name it: it runs nothing.
+    if matches!(operation, Operation::Datum { .. }) {
+        return Vec::new();
+    }
     let Operation::DimChain { points, side } = operation else {
         return vec![steps_of(operation)];
     };
@@ -363,8 +367,9 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
                 enter(),
             ],
         ),
-        // Compiled by `commands_of`, as two commands.
+        // Compiled by `commands_of`: two commands, or none.
         Operation::DimChain { .. } => ("DIMLINEAR", Vec::new()),
+        Operation::Datum { .. } => ("LINE", Vec::new()),
         Operation::Notes {
             lines,
             width,

@@ -83,6 +83,12 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         (points(3), any::<bool>())
             .prop_map(|(points, closed)| Operation::Polyline { points, closed }),
         points(2).prop_map(|points| Operation::Spline { points }),
+        (1.0..2000.0f64).prop_map(|value| Operation::Datum {
+            name: "d".to_owned(),
+            axis: crate::DatumAxis::Height,
+            value,
+            views: Vec::new(),
+        }),
         points(3).prop_map(|points| Operation::DimChain {
             points,
             side: crate::ChainSide::Below,
@@ -819,8 +825,10 @@ pub fn intent(most: usize) -> impl Strategy<Value = Intent> {
         .prop_map(|(units, mut operations)| {
             // Each view its own id.
             for (index, operation) in operations.iter_mut().enumerate() {
-                if let Operation::View { id, .. } = operation {
-                    *id = format!("{id}-{index}");
+                match operation {
+                    Operation::View { id, .. } => *id = format!("{id}-{index}"),
+                    Operation::Datum { name, .. } => *name = format!("{name}-{index}"),
+                    _ => {}
                 }
             }
             Intent {

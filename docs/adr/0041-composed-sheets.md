@@ -251,6 +251,15 @@ Recorded as each issue lands. Where the code chose among what the decision left 
 - **#355.** `dim_chain` is DIMLINEAR then DIMCONTINUE, as typed (intent version 19). Its dimension line is a new answer kind the engine resolves: 10 paper mm beyond everything its view has drawn on that side, so a second chain stands beyond the first.
   - `notes` is the `NOTES` command: MTEXT wrapped to a width in paper mm, placed as a free view.
 - **#356.** `layer` takes `color` and `linetype` (intent version 20). LAYER's LType loads a built-in linetype the drawing has not loaded, typed or asked for, in the same undo, instead of refusing it.
+- **#361.** Datums are read into the numbers they stand for when the document is parsed (`cad_intent::datums`), signed by the orientation table, so every operation keeps plain coordinates (intent version 21). The schema's points are widened so either coordinate may be `{"datum": name}`.
+  - A free view or section may give `looking` to have axes; a principal view looks from the front.
+  - Checked statically:
+    - a datum on an axis the view does not show;
+    - an unknown datum;
+    - one outside a view, or for a number that is not a coordinate;
+    - one declared for a view that does not use it.
+
+    The last was §7's review finding; refused when the document is read, it is corrected by the service's correction ask.
 - **#352.** A free view's `ratio` (intent version 16) scales its geometry by k about its origin before it is measured. Text keeps its height and a hatch its pattern scale. Each of its dimensions takes a style made from its own: `<view>-<style>`, linear factor ÷ k, overall scale N, measured with that style before anything is committed. Its title says its scale, "DETAIL A (2:1)". The dimension style's linear factor is DIMLFAC (144), read and written; an angle is not scaled by it.
 
 ## Alternatives considered

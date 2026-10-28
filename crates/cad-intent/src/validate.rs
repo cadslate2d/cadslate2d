@@ -415,6 +415,16 @@ impl Check {
                 }
                 Ok(())
             }
+            Operation::Datum {
+                name, value, views, ..
+            } => {
+                self.name("name", name)?;
+                self.number("value", *value)?;
+                for view in views {
+                    self.name("views", view)?;
+                }
+                Ok(())
+            }
             Operation::DimChain { points, .. } => {
                 if points.len() > 50 {
                     return Err(self.refuse("points", Reason::TooMany(50)));
@@ -505,12 +515,20 @@ impl Check {
                             return Err(self.refuse("looking", Reason::Missing));
                         }
                     }
-                    _ => {
+                    crate::ViewPlacement::Principal => {
                         if of.is_some() {
                             return Err(self.refuse("of", Reason::Unwanted));
                         }
+                        // The principal view looks from the front.
                         if looking.is_some() {
                             return Err(self.refuse("looking", Reason::Unwanted));
+                        }
+                    }
+                    // A free view or a section may say where it looks from,
+                    // which gives its datums their axes (#361).
+                    _ => {
+                        if of.is_some() {
+                            return Err(self.refuse("of", Reason::Unwanted));
                         }
                     }
                 }

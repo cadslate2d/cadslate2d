@@ -1332,3 +1332,43 @@ fn a_layer_is_made_with_a_colour_and_a_linetype_loaded_for_it() {
         drawing.layers().find("CENTRE-LINES").unwrap()
     );
 }
+
+/// Datums across views (#361, ADR-0041 §3): the shoulder drawn at one
+/// datum in the front and the side view is at one height on the sheet.
+#[test]
+fn a_feature_drawn_at_a_datum_in_two_views_agrees_on_the_sheet() {
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    h.session
+        .run_intent(&document(
+            r#"
+        {"op": "title_block", "paper": "A1", "scale": 5, "title": "ARMOUR", "projection": "third", "at": [0, 0]},
+        {"op": "datum", "name": "shoulder", "axis": "height", "value": 1450, "views": ["front", "side"]},
+        {"op": "datum", "name": "chest", "axis": "depth", "value": 340},
+        {"op": "view", "id": "front", "placed": "principal", "operations": [
+            {"op": "rectangle", "corner": [0, 0], "opposite": [560, 1950]},
+            {"op": "line", "points": [[-100, {"datum": "shoulder"}], [660, {"datum": "shoulder"}]]}]},
+        {"op": "view", "id": "side", "placed": "projected", "of": "front", "looking": "from_left", "operations": [
+            {"op": "rectangle", "corner": [{"datum": "chest"}, 0], "opposite": [0, 1950]},
+            {"op": "line", "points": [[-400, {"datum": "shoulder"}], [60, {"datum": "shoulder"}]]}]}
+    "#,
+        ))
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", h.log()));
+    let drawing = h.session.drawing();
+    let shoulder_in = |view: &str| {
+        let members = drawing
+            .groups()
+            .iter()
+            .find(|(_, g)| g.name == format!("VIEW-{view}"))
+            .map(|(_, g)| g.members.clone())
+            .unwrap();
+        members
+            .iter()
+            .find_map(|id| match drawing.entity(*id) {
+                Some(Entity::Line(l)) => Some(l.start.y),
+                _ => None,
+            })
+            .unwrap()
+    };
+    assert_eq!(shoulder_in("front"), shoulder_in("side"));
+}

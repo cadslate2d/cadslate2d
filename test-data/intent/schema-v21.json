@@ -295,6 +295,28 @@
       ],
       "description": "A colour: an index of the 1–255 table, or a name the engine knows\n(`red`, `bylayer`, …)."
     },
+    "DatumAxis": {
+      "description": "An axis of the object a composed sheet shows: width to the right as the\nfront view shows it, depth away from the front, height up.",
+      "enum": [
+        "width",
+        "depth",
+        "height"
+      ],
+      "type": "string"
+    },
+    "DatumRef": {
+      "additionalProperties": false,
+      "description": "A coordinate given as a datum declared by a `datum` operation: inside a view, its value read along the axis this coordinate is in the view's orientation, sign included.",
+      "properties": {
+        "datum": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "datum"
+      ],
+      "type": "object"
+    },
     "IsoPlane": {
       "description": "An isometric plane (#336): the face of a box two axes span.",
       "oneOf": [
@@ -379,8 +401,15 @@
             "points": {
               "items": {
                 "items": {
-                  "format": "double",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "$ref": "#/$defs/DatumRef"
+                    }
+                  ]
                 },
                 "maxItems": 2,
                 "minItems": 2,
@@ -410,8 +439,15 @@
             "points": {
               "items": {
                 "items": {
-                  "format": "double",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "$ref": "#/$defs/DatumRef"
+                    }
+                  ]
                 },
                 "maxItems": 2,
                 "minItems": 2,
@@ -437,8 +473,15 @@
             "points": {
               "items": {
                 "items": {
-                  "format": "double",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "$ref": "#/$defs/DatumRef"
+                    }
+                  ]
                 },
                 "maxItems": 2,
                 "minItems": 2,
@@ -602,8 +645,15 @@
           "properties": {
             "at": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -620,8 +670,15 @@
             },
             "to": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -651,8 +708,15 @@
             "points": {
               "items": {
                 "items": {
-                  "format": "double",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "$ref": "#/$defs/DatumRef"
+                    }
+                  ]
                 },
                 "maxItems": 2,
                 "minItems": 2,
@@ -704,12 +768,52 @@
         },
         {
           "additionalProperties": false,
+          "description": "A datum of the object a composed sheet shows (ADR-0041 §3): a\nnamed value along its width, depth, or height. Any coordinate of an\noperation inside a view may be `{\"datum\": name}` instead of a\nnumber; it stands for the value, with the sign the view's\norientation gives — a width read from behind is negated, a depth\nread from the left too. `views` names the views the feature it marks\nmust be drawn in; each is refused unless it uses it.",
+          "properties": {
+            "axis": {
+              "$ref": "#/$defs/DatumAxis"
+            },
+            "name": {
+              "type": "string"
+            },
+            "op": {
+              "const": "datum",
+              "type": "string"
+            },
+            "value": {
+              "format": "double",
+              "type": "number"
+            },
+            "views": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "name",
+            "axis",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "A closed rectangle from two opposite corners.",
           "properties": {
             "corner": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -721,8 +825,15 @@
             },
             "opposite": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -741,8 +852,15 @@
           "properties": {
             "center": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -770,8 +888,15 @@
           "properties": {
             "end": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -783,8 +908,15 @@
             },
             "start": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -792,8 +924,15 @@
             },
             "through": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -814,8 +953,15 @@
           "properties": {
             "center": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -853,8 +999,15 @@
           "properties": {
             "at": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1028,8 +1181,15 @@
           "properties": {
             "displacement": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1056,8 +1216,15 @@
           "properties": {
             "displacement": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1088,8 +1255,15 @@
             },
             "base": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1117,8 +1291,15 @@
           "properties": {
             "base": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1151,8 +1332,15 @@
             "axis": {
               "items": {
                 "items": {
-                  "format": "double",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "$ref": "#/$defs/DatumRef"
+                    }
+                  ]
                 },
                 "maxItems": 2,
                 "minItems": 2,
@@ -1198,8 +1386,15 @@
             },
             "toward": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1386,8 +1581,15 @@
             },
             "center": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1528,8 +1730,15 @@
           "properties": {
             "at": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1537,8 +1746,15 @@
             },
             "from": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1560,8 +1776,15 @@
             },
             "to": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1582,8 +1805,15 @@
           "properties": {
             "at": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1591,8 +1821,15 @@
             },
             "from": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1604,8 +1841,15 @@
             },
             "to": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1626,8 +1870,15 @@
           "properties": {
             "at": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1654,8 +1905,15 @@
           "properties": {
             "at": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1682,8 +1940,15 @@
           "properties": {
             "at": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1691,8 +1956,15 @@
             },
             "first": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1704,8 +1976,15 @@
             },
             "second": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1713,8 +1992,15 @@
             },
             "vertex": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1743,8 +2029,15 @@
             },
             "corner": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1803,8 +2096,15 @@
             },
             "center": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1851,8 +2151,15 @@
             },
             "first": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1888,8 +2195,15 @@
           "properties": {
             "center": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1937,8 +2251,15 @@
             },
             "center": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -1987,8 +2308,15 @@
             },
             "center": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -2162,8 +2490,15 @@
             },
             "inside": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -2240,8 +2575,15 @@
             },
             "at": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -2267,8 +2609,15 @@
             "points": {
               "items": {
                 "items": {
-                  "format": "double",
-                  "type": "number"
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "$ref": "#/$defs/DatumRef"
+                    }
+                  ]
                 },
                 "maxItems": 2,
                 "minItems": 2,
@@ -2426,8 +2775,15 @@
             },
             "from": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -2442,8 +2798,15 @@
             },
             "to": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -2561,8 +2924,15 @@
           "properties": {
             "at": {
               "items": {
-                "format": "double",
-                "type": "number"
+                "anyOf": [
+                  {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "#/$defs/DatumRef"
+                  }
+                ]
               },
               "maxItems": 2,
               "minItems": 2,
@@ -2667,8 +3037,15 @@
         "profile": {
           "items": {
             "items": {
-              "format": "double",
-              "type": "number"
+              "anyOf": [
+                {
+                  "format": "double",
+                  "type": "number"
+                },
+                {
+                  "$ref": "#/$defs/DatumRef"
+                }
+              ]
             },
             "maxItems": 2,
             "minItems": 2,
@@ -2682,8 +3059,15 @@
         "steps": {
           "items": {
             "items": {
-              "format": "double",
-              "type": "number"
+              "anyOf": [
+                {
+                  "format": "double",
+                  "type": "number"
+                },
+                {
+                  "$ref": "#/$defs/DatumRef"
+                }
+              ]
             },
             "maxItems": 2,
             "minItems": 2,
@@ -2703,8 +3087,15 @@
       "properties": {
         "at": {
           "items": {
-            "format": "double",
-            "type": "number"
+            "anyOf": [
+              {
+                "format": "double",
+                "type": "number"
+              },
+              {
+                "$ref": "#/$defs/DatumRef"
+              }
+            ]
           },
           "maxItems": 2,
           "minItems": 2,
@@ -2847,8 +3238,15 @@
       "properties": {
         "from": {
           "items": {
-            "format": "double",
-            "type": "number"
+            "anyOf": [
+              {
+                "format": "double",
+                "type": "number"
+              },
+              {
+                "$ref": "#/$defs/DatumRef"
+              }
+            ]
           },
           "maxItems": 2,
           "minItems": 2,
@@ -2859,8 +3257,15 @@
         },
         "to": {
           "items": {
-            "format": "double",
-            "type": "number"
+            "anyOf": [
+              {
+                "format": "double",
+                "type": "number"
+              },
+              {
+                "$ref": "#/$defs/DatumRef"
+              }
+            ]
           },
           "maxItems": 2,
           "minItems": 2,
@@ -2868,8 +3273,15 @@
         },
         "toward": {
           "items": {
-            "format": "double",
-            "type": "number"
+            "anyOf": [
+              {
+                "format": "double",
+                "type": "number"
+              },
+              {
+                "$ref": "#/$defs/DatumRef"
+              }
+            ]
           },
           "maxItems": 2,
           "minItems": 2,

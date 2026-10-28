@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 mod compile;
 mod validate;
 
+mod datums;
 pub use compile::{Answer, COMMANDS, Compiled, Step, compile};
 pub use validate::{IntentError, Reason, limits};
 
@@ -27,7 +28,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 20;
+pub const VERSION: u32 = 21;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -43,9 +44,10 @@ pub const VERSION: u32 = 20;
 /// view's `ratio` (#352), version 17 a section view's `cut` (#353),
 /// version 18 `bill_of_materials` and `balloon` (#354), version 19
 /// `dim_chain` and `notes` (#355), version 20 a layer's `color` and
-/// `linetype` (#356).
-pub const READS: [u32; 20] = [
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+/// `linetype` (#356), version 21 `datum` and a coordinate given as one
+/// (#361).
+pub const READS: [u32; 21] = [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
 ];
 
 /// A point, `[x, y]`, in the document's units.
@@ -450,6 +452,20 @@ pub enum Operation {
         width: Option<f64>,
         #[serde(default, skip_serializing_if = "String::is_empty")]
         title: String,
+    },
+    /// A datum of the object a composed sheet shows (ADR-0041 §3): a
+    /// named value along its width, depth, or height. Any coordinate of an
+    /// operation inside a view may be `{"datum": name}` instead of a
+    /// number; it stands for the value, with the sign the view's
+    /// orientation gives — a width read from behind is negated, a depth
+    /// read from the left too. `views` names the views the feature it marks
+    /// must be drawn in; each is refused unless it uses it.
+    Datum {
+        name: String,
+        axis: DatumAxis,
+        value: f64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        views: Vec<String>,
     },
     /// A closed rectangle from two opposite corners.
     Rectangle {
@@ -1072,6 +1088,17 @@ pub enum ViewPlacement {
     Section,
 }
 
+/// An axis of the object a composed sheet shows: width to the right as the
+/// front view shows it, depth away from the front, height up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum DatumAxis {
+    Width,
+    Depth,
+    Height,
+}
+
 /// Which side of the geometry a chain of dimensions runs along.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -1141,6 +1168,7 @@ impl Operation {
             Self::BillOfMaterials { .. } => "bill_of_materials",
             Self::Balloon { .. } => "balloon",
             Self::DimChain { .. } => "dim_chain",
+            Self::Datum { .. } => "datum",
             Self::Notes { .. } => "notes",
             Self::Hatch { .. } => "hatch",
             Self::Rectangle { .. } => "rectangle",
@@ -1201,9 +1229,18 @@ impl Operation {
 /// limits, every number finite and in range, every reference and name
 /// well formed. What is refused says where and why ([`IntentError`]).
 pub fn parse(text: &str) -> Result<Intent, IntentError> {
-    let intent: Intent = serde_json::from_str(text).map_err(|error| IntentError::Json {
+    let json_error = |error: serde_json::Error| IntentError::Json {
         line: error.line(),
         column: error.column(),
+        message: error.to_string(),
+    };
+    let mut value: serde_json::Value = serde_json::from_str(text).map_err(json_error)?;
+    // Datums are read into the numbers they stand for, so every operation
+    // keeps its plain coordinates (#361).
+    datums::resolve(&mut value)?;
+    let intent: Intent = serde_json::from_value(value).map_err(|error| IntentError::Json {
+        line: 1,
+        column: 1,
         message: error.to_string(),
     })?;
     validate::validate(&intent)?;
@@ -1214,7 +1251,9 @@ pub fn parse(text: &str) -> Result<Intent, IntentError> {
 /// (`features = ["schema"]`).
 #[cfg(feature = "schema")]
 pub fn schema() -> serde_json::Value {
-    serde_json::to_value(schemars::schema_for!(Intent)).expect("a schema is JSON")
+    let mut schema = serde_json::to_value(schemars::schema_for!(Intent)).expect("a schema is JSON");
+    datums::widen_points(&mut schema);
+    schema
 }
 
 pub(crate) fn point(p: Point) -> Point2 {
