@@ -250,8 +250,15 @@ impl SheetWanted {
                         })
                         .flat_map(|e| e.primitives(tables_now))
                         .flat_map(|p| {
+                            // Its extremes, and a circle's or an arc's
+                            // centre: a hub drawn round a shaft is at it.
                             let b = p.bounds();
-                            [b.min(), b.max()]
+                            let centre = match &p {
+                                cad_geometry::Primitive::Circle(c) => Some(c.center),
+                                cad_geometry::Primitive::Arc(a) => Some(a.center),
+                                cad_geometry::Primitive::Segment(_) => None,
+                            };
+                            [b.min(), b.max()].into_iter().chain(centre)
                         })
                         .map(|q| sign * [q.x - view.origin.x, q.y - view.origin.y][index])
                         .collect();

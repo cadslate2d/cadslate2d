@@ -318,6 +318,11 @@ fn a_sheet_is_judged_on_structure_agreement_dimensions_and_print_scale() {
     let lowered = r#",{"op": "view", "id": "left", "placed": "projected", "of": "front", "looking": "from_left", "operations": [
                 {"op": "rectangle", "corner": [-40, -30], "opposite": [0, 30]}]}"#;
     assert_eq!(miss(sheet(lowered, r#"["front"]"#, 80.0, 1)), None);
+    // A circle centred at the height is at it: a hub round a shaft.
+    let hub = r#",{"op": "view", "id": "left", "placed": "projected", "of": "front", "looking": "from_left", "operations": [
+                {"op": "rectangle", "corner": [-40, 0], "opposite": [0, 30]},
+                {"op": "circle", "center": [-20, 60], "radius": 10}]}"#;
+    assert_eq!(miss(sheet(hub, r#"["front"]"#, 80.0, 1)), None);
     // The side view drawn to another height does not.
     let taller = left.replace(r#"{"datum": "h"}"#, "65");
     let one_view = miss(sheet(&taller, r#"["front"]"#, 80.0, 1)).unwrap();

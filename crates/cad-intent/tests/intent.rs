@@ -264,6 +264,15 @@ fn what_is_refused_says_where_and_why() {
         "radius",
         Reason::NotPositive,
     );
+    // A hatch's region given twice is told which to keep.
+    match refused(r#"{"op": "hatch", "inside": [0, 0], "targets": "selection"}"#) {
+        IntentError::Invalid {
+            field: "inside",
+            reason: reason @ Reason::Said(_),
+            ..
+        } => assert!(reason.to_string().contains("leave `targets` out")),
+        other => panic!("{other:?}"),
+    }
     invalid(
         r#"{"op": "circle", "center": [1e300, 0], "radius": 1}"#,
         "center",

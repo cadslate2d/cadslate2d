@@ -550,8 +550,14 @@ impl Check {
                 match (inside, targets) {
                     (Some(inside), None) => self.point("inside", *inside)?,
                     (None, Some(targets)) => self.targets("targets", targets)?,
+                    // Said whole: one or the other, and which to keep.
                     (Some(_), Some(_)) => {
-                        return Err(self.refuse("inside", Reason::Both("targets")));
+                        return Err(self.refuse(
+                            "inside",
+                            Reason::Said(
+                                "and `targets` are two ways to give a hatch's region — a point inside it, or the closed objects around it — so give one: leave `targets` out to hatch round the point",
+                            ),
+                        ));
                     }
                     (None, None) => return Err(self.refuse("inside", Reason::Missing)),
                 }
