@@ -238,7 +238,25 @@ fn options_are_judged_each_and_must_differ() {
             .unwrap()
             .starts_with("option 3: made")
     );
-    assert_eq!(miss(&[one], "one"), None);
+    assert_eq!(miss(std::slice::from_ref(&one), "one"), None);
+    // The answer that stands is the last valid one: a correction that came
+    // back invalid leaves the answer before it.
+    let mut corrected: serde_json::Value = serde_json::from_str(&one).unwrap();
+    let invalid = serde_json::json!({"reply": "Here it is.", "intent": {"version": cad_intent::VERSION,
+        "operations": [{"op": "circle", "center": [0, 0], "radius": -1}]}});
+    corrected["raw"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"content": invalid.to_string(), "usage": {"input": 1, "cached_input": 0, "output": 1}}));
+    assert_eq!(miss(&[corrected.to_string()], "one"), None);
+    corrected["raw"].as_array_mut().unwrap().remove(0);
+    assert!(
+        miss(&[corrected.to_string()], "one")
+            .unwrap()
+            .starts_with("invalid document"),
+        "{:?}",
+        miss(&[corrected.to_string()], "one")
+    );
     let unasked = recording("one", circle(10), serde_json::json!([circle(20)]));
     assert_eq!(
         miss(&[unasked], "one").unwrap(),
@@ -295,6 +313,11 @@ fn a_sheet_is_judged_on_structure_agreement_dimensions_and_print_scale() {
     // Typed instead of drawn at the datum, the height still agrees.
     let typed = left.replace(r#"{"datum": "h"}"#, "60");
     assert_eq!(miss(sheet(&typed, r#"["front"]"#, 80.0, 1)), None);
+    // So with the side view's reference point elsewhere: a position is
+    // measured from the object's floor.
+    let lowered = r#",{"op": "view", "id": "left", "placed": "projected", "of": "front", "looking": "from_left", "operations": [
+                {"op": "rectangle", "corner": [-40, -30], "opposite": [0, 30]}]}"#;
+    assert_eq!(miss(sheet(lowered, r#"["front"]"#, 80.0, 1)), None);
     // The side view drawn to another height does not.
     let taller = left.replace(r#"{"datum": "h"}"#, "65");
     let one_view = miss(sheet(&taller, r#"["front"]"#, 80.0, 1)).unwrap();

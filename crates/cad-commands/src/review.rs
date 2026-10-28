@@ -68,22 +68,61 @@ const COMPOSING: [&str; 4] = ["VIEWFRAME", "BOMTABLE", "NOTES", "BALLOON"];
 /// it. `None` when it does not run there — it acts on objects of a drawing
 /// it was not given — so there is nothing to review.
 pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Option<Vec<String>> {
-    let mut session = crate::Session::new();
-    session.resize(800.0, 600.0);
-    if let Some(unit) = unit {
-        session.submit_text("UNITS");
-        session.submit_text(unit);
-    }
-    match session.run_intent(intent) {
-        Ok(_) => Some(review(session.drawing())),
+    let run = |intent: &cad_intent::Intent| {
+        let mut session = crate::Session::new();
+        session.resize(800.0, 600.0);
+        if let Some(unit) = unit {
+            session.submit_text("UNITS");
+            session.submit_text(unit);
+        }
+        session.run_intent(intent).map(|_| session)
+    };
+    match run(intent) {
+        Ok(session) => Some(review(session.drawing())),
         // A sheet that cannot be composed — a view with no room — is the
         // document's own layout, which a revision can put right; any other
         // refusal is the program's answer to the request, not a finding.
+        // The smallest paper it composes on, the rest the same, is said.
         Err(crate::intent::RunError::Refused {
             command, reason, ..
-        }) if COMPOSING.contains(&command) => Some(vec![format!(
-            "The sheet could not be composed: {reason}. Give the views, notes, and table room on the sheet: a larger paper or scale, narrower notes, or fewer views."
-        )]),
+        }) if COMPOSING.contains(&command) => {
+            use cad_intent::{Operation, PaperSize};
+            let larger = |paper: PaperSize| {
+                let order = [
+                    PaperSize::A4,
+                    PaperSize::A3,
+                    PaperSize::A2,
+                    PaperSize::A1,
+                    PaperSize::A0,
+                ];
+                let at = order.iter().position(|p| *p == paper).unwrap_or(0);
+                order[at + 1..].to_vec()
+            };
+            let current = intent.operations.iter().find_map(|op| match op {
+                Operation::TitleBlock { paper, .. } => Some(*paper),
+                _ => None,
+            });
+            let fits = current.and_then(|paper| {
+                larger(paper).into_iter().find(|bigger| {
+                    let mut tried = intent.clone();
+                    for op in &mut tried.operations {
+                        if let Operation::TitleBlock { paper, .. } = op {
+                            *paper = *bigger;
+                        }
+                    }
+                    run(&tried).is_ok()
+                })
+            });
+            let advice = match fits {
+                Some(paper) => format!(
+                    "At this scale it composes on {paper:?}: use {paper:?}, or a smaller scale, narrower notes, or fewer views."
+                ),
+                None => "Not even A0 has room at this scale: choose a smaller scale, narrower notes, or fewer views.".to_owned(),
+            };
+            Some(vec![format!(
+                "The sheet could not be composed: {reason}. {advice}"
+            )])
+        }
         // So is what a view's own drawing refuses — a hatch with no closed
         // boundary: the view's geometry, which the model draws again.
         Err(crate::intent::RunError::Refused {
@@ -389,7 +428,10 @@ mod tests {
         );
         let findings = review_document(&crowded, Some("mm")).unwrap();
         assert!(
-            findings[0].starts_with("The sheet could not be composed: View front needs"),
+            findings[0].starts_with("The sheet could not be composed: View front needs")
+                && findings[0].ends_with(
+                    "At this scale it composes on A1: use A1, or a smaller scale, narrower notes, or fewer views."
+                ),
             "{findings:?}"
         );
         let parallel = parse(

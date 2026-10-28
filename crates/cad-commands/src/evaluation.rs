@@ -242,20 +242,23 @@ impl SheetWanted {
                         })
                         .map(|(_, g)| g.members.clone())
                         .unwrap_or_default();
-                    let wanted = sign * value;
-                    members
+                    let along: Vec<f64> = members
                         .iter()
                         .filter_map(|id| drawing.entity(*id))
-                        .any(|e| {
+                        .filter(|e| {
                             !matches!(e, Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_))
-                                && e.primitives(tables_now).iter().any(|p| {
-                                    let b = p.bounds();
-                                    [b.min(), b.max()].iter().any(|q| {
-                                        let local = [q.x - view.origin.x, q.y - view.origin.y];
-                                        (local[index] - wanted).abs() <= 1e-6 * value.abs().max(1.0)
-                                    })
-                                })
                         })
+                        .flat_map(|e| e.primitives(tables_now))
+                        .flat_map(|p| {
+                            let b = p.bounds();
+                            [b.min(), b.max()]
+                        })
+                        .map(|q| sign * [q.x - view.origin.x, q.y - view.origin.y][index])
+                        .collect();
+                    let from = along.iter().copied().fold(f64::INFINITY, f64::min);
+                    along
+                        .iter()
+                        .any(|c| (c - from - value).abs() <= 1e-6 * value.abs().max(1.0))
                 })
                 .count();
             if agreeing < *least {
@@ -1179,9 +1182,27 @@ pub fn language(text: &str) -> &'static str {
 /// The model's answer in a recording: the provider's last attempt, as
 /// the service reads it — the reply, the intent, and the other options.
 fn answer(recording: &Value) -> Result<(String, Option<Value>, Vec<Value>), String> {
-    let raw = recording["raw"]
-        .as_array()
-        .and_then(|raws| raws.last())
+    // The answer that stands, as the service serves it: the last whose
+    // documents are valid — a correction asked of a revised sheet may come
+    // back invalid, and the revision it was asked of stands — else the last.
+    let raws = recording["raw"].as_array().ok_or("no answer")?;
+    let valid = |raw: &&Value| {
+        let Ok(content) = serde_json::from_str::<Value>(raw["content"].as_str().unwrap_or(""))
+        else {
+            return false;
+        };
+        let documents = std::iter::once(&content["intent"])
+            .filter(|intent| !intent.is_null())
+            .chain(content["alternatives"].as_array().into_iter().flatten());
+        documents
+            .map(|document| parse(&document.to_string()))
+            .all(|parsed| parsed.is_ok())
+    };
+    let raw = raws
+        .iter()
+        .rev()
+        .find(valid)
+        .or(raws.last())
         .ok_or("no answer")?;
     let content: Value = serde_json::from_str(raw["content"].as_str().unwrap_or(""))
         .map_err(|error| format!("the answer is not JSON: {error}"))?;
