@@ -30,6 +30,9 @@ pub enum Answer {
     /// A point in a placed view's own coordinates (#354): where it is on
     /// the sheet the engine works out from the view's placement.
     InView { view: String, point: Point2 },
+    /// Where the operations of the view `id` were drawn — the place the
+    /// engine kept for that view, clear of the others' (#358).
+    Staging(String),
     /// Where a chain's dimension line goes (#355): on `side` of `points`,
     /// beyond what the operation's view has drawn there — worked out by
     /// the engine, which knows.
@@ -246,7 +249,7 @@ fn viewframe_steps(views: &[Operation]) -> Vec<Step> {
             // The selection made, the objects prompt is done.
             steps.push(enter());
         }
-        steps.push(at([0.0, 0.0]));
+        steps.push(answer(Answer::Staging(id.clone())));
         steps.push(answer(Answer::Text(id.clone())));
         steps.push(if title.trim().is_empty() {
             enter()

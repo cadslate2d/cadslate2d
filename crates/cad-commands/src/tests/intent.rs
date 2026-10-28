@@ -1372,3 +1372,37 @@ fn a_feature_drawn_at_a_datum_in_two_views_agrees_on_the_sheet() {
     };
     assert_eq!(shoulder_in("front"), shoulder_in("side"));
 }
+
+/// Each view is drawn in a place of its own before it is placed (#358):
+/// two views' rectangles at the same local coordinates, each hatched from
+/// a point inside, each hatch filling its own — not meeting the other's.
+#[test]
+fn each_view_is_drawn_clear_of_the_others_before_it_is_placed() {
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    h.session
+        .run_intent(&document(
+            r#"
+        {"op": "title_block", "paper": "A3", "scale": 1, "title": "SECTIONS", "at": [0, 0]},
+        {"op": "view", "id": "front", "placed": "principal", "operations": [
+            {"op": "rectangle", "corner": [0, 0], "opposite": [100, 60]},
+            {"op": "rectangle", "corner": [20, 20], "opposite": [40, 40]}]},
+        {"op": "view", "id": "aa", "placed": "section", "cut": {"of": "front", "from": [50, -10], "to": [50, 70], "toward": [100, 30]}, "operations": [
+            {"op": "rectangle", "corner": [0, 0], "opposite": [60, 60]},
+            {"op": "hatch", "inside": [30, 30], "pattern": "ANSI31"}]}
+    "#,
+        ))
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", h.log()));
+    let drawing = h.session.drawing();
+    let hatch = drawing
+        .entities()
+        .find_map(|(_, e)| match e {
+            Entity::Hatch(hatch) => Some(hatch.clone()),
+            _ => None,
+        })
+        .unwrap();
+    // One loop, the section's own 60 × 60: not the front's hole.
+    assert_eq!(hatch.loops.len(), 1);
+    let b = Entity::Hatch(hatch).bounds(drawing.tables());
+    assert!((b.max().x - b.min().x - 60.0).abs() < 1e-6);
+}

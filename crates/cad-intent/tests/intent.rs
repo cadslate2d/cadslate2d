@@ -27,6 +27,7 @@ fn answers(steps: &[Step]) -> Vec<String> {
                     Answer::Text(t) => t.clone(),
                     Answer::Enter => String::new(),
                     Answer::InView { view, point } => format!("{view}@{},{}", point.x, point.y),
+                    Answer::Staging(view) => format!("staging:{view}"),
                     Answer::Beyond { side, points } => format!("beyond:{side:?}:{}", points.len()),
                 };
                 match when {

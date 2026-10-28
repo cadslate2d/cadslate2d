@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use cad_core::{EntityId, LengthUnit, Point2};
+use cad_core::{EntityId, LengthUnit, Point2, Vec2};
 use cad_intent::{Answer, Compiled, Intent, Pick, Step, Targets};
 
 use cad_input::InputKind;
@@ -95,6 +95,17 @@ pub struct Ran {
     pub made: Vec<EntityId>,
 }
 
+/// How far apart views are drawn before they are placed: far beyond any
+/// view's size, in drawing units.
+const STAGING: f64 = 1.0e6;
+
+/// Where an operation draws: moved by `offset` when it is a view's, and
+/// where each view of the document was drawn.
+struct Place<'a> {
+    offset: Vec2,
+    staging: &'a [(String, Vec2)],
+}
+
 impl Session {
     /// Runs every operation of `intent`, in order, stopping at the first
     /// that cannot run. What ran is reported with its log; what stopped it
@@ -107,8 +118,30 @@ impl Session {
         let mut ran = Vec::new();
         // What each view's operations made, for its VIEWFRAME (#351).
         let mut views: Vec<(String, Vec<EntityId>)> = Vec::new();
-        for compiled in cad_intent::compile(intent) {
-            let done = self.run_compiled(&compiled, scale, &views)?;
+        let compiled_all = cad_intent::compile(intent);
+        // Each view drawn in a place of its own, far from the others', so
+        // a view's operations — a hatch's region, a trim's edges, a snap —
+        // meet only its own objects before VIEWFRAME places them (#358).
+        let mut staging: Vec<(String, Vec2)> = Vec::new();
+        for compiled in &compiled_all {
+            if let Some(view) = &compiled.view
+                && !staging.iter().any(|(id, _)| id == view)
+            {
+                let k = staging.len() as f64 + 1.0;
+                staging.push((view.clone(), Vec2::new(STAGING * k, 0.0)));
+            }
+        }
+        for compiled in compiled_all {
+            let offset = compiled
+                .view
+                .as_ref()
+                .and_then(|v| staging.iter().find(|(id, _)| id == v))
+                .map_or(Vec2::new(0.0, 0.0), |(_, at)| *at);
+            let place = Place {
+                offset,
+                staging: &staging,
+            };
+            let done = self.run_compiled(&compiled, scale, &views, &place)?;
             if let Some(view) = &compiled.view {
                 match views.iter_mut().find(|(id, _)| id == view) {
                     Some((_, made)) => made.extend(&done.made),
@@ -128,6 +161,7 @@ impl Session {
         compiled: &Compiled,
         scale: f64,
         views: &[(String, Vec<EntityId>)],
+        place: &Place<'_>,
     ) -> Result<Ran, RunError> {
         let operation = compiled.operation;
         let command = compiled.command;
@@ -142,7 +176,7 @@ impl Session {
         let log_from = self.log_total();
         let revision = self.drawing().revision();
         let first_new = self.drawing().next_entity_id();
-        let result = self.run_steps(compiled, scale, views);
+        let result = self.run_steps(compiled, scale, views, place);
         // The command's own words for what it refused: the last line it
         // wrote that is a sentence, not the echo of a prompt and answer.
         let reason = self
@@ -198,7 +232,10 @@ impl Session {
         compiled: &Compiled,
         scale: f64,
         views: &[(String, Vec<EntityId>)],
+        place: &Place<'_>,
     ) -> Result<(), RunError> {
+        // A point of the operation, in the drawing, where it is drawn.
+        let drawn = |p: Point2| Point2::new(p.x * scale, p.y * scale) + place.offset;
         // What a view's operations made, still there.
         let view_made = |session: &Self, id: &str| -> Vec<EntityId> {
             views
@@ -276,17 +313,27 @@ impl Session {
                         continue;
                     }
                     let text = match answer {
+                        Answer::Point(p) => format_answer(&Answer::Point(drawn(*p)), 1.0),
+                        Answer::Staging(view) => {
+                            let at = place
+                                .staging
+                                .iter()
+                                .find(|(id, _)| id == view)
+                                .map_or(Point2::ORIGIN, |(_, by)| Point2::ORIGIN + *by);
+                            format_answer(&Answer::Point(at), 1.0)
+                        }
                         Answer::InView { view, point } => {
                             let at = self.in_view(operation, command, view, *point, scale)?;
                             format_answer(&Answer::Point(at), 1.0)
                         }
                         Answer::Beyond { side, points } => {
-                            let drawn = compiled
+                            let made = compiled
                                 .view
                                 .as_ref()
                                 .map(|id| view_made(self, id))
                                 .unwrap_or_default();
-                            let at = self.beyond(&drawn, *side, points, scale);
+                            let points: Vec<Point2> = points.iter().map(|p| drawn(*p)).collect();
+                            let at = self.beyond(&made, *side, &points, 1.0);
                             format_answer(&Answer::Point(at), 1.0)
                         }
                         _ => format_answer(answer, scale),
@@ -297,17 +344,14 @@ impl Session {
                 // pick is the point it is at: typed, as exact as a snap.
                 Step::Pick(pick) if self.expected().kind == InputKind::Point => {
                     let at = match pick.near {
-                        Some(near) => Point2::new(near[0], near[1]),
-                        None => {
-                            let at = self.pick_point(operation, pick, scale)?;
-                            Point2::new(at.x / scale, at.y / scale)
-                        }
+                        Some(near) => drawn(Point2::new(near[0], near[1])),
+                        None => self.pick_point(operation, pick, scale, place.offset)?,
                     };
                     self.entity_id(operation, pick.id)?;
-                    self.submit_text(&format_answer(&Answer::Point(at), scale));
+                    self.submit_text(&format_answer(&Answer::Point(at), 1.0));
                 }
                 Step::Pick(pick) => {
-                    let at = self.pick_point(operation, pick, scale)?;
+                    let at = self.pick_point(operation, pick, scale, place.offset)?;
                     let screen = self.view().world_to_screen(at);
                     self.pointer_down(screen, PointerButton::Primary, Modifiers::NONE);
                     self.pointer_up(screen, PointerButton::Primary, Modifiers::NONE);
@@ -410,7 +454,13 @@ impl Session {
 
     /// Where a pick lands: the object's point nearest `near`, or the start
     /// of its first primitive.
-    fn pick_point(&self, operation: usize, pick: &Pick, scale: f64) -> Result<Point2, RunError> {
+    fn pick_point(
+        &self,
+        operation: usize,
+        pick: &Pick,
+        scale: f64,
+        offset: Vec2,
+    ) -> Result<Point2, RunError> {
         let id = self.entity_id(operation, pick.id)?;
         let drawing = self.drawing();
         let entity = drawing.entity(id).expect("checked");
@@ -423,7 +473,7 @@ impl Session {
         };
         Ok(match pick.near {
             Some(near) => {
-                let near = Point2::new(near[0] * scale, near[1] * scale);
+                let near = Point2::new(near[0] * scale, near[1] * scale) + offset;
                 primitives
                     .iter()
                     .map(|primitive| primitive.closest_point(near))
@@ -452,6 +502,7 @@ fn format_answer(answer: &Answer, scale: f64) -> String {
         Answer::InView { point, .. } => {
             format!("{},{}", number(point.x * scale), number(point.y * scale))
         }
+        Answer::Staging(_) => "0,0".to_owned(),
         Answer::Beyond { points, .. } => points.first().map_or_else(String::new, |p| {
             format!("{},{}", number(p.x * scale), number(p.y * scale))
         }),
