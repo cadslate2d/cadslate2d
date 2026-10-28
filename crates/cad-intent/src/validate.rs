@@ -79,6 +79,9 @@ pub enum Reason {
     Unknown,
     /// Said in full: a datum given where it cannot be read (#361).
     Said(&'static str),
+    /// Said in full, naming what is wrong — the datum, the view, its axes —
+    /// so a model can put it right when asked again (#358).
+    Told(String),
 }
 
 impl fmt::Display for Reason {
@@ -100,6 +103,7 @@ impl fmt::Display for Reason {
             Self::Repeated => write!(f, "is given twice"),
             Self::Unknown => write!(f, "names what is not there"),
             Self::Said(words) => write!(f, "{words}"),
+            Self::Told(words) => write!(f, "{words}"),
         }
     }
 }
@@ -547,7 +551,12 @@ impl Check {
                     // which gives its datums their axes (#361).
                     _ => {
                         if of.is_some() {
-                            return Err(self.refuse("of", Reason::Unwanted));
+                            return Err(self.refuse(
+                                "of",
+                                Reason::Said(
+                                    "is only for a projected view: a section names the view it cuts in its `cut`'s `of`, and a free view names none — leave `of` out",
+                                ),
+                            ));
                         }
                     }
                 }

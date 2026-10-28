@@ -284,6 +284,21 @@ fn what_is_refused_says_where_and_why() {
             other => panic!("{inner}: {other:?}"),
         }
     }
+    // A section given an `of` is told where its parent goes.
+    match refused(
+        r#"{"op": "view", "id": "aa", "placed": "section", "of": "plan", "cut": {"of": "plan", "from": [0, 0], "to": [10, 0], "toward": [5, 5]},
+            "operations": [{"op": "line", "points": [[0, 0], [10, 0]]}]}"#,
+    ) {
+        IntentError::Invalid {
+            field: "of",
+            reason: reason @ Reason::Said(_),
+            ..
+        } => assert!(
+            reason.to_string().contains("only for a projected view"),
+            "{reason}"
+        ),
+        other => panic!("{other:?}"),
+    }
     // A hatch's region given twice is told which to keep.
     match refused(r#"{"op": "hatch", "inside": [0, 0], "targets": "selection"}"#) {
         IntentError::Invalid {

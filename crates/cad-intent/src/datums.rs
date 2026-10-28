@@ -30,6 +30,24 @@ enum Axis {
     Height,
 }
 
+impl Axis {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Width => "width",
+            Self::Depth => "depth",
+            Self::Height => "height",
+        }
+    }
+}
+
+/// The view a datum is read in, for what a refusal says: its id and where
+/// it looks from.
+#[derive(Clone, Copy)]
+struct Seen<'a> {
+    id: &'a str,
+    looking: &'a str,
+}
+
 /// For a view's orientation, the axis and sign of u and of v.
 fn axes(looking: &str) -> Option<[(Axis, f64); 2]> {
     use Axis::{Depth, Height, Width};
@@ -93,6 +111,7 @@ fn resolve_in(
     datums: &[Datum],
     used: &mut Vec<String>,
     at: (usize, &'static str),
+    seen: Seen<'_>,
 ) -> Result<(), IntentError> {
     match value {
         Value::Array(items)
@@ -107,9 +126,10 @@ fn resolve_in(
                         at.0,
                         at.1,
                         "datum",
-                        Reason::Said(
-                            "names no datum a `datum` operation declares before the views",
-                        ),
+                        Reason::Told(format!(
+                            "`{name}` in view `{}` names no datum: declare it with a `datum` operation before the views, or write the number",
+                            seen.id
+                        )),
                     ));
                 };
                 let Some(axes) = orientation else {
@@ -119,20 +139,27 @@ fn resolve_in(
                         at.0,
                         at.1,
                         "datum",
-                        Reason::Said(
-                            "is used in a view that does not say where it looks from: give a section or free view `looking`, or write the number",
-                        ),
+                        Reason::Told(format!(
+                            "`{name}` is used in view `{}`, which does not say where it looks from: give view `{}` a `looking` — a plan `from_above`; a section or elevation whose x runs along the plan's x `from_front`, one whose x runs along the plan's y `from_left` or `from_right` — or write the number",
+                            seen.id, seen.id
+                        )),
                     ));
                 };
                 let (axis, sign) = axes[i];
                 if axis != datum.axis {
+                    let coordinate = ["x", "y"][i];
                     return Err(refuse(
                         at.0,
                         at.1,
                         "datum",
-                        Reason::Said(
-                            "is along an axis this coordinate is not in this view: from the front or behind x is width and y height; from the left or right x is depth and y height; from above or below x is width and y depth",
-                        ),
+                        Reason::Told(format!(
+                            "`{name}` is a {} datum, but it is the {coordinate} of a point in view `{}`, which looks {}: there x is {} and y is {}. Use it only as the coordinate along its own axis, or write the number. The principal view always looks from the front; a plan is a view looking `from_above`",
+                            datum.axis.name(),
+                            seen.id,
+                            seen.looking,
+                            axes[0].0.name(),
+                            axes[1].0.name(),
+                        )),
                     ));
                 }
                 used.push(datum.name.clone());
@@ -142,7 +169,7 @@ fn resolve_in(
         }
         Value::Array(items) => items
             .iter_mut()
-            .try_for_each(|item| resolve_in(item, orientation, datums, used, at)),
+            .try_for_each(|item| resolve_in(item, orientation, datums, used, at, seen)),
         Value::Object(o) => {
             if o.contains_key("datum") {
                 // A datum stands for a coordinate of a point, nothing else.
@@ -156,7 +183,7 @@ fn resolve_in(
                 ));
             }
             o.values_mut()
-                .try_for_each(|item| resolve_in(item, orientation, datums, used, at))
+                .try_for_each(|item| resolve_in(item, orientation, datums, used, at, seen))
         }
         _ => Ok(()),
     }
@@ -196,13 +223,25 @@ fn resolve_with(document: &mut Value, used_in: &mut Used) -> Result<(), IntentEr
     for (index, op) in operations.iter_mut().enumerate() {
         if op["op"] == "view" {
             let id = op["id"].as_str().unwrap_or_default().to_owned();
-            let orientation = match op["placed"].as_str() {
-                Some("principal") => axes("from_front"),
-                _ => op["looking"].as_str().and_then(axes),
+            let looking = match op["placed"].as_str() {
+                Some("principal") => "from_front".to_owned(),
+                _ => op["looking"].as_str().unwrap_or_default().to_owned(),
             };
+            let orientation = axes(&looking);
             let mut used = Vec::new();
             if let Some(inner) = op.get_mut("operations") {
-                resolve_in(inner, orientation, &datums, &mut used, (index, "view"))?;
+                let seen = Seen {
+                    id: &id,
+                    looking: &looking,
+                };
+                resolve_in(
+                    inner,
+                    orientation,
+                    &datums,
+                    &mut used,
+                    (index, "view"),
+                    seen,
+                )?;
             }
             used_in.push((id, used));
         } else if op["op"] != "datum" && holds_datum(op) {
@@ -389,21 +428,24 @@ mod tests {
     fn a_datum_where_it_cannot_be_read_is_refused() {
         let refused = |text: &str| document(text).unwrap_err().to_string();
         let shoulder = r#"{"op": "datum", "name": "shoulder", "axis": "height", "value": 1450}"#;
-        // On an axis the view does not show: a height across.
-        assert!(
-            refused(&format!(
-                r#"{shoulder}, {{"op": "view", "id": "front", "placed": "principal", "operations": [
+        // On an axis the view does not show: a height across. Said with
+        // the datum, the view, and its axes, so it can be put right (#358).
+        let across = refused(&format!(
+            r#"{shoulder}, {{"op": "view", "id": "front", "placed": "principal", "operations": [
             {{"op": "line", "points": [[{{"datum": "shoulder"}}, 0], [1, 1]]}}]}}"#
-            ))
-            .contains("datum")
+        ));
+        assert!(
+            across.contains("`shoulder` is a height datum, but it is the x of a point in view `front`, which looks from_front: there x is width and y is height"),
+            "{across}"
         );
         // Unknown.
+        let unknown = refused(
+            r#"{"op": "view", "id": "front", "placed": "principal", "operations": [
+            {"op": "line", "points": [[{"datum": "nope"}, 0], [1, 1]]}]}"#,
+        );
         assert!(
-            refused(
-                r#"{"op": "view", "id": "front", "placed": "principal", "operations": [
-            {"op": "line", "points": [[{"datum": "nope"}, 0], [1, 1]]}]}"#
-            )
-            .contains("datum")
+            unknown.contains("`nope` in view `front` names no datum"),
+            "{unknown}"
         );
         // Outside a view.
         assert!(
@@ -413,13 +455,11 @@ mod tests {
             .contains("datum")
         );
         // In a free view that does not say where it looks from.
-        assert!(
-            refused(&format!(
-                r#"{shoulder}, {{"op": "view", "id": "x", "placed": "free", "operations": [
+        let unlooked = refused(&format!(
+            r#"{shoulder}, {{"op": "view", "id": "x", "placed": "free", "operations": [
             {{"op": "line", "points": [[0, {{"datum": "shoulder"}}], [1, 1]]}}]}}"#
-            ))
-            .contains("datum")
-        );
+        ));
+        assert!(unlooked.contains("give view `x` a `looking`"), "{unlooked}");
         // For a number that is not a coordinate.
         assert!(
             refused(&format!(
