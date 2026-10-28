@@ -1244,6 +1244,26 @@ impl Session {
         dirty | Dirty::SCENE | Dirty::OVERLAY | Dirty::VIEW | Dirty::UI
     }
 
+    /// Fits the view to `reach` when it is not wholly in view, keeping the
+    /// view it left for ZOOM Previous; else leaves it as it is.
+    pub(crate) fn bring_into_view(&mut self, reach: &Aabb) -> Dirty {
+        let visible = self.view.visible_bounds();
+        let inside = reach.min().x >= visible.min().x
+            && reach.min().y >= visible.min().y
+            && reach.max().x <= visible.max().x
+            && reach.max().y <= visible.max().y;
+        if inside {
+            return Dirty::NONE;
+        }
+        let before = self.view.clone();
+        self.view.fit(reach);
+        if self.view == before {
+            return Dirty::NONE;
+        }
+        self.previous_views.push(before);
+        Dirty::VIEW | Dirty::OVERLAY
+    }
+
     /// Where the command that just ran sent the session.
     fn apply_space_request(&mut self) -> Dirty {
         match self.space_request.take() {

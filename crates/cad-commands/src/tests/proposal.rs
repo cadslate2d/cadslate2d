@@ -70,6 +70,35 @@ fn a_proposal_leaves_the_drawing_and_its_revision_untouched() {
     assert_eq!(h.session.drawing().revision(), revision);
 }
 
+/// A proposal is brought into view when it is not (#358): an A3 sheet far
+/// larger than the screen is fitted, and ZOOM Previous goes back; a small
+/// one already in view moves nothing.
+#[test]
+fn a_proposal_out_of_view_is_brought_into_it_and_one_in_view_is_not() {
+    let mut h = with_a_line();
+    // Most of the view is about the line: the circle near it is in view.
+    let before = h.session.view().clone();
+    let dirty = h.session.propose(document(
+        r#"{"op": "circle", "center": [50, 0], "radius": 5}"#,
+    ));
+    assert!(!dirty.contains(Dirty::VIEW));
+    assert_eq!(*h.session.view(), before);
+    h.session.reject_proposal();
+    // A large rectangle far off: fitted, whole.
+    let dirty = h.session.propose(document(
+        r#"{"op": "rectangle", "corner": [100000, 100000], "opposite": [520000, 397000]}"#,
+    ));
+    assert!(dirty.contains(Dirty::VIEW));
+    let visible = h.session.view().visible_bounds();
+    assert!(visible.min().x <= 100000.0 && visible.max().x >= 520000.0);
+    assert!(visible.min().y <= 100000.0 && visible.max().y >= 397000.0);
+    // The drawing is as it was; ZOOM Previous returns to the view left.
+    assert_eq!(h.session.drawing().len(), 1);
+    h.session.reject_proposal();
+    h.enter_all(&["ZOOM", "P"]);
+    assert_eq!(*h.session.view(), before);
+}
+
 #[test]
 fn accept_is_one_undo_and_makes_what_was_shown() {
     let mut h = with_a_line();

@@ -136,6 +136,21 @@ impl Session {
             .filter(|(id, _)| after.entity(*id).is_none())
             .map(|(id, entity)| (id, entity.clone()))
             .collect();
+        // Where the proposal is: what it adds and what it changes as they
+        // would be, what it removes as it was.
+        let reach = added
+            .iter()
+            .map(|(_, e)| e)
+            .chain(changed.iter().map(|(_, _, now)| now))
+            .filter(|e| !e.is_unbounded())
+            .map(|e| e.bounds(after.tables()))
+            .chain(
+                removed
+                    .iter()
+                    .filter(|(_, e)| !e.is_unbounded())
+                    .map(|(_, e)| e.bounds(before.tables())),
+            )
+            .reduce(|a, b| a.union(&b));
         self.set_proposal(Some(Proposal {
             intent,
             added,
@@ -143,7 +158,11 @@ impl Session {
             removed,
             outcome,
         }));
-        Dirty::OVERLAY | Dirty::UI
+        // A proposal is judged by seeing it: one not wholly in view is
+        // brought into it, as ZOOM Extents would, the view it left kept
+        // for ZOOM Previous (#358). One in view leaves the view alone.
+        let moved = reach.map_or(Dirty::NONE, |reach| self.bring_into_view(&reach));
+        Dirty::OVERLAY | Dirty::UI | moved
     }
 
     /// The proposal, if one is waiting.
