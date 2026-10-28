@@ -21,6 +21,7 @@ mod validate;
 
 mod datums;
 pub use compile::{Answer, COMMANDS, Compiled, Step, compile};
+pub use datums::{datum_views, unused_datums};
 pub use validate::{IntentError, Reason, limits};
 
 #[cfg(any(test, feature = "testing"))]

@@ -195,6 +195,17 @@ fn structure(drawing: &Drawing) -> Vec<String> {
     findings
 }
 
+/// A document's review from its text, as the model wrote it: the drawn
+/// sheet's findings ([`review_document`]) and its datums declared for views
+/// that do not draw them (ADR-0041 §7). `None` when it is no document, or
+/// does not run on an empty drawing.
+pub fn review_text(text: &str, unit: Option<&str>) -> Option<Vec<String>> {
+    let intent = cad_intent::parse(text).ok()?;
+    let mut findings = review_document(&intent, unit)?;
+    findings.extend(cad_intent::unused_datums(text));
+    Some(findings)
+}
+
 /// The words of a text, for a finding.
 fn words(entity: &Entity) -> Option<&str> {
     match entity {

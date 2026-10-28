@@ -70,45 +70,18 @@ impl BomTableCommand {
             })
             .find(|id| !taken.contains(id))
             .expect("a free id");
-        let found = ctx.drawing.layers().find(TABLE_LAYER);
-        let mut transaction = ctx.transaction();
-        let made: Result<Vec<EntityId>, String> = (|| {
-            let on = layer(&mut transaction, found, TABLE_LAYER)?;
-            table(&self.parts, unit)
-                .into_iter()
-                .map(|entity| {
-                    transaction
-                        .insert_with(
-                            entity,
-                            Properties {
-                                layer: on,
-                                ..Properties::default()
-                            },
-                        )
-                        .map_err(|e| e.to_string())
-                })
-                .collect()
-        })();
-        let made = match made {
-            Ok(made) => {
-                transaction.commit();
-                made
-            }
-            Err(reason) => {
-                ctx.message(reason);
-                return Step::Finished;
-            }
-        };
         let space = ctx.space;
         let view = NewView {
             id: id.clone(),
             title,
             role: Role::Free,
-            entities: made,
+            entities: Vec::new(),
             origin: Point2::ORIGIN,
             ratio: None,
             cut: None,
             parts: self.parts.clone(),
+            fresh: table(&self.parts, unit),
+            fresh_layer: TABLE_LAYER,
         };
         match compose(ctx.drawing, space, &[view]) {
             Ok(_) => ctx.message(format!(
@@ -120,11 +93,8 @@ impl BomTableCommand {
                 },
                 sheet.group
             )),
-            Err(reason) => {
-                // The table drawn to be placed goes with it.
-                ctx.drawing.rollback_last_in_group();
-                ctx.message(reason);
-            }
+            // Nothing was drawn: the table is drawn only where it fits.
+            Err(reason) => ctx.message(reason),
         }
         Step::Finished
     }

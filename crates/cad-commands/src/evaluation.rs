@@ -47,6 +47,231 @@ pub enum Expected {
         wanted: Box<PlanWanted>,
         example: Intent,
     },
+    /// A composed sheet (ADR-0041 §9, #358) that holds these things, judged
+    /// on four scores apart — structure, agreement, dimensions, print
+    /// scale — all four to pass. The example is a sheet that holds them.
+    Sheet {
+        wanted: Box<SheetWanted>,
+        example: Intent,
+        /// The example as written, its datums unread.
+        example_text: String,
+    },
+}
+
+/// What a composed sheet must hold. A view is matched by its kind —
+/// `front`, `left`, `right`, `top`, `bottom`, `rear`, `section`, `detail`,
+/// `free`, `bill` — or any of several, `left|right`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SheetWanted {
+    /// The sheet's scale, 1:N.
+    pub scale: Option<f64>,
+    /// The views it holds, each by kind.
+    pub views: Vec<String>,
+    /// How many views at least.
+    pub view_count: Option<usize>,
+    /// How many sections at least.
+    pub sections: Option<usize>,
+    /// How many parts the bill holds at least, and which numbers.
+    pub parts: Option<usize>,
+    /// How many parts are ballooned at least.
+    pub balloons: Option<usize>,
+    /// Datums: a value along an axis, used in at least so many views.
+    pub datums: Vec<(String, f64, usize)>,
+    /// Sizes the request gives, each dimensioned and reading its value.
+    pub dimensions: Vec<f64>,
+}
+
+impl SheetWanted {
+    fn read(value: &Value) -> Result<Self, String> {
+        let numbers = |key: &str| -> Vec<f64> {
+            value[key]
+                .as_array()
+                .map(|a| a.iter().filter_map(Value::as_f64).collect())
+                .unwrap_or_default()
+        };
+        let count = |key: &str| value[key].as_u64().map(|n| n as usize);
+        Ok(Self {
+            scale: value["scale"].as_f64(),
+            views: value["views"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            view_count: count("view_count"),
+            sections: count("sections"),
+            parts: count("parts"),
+            balloons: count("balloons"),
+            datums: value["datums"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|d| {
+                            Some((
+                                d["axis"].as_str()?.to_owned(),
+                                d["value"].as_f64()?,
+                                d["views"].as_u64().unwrap_or(2) as usize,
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            dimensions: numbers("dimensions"),
+        })
+    }
+
+    /// The first of the four scores the sheet `intent` draws misses, said;
+    /// `None` when it holds everything.
+    fn missed(&self, case: &Case, intent: &Intent, raw: &str) -> Result<Option<String>, String> {
+        use cad_geometry::composition::{Looking, Role};
+        let mut h = start(case);
+        h.session.run_intent(intent).map_err(|e| e.to_string())?;
+        let drawing = h.session.drawing();
+        let Some(sheet) = crate::compose::sheet_of(drawing) else {
+            return Ok(Some("structure: no sheet".to_owned()));
+        };
+        let views = crate::compose::views_on(drawing, &sheet.group);
+        let kind = |v: &crate::compose::ViewRecord| -> &'static str {
+            if !v.parts.is_empty() {
+                return "bill";
+            }
+            if v.section.is_some() {
+                return "section";
+            }
+            match &v.role {
+                Role::Principal => "front",
+                Role::Projected { looking, .. } => match looking {
+                    Looking::Left => "left",
+                    Looking::Right => "right",
+                    Looking::Above => "top",
+                    Looking::Below => "bottom",
+                    Looking::Behind => "rear",
+                    Looking::Front => "front",
+                },
+                Role::Free if v.ratio.is_some() => "detail",
+                Role::Free => "free",
+            }
+        };
+        // 1. Structure.
+        for wanted in &self.views {
+            if !views
+                .iter()
+                .any(|v| wanted.split('|').any(|w| w == kind(v)))
+            {
+                return Ok(Some(format!("structure: no {wanted} view")));
+            }
+        }
+        if let Some(least) = self.view_count
+            && views.len() < least
+        {
+            return Ok(Some(format!(
+                "structure: {} views, not {least} or more",
+                views.len()
+            )));
+        }
+        let sections = views.iter().filter(|v| v.section.is_some()).count();
+        if let Some(least) = self.sections
+            && sections < least
+        {
+            return Ok(Some(format!(
+                "structure: {sections} sections, not {least} or more"
+            )));
+        }
+        let parts = crate::compose::parts_on(drawing, &sheet.group);
+        if let Some(least) = self.parts
+            && parts.len() < least
+        {
+            return Ok(Some(format!(
+                "structure: {} parts, not {least} or more",
+                parts.len()
+            )));
+        }
+        if let Some(least) = self.balloons {
+            let ballooned: std::collections::BTreeSet<u64> = drawing
+                .groups()
+                .iter()
+                .filter(|(_, g)| g.name.starts_with(crate::bom::BALLOON_GROUP))
+                .filter_map(|(_, g)| {
+                    serde_json::from_str::<Value>(&g.description).ok()?["part"].as_u64()
+                })
+                .collect();
+            if ballooned.len() < least {
+                return Ok(Some(format!(
+                    "structure: {} parts ballooned, not {least} or more",
+                    ballooned.len()
+                )));
+            }
+        }
+        // 2. Geometric agreement: each datum, at its value, drawn in so
+        // many views — where it is drawn, read from the document as written.
+        let drawn_in = cad_intent::datum_views(raw);
+        for (axis, value, least) in &self.datums {
+            let held = intent.operations.iter().any(|op| match op {
+                cad_intent::Operation::Datum {
+                    name,
+                    axis: a,
+                    value: v,
+                    ..
+                } => {
+                    let views = drawn_in
+                        .iter()
+                        .find(|(n, _)| n == name)
+                        .map_or(0, |(_, views)| views.len());
+                    format!("{a:?}").eq_ignore_ascii_case(axis)
+                        && (v - value).abs() <= 1e-6 * value.abs().max(1.0)
+                        && views >= *least
+                }
+                _ => false,
+            });
+            if !held {
+                return Ok(Some(format!(
+                    "agreement: no {axis} datum at {value} drawn in {least} views"
+                )));
+            }
+        }
+        // 3. Dimensions: each size reads its value; 4. print scale: drawn
+        // at its view's factor, on a sheet at its scale.
+        if let Some(n) = self.scale
+            && (sheet.frame.units_per_mm - n).abs() > 1e-9
+        {
+            return Ok(Some(format!(
+                "print scale: the sheet is 1:{}, not 1:{n}",
+                sheet.frame.units_per_mm
+            )));
+        }
+        let tables = drawing.tables();
+        let view_of = |id: EntityId| {
+            drawing
+                .groups_of(id)
+                .find(|(_, g)| g.name.starts_with(crate::compose::VIEW_GROUP))
+                .and_then(|(_, g)| crate::compose::ViewRecord::read(&g.description))
+        };
+        for wanted in &self.dimensions {
+            let found = drawing.entities().find_map(|(id, e)| match e {
+                Entity::Dimension(d) => {
+                    let style = tables.dim_style(d.style);
+                    let shown = d.value() * style.linear_factor;
+                    ((shown - wanted).abs() <= 0.01).then(|| (id, d.value()))
+                }
+                _ => None,
+            });
+            let Some((id, drawn)) = found else {
+                return Ok(Some(format!("dimensions: {wanted} is not dimensioned")));
+            };
+            let k = view_of(id)
+                .and_then(|v| v.ratio)
+                .map_or(1.0, |r| r * sheet.frame.units_per_mm);
+            if (drawn - wanted * k).abs() > 0.01 * k.max(1.0) {
+                return Ok(Some(format!(
+                    "print scale: {wanted} is drawn {drawn}, not {} on its view's scale",
+                    wanted * k
+                )));
+            }
+        }
+        Ok(None)
+    }
 }
 
 /// What a floor plan's brief must have. A room is matched by a pattern:
@@ -407,6 +632,13 @@ impl Corpus {
                         .ok_or_else(|| at(format!("no {key}")))
                 };
                 let expected = match (&case["expected"], &case["refused"]) {
+                    _ if case.get("sheet").is_some() => Expected::Sheet {
+                        wanted: Box::new(SheetWanted::read(&case["sheet"]).map_err(at)?),
+                        example: document(&case["example"]).map_err(at)?,
+                        example_text:
+                            json!({"version": cad_intent::VERSION, "operations": case["example"]})
+                                .to_string(),
+                    },
                     _ if case.get("plan").is_some() => Expected::Plan {
                         wanted: Box::new(PlanWanted::read(&case["plan"]).map_err(at)?),
                         example: document(&case["example"]).map_err(at)?,
@@ -540,6 +772,17 @@ impl Corpus {
                         faults.push(format!("{}: the example has {missed}", case.name));
                     }
                 }
+                Expected::Sheet {
+                    wanted,
+                    example,
+                    example_text,
+                } => match wanted.missed(case, example, example_text) {
+                    Ok(None) => {}
+                    Ok(Some(missed)) => {
+                        faults.push(format!("{}: the example: {missed}", case.name))
+                    }
+                    Err(error) => faults.push(format!("{}: the example: {error}", case.name)),
+                },
                 Expected::Nothing => {}
             }
         }
@@ -930,7 +1173,7 @@ fn answer(recording: &Value) -> Result<(String, Option<Value>, Vec<Value>), Stri
 
 /// Whether one proposed document is what `case` wants; if so, the drawing
 /// it makes.
-fn wanted(case: &Case, intent: &Intent) -> Result<Vec<String>, String> {
+fn wanted(case: &Case, intent: &Intent, raw: &str) -> Result<Vec<String>, String> {
     match &case.expected {
         Expected::Drawing(alternatives) => {
             let wanted: Vec<Vec<String>> = alternatives
@@ -957,6 +1200,13 @@ fn wanted(case: &Case, intent: &Intent) -> Result<Vec<String>, String> {
                 Some(missed) => Err(format!("the plan has {missed}")),
             }
         }
+        Expected::Sheet { wanted, .. } => {
+            let made = outcome(case, intent).map_err(|error| error.to_string())?;
+            match wanted.missed(case, intent, raw)? {
+                None => Ok(made),
+                Some(missed) => Err(missed),
+            }
+        }
         Expected::Nothing => Err("proposed what cannot be done".to_owned()),
         Expected::Refused(_) => Err("not refused".to_owned()),
     }
@@ -976,6 +1226,7 @@ fn judge(case: &Case, recording: &Value) -> Result<(), String> {
     let document = |value: Value| {
         parse(&value.to_string()).map_err(|error| format!("invalid document: {error}"))
     };
+    let raw = intent.as_ref().map(Value::to_string).unwrap_or_default();
     let intent = intent.map(document).transpose()?;
     let alternatives: Vec<Intent> = alternatives
         .into_iter()
@@ -994,7 +1245,7 @@ fn judge(case: &Case, recording: &Value) -> Result<(), String> {
             }
             let mut made = Vec::new();
             for (index, option) in options.iter().enumerate() {
-                let drawing = wanted(case, option)
+                let drawing = wanted(case, option, "")
                     .map_err(|error| format!("option {}: {error}", index + 1))?;
                 if made.contains(&drawing) {
                     return Err(format!("option {} draws the same as another", index + 1));
@@ -1004,10 +1255,11 @@ fn judge(case: &Case, recording: &Value) -> Result<(), String> {
             Ok(())
         }
         (None, intent) => match (&case.expected, intent) {
-            (Expected::Drawing(_) | Expected::Plan { .. }, Some(intent)) => {
-                wanted(case, &intent).map(drop)
-            }
-            (Expected::Drawing(_) | Expected::Plan { .. }, None) => {
+            (
+                Expected::Drawing(_) | Expected::Plan { .. } | Expected::Sheet { .. },
+                Some(intent),
+            ) => wanted(case, &intent, &raw).map(drop),
+            (Expected::Drawing(_) | Expected::Plan { .. } | Expected::Sheet { .. }, None) => {
                 Err(format!("nothing proposed: {reply}"))
             }
             (Expected::Nothing, None) => Ok(()),

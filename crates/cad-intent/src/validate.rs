@@ -77,6 +77,8 @@ pub enum Reason {
     Repeated,
     /// A name that is none of those given: a room not in the brief.
     Unknown,
+    /// Said in full: a datum given where it cannot be read (#361).
+    Said(&'static str),
 }
 
 impl fmt::Display for Reason {
@@ -97,6 +99,7 @@ impl fmt::Display for Reason {
             Self::Unwanted => write!(f, "is not taken here"),
             Self::Repeated => write!(f, "is given twice"),
             Self::Unknown => write!(f, "names what is not there"),
+            Self::Said(words) => write!(f, "{words}"),
         }
     }
 }

@@ -67,6 +67,8 @@ impl ViewFrameCommand {
                 ratio: None,
                 cut: None,
                 parts: Vec::new(),
+                fresh: Vec::new(),
+                fresh_layer: "",
             },
             principal: None,
         }
@@ -97,6 +99,8 @@ impl ViewFrameCommand {
                 ratio: None,
                 cut: None,
                 parts: Vec::new(),
+                fresh: Vec::new(),
+                fresh_layer: "",
             },
         );
         self.views.push(done);

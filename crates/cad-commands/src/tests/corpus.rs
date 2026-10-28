@@ -252,3 +252,55 @@ fn options_are_judged_each_and_must_differ() {
         .is_err()
     );
 }
+
+/// A composed sheet is judged on four scores apart (ADR-0041 §9, #358):
+/// the example passes; each sheet that fails one score alone fails with
+/// that score's name.
+#[test]
+fn a_sheet_is_judged_on_structure_agreement_dimensions_and_print_scale() {
+    let sheet = |extra_view: &str, datum_views: &str, dim: f64, scale: u32| {
+        serde_json::from_str::<serde_json::Value>(&format!(r#"[
+            {{"op": "title_block", "paper": "A3", "scale": {scale}, "title": "BRACKET", "projection": "third", "at": [0, 0]}},
+            {{"op": "datum", "name": "h", "axis": "height", "value": 60, "views": {datum_views}}},
+            {{"op": "view", "id": "front", "placed": "principal", "operations": [
+                {{"op": "rectangle", "corner": [0, 0], "opposite": [80, {{"datum": "h"}}]}},
+                {{"op": "dim_chain", "points": [[0, 0], [{dim}, 0]], "side": "below"}}]}}
+            {extra_view}
+        ]"#)).unwrap()
+    };
+    let left = r#",{"op": "view", "id": "left", "placed": "projected", "of": "front", "looking": "from_left", "operations": [
+                {"op": "rectangle", "corner": [-40, 0], "opposite": [0, {"datum": "h"}]}]}"#;
+    let cases = format!(
+        r#"{{"name": "s", "lang": "en", "prompt": "A bracket's sheet", "sheet": {{"scale": 1, "views": ["front", "left"], "datums": [{{"axis": "height", "value": 60, "views": 2}}], "dimensions": [80]}}, "example": {}}}"#,
+        sheet(left, r#"["front", "left"]"#, 80.0, 1)
+    );
+    let corpus = Corpus {
+        level: "test".to_owned(),
+        cases: Corpus::parse(&cases).unwrap(),
+    };
+    assert!(corpus.faults().is_empty(), "{:?}", corpus.faults());
+    let miss = |intent: serde_json::Value| {
+        let case = &corpus.cases[0];
+        let intent = serde_json::json!({"version": cad_intent::VERSION, "operations": intent});
+        let content = serde_json::json!({"reply": "The sheet.", "intent": intent});
+        let line = serde_json::json!({"name": "s", "request": crate::evaluation::request(case),
+            "raw": [{"content": content.to_string(), "usage": {"input": 1, "cached_input": 0, "output": 1}}]})
+        .to_string();
+        corpus.score(&line).results[0].miss.clone()
+    };
+    assert_eq!(miss(sheet(left, r#"["front", "left"]"#, 80.0, 1)), None);
+    // Each score failed alone.
+    let no_left = miss(sheet("", r#"["front"]"#, 80.0, 1)).unwrap();
+    assert!(no_left.starts_with("structure: no left view"), "{no_left}");
+    // The side view types the height instead of drawing it at the datum.
+    let typed = left.replace(r#"{"datum": "h"}"#, "60");
+    let one_view = miss(sheet(&typed, r#"["front"]"#, 80.0, 1)).unwrap();
+    assert!(one_view.starts_with("agreement:"), "{one_view}");
+    let wrong_size = miss(sheet(left, r#"["front", "left"]"#, 70.0, 1)).unwrap();
+    assert!(
+        wrong_size.starts_with("dimensions: 80 is not dimensioned"),
+        "{wrong_size}"
+    );
+    let wrong_scale = miss(sheet(left, r#"["front", "left"]"#, 80.0, 2)).unwrap();
+    assert!(wrong_scale.starts_with("print scale:"), "{wrong_scale}");
+}

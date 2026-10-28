@@ -3,7 +3,7 @@
 //! titled, and placed on the sheet where there is room as a view. One undo.
 
 use cad_core::Point2;
-use cad_document::{Entity, Layer, MTextEntity, Properties};
+use cad_document::{Entity, MTextEntity};
 use cad_geometry::composition::Role;
 use cad_input::ExpectedInput;
 
@@ -59,54 +59,29 @@ impl NotesCommand {
             })
             .find(|id| !taken.contains(id))
             .expect("a free id");
-        let found = ctx.drawing.layers().find(NOTES_LAYER);
-        let mut transaction = ctx.transaction();
-        let made = (|| -> Result<_, cad_document::TransactionError> {
-            let layer = match found {
-                Some(id) => id,
-                None => transaction.add_layer(Layer::named(NOTES_LAYER))?,
-            };
-            transaction.insert_with(
-                Entity::MText(MTextEntity::new(
-                    Point2::ORIGIN,
-                    self.width * unit,
-                    TEXT * unit,
-                    0.0,
-                    self.lines.join("\n"),
-                )),
-                Properties {
-                    layer,
-                    ..Properties::default()
-                },
-            )
-        })();
-        let made = match made {
-            Ok(made) => {
-                transaction.commit();
-                made
-            }
-            Err(error) => {
-                ctx.message(error.to_string());
-                return Step::Finished;
-            }
-        };
         let space = ctx.space;
         let view = NewView {
             id: id.clone(),
             title,
             role: Role::Free,
-            entities: vec![made],
+            entities: Vec::new(),
             origin: Point2::ORIGIN,
             ratio: None,
             cut: None,
             parts: Vec::new(),
+            fresh: vec![Entity::MText(MTextEntity::new(
+                Point2::ORIGIN,
+                self.width * unit,
+                TEXT * unit,
+                0.0,
+                self.lines.join("\n"),
+            ))],
+            fresh_layer: NOTES_LAYER,
         };
         match compose(ctx.drawing, space, &[view]) {
             Ok(_) => ctx.message(format!("Notes placed on {} as {id}.", sheet.group)),
-            Err(reason) => {
-                ctx.drawing.rollback_last_in_group();
-                ctx.message(reason);
-            }
+            // Nothing was drawn: the notes are written only where they fit.
+            Err(reason) => ctx.message(reason),
         }
         Step::Finished
     }

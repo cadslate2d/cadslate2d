@@ -172,6 +172,11 @@ pub struct NewView {
     pub cut: Option<Cut>,
     /// For a bill of materials, its parts (#354).
     pub parts: Vec<crate::bom::Part>,
+    /// Objects not in the drawing yet — a table, notes — drawn at
+    /// `origin`, inserted on `fresh_layer` only if the view is placed: a
+    /// view that does not fit leaves the drawing as it was.
+    pub fresh: Vec<Entity>,
+    pub fresh_layer: &'static str,
 }
 
 /// Where a section view's cut is: across the view `of`, from `from` to
@@ -369,7 +374,7 @@ pub fn compose(
                 view.id
             ));
         }
-        if view.entities.is_empty() {
+        if view.entities.is_empty() && view.fresh.is_empty() {
             return Err(format!("View {} has nothing in it.", view.id));
         }
         let k = match view.ratio {
@@ -388,7 +393,11 @@ pub fn compose(
                 ));
             }
         };
-        let mut extent: Option<Aabb> = None;
+        let mut extent: Option<Aabb> = view
+            .fresh
+            .iter()
+            .map(|e| e.bounds(tables))
+            .reduce(|a, b| a.union(&b));
         let mut objects = Vec::new();
         for &id in &view.entities {
             let Some(entity) = drawing.entity(id) else {
@@ -632,6 +641,23 @@ pub fn compose(
         }
         placed_markers.push((*i, absolute));
     }
+    let fresh: Vec<Vec<Entity>> = views
+        .iter()
+        .map(|view| {
+            let at = out
+                .iter()
+                .find(|p| p.view.id == view.id)
+                .expect("placed")
+                .origin;
+            let by = Transform::translation(at - view.origin);
+            view.fresh.iter().map(|e| e.transformed(&by)).collect()
+        })
+        .collect();
+    let fresh_layers: Vec<(&'static str, Option<cad_document::LayerId>)> = views
+        .iter()
+        .filter(|v| !v.fresh.is_empty())
+        .map(|v| (v.fresh_layer, drawing.layers().find(v.fresh_layer)))
+        .collect();
     let moved: Vec<(usize, Vec<(EntityId, Entity)>)> = views
         .iter()
         .enumerate()
@@ -705,6 +731,19 @@ pub fn compose(
         group.selectable = false;
         transaction.add_group(group).map_err(|e| e.to_string())?;
     }
+    let mut fresh_layer_ids: Vec<(&'static str, cad_document::LayerId)> = Vec::new();
+    for (name, found) in fresh_layers {
+        if fresh_layer_ids.iter().any(|(n, _)| *n == name) {
+            continue;
+        }
+        let id = match found {
+            Some(id) => id,
+            None => transaction
+                .add_layer(Layer::named(name))
+                .map_err(|e| e.to_string())?,
+        };
+        fresh_layer_ids.push((name, id));
+    }
     let mut styles: Vec<(usize, DimStyleId, DimStyleId)> = Vec::new();
     for (view, from, style) in derived {
         let made = transaction
@@ -726,6 +765,24 @@ pub fn compose(
             }
             transaction.replace(id, entity).map_err(|e| e.to_string())?;
             members.push(id);
+        }
+        for entity in &fresh[i] {
+            let layer = fresh_layer_ids
+                .iter()
+                .find(|(n, _)| *n == view.fresh_layer)
+                .map(|(_, id)| *id)
+                .expect("made above");
+            members.push(
+                transaction
+                    .insert_with(
+                        entity.clone(),
+                        Properties {
+                            layer,
+                            ..Properties::default()
+                        },
+                    )
+                    .map_err(|e| e.to_string())?,
+            );
         }
         let title = titles[i].transformed(&Transform::translation(placed.origin - Point2::ORIGIN));
         let title_at = title.insertion;

@@ -418,6 +418,74 @@ pub fn place(sheet: &Sheet, placed: &[Placed], new: &[ViewBox]) -> Result<Vec<Pl
         }
     }
 
+    // Centred where the principal's block and every free view still fit,
+    // so a view added later has room on every side; else from the top
+    // left, which leaves the rest of the sheet in one piece.
+    let mut out = match lay_out(
+        sheet,
+        placed,
+        new,
+        new_principal,
+        &cluster,
+        &origins,
+        &extent_of,
+        true,
+    ) {
+        Ok(out) => out,
+        Err(_) => lay_out(
+            sheet,
+            placed,
+            new,
+            new_principal,
+            &cluster,
+            &origins,
+            &extent_of,
+            false,
+        )?,
+    };
+    // Never crowded: a new view that comes within the gap of another is
+    // refused, not drawn.
+    let clear = sheet.gap / 2.0 - 1e-9;
+    let before: Vec<Aabb> = placed
+        .iter()
+        .map(Placed::bounds)
+        .chain(sheet.obstacles.iter().copied())
+        .collect();
+    for (i, a) in out.iter().enumerate() {
+        let others = out[..i]
+            .iter()
+            .map(Placed::bounds)
+            .chain(before.iter().copied());
+        let crowded = !within(&sheet.area, &a.bounds())
+            || others
+                .into_iter()
+                .any(|b| overlap(&grown(&a.bounds(), clear), &grown(&b, clear)));
+        if crowded {
+            return Err(PlaceError::NoRoom {
+                view: a.view.id.clone(),
+                size: size(&a.view.extent),
+            });
+        }
+    }
+    // In the order they were given.
+    out.sort_by_key(|p| new.iter().position(|v| v.id == p.view.id));
+    Ok(out)
+}
+
+/// The new views placed: the principal's block centred (`centre`) or from
+/// the top left, then projected views of what was placed before, then free
+/// views largest first.
+#[allow(clippy::too_many_arguments)]
+fn lay_out(
+    sheet: &Sheet,
+    placed: &[Placed],
+    new: &[ViewBox],
+    new_principal: Option<&ViewBox>,
+    cluster: &[String],
+    origins: &[(String, Point2)],
+    extent_of: &dyn Fn(&str) -> Aabb,
+    centre: bool,
+) -> Result<Vec<Placed>, PlaceError> {
     let mut taken: Vec<Aabb> = sheet.obstacles.clone();
     taken.extend(placed.iter().map(Placed::bounds));
     let mut out: Vec<Placed> = Vec::new();
@@ -433,21 +501,26 @@ pub fn place(sheet: &Sheet, placed: &[Placed], new: &[ViewBox]) -> Result<Vec<Pl
     if let Some(principal) = new_principal {
         let block = cluster
             .iter()
-            .map(|id| shifted(&extent_of(id), origin_of(id, &origins) - Point2::ORIGIN))
+            .map(|id| shifted(&extent_of(id), origin_of(id, origins) - Point2::ORIGIN))
             .reduce(|a, b| a.union(&b))
             .expect("the principal at least");
         // Centred where it can be, so a view added later has room on every
         // side; else where it first fits.
-        let Some(at) = centred(sheet, &taken, &block).or_else(|| fit(sheet, &taken, &block)) else {
+        let at = if centre {
+            centred(sheet, &taken, &block)
+        } else {
+            fit(sheet, &taken, &block)
+        };
+        let Some(at) = at else {
             return Err(PlaceError::NoRoom {
                 view: principal.id.clone(),
                 size: size(&block),
             });
         };
         let by = at - block.min();
-        for id in &cluster {
+        for id in cluster {
             let view = new.iter().find(|v| &v.id == id).expect("new").clone();
-            let origin = origin_of(id, &origins) + by;
+            let origin = origin_of(id, origins) + by;
             let bounds = shifted(&view.extent, origin - Point2::ORIGIN);
             taken.push(bounds);
             out.push(Placed { view, origin });
@@ -459,7 +532,7 @@ pub fn place(sheet: &Sheet, placed: &[Placed], new: &[ViewBox]) -> Result<Vec<Pl
         {
             continue;
         }
-        let origin = origin_of(&view.id, &origins);
+        let origin = origin_of(&view.id, origins);
         let bounds = shifted(&view.extent, origin - Point2::ORIGIN);
         let free = within(&sheet.area, &bounds)
             && !taken.iter().any(|t| {
@@ -502,32 +575,6 @@ pub fn place(sheet: &Sheet, placed: &[Placed], new: &[ViewBox]) -> Result<Vec<Pl
             origin,
         });
     }
-    // Never crowded: a new view that comes within the gap of another is
-    // refused, not drawn.
-    let clear = sheet.gap / 2.0 - 1e-9;
-    let before: Vec<Aabb> = placed
-        .iter()
-        .map(Placed::bounds)
-        .chain(sheet.obstacles.iter().copied())
-        .collect();
-    for (i, a) in out.iter().enumerate() {
-        let others = out[..i]
-            .iter()
-            .map(Placed::bounds)
-            .chain(before.iter().copied());
-        let crowded = !within(&sheet.area, &a.bounds())
-            || others
-                .into_iter()
-                .any(|b| overlap(&grown(&a.bounds(), clear), &grown(&b, clear)));
-        if crowded {
-            return Err(PlaceError::NoRoom {
-                view: a.view.id.clone(),
-                size: size(&a.view.extent),
-            });
-        }
-    }
-    // In the order they were given.
-    out.sort_by_key(|p| new.iter().position(|v| v.id == p.view.id));
     Ok(out)
 }
 

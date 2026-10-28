@@ -57,7 +57,6 @@ struct Datum {
     name: String,
     axis: Axis,
     value: f64,
-    views: Vec<String>,
 }
 
 fn refuse(operation: usize, op: &'static str, field: &'static str, reason: Reason) -> IntentError {
@@ -104,16 +103,37 @@ fn resolve_in(
                     continue;
                 };
                 let Some(datum) = datums.iter().find(|d| d.name == name) else {
-                    return Err(refuse(at.0, at.1, "datum", Reason::Unknown));
+                    return Err(refuse(
+                        at.0,
+                        at.1,
+                        "datum",
+                        Reason::Said(
+                            "names no datum a `datum` operation declares before the views",
+                        ),
+                    ));
                 };
                 let Some(axes) = orientation else {
                     // A view that does not say where it looks from has no
                     // axes for a datum.
-                    return Err(refuse(at.0, at.1, "datum", Reason::Missing));
+                    return Err(refuse(
+                        at.0,
+                        at.1,
+                        "datum",
+                        Reason::Said(
+                            "is used in a view that does not say where it looks from: give a section or free view `looking`, or write the number",
+                        ),
+                    ));
                 };
                 let (axis, sign) = axes[i];
                 if axis != datum.axis {
-                    return Err(refuse(at.0, at.1, "datum", Reason::Unwanted));
+                    return Err(refuse(
+                        at.0,
+                        at.1,
+                        "datum",
+                        Reason::Said(
+                            "is along an axis this coordinate is not in this view: from the front or behind x is width and y height; from the left or right x is depth and y height; from above or below x is width and y depth",
+                        ),
+                    ));
                 }
                 used.push(datum.name.clone());
                 *item = json!(sign * datum.value);
@@ -126,7 +146,14 @@ fn resolve_in(
         Value::Object(o) => {
             if o.contains_key("datum") {
                 // A datum stands for a coordinate of a point, nothing else.
-                return Err(refuse(at.0, at.1, "datum", Reason::Unwanted));
+                return Err(refuse(
+                    at.0,
+                    at.1,
+                    "datum",
+                    Reason::Said(
+                        "stands only for a coordinate of a point `[x, y]`, not a radius, a length, or a count",
+                    ),
+                ));
             }
             o.values_mut()
                 .try_for_each(|item| resolve_in(item, orientation, datums, used, at))
@@ -137,6 +164,10 @@ fn resolve_in(
 
 /// Reads every datum of the document into the coordinates that name it.
 pub(crate) fn resolve(document: &mut Value) -> Result<(), IntentError> {
+    resolve_with(document, &mut Vec::new())
+}
+
+fn resolve_with(document: &mut Value, used_in: &mut Used) -> Result<(), IntentError> {
     let Some(operations) = document.get_mut("operations").and_then(Value::as_array_mut) else {
         return Ok(());
     };
@@ -159,17 +190,9 @@ pub(crate) fn resolve(document: &mut Value) -> Result<(), IntentError> {
             name: name.to_owned(),
             axis,
             value,
-            views: op["views"]
-                .as_array()
-                .map(|v| {
-                    v.iter()
-                        .filter_map(|n| n.as_str().map(str::to_owned))
-                        .collect()
-                })
-                .unwrap_or_default(),
         });
     }
-    let mut used_in: Vec<(String, Vec<String>)> = Vec::new();
+
     for (index, op) in operations.iter_mut().enumerate() {
         if op["op"] == "view" {
             let id = op["id"].as_str().unwrap_or_default().to_owned();
@@ -184,35 +207,100 @@ pub(crate) fn resolve(document: &mut Value) -> Result<(), IntentError> {
             used_in.push((id, used));
         } else if op["op"] != "datum" && holds_datum(op) {
             // Outside a view there are no axes to read a datum along.
-            return Err(refuse(index, "view", "datum", Reason::Unwanted));
-        }
-    }
-    // A datum declared for a view must be drawn there.
-    for (index, op) in operations.iter().enumerate() {
-        if op["op"] != "datum" {
-            continue;
-        }
-        let Some(datum) = datums
-            .iter()
-            .find(|d| Some(d.name.as_str()) == op["name"].as_str())
-        else {
-            continue;
-        };
-        for view in &datum.views {
-            let used = used_in
-                .iter()
-                .find(|(id, _)| id == view)
-                .is_some_and(|(_, names)| names.contains(&datum.name));
-            if !used {
-                return Err(refuse(index, "datum", "views", Reason::Missing));
-            }
+            return Err(refuse(
+                index,
+                "view",
+                "datum",
+                Reason::Said("is used outside a view, where there are no axes to read it along"),
+            ));
         }
     }
     Ok(())
 }
 
+/// Where each datum of a document is drawn, and the views it is declared
+/// for and is not drawn in (ADR-0041 §7): a finding of the sheet's review,
+/// not a refusal, since the model may yet put it right. Empty for a
+/// document that is not one.
+pub fn unused_datums(text: &str) -> Vec<String> {
+    let Ok(mut value) = serde_json::from_str::<Value>(text) else {
+        return Vec::new();
+    };
+    datum_use(&mut value)
+        .map(|(declared, used_in)| {
+            let mut findings = Vec::new();
+            for (name, views) in declared {
+                for view in views {
+                    let used = used_in
+                        .iter()
+                        .any(|(id, names)| *id == view && names.contains(&name));
+                    if !used {
+                        findings.push(format!(
+                            "Datum {name} is declared for view {view} but not drawn there: draw its feature at {{\"datum\": \"{name}\"}} in that view, or leave the view out of its `views`."
+                        ));
+                    }
+                }
+            }
+            findings
+        })
+        .unwrap_or_default()
+}
+
+/// The views each datum is drawn in: for the corpus's agreement score.
+pub fn datum_views(text: &str) -> Vec<(String, Vec<String>)> {
+    let Ok(mut value) = serde_json::from_str::<Value>(text) else {
+        return Vec::new();
+    };
+    let Ok((declared, used_in)) = datum_use(&mut value) else {
+        return Vec::new();
+    };
+    declared
+        .into_iter()
+        .map(|(name, _)| {
+            let views = used_in
+                .iter()
+                .filter(|(_, names)| names.contains(&name))
+                .map(|(id, _)| id.clone())
+                .collect();
+            (name, views)
+        })
+        .collect()
+}
+
+type Declared = Vec<(String, Vec<String>)>;
+type Used = Vec<(String, Vec<String>)>;
+
+/// The datums declared, with their `views`, and the datums each view uses.
+fn datum_use(document: &mut Value) -> Result<(Declared, Used), IntentError> {
+    let declared: Declared = document["operations"]
+        .as_array()
+        .map(|ops| {
+            ops.iter()
+                .filter(|op| op["op"] == "datum")
+                .filter_map(|op| {
+                    Some((
+                        op["name"].as_str()?.to_owned(),
+                        op["views"]
+                            .as_array()
+                            .map(|v| {
+                                v.iter()
+                                    .filter_map(|n| n.as_str().map(str::to_owned))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut used: Used = Vec::new();
+    resolve_with(document, &mut used)?;
+    Ok((declared, used))
+}
+
 /// The schema's points widened so that either coordinate may name a datum
 /// (`{"datum": name}`), which the model is told it may do inside a view.
+#[cfg(feature = "schema")]
 pub(crate) fn widen_points(schema: &mut Value) {
     fn walk(value: &mut Value) {
         match value {
@@ -361,10 +449,19 @@ mod tests {
             ))
             .contains("datum")
         );
-        // Declared for a view that does not use it.
-        assert!(refused(r#"{"op": "datum", "name": "shoulder", "axis": "height", "value": 1450, "views": ["front"]},
+        // Declared for a view that does not use it: read, and said by the
+        // sheet's review rather than refused.
+        let unused = r#"{"version": 21, "operations": [{"op": "datum", "name": "shoulder", "axis": "height", "value": 1450, "views": ["front", "side"]},
             {"op": "view", "id": "front", "placed": "principal", "operations": [
-                {"op": "line", "points": [[0, 0], [1, 1]]}]}"#).contains("views"));
+                {"op": "line", "points": [[0, {"datum": "shoulder"}], [1, 1]]}]}]}"#;
+        assert!(crate::parse(unused).is_ok());
+        let findings = crate::unused_datums(unused);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].contains("Datum shoulder is declared for view side"));
+        assert_eq!(
+            crate::datum_views(unused),
+            [("shoulder".to_owned(), vec!["front".to_owned()])]
+        );
         // Twice.
         assert!(refused(&format!("{shoulder}, {shoulder}")).contains("name"));
     }
