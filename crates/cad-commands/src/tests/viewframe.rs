@@ -477,6 +477,29 @@ fn the_review_finds_what_breaks_a_composed_sheet() {
     ]);
     assert_eq!(structural(&h), Vec::<String>::new());
 
+    // A side view drawn shorter than the front: they disagree on the
+    // object's height. A centre line past the outline is not the outline.
+    let mut short = sheet();
+    let front_s = drawn(&mut short, 100.0, 60.0);
+    short.enter_all(&["LINE", "50,-5", "50,65", ""]);
+    let centre = *short.ids().last().unwrap();
+    short.enter_all(&["LINETYPE", "Load", "CENTER", ""]);
+    short.session.select_only(&[centre]);
+    short.enter_all(&["CHPROP", "LType", "CENTER", ""]);
+    let left_s = drawn(&mut short, 40.0, 55.0);
+    short.session.select_only(&[front_s, centre]);
+    short.enter_all(&["VIEWFRAME", "0,0", "front", "", "", "Yes"]);
+    short.session.select_only(&[left_s]);
+    short.enter_all(&["", "0,0", "left", "", "PRojected", "front", "Left", "No"]);
+    assert_eq!(
+        structural(&short),
+        [
+            "Views left and front disagree on the object's height: 55 in left and 60 in front. A projected view shows the whole object, as tall and as wide as the view it is projected from: draw both from the same positions."
+        ],
+        "{:?}",
+        short.log()
+    );
+
     // The left view moved by hand, out of line.
     let members = |h: &Harness, name: &str| {
         h.session

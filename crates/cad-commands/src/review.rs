@@ -233,6 +233,67 @@ fn structure(drawing: &Drawing) -> Vec<String> {
             ));
         }
     }
+    // A projected view shows the object's height (from a side or behind)
+    // or its width (from above or below) as its parent does: its outline —
+    // not its text, dimensions, centre or hidden lines, balloons, or
+    // markers — spans the same (#358).
+    let outline = |view: &crate::compose::ViewRecord| {
+        let members = group(&format!("{VIEW_GROUP}{}", view.id)).unwrap_or_default();
+        let skipped = [crate::compose::SECTION_LAYER, crate::bom::BALLOON_LAYER]
+            .map(|name| drawing.layers().find(name));
+        members
+            .iter()
+            .filter_map(|id| Some((drawing.entity(*id)?, drawing.record(*id)?)))
+            .filter(|(e, record)| {
+                let layer = drawing.layers().get(record.properties.layer);
+                let linetype = match record.properties.linetype {
+                    cad_document::Linetype::ByLayer => {
+                        layer.map_or(cad_document::Linetype::CONTINUOUS, |l| l.linetype)
+                    }
+                    other => other,
+                };
+                !matches!(
+                    e,
+                    Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_) | Entity::Hatch(_)
+                ) && (linetype == cad_document::Linetype::ByBlock
+                    || linetype == cad_document::Linetype::CONTINUOUS)
+                    && !skipped.contains(&Some(record.properties.layer))
+            })
+            .map(|(e, _)| e.bounds(tables))
+            .reduce(|a, b| a.union(&b))
+    };
+    for view in &views {
+        let Role::Projected { of, looking } = &view.role else {
+            continue;
+        };
+        let Some(parent) = views.iter().find(|v| &v.id == of) else {
+            continue;
+        };
+        let (Some(here), Some(there)) = (outline(view), outline(parent)) else {
+            continue;
+        };
+        let (axis, a, b) = match looking {
+            Looking::Above | Looking::Below => (
+                "width",
+                here.max().x - here.min().x,
+                there.max().x - there.min().x,
+            ),
+            _ => (
+                "height",
+                here.max().y - here.min().y,
+                there.max().y - there.min().y,
+            ),
+        };
+        if (a - b).abs() > 0.005 * a.max(b) + tolerance {
+            findings.push(format!(
+                "Views {} and {of} disagree on the object's {axis}: {} in {} and {} in {of}. A projected view shows the whole object, as tall and as wide as the view it is projected from: draw both from the same positions.",
+                view.id,
+                number(a),
+                view.id,
+                number(b)
+            ));
+        }
+    }
     for view in &views {
         if let Some((letter, _)) = &view.section {
             let marked = group(&format!("{SECTION_GROUP}{letter}"))
@@ -275,6 +336,12 @@ pub fn review_text(text: &str, unit: Option<&str>) -> Option<Vec<String>> {
     let mut findings = review_document(&intent, unit)?;
     findings.extend(cad_intent::unused_datums(text));
     Some(findings)
+}
+
+/// A length as a finding says it: to the hundredth, no trailing zeros.
+fn number(value: f64) -> String {
+    let text = format!("{value:.2}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 /// The words of a text, for a finding.
