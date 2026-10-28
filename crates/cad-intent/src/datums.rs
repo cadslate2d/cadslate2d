@@ -140,7 +140,7 @@ fn resolve_in(
                         at.1,
                         "datum",
                         Reason::Told(format!(
-                            "`{name}` is used in view `{}`, which does not say where it looks from: give view `{}` a `looking` — a plan `from_above`; a section or elevation whose x runs along the plan's x `from_front`, one whose x runs along the plan's y `from_left` or `from_right` — or write the number",
+                            "`{name}` is used in view `{}`, which does not say where it looks from: give view `{}` a `looking` — a plan `from_above`; a section or elevation whose x runs along the principal view's x `from_front`, one whose x runs along the plan's y `from_left` or `from_right` — or write the number",
                             seen.id, seen.id
                         )),
                     ));
@@ -220,6 +220,36 @@ fn resolve_with(document: &mut Value, used_in: &mut Used) -> Result<(), IntentEr
         });
     }
 
+    // Every view that uses a datum and does not say where it looks from,
+    // named at once, so one correction puts them all right (#358).
+    let unlooked: Vec<(usize, String)> = operations
+        .iter()
+        .enumerate()
+        .filter(|(_, op)| {
+            op["op"] == "view"
+                && op["placed"] != "principal"
+                && op["looking"].as_str().is_none()
+                && holds_datum(&op["operations"])
+        })
+        .map(|(index, op)| {
+            (
+                index,
+                format!("`{}`", op["id"].as_str().unwrap_or_default()),
+            )
+        })
+        .collect();
+    if let Some((first, _)) = unlooked.first() {
+        let ids: Vec<&str> = unlooked.iter().map(|(_, id)| id.as_str()).collect();
+        return Err(refuse(
+            *first,
+            "view",
+            "looking",
+            Reason::Told(format!(
+                "is missing from {}, which use datums: give each a `looking` — a plan `from_above`; a section or elevation whose x runs along the principal view's x `from_front`, one whose x runs along the plan's y `from_left` or `from_right` — or write the numbers",
+                ids.join(", ")
+            )),
+        ));
+    }
     for (index, op) in operations.iter_mut().enumerate() {
         if op["op"] == "view" {
             let id = op["id"].as_str().unwrap_or_default().to_owned();
@@ -454,12 +484,25 @@ mod tests {
             ))
             .contains("datum")
         );
-        // In a free view that does not say where it looks from.
+        // In free views that do not say where they look from: all named
+        // at once, so one correction puts them right.
         let unlooked = refused(&format!(
             r#"{shoulder}, {{"op": "view", "id": "x", "placed": "free", "operations": [
+            {{"op": "line", "points": [[0, {{"datum": "shoulder"}}], [1, 1]]}}]}},
+            {{"op": "view", "id": "y", "placed": "free", "operations": [
             {{"op": "line", "points": [[0, {{"datum": "shoulder"}}], [1, 1]]}}]}}"#
         ));
-        assert!(unlooked.contains("give view `x` a `looking`"), "{unlooked}");
+        assert!(
+            unlooked.contains("looking is missing from `x`, `y`, which use datums"),
+            "{unlooked}"
+        );
+        // A section along the length looks from the front (version 22):
+        // its y is the height.
+        let along = document(&format!(
+            r#"{shoulder}, {{"op": "view", "id": "aa", "placed": "free", "looking": "from_front", "operations": [
+            {{"op": "line", "points": [[0, {{"datum": "shoulder"}}], [1, 1]]}}]}}"#
+        ));
+        assert!(along.is_ok(), "{along:?}");
         // For a number that is not a coordinate.
         assert!(
             refused(&format!(

@@ -537,6 +537,14 @@ impl Check {
                         if looking.is_none() {
                             return Err(self.refuse("looking", Reason::Missing));
                         }
+                        if *looking == Some(crate::ViewLooking::FromFront) {
+                            return Err(self.refuse(
+                                "looking",
+                                Reason::Said(
+                                    "is from a side, above, below, or behind for a projected view: the principal view is the one from the front",
+                                ),
+                            ));
+                        }
                     }
                     crate::ViewPlacement::Principal => {
                         if of.is_some() {

@@ -286,7 +286,11 @@ fn viewframe_steps(views: &[Operation]) -> Vec<Step> {
                     Some(crate::ViewLooking::FromRight) => "Right",
                     Some(crate::ViewLooking::FromAbove) => "Above",
                     Some(crate::ViewLooking::FromBelow) => "Below",
-                    Some(crate::ViewLooking::FromBehind) | None => "Rear",
+                    // A projected view looking from the front is refused
+                    // when the document is read.
+                    Some(crate::ViewLooking::FromBehind | crate::ViewLooking::FromFront) | None => {
+                        "Rear"
+                    }
                 }));
             }
         }

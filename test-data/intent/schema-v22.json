@@ -3384,8 +3384,9 @@
       "type": "string"
     },
     "ViewLooking": {
-      "description": "Where a projected view looks at the object from.",
+      "description": "Where a view looks at the object from: a projected view from a side,\nabove, below, or behind; a section or a free view from any of those or\nthe front (version 22), which gives its datums their axes.",
       "enum": [
+        "from_front",
         "from_left",
         "from_right",
         "from_above",

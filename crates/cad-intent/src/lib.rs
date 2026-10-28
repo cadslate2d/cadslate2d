@@ -29,7 +29,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 21;
+pub const VERSION: u32 = 22;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -46,9 +46,10 @@ pub const VERSION: u32 = 21;
 /// version 18 `bill_of_materials` and `balloon` (#354), version 19
 /// `dim_chain` and `notes` (#355), version 20 a layer's `color` and
 /// `linetype` (#356), version 21 `datum` and a coordinate given as one
-/// (#361).
-pub const READS: [u32; 21] = [
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+/// (#361), version 22 a section or free view `looking` `from_front`
+/// (#358).
+pub const READS: [u32; 22] = [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
 ];
 
 /// A point, `[x, y]`, in the document's units.
@@ -1161,11 +1162,14 @@ pub struct SectionCut {
     pub toward: Point,
 }
 
-/// Where a projected view looks at the object from.
+/// Where a view looks at the object from: a projected view from a side,
+/// above, below, or behind; a section or a free view from any of those or
+/// the front (version 22), which gives its datums their axes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ViewLooking {
+    FromFront,
     FromLeft,
     FromRight,
     FromAbove,
