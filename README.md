@@ -47,13 +47,15 @@ The AI assistant is optional — switch it on by signing in from its panel — a
 
 With objects selected, talk about them — *move these 25 mm up*, *make this plate 20 mm wider without moving the holes relative to the edges*, *put the bathroom next to both bedrooms*, *show me another option*.
 
+![A pump set's specification sheet, asked for in one request and accepted: four views, a section, a bill of materials, balloons, notes, and a title block](docs/images/ai-sheet.png)
+
 What comes back is a **proposal**, drawn on the canvas for you to accept as one undo step, reject, or refine. The model never writes geometry: it answers with operations the program validates, runs as ordinary commands, and reviews — a view with no room, a label over another, text too small to read, all go back to the model to put right before you see the result. A sheet of several views is composed by the program: views placed in projection and aligned, sections marked, parts tabled and ballooned, a detail at its own scale, the whole centred on its paper. Every request above is in the program's test corpus, asked in English and Portuguese, and checked on every build.
 
 More examples, and how it works: [`docs/ai-assistant.md`](docs/ai-assistant.md).
 
 ## How it is built
 
-Rust compiled to WebAssembly owns all CAD state — entities, commands, selection, undo, snapping, constraints, file formats — and prepares batched render data. TypeScript owns the React shell and the WebGL2 context. The boundary is coarse: events in, dirty flags out, frames pulled in bulk. There is no backend; the production build is a folder of static files. Each crate and module has one reason to change, every behaviour ships with its tests, and every geometry bug fixed becomes a permanent regression case.
+Rust compiled to WebAssembly owns all CAD state — entities, commands, selection, undo, snapping, constraints, file formats — and prepares batched render data. TypeScript owns the React shell and the WebGL2 context. The boundary is coarse: events in, dirty flags out, frames pulled in bulk. The CAD editor needs no backend — its production build is a folder of static files — and the optional AI assistant talks to a separately hosted service. Each crate and module has one reason to change, every behaviour ships with its tests, and every geometry bug fixed becomes a permanent regression case.
 
 | | |
 | --- | --- |
