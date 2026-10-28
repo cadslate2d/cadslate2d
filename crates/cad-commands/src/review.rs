@@ -60,6 +60,9 @@ pub fn review(drawing: &Drawing) -> Vec<String> {
     findings
 }
 
+/// The commands that compose a sheet: what they refuse is the layout.
+const COMPOSING: [&str; 4] = ["VIEWFRAME", "BOMTABLE", "NOTES", "BALLOON"];
+
 /// A document reviewed as a sheet of its own: run on an empty drawing in
 /// `unit` (a suffix, `mm`), as the AI service does before it answers with
 /// it. `None` when it does not run there — it acts on objects of a drawing
@@ -71,8 +74,18 @@ pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Optio
         session.submit_text("UNITS");
         session.submit_text(unit);
     }
-    session.run_intent(intent).ok()?;
-    Some(review(session.drawing()))
+    match session.run_intent(intent) {
+        Ok(_) => Some(review(session.drawing())),
+        // A sheet that cannot be composed — a view with no room — is the
+        // document's own layout, which a revision can put right; any other
+        // refusal is the program's answer to the request, not a finding.
+        Err(crate::intent::RunError::Refused {
+            command, reason, ..
+        }) if COMPOSING.contains(&command) => Some(vec![format!(
+            "The sheet could not be composed: {reason}. Give the views, notes, and table room on the sheet: a larger paper or scale, narrower notes, or fewer views."
+        )]),
+        Err(_) => None,
+    }
 }
 
 /// What is wrong with a composed sheet's structure (ADR-0041 §7, #357):
@@ -337,6 +350,35 @@ mod tests {
         h.enter_all(&["UNITS", "mm"]);
         h.enter_all(lines);
         review(h.session.drawing())
+    }
+
+    /// A sheet that cannot be composed is a finding, for the model to lay
+    /// out again; a refusal of another kind is not.
+    #[test]
+    fn a_sheet_with_no_room_is_a_finding_and_other_refusals_are_not() {
+        let parse = |operations: &str| {
+            cad_intent::parse(&format!(
+                r#"{{"version": {}, "operations": [{operations}]}}"#,
+                cad_intent::VERSION
+            ))
+            .unwrap()
+        };
+        let crowded = parse(
+            r#"{"op": "title_block", "paper": "A4", "scale": 1, "title": "X", "at": [0, 0]},
+               {"op": "view", "id": "front", "placed": "principal", "operations": [
+                   {"op": "rectangle", "corner": [0, 0], "opposite": [600, 400]}]}"#,
+        );
+        let findings = review_document(&crowded, Some("mm")).unwrap();
+        assert!(
+            findings[0].starts_with("The sheet could not be composed: View front needs"),
+            "{findings:?}"
+        );
+        let parallel = parse(
+            r#"{"op": "line", "points": [[0, 0], [10, 0]]},
+               {"op": "line", "points": [[0, 5], [10, 5]]},
+               {"op": "fillet", "radius": 1, "first": {"id": 1, "near": [5, 0]}, "second": {"id": 2, "near": [5, 5]}}"#,
+        );
+        assert_eq!(review_document(&parallel, Some("mm")), None);
     }
 
     /// What the service reviews: the document on an empty drawing; one that
