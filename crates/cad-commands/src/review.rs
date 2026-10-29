@@ -122,10 +122,19 @@ pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Optio
             session.submit_text("UNITS");
             session.submit_text(unit);
         }
-        session.run_intent(intent).map(|_| session)
+        session.run_intent(intent).map(|ran| (session, ran))
     };
     match run(intent) {
-        Ok(session) => Some(review(session.drawing())),
+        // A hatch passed over is still the model's to put right (#358).
+        Ok((session, ran)) => {
+            let mut findings = review(session.drawing());
+            findings.extend(ran.iter().filter_map(|r| r.skipped.as_ref()).map(|why| {
+                format!(
+                    "HATCH was skipped, {why}: draw the closed outline it fills in that view, its point well inside it, or leave the hatch out."
+                )
+            }));
+            Some(findings)
+        }
         // A sheet that cannot be composed — a view with no room — is the
         // document's own layout, which a revision can put right; any other
         // refusal is the program's answer to the request, not a finding.
@@ -690,7 +699,8 @@ mod tests {
                {"op": "fillet", "radius": 1, "first": {"id": 1, "near": [5, 0]}, "second": {"id": 2, "near": [5, 5]}}"#,
         );
         assert_eq!(review_document(&parallel, Some("mm")), None);
-        // A view whose own drawing is refused is a finding too.
+        // A hatch in a view with no outline around it is skipped, and the
+        // review still says so, for the model to draw the outline.
         let open = parse(
             r#"{"op": "title_block", "paper": "A3", "scale": 1, "title": "X", "at": [0, 0]},
                {"op": "view", "id": "front", "placed": "principal", "operations": [
@@ -699,8 +709,9 @@ mod tests {
         );
         let findings = review_document(&open, Some("mm")).unwrap();
         assert!(
-            findings[0].starts_with("View front could not be drawn: HATCH refused")
-                && !findings[0].contains(".."),
+            findings.iter().any(|f| f.starts_with(
+                "HATCH was skipped, a hatch in view front: no closed outline surrounds its point"
+            )),
             "{findings:?}"
         );
         // A plan too large for A0 at 1:20, as a culvert's was (#358): told

@@ -93,6 +93,9 @@ pub struct Ran {
     pub log: Vec<String>,
     /// What it made.
     pub made: Vec<EntityId>,
+    /// Why it was passed over, when it was: a hatch in a sheet's view
+    /// whose point no closed outline surrounds (#358). The rest runs.
+    pub skipped: Option<String>,
 }
 
 /// How far apart views are drawn before they are placed: far beyond any
@@ -162,7 +165,30 @@ impl Session {
                 offset,
                 staging: &staging,
             };
-            let done = self.run_compiled(&compiled, scale, &views, &place)?;
+            let done = match self.run_compiled(&compiled, scale, &views, &place) {
+                Ok(done) => done,
+                // A hatch in a sheet's view that finds no closed outline is
+                // passed over, and said: one missing outline does not lose
+                // the sheet (#358). Anything else stops the run, as before.
+                Err(RunError::Refused {
+                    operation,
+                    command: "HATCH",
+                    reason,
+                }) if compiled.view.is_some() && reason.starts_with("No closed boundary") => {
+                    let view = compiled.view.clone().unwrap_or_default();
+                    Ran {
+                        operation,
+                        command: "HATCH",
+                        changed: false,
+                        log: Vec::new(),
+                        made: Vec::new(),
+                        skipped: Some(format!(
+                            "a hatch in view {view}: no closed outline surrounds its point"
+                        )),
+                    }
+                }
+                Err(error) => return Err(error),
+            };
             if let Some(view) = &compiled.view {
                 match views.iter_mut().find(|(id, _)| id == view) {
                     Some((_, made)) => made.extend(&done.made),
@@ -259,6 +285,7 @@ impl Session {
             changed,
             log: self.log_since(log_from),
             made,
+            skipped: None,
         })
     }
 

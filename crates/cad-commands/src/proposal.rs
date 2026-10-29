@@ -57,7 +57,7 @@ impl Proposal {
         .into_iter()
         .flatten()
         .collect();
-        let headline = if parts.is_empty() {
+        let mut headline = if parts.is_empty() {
             "Changes nothing".to_owned()
         } else {
             let mut text = parts.join(", ");
@@ -66,6 +66,16 @@ impl Proposal {
             }
             text
         };
+        // What was passed over is said where it is seen first (#358).
+        let skipped = self
+            .outcome
+            .as_ref()
+            .map_or(0, |ran| ran.iter().filter(|r| r.skipped.is_some()).count());
+        match skipped {
+            0 => {}
+            1 => headline.push_str("; 1 hatch skipped"),
+            n => headline.push_str(&format!("; {n} hatches skipped")),
+        }
         let operations = match &self.outcome {
             Ok(ran) => ran.iter().map(describe_ran).collect(),
             Err(_) => Vec::new(),
@@ -99,6 +109,9 @@ impl Proposal {
 /// `CIRCLE: Imported …`: the command, and the last line the log has of
 /// it beyond the echoes of its answers, when there is one.
 fn describe_ran(ran: &Ran) -> String {
+    if let Some(why) = &ran.skipped {
+        return format!("{}: skipped, {why}", ran.command);
+    }
     let said = ran
         .log
         .iter()

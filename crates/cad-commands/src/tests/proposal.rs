@@ -186,6 +186,63 @@ fn a_proposal_that_stops_says_why_and_shows_what_ran_before() {
     assert_eq!(proposal.summary().headline, "Adds 1 object");
 }
 
+/// A hatch in a sheet's view with no closed outline around its point is
+/// skipped, not the end of the proposal (#358): the summary says which,
+/// the rest is drawn, and Accept applies it as one undo. Only in a view:
+/// the same hatch on its own still stops the proposal.
+#[test]
+fn a_hatch_in_a_view_with_no_outline_is_skipped_and_said() {
+    let sheet = r#"{"op": "title_block", "paper": "A3", "scale": 1, "title": "X", "at": [0, 0]},
+           {"op": "view", "id": "front", "placed": "principal", "operations": [
+               {"op": "rectangle", "corner": [0, 0], "opposite": [60, 40]},
+               {"op": "hatch", "pattern": "ANSI31", "inside": [30, 20]},
+               {"op": "line", "points": [[100, 0], [150, 0], [150, 30]]},
+               {"op": "hatch", "pattern": "ANSI31", "inside": [125, 10]}]}"#;
+    let hatches = |entities: &[Entity]| {
+        entities
+            .iter()
+            .filter(|e| matches!(e, Entity::Hatch(_)))
+            .count()
+    };
+    let mut h = Harness::new();
+    h.session.propose(document(sheet));
+    let summary = h.session.proposal().unwrap().summary();
+    assert_eq!(summary.error, None);
+    assert!(
+        summary.headline.ends_with("; 1 hatch skipped"),
+        "{}",
+        summary.headline
+    );
+    assert!(
+        summary
+            .operations
+            .iter()
+            .any(|o| o
+                == "HATCH: skipped, a hatch in view front: no closed outline surrounds its point"),
+        "{:?}",
+        summary.operations
+    );
+    h.session.accept_proposal();
+    assert_eq!(hatches(&h.entities()), 1);
+    h.undo();
+    assert_eq!(h.session.drawing().len(), 0);
+
+    let mut h = Harness::new();
+    h.session.propose(document(
+        r#"{"op": "line", "points": [[100, 0], [150, 0], [150, 30]]},
+           {"op": "hatch", "pattern": "ANSI31", "inside": [125, 10]}"#,
+    ));
+    let summary = h.session.proposal().unwrap().summary();
+    assert!(
+        summary
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("HATCH")),
+        "{summary:?}"
+    );
+    assert!(!summary.headline.contains("skipped"));
+}
+
 #[test]
 fn opening_another_drawing_drops_the_proposal() {
     let mut h = with_a_line();
