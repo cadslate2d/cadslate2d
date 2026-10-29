@@ -264,9 +264,7 @@ impl SheetWanted {
                     let members = drawing
                         .groups()
                         .iter()
-                        .find(|(_, g)| {
-                            g.name == format!("{}{}", crate::compose::VIEW_GROUP, view.id)
-                        })
+                        .find(|(_, g)| g.name == crate::compose::view_group(&view.sheet, &view.id))
                         .map(|(_, g)| g.members.clone())
                         .unwrap_or_default();
                     let along: Vec<f64> = members

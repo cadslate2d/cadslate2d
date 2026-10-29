@@ -1140,7 +1140,9 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
                         Projection::First => "First",
                         Projection::Third => "Third",
                     }),
-                    place.map_or_else(enter, at),
+                    // The origin as a point, not Enter: a point the engine
+                    // can draw beside a sheet already there (#358).
+                    at(place.unwrap_or([0.0, 0.0])),
                 ],
             )
         }

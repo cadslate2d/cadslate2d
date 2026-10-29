@@ -1559,3 +1559,89 @@ fn each_view_is_drawn_clear_of_the_others_before_it_is_placed() {
     let b = Entity::Hatch(hatch).bounds(drawing.tables());
     assert!((b.max().x - b.min().x - 60.0).abs() < 1e-6);
 }
+
+/// A second sheet in a drawing that has one (#358): the maintainer's
+/// house, its ground floor accepted, then its upper floor — the same view
+/// ids, a section, notes, and its title block named at the origin as the
+/// first's was. It is drawn to the right of the first, said in the log;
+/// its views, section mark, and notes are its own, inside its border; and
+/// nothing of the first sheet moves.
+#[test]
+fn a_second_sheet_is_drawn_beside_the_first_with_views_named_as_its_own() {
+    let floor = |title: &str| {
+        document(&format!(
+            r#"
+        {{"op": "title_block", "paper": "A2", "portrait": true, "scale": 50, "title": "{title}", "at": [0, 0]}},
+        {{"op": "dim_scale", "scale": 50}},
+        {{"op": "view", "id": "plan", "placed": "principal", "operations": [
+            {{"op": "rectangle", "corner": [1500, 5000], "opposite": [8500, 20000]}}]}},
+        {{"op": "view", "id": "aa", "placed": "section", "cut": {{"of": "plan", "from": [5000, 4000], "to": [5000, 21000], "toward": [6000, 12000]}}, "operations": [
+            {{"op": "rectangle", "corner": [0, 0], "opposite": [15000, 3000]}}]}},
+        {{"op": "notes", "title": "NOTES", "lines": ["Schematic."]}}
+    "#
+        ))
+    };
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    h.session
+        .run_intent(&floor("GROUND FLOOR"))
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", h.log()));
+    let first = h.entities();
+    let ran = h
+        .session
+        .run_intent(&floor("UPPER FLOOR"))
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", h.log()));
+    assert!(
+        ran[0]
+            .log
+            .iter()
+            .any(|l| l == "The sheet is drawn to the right of what the drawing held, clear of it."),
+        "{:?}",
+        ran[0].log
+    );
+    // The first sheet as it was.
+    let now = h.entities();
+    for entity in &first {
+        assert!(now.contains(entity), "{entity:?} moved");
+    }
+    let drawing = h.session.drawing();
+    let frame = |name: &str| {
+        let group = drawing
+            .groups()
+            .iter()
+            .find(|(_, g)| g.name == name)
+            .unwrap()
+            .1;
+        crate::titleblock::SheetFrame::read(&group.description)
+            .unwrap()
+            .border
+    };
+    let (one, two) = (frame("TITLE-1"), frame("TITLE-2"));
+    assert!(!one.intersects(&two), "{one:?} {two:?}");
+    // Each sheet's views in its own groups, inside its own border.
+    for (sheet, border) in [("TITLE-1", one), ("TITLE-2", two)] {
+        for name in ["plan", "aa", "notes"] {
+            let group = crate::compose::view_group(sheet, name);
+            let members = &drawing
+                .groups()
+                .iter()
+                .find(|(_, g)| g.name == group)
+                .unwrap_or_else(|| panic!("no {group}"))
+                .1
+                .members;
+            for id in members {
+                let b = drawing.entity(*id).unwrap().bounds(drawing.tables());
+                assert!(
+                    border.contains_point(b.min()) && border.contains_point(b.max()),
+                    "{group}: {b:?} outside {border:?}"
+                );
+            }
+        }
+        let mark = crate::compose::section_group(sheet, 'A');
+        assert!(
+            drawing.groups().iter().any(|(_, g)| g.name == mark),
+            "no {mark}"
+        );
+    }
+    assert_eq!(crate::compose::view_group("TITLE-2", "plan"), "VIEW-plan$2");
+}

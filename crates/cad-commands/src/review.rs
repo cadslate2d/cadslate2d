@@ -246,7 +246,7 @@ pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Optio
 /// out of line with its parent, a section without its marker, a balloon
 /// for a part no bill has. A view moved by hand is where its title went.
 fn structure(drawing: &Drawing) -> Vec<String> {
-    use crate::compose::{SECTION_GROUP, VIEW_GROUP, parts_on, sheet_of, views_on};
+    use crate::compose::{parts_on, section_group, sheet_of, view_group, views_on};
     use cad_geometry::composition::{Looking, Role};
     let Some(sheet) = sheet_of(drawing) else {
         return Vec::new();
@@ -265,7 +265,7 @@ fn structure(drawing: &Drawing) -> Vec<String> {
     let moved: Vec<(String, cad_core::Vec2, Aabb)> = views
         .iter()
         .map(|view| {
-            let members = group(&format!("{VIEW_GROUP}{}", view.id)).unwrap_or_default();
+            let members = group(&view_group(&sheet.group, &view.id)).unwrap_or_default();
             let title = members.iter().find_map(|id| match drawing.entity(*id) {
                 Some(Entity::Text(t)) if t.content == view.title => Some(t.insertion),
                 _ => None,
@@ -284,7 +284,7 @@ fn structure(drawing: &Drawing) -> Vec<String> {
         .collect();
     let mut findings = Vec::new();
     for (view, (_, _, b)) in views.iter().zip(&moved) {
-        let members = group(&format!("{VIEW_GROUP}{}", view.id)).unwrap_or_default();
+        let members = group(&view_group(&sheet.group, &view.id)).unwrap_or_default();
         let outside = members.iter().any(|id| {
             drawing.entity(*id).is_some_and(|e| {
                 let e = e.bounds(tables);
@@ -333,7 +333,7 @@ fn structure(drawing: &Drawing) -> Vec<String> {
     // not its text, dimensions, centre or hidden lines, balloons, or
     // markers — spans the same (#358).
     let outline = |view: &crate::compose::ViewRecord| {
-        let members = group(&format!("{VIEW_GROUP}{}", view.id)).unwrap_or_default();
+        let members = group(&view_group(&sheet.group, &view.id)).unwrap_or_default();
         let skipped = [crate::compose::SECTION_LAYER, crate::bom::BALLOON_LAYER]
             .map(|name| drawing.layers().find(name));
         members
@@ -391,7 +391,7 @@ fn structure(drawing: &Drawing) -> Vec<String> {
     }
     for view in &views {
         if let Some((letter, _)) = &view.section {
-            let marked = group(&format!("{SECTION_GROUP}{letter}"))
+            let marked = group(&section_group(&sheet.group, *letter))
                 .is_some_and(|members| members.iter().any(|id| drawing.entity(*id).is_some()));
             if !marked {
                 findings.push(format!(

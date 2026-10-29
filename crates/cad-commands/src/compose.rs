@@ -128,6 +128,27 @@ pub(crate) fn sheet_layer(name: &str) -> Layer {
     layer
 }
 
+/// The group a view of `sheet` is kept in: `VIEW-<id>` on the drawing's
+/// first sheet, `VIEW-<id>$<n>` on its sheet n, so that each sheet of a
+/// house may have its `notes` and its `plan` (#358). A view's id holds no
+/// `$`.
+pub fn view_group(sheet: &str, id: &str) -> String {
+    on_sheet(VIEW_GROUP, sheet, id)
+}
+
+/// The group a section mark of `sheet` is kept in, named as a view's is:
+/// each sheet letters its sections from A.
+pub fn section_group(sheet: &str, letter: char) -> String {
+    on_sheet(SECTION_GROUP, sheet, &letter.to_string())
+}
+
+fn on_sheet(prefix: &str, sheet: &str, key: &str) -> String {
+    match sheet.strip_prefix(titleblock::GROUP) {
+        Some("1") | None => format!("{prefix}{key}"),
+        Some(n) => format!("{prefix}{key}${n}"),
+    }
+}
+
 /// The sheet in `drawing`: the title block group with the highest number.
 pub fn sheet_of(drawing: &Drawing) -> Option<Sheet> {
     drawing
@@ -726,7 +747,7 @@ pub fn compose(
         .map(|(_, g)| g.name.clone())
         .collect();
     for view in views {
-        let name = format!("{VIEW_GROUP}{}", view.id);
+        let name = view_group(&sheet.group, &view.id);
         if taken.contains(&name) {
             return Err(format!("There is a view {} already.", view.id));
         }
@@ -756,7 +777,7 @@ pub fn compose(
                 let members = drawing
                     .groups()
                     .iter()
-                    .find(|(_, g)| g.name == format!("{VIEW_GROUP}{of}"))
+                    .find(|(_, g)| g.name == view_group(&sheet.group, of))
                     .map(|(_, g)| g.members.clone())
                     .unwrap_or_default();
                 (
@@ -891,7 +912,7 @@ pub fn compose(
                     .map_err(|e| e.to_string())?,
             );
         }
-        let mut group = Group::named(format!("{SECTION_GROUP}{letter}"), members);
+        let mut group = Group::named(section_group(&sheet.group, letter), members);
         group.description = json!({
             "letter": letter.to_string(),
             "of": views[i].cut.as_ref().map(|c| c.of.clone()),
@@ -967,7 +988,7 @@ pub fn compose(
             )
             .map_err(|e| e.to_string())?;
         members.push(title);
-        let mut group = Group::named(format!("{VIEW_GROUP}{}", view.id), members);
+        let mut group = Group::named(view_group(&sheet.group, &view.id), members);
         group.description = ViewRecord {
             id: view.id.clone(),
             title: titles[i].content.clone(),

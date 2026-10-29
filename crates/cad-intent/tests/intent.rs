@@ -216,7 +216,9 @@ fn a_document_is_read_and_each_operation_compiles_to_its_command_and_answers() {
                 "",
                 "",
                 "First",
-                "",
+                // No corner is the origin, as a point the engine can move
+                // beside a sheet already drawn (#358).
+                "0,0",
             ],
         ),
     ];

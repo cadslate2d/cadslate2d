@@ -105,6 +105,22 @@ const STAGING: f64 = 1.0e6;
 /// Past the widest sheet at 1:1, in millimetres: an A0's 1189 and room.
 const SHEET_REACH: f64 = 2500.0;
 
+/// Between a sheet and what the drawing held before it, in millimetres of
+/// paper.
+const SHEET_GAP: f64 = 50.0;
+
+/// The paper a document names, as the title block command takes it.
+fn paper_of(paper: cad_intent::PaperSize) -> crate::settings::Paper {
+    use crate::settings::Paper;
+    match paper {
+        cad_intent::PaperSize::A4 => Paper::A4,
+        cad_intent::PaperSize::A3 => Paper::A3,
+        cad_intent::PaperSize::A2 => Paper::A2,
+        cad_intent::PaperSize::A1 => Paper::A1,
+        cad_intent::PaperSize::A0 => Paper::A0,
+    }
+}
+
 /// Where an operation draws: moved by `offset` when it is a view's, and
 /// where each view of the document was drawn.
 struct Place<'a> {
@@ -155,12 +171,45 @@ impl Session {
                 staging.push((view.clone(), Vec2::new(past + step * k, 0.0)));
             }
         }
+        // A sheet is drawn beside what the drawing holds, never on it: a
+        // second sheet — the upper floor of a house whose ground floor is
+        // drawn — names its corner as the first did, at the origin (#358).
+        let held = self.drawing().extents();
+        let unit_per_mm = self
+            .drawing()
+            .unit()
+            .map_or(1.0, |unit| 0.001 / unit.metres());
+        let beside = |op: &cad_intent::Operation| -> Option<Vec2> {
+            let cad_intent::Operation::TitleBlock {
+                paper,
+                portrait,
+                scale: n,
+                at,
+                ..
+            } = op
+            else {
+                return None;
+            };
+            let held = held?;
+            let per_mm = n.unwrap_or(1.0) * unit_per_mm;
+            let (w, h) = crate::titleblock::sheet(paper_of(*paper), !*portrait);
+            let [x, y] = at.unwrap_or([0.0, 0.0]);
+            let corner = Point2::new(x * scale, y * scale);
+            let sheet =
+                cad_core::Aabb::from_points(corner, corner + Vec2::new(w * per_mm, h * per_mm));
+            sheet
+                .intersects(&held)
+                .then(|| Vec2::new(held.max().x + SHEET_GAP * per_mm - corner.x, 0.0))
+        };
         for compiled in compiled_all {
+            let moved = (compiled.view.is_none() && compiled.command == "TITLEBLOCK")
+                .then(|| intent.operations.get(compiled.operation).and_then(beside))
+                .flatten();
             let offset = compiled
                 .view
                 .as_ref()
                 .and_then(|v| staging.iter().find(|(id, _)| id == v))
-                .map_or(Vec2::new(0.0, 0.0), |(_, at)| *at);
+                .map_or(moved.unwrap_or(Vec2::new(0.0, 0.0)), |(_, at)| *at);
             let place = Place {
                 offset,
                 staging: &staging,
@@ -189,6 +238,13 @@ impl Session {
                 }
                 Err(error) => return Err(error),
             };
+            let mut done = done;
+            if moved.is_some() {
+                done.log.push(
+                    "The sheet is drawn to the right of what the drawing held, clear of it."
+                        .to_owned(),
+                );
+            }
             if let Some(view) = &compiled.view {
                 match views.iter_mut().find(|(id, _)| id == view) {
                     Some((_, made)) => made.extend(&done.made),
