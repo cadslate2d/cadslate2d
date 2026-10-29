@@ -1,0 +1,8 @@
+{"name":"no-room-en","request":{"prompt":"Draw the outline of a 40 × 30 m building footprint, dimensioned, on an A4 sheet at 1:50 — keep both the sheet and the scale.","unit":"mm"}}
+{"name":"no-room-pt","request":{"prompt":"Desenhe o contorno de uma edificação de 40 × 30 m, cotado, numa folha A4 na escala 1:50 — mantenha a folha e a escala.","unit":"mm"}}
+{"name":"contradiction-en","request":{"prompt":"Draw a rectangle 100 wide and 60 high whose diagonal is 150.","unit":"mm"}}
+{"name":"contradiction-pt","request":{"prompt":"Desenhe um retângulo de 100 de largura e 60 de altura cuja diagonal seja 150.","unit":"mm"}}
+{"name":"stair-height-en","request":{"prompt":"Draw a staircase in plan up to the upper floor, 90 cm wide.","unit":"mm"}}
+{"name":"stair-height-pt","request":{"prompt":"Desenhe em planta uma escada até o pavimento superior, com 90 cm de largura.","unit":"mm"}}
+{"name":"design-en","request":{"prompt":"Calculate the reinforcement a 300 × 600 mm beam needs for a 30 kN/m load over a 6 m span, and draw it.","unit":"mm"}}
+{"name":"design-pt","request":{"prompt":"Calcule a armadura que uma viga de 300 × 600 mm precisa para uma carga de 30 kN/m num vão de 6 m, e desenhe-a.","unit":"mm"}}

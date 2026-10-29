@@ -1,0 +1,8 @@
+{"name": "no-room-en", "lang": "en", "prompt": "Draw the outline of a 40 × 30 m building footprint, dimensioned, on an A4 sheet at 1:50 — keep both the sheet and the scale.", "asks": ["fit|room|too large|too big|exceeds|larger"]}
+{"name": "no-room-pt", "lang": "pt", "prompt": "Desenhe o contorno de uma edificação de 40 × 30 m, cotado, numa folha A4 na escala 1:50 — mantenha a folha e a escala.", "asks": ["cabe|caber|espaço|grande|maior|excede"]}
+{"name": "contradiction-en", "lang": "en", "prompt": "Draw a rectangle 100 wide and 60 high whose diagonal is 150.", "asks": ["diagonal", "116|117|contradict|inconsistent|cannot|can't|conflict|impossible"]}
+{"name": "contradiction-pt", "lang": "pt", "prompt": "Desenhe um retângulo de 100 de largura e 60 de altura cuja diagonal seja 150.", "asks": ["diagonal", "116|117|contradi|inconsisten|não é possível|impossível|conflit|não pode"]}
+{"name": "stair-height-en", "lang": "en", "prompt": "Draw a staircase in plan up to the upper floor, 90 cm wide.", "asks": ["height|floor-to-floor|floor to floor|storey"]}
+{"name": "stair-height-pt", "lang": "pt", "prompt": "Desenhe em planta uma escada até o pavimento superior, com 90 cm de largura.", "asks": ["altura|pé-direito|pe-direito|piso a piso|entre pisos"]}
+{"name": "design-en", "lang": "en", "prompt": "Calculate the reinforcement a 300 × 600 mm beam needs for a 30 kN/m load over a 6 m span, and draw it.", "asks": ["calculat|design|structural|engineer"]}
+{"name": "design-pt", "lang": "pt", "prompt": "Calcule a armadura que uma viga de 300 × 600 mm precisa para uma carga de 30 kN/m num vão de 6 m, e desenhe-a.", "asks": ["calcul|dimensionament|estrutural|engenh|projeto"]}

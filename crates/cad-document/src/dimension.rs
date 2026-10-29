@@ -781,13 +781,27 @@ impl DimensionEntity {
         } else {
             let along = tangent(arc.end());
             let from = arc.end_point() + along * past;
-            let start = style.text_gap;
+            let mut start = style.text_gap;
+            text = self.text_along(text.content, style, along);
+            place_above(&mut text, from + along * (start + width / 2.0), style);
+            // On an arc that nearly closes, the tangent at its end runs back
+            // past the other arrowhead: the text goes on along it until it is
+            // clear of the circle both arrowheads lie in.
+            if layout
+                .arrowheads
+                .iter()
+                .any(|arrowhead| crosses(&text.frame(), arrowhead))
+            {
+                let metrics = Font::simplex().metrics(&text.content, text.height);
+                let reach =
+                    arc.radius + arrow + style.text_gap + (metrics.ascent - metrics.descent);
+                start = start.max((reach * reach - arc.radius * arc.radius).max(0.0).sqrt() - past);
+                place_above(&mut text, from + along * (start + width / 2.0), style);
+            }
             layout.lines.push(Segment::new(
                 from,
                 from + along * (start + width + style.text_gap),
             ));
-            text = self.text_along(text.content, style, along);
-            place_above(&mut text, from + along * (start + width / 2.0), style);
         }
         layout.text = text;
         layout
@@ -911,6 +925,28 @@ fn place_beside(text: &mut TextEntity, anchor: Point2, side: Vec2, style: &DimSt
 }
 
 /// Puts the text's box above the line through `anchor`: on its own up side.
+/// Whether a text's frame and an arrowhead overlap: one's corner in the
+/// other, or their edges crossing. Touching along an edge is not overlap.
+fn crosses(frame: &crate::TextFrame, arrow: &Arrowhead) -> bool {
+    let [tip, b0, b1] = arrow.corners();
+    let centroid = Point2::new((tip.x + b0.x + b1.x) / 3.0, (tip.y + b0.y + b1.y) / 3.0);
+    let inward = |corner: Point2| centroid + (corner - centroid) * 0.999;
+    let arrow = Arrowhead {
+        tip: inward(tip),
+        base: [inward(b0), inward(b1)],
+    };
+    arrow.corners().iter().any(|corner| frame.contains(*corner))
+        || frame.corners().iter().any(|corner| arrow.contains(*corner))
+        || frame.edges().iter().any(|edge| {
+            arrow.segments().iter().any(|side| {
+                !cad_geometry::Primitive::Segment(*edge)
+                    .intersect(&cad_geometry::Primitive::Segment(*side))
+                    .as_slice()
+                    .is_empty()
+            })
+        })
+}
+
 fn place_above(text: &mut TextEntity, anchor: Point2, style: &DimStyle) {
     let up = up_of(text);
     place_beside(text, anchor, up, style);
@@ -926,11 +962,9 @@ fn place_on(text: &mut TextEntity, anchor: Point2) {
 mod tests {
     use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
-    use cad_geometry::Primitive;
     use proptest::prelude::*;
 
     use super::*;
-    use crate::text::TextFrame;
     use crate::{Entity, GripKind, Properties, Tables};
 
     fn p(x: f64, y: f64) -> Point2 {
@@ -1529,6 +1563,46 @@ mod tests {
     }
 
     #[test]
+    fn the_text_past_an_angle_that_nearly_closes_clears_its_far_arrowhead() {
+        // Found by the property test: the arc sweeps some 304°, its text
+        // does not fit inside, and the tangent at its end ran the text back
+        // over the arrowhead at its start.
+        let dim = DimensionEntity::new(
+            Measure::Angular {
+                vertex: p(-840.43, -272.40),
+                a: p(0.0, -934.86),
+                b: p(0.0, 0.0),
+            },
+            p(-842.69, -285.39),
+        );
+        let style = DimStyle {
+            text_height: 8.2039,
+            arrow_size: 0.5,
+            text_gap: 0.0,
+            decimals: 5,
+            ..standard()
+        };
+        let layout = dim.layout(&style);
+        let frame = layout.text.frame();
+        assert_eq!(layout.arrowheads.len(), 2);
+        for arrow in &layout.arrowheads {
+            assert!(
+                !crosses(&frame, arrow),
+                "{arrow:?} vs {:?}",
+                frame.corners()
+            );
+        }
+        // The leader still reaches under the whole text.
+        let leader = layout.lines.last().unwrap();
+        let run = leader.end - leader.start;
+        let along = run * (1.0 / run.length());
+        let ends = frame
+            .corners()
+            .map(|corner| (corner - leader.start).dot(along));
+        assert!(ends.iter().all(|t| *t > -1e-6 && *t < run.length() + 1e-6));
+    }
+
+    #[test]
     fn the_points_are_what_is_measured_then_the_placement_and_each_may_move() {
         let dim = DimensionEntity::new(
             Measure::Angular {
@@ -1764,28 +1838,6 @@ mod tests {
         a.distance_to(b) < 1e-6 * (1.0 + a.x.abs() + a.y.abs())
     }
 
-    /// Whether the text's box and the arrowhead share any area. Touching
-    /// is not overlapping: the arrowhead is drawn in by a hair first.
-    fn overlaps(frame: &TextFrame, arrow: &Arrowhead) -> bool {
-        let [tip, b0, b1] = arrow.corners();
-        let centroid = p((tip.x + b0.x + b1.x) / 3.0, (tip.y + b0.y + b1.y) / 3.0);
-        let inward = |corner: Point2| centroid + (corner - centroid) * 0.999;
-        let arrow = Arrowhead {
-            tip: inward(tip),
-            base: [inward(b0), inward(b1)],
-        };
-        arrow.corners().iter().any(|corner| frame.contains(*corner))
-            || frame.corners().iter().any(|corner| arrow.contains(*corner))
-            || frame.edges().iter().any(|edge| {
-                arrow.segments().iter().any(|side| {
-                    !Primitive::Segment(*edge)
-                        .intersect(&Primitive::Segment(*side))
-                        .as_slice()
-                        .is_empty()
-                })
-            })
-    }
-
     proptest! {
         /// #327: a style's scale draws a dimension exactly as the same
         /// style with every size multiplied — text, arrows, gaps, lines —
@@ -1910,7 +1962,7 @@ mod tests {
             let layout = dim.layout(&style);
             let frame = layout.text.frame();
             for arrow in &layout.arrowheads {
-                prop_assert!(!overlaps(&frame, arrow), "{arrow:?} vs {:?}", frame.corners());
+                prop_assert!(!crosses(&frame, arrow), "{arrow:?} vs {:?}", frame.corners());
             }
             let bounds = layout.bounds().expanded(1e-6);
             for segment in layout.segments() {
