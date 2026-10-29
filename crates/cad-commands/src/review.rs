@@ -28,8 +28,15 @@ pub fn review(drawing: &Drawing) -> Vec<String> {
     let tables = drawing.tables();
     let boxed: Vec<(EntityId, &Entity, Aabb)> = drawing
         .entities()
-        // An xline or a ray has no box to be on a sheet with (ADR-0031).
-        .filter(|(_, entity)| !entity.is_unbounded())
+        // An xline or a ray has no box to be on a sheet with (ADR-0031);
+        // a layout's paper — a sheet's viewport onto it (#358) — is not the
+        // sheet drawn in the model.
+        .filter(|(id, entity)| {
+            !entity.is_unbounded()
+                && drawing
+                    .record(*id)
+                    .is_some_and(|r| r.space == cad_document::LayoutId::MODEL)
+        })
         .map(|(id, entity)| (id, entity, entity.bounds(tables)))
         .collect();
     let mut findings = Vec::new();
@@ -62,6 +69,11 @@ pub fn review(drawing: &Drawing) -> Vec<String> {
             return findings;
         }
         findings.extend(sliver(&sheet, &boxed));
+        let unit = crate::compose::sheet_of(drawing).map_or(1.0, |s| s.frame.units_per_mm);
+        findings.extend(hiding_fills(drawing, &boxed, unit));
+        findings.extend(scales_said(drawing));
+        findings.extend(fills_over_voids(drawing, &boxed));
+        findings.extend(labels_on_lines(drawing, &boxed));
         findings.extend(too_small(drawing, &sheet, &boxed));
         let dimensioned = boxed
             .iter()
@@ -74,6 +86,413 @@ pub fn review(drawing: &Drawing) -> Vec<String> {
         }
     }
     findings
+}
+
+/// Below this spacing on paper, a pattern's lines crowd the labels laid on
+/// it, millimetres: ANSI37 at the sheet's scale is 3.2 mm, both ways.
+const BUSY: f64 = 4.0;
+
+/// The colour `id` prints in: its own, or its layer's; the foreground, 7,
+/// when neither says.
+fn ink(drawing: &Drawing, id: EntityId) -> u8 {
+    use cad_document::Color;
+    let Some(properties) = drawing.properties(id) else {
+        return 7;
+    };
+    match properties.color {
+        Color::Index(n) => n,
+        _ => match drawing.layers().get(properties.layer).map(|l| l.color) {
+            Some(Color::Index(n)) => n,
+            _ => 7,
+        },
+    }
+}
+
+fn layer_name(drawing: &Drawing, id: EntityId) -> String {
+    drawing
+        .properties(id)
+        .and_then(|p| drawing.layers().get(p.layer))
+        .map_or_else(|| "0".to_owned(), |l| l.name.clone())
+}
+
+/// Fills that hide what is drawn on them (#358): a solid fill the colour
+/// of the lines on it — roads filled black under their crosswalks, curbs,
+/// and centrelines, which vanish into it when printed — and hatching whose
+/// lines crowd the labels on it, closer than [`BUSY`] on paper.
+fn hiding_fills(drawing: &Drawing, boxed: &[(EntityId, &Entity, Aabb)], unit: f64) -> Vec<String> {
+    use cad_document::HatchStyle;
+    let mut out = Vec::new();
+    // Solid fills, by layer: the layers of what vanishes into them.
+    let mut solid: Vec<(String, Vec<String>)> = Vec::new();
+    // Busy hatching, by layer: its pattern, spacing on paper, labels, and
+    // the scale that spaces its lines [`BUSY`] apart.
+    let mut busy: Vec<(String, String, f64, usize, f64)> = Vec::new();
+    for (id, entity, b) in boxed {
+        let Entity::Hatch(hatch) = entity else {
+            continue;
+        };
+        let on: Vec<&(EntityId, &Entity, Aabb)> = boxed
+            .iter()
+            .filter(|(other, e, ob)| {
+                other != id
+                    && !matches!(e, Entity::Hatch(_))
+                    && b.intersects(ob)
+                    && hatch.contains(ob.center())
+            })
+            .collect();
+        let layer = layer_name(drawing, *id);
+        match &hatch.style {
+            HatchStyle::Solid => {
+                let colour = ink(drawing, *id);
+                let hidden: Vec<String> = on
+                    .iter()
+                    .filter(|(other, e, _)| words(e).is_none() && ink(drawing, *other) == colour)
+                    .map(|(other, ..)| layer_name(drawing, *other))
+                    .collect();
+                if hidden.is_empty() {
+                    continue;
+                }
+                let at = match solid.iter().position(|(l, _)| *l == layer) {
+                    Some(at) => at,
+                    None => {
+                        solid.push((layer.clone(), Vec::new()));
+                        solid.len() - 1
+                    }
+                };
+                for name in hidden {
+                    if name != layer && !solid[at].1.contains(&name) {
+                        solid[at].1.push(name);
+                    }
+                }
+            }
+            HatchStyle::Pattern { name, scale, .. } => {
+                let Some(pattern) = cad_document::hatch_pattern(name) else {
+                    continue;
+                };
+                let spacing = pattern
+                    .families
+                    .iter()
+                    .map(|f| f.spacing.abs())
+                    .fold(f64::INFINITY, f64::min)
+                    * scale
+                    / unit;
+                let labels = on.iter().filter(|(_, e, _)| words(e).is_some()).count();
+                if !(spacing < BUSY && labels > 0) {
+                    continue;
+                }
+                let enough = (scale * BUSY / spacing).ceil();
+                match busy.iter_mut().find(|(l, ..)| *l == layer) {
+                    Some(row) => row.3 += labels,
+                    None => busy.push((layer, name.clone(), spacing, labels, enough)),
+                }
+            }
+        }
+    }
+    for (layer, hidden) in solid.into_iter().filter(|(_, h)| !h.is_empty()) {
+        out.push(format!(
+            "The solid fill on {layer} prints in the colour of what is drawn on it — {} — which vanishes into it on paper. Give {layer} a light colour (`color` 9, a light grey) or a pattern, and draw what is on it in a colour of its own.",
+            hidden.join(", ")
+        ));
+    }
+    for (layer, pattern, spacing, labels, enough) in busy {
+        let (said, is) = if labels == 1 {
+            ("1 label lies".to_owned(), "is")
+        } else {
+            (format!("{labels} labels lie"), "are")
+        };
+        out.push(format!(
+            "{said} on {pattern} hatching on {layer}, its lines {} mm apart on paper, and {is} hard to read there. Make the hatch's `scale` at least {} — lines {BUSY} mm or more apart — or fill it solid in a light colour (`color` 9).",
+            number(spacing),
+            number(enough)
+        ));
+    }
+    out
+}
+
+/// How much of a label's box, each side, a line may graze without
+/// crossing it: a tenth.
+const GRAZE: f64 = 0.1;
+
+/// Labels laid over the drawing (#358): beam V01's bottom-bar callout on
+/// the bars it names. A text crossed by a line, curve, or outline on
+/// another layer — a leader from it, a title block's cells, a table's
+/// grid are on the text's own — is hard to read and reads as part of the
+/// drawing.
+fn labels_on_lines(drawing: &Drawing, boxed: &[(EntityId, &Entity, Aabb)]) -> Vec<String> {
+    let tables = drawing.tables();
+    // The program's own words — a section's letters, a view's title, the
+    // title block, notes, tables — are placed by it, not the model.
+    let placed = [
+        crate::titleblock::LAYER,
+        crate::compose::TITLE_LAYER,
+        crate::compose::SECTION_LAYER,
+        crate::bom::TABLE_LAYER,
+        crate::bom::BALLOON_LAYER,
+        crate::commands::NOTES_LAYER,
+    ];
+    let mut crossed: Vec<(String, String)> = Vec::new();
+    for (id, entity, b) in boxed {
+        let Some(text) = words(entity) else {
+            continue;
+        };
+        let layer = layer_name(drawing, *id);
+        if placed.contains(&layer.as_str()) {
+            continue;
+        }
+        let (w, h) = (b.max().x - b.min().x, b.max().y - b.min().y);
+        let inner = Aabb::from_points(
+            Point2::new(b.min().x + w * GRAZE, b.min().y + h * GRAZE),
+            Point2::new(b.max().x - w * GRAZE, b.max().y - h * GRAZE),
+        );
+        let over = boxed.iter().find(|(other, e, ob)| {
+            other != id
+                && words(e).is_none()
+                && !matches!(
+                    e,
+                    Entity::Dimension(_) | Entity::Hatch(_) | Entity::Viewport(_)
+                )
+                && ob.intersects(&inner)
+                && layer_name(drawing, *other) != layer
+                && e.crosses(&inner, tables)
+        });
+        if let Some((other, ..)) = over {
+            crossed.push((text.to_owned(), layer_name(drawing, *other)));
+        }
+    }
+    if crossed.is_empty() {
+        return Vec::new();
+    }
+    let named: Vec<String> = crossed
+        .iter()
+        .take(SPELLED_OUT)
+        .map(|(text, on)| format!("\"{text}\" on {on}"))
+        .collect();
+    let more = crossed.len().saturating_sub(SPELLED_OUT);
+    let (count, lie) = if crossed.len() == 1 {
+        ("1 label".to_owned(), "lies")
+    } else {
+        (format!("{} labels", crossed.len()), "lie")
+    };
+    vec![format!(
+        "{count} {lie} over the drawing's lines — {}{}: hard to read, and read as part of what is drawn. Move each clear of what it names, beside it, with a `leader` to it where it is not plain what it labels.",
+        named.join(", "),
+        if more > 0 {
+            format!(", and {more} more")
+        } else {
+            String::new()
+        }
+    )]
+}
+
+/// How many points each way two hatches' common box is sampled at.
+const SAMPLES: u32 = 12;
+
+/// The points of a closed outline: a closed polyline's vertices.
+fn ring(entity: &Entity) -> Option<Vec<Point2>> {
+    match entity {
+        Entity::Polyline(p) if p.closed && p.vertices.len() >= 3 => Some(p.vertices.clone()),
+        _ => None,
+    }
+}
+
+/// Hatching where there is no material (#358): culvert H01's inlet face
+/// hatched whole, its opening with it, and its walls' and slabs' own
+/// hatches laid over that one. Two hatches that fill the same ground, and
+/// a hatch over a closed outline inside its own boundary — on the
+/// boundary's layer, so an opening, not a marking drawn on the fill.
+fn fills_over_voids(drawing: &Drawing, boxed: &[(EntityId, &Entity, Aabb)]) -> Vec<String> {
+    let hatches: Vec<(EntityId, &cad_document::HatchEntity, Aabb)> = boxed
+        .iter()
+        .filter_map(|(id, e, b)| match e {
+            Entity::Hatch(h) => Some((*id, h, *b)),
+            _ => None,
+        })
+        .collect();
+    let mut out = Vec::new();
+    // Overlaps: a grid inside where two boxes meet, a point in both fills.
+    let mut overlaps = 0;
+    for (i, (_, a, ab)) in hatches.iter().enumerate() {
+        for (_, b, bb) in &hatches[i + 1..] {
+            if !ab.intersects(bb) {
+                continue;
+            }
+            let lo = Point2::new(ab.min().x.max(bb.min().x), ab.min().y.max(bb.min().y));
+            let hi = Point2::new(ab.max().x.min(bb.max().x), ab.max().y.min(bb.max().y));
+            let (w, h) = (hi.x - lo.x, hi.y - lo.y);
+            let size = (ab.max() - ab.min())
+                .length()
+                .max((bb.max() - bb.min()).length());
+            if w <= size * 1e-6 || h <= size * 1e-6 {
+                continue;
+            }
+            // A grid fine enough to land in a wall's thickness beside an
+            // opening, each point half a step in from the box's edges.
+            let at = |k: u32, of: f64| (f64::from(k) + 0.5) / f64::from(SAMPLES) * of;
+            let common = (0..SAMPLES).any(|i| {
+                (0..SAMPLES).any(|j| {
+                    let q = Point2::new(lo.x + at(i, w), lo.y + at(j, h));
+                    a.contains(q) && b.contains(q)
+                })
+            });
+            if common {
+                overlaps += 1;
+            }
+        }
+    }
+    if overlaps > 0 {
+        out.push(format!(
+            "{} hatched regions fill ground another hatch fills too: drawn twice, one over the other. Hatch each region once — a wall, a slab — its inside point in it, after the outlines that bound it.",
+            overlaps * 2
+        ));
+    }
+    // Voids: a closed outline inside a hatch, on its boundary's layer.
+    let mut voids = 0;
+    for (_, hatch, hb) in &hatches {
+        let size = (hb.max() - hb.min()).length();
+        // The outline that bounds it: a closed one with the hatch's box.
+        let bounding = boxed.iter().find(|(_, e, b)| {
+            ring(e).is_some()
+                && (b.min() - hb.min()).length() <= size * 1e-6
+                && (b.max() - hb.max()).length() <= size * 1e-6
+        });
+        let Some((outer, ..)) = bounding else {
+            continue;
+        };
+        let layer = layer_name(drawing, *outer);
+        voids += boxed
+            .iter()
+            .filter(|(id, e, b)| {
+                id != outer
+                    && layer_name(drawing, *id) == layer
+                    && (b.max() - b.min()).length() > size * 0.05
+                    && ring(e).is_some_and(|r| r.iter().all(|q| hatch.contains(*q)))
+                    && hatch.contains(b.center())
+            })
+            .count();
+    }
+    if voids > 0 {
+        let said = if voids == 1 {
+            "1 closed outline lies inside a hatch that fills over it".to_owned()
+        } else {
+            format!("{voids} closed outlines lie inside a hatch that fills over them")
+        };
+        out.push(format!(
+            "{said}, on its boundary's layer: openings hatched as if solid. Hatch only the material between an outline and the opening inside it — its inside point in the solid part, drawn after both outlines — and never over an opening."
+        ));
+    }
+    out
+}
+
+/// What a view's own words say against what it is (#358): a scale written
+/// in it that is not the one it is drawn at — spillway H02's section B-B
+/// said 1:50 and was drawn at the sheet's 1:100 — and its title written
+/// again, the program having titled it.
+fn scales_said(drawing: &Drawing) -> Vec<String> {
+    use crate::compose::{sheet_of, view_group, views_on};
+    let Some(sheet) = sheet_of(drawing) else {
+        return Vec::new();
+    };
+    // The sheet's own scale, as its title block writes it.
+    let sheet_scale = drawing
+        .groups()
+        .iter()
+        .find(|(_, g)| g.name == sheet.group)
+        .and_then(|(_, g)| serde_json::from_str::<serde_json::Value>(&g.description).ok())
+        .and_then(|record| {
+            crate::stated::stated(record["scale"].as_str()?)
+                .scales
+                .first()
+                .copied()
+        });
+    // Words that are a table's or the notes' speak for the sheet, not a view.
+    let sheet_words = [
+        crate::commands::NOTES_LAYER,
+        crate::bom::TABLE_LAYER,
+        crate::compose::TITLE_LAYER,
+    ];
+    let mut out = Vec::new();
+    for view in views_on(drawing, &sheet.group) {
+        let Some(drawn) = view.ratio.or(sheet_scale) else {
+            continue;
+        };
+        let group = view_group(&sheet.group, &view.id);
+        let Some((_, members)) = drawing.groups().iter().find(|(_, g)| g.name == group) else {
+            continue;
+        };
+        let title = view.title.to_lowercase();
+        let bare = title.split(" (").next().unwrap_or(&title).trim().to_owned();
+        let mut wrong: Option<f64> = None;
+        let mut twice = false;
+        for id in &members.members {
+            let Some(entity) = drawing.entity(*id) else {
+                continue;
+            };
+            let Some(text) = words(entity) else {
+                continue;
+            };
+            let layer = layer_name(drawing, *id);
+            if sheet_words.contains(&layer.as_str()) {
+                continue;
+            }
+            if let Some(said) = crate::stated::stated(text)
+                .scales
+                .into_iter()
+                .find(|s| (s / drawn - 1.0).abs() > 1e-9)
+            {
+                wrong = Some(said);
+            }
+            // A title long enough to be told from a label's word.
+            if bare.len() >= 8 && text.to_lowercase().contains(&bare) {
+                twice = true;
+            }
+        }
+        if let Some(said) = wrong {
+            out.push(format!(
+                "View {} says {} and is drawn at {}: what it says and what it measures on paper must agree. Give the view the `scale` it says — a section or a free view may have its own — or say {}.",
+                view.id,
+                crate::compose::ratio_text(said),
+                crate::compose::ratio_text(drawn),
+                crate::compose::ratio_text(drawn)
+            ));
+        }
+        if twice {
+            out.push(format!(
+                "View {}'s title is written twice: the program titles each view from its `title`, with its scale when it has its own. Put all the title should say — its scale too, when asked — in the view's `title`, and leave it out of the view's own text.",
+                view.id
+            ));
+        }
+    }
+    out
+}
+
+/// Below this share of its sheet used, a sheet is larger than its views
+/// need, if a smaller one holds them.
+const ROOMY: f64 = 0.35;
+
+/// How much of its sheet a drawing uses: the box round what is drawn
+/// inside the border, against the border's; `None` with no sheet.
+fn used(drawing: &Drawing) -> Option<f64> {
+    let frame = crate::compose::sheet_of(drawing)?.frame;
+    let tables = drawing.tables();
+    let members: Vec<EntityId> = drawing
+        .groups()
+        .iter()
+        .filter(|(_, g)| g.name.starts_with(GROUP))
+        .flat_map(|(_, g)| g.members.clone())
+        .collect();
+    let drawn = drawing
+        .entities()
+        .filter(|(id, e)| {
+            !members.contains(id)
+                && !e.is_unbounded()
+                && drawing
+                    .record(*id)
+                    .is_some_and(|r| r.space == cad_document::LayoutId::MODEL)
+        })
+        .map(|(_, e)| e.bounds(tables))
+        .filter(|b| inside(&frame.border, b))
+        .reduce(|a, b| a.union(&b))?;
+    Some(area(&drawn) / area(&frame.border))
 }
 
 /// The commands that compose a sheet: what they refuse is the layout.
@@ -151,6 +570,46 @@ fn review_unstated(
         // A hatch passed over is still the model's to put right (#358).
         Ok((session, ran)) => {
             let mut findings = review(session.drawing());
+            // A sheet larger than its views need, when the request named
+            // none (#358): the U01 plan's 400 × 300 mm on A0 left most of
+            // it empty. The smallest paper it composes on at its scale.
+            let roomy = used(session.drawing()).is_some_and(|share| share < ROOMY);
+            if roomy && stated.paper.is_none() {
+                use cad_intent::{Operation, PaperSize};
+                let order = [
+                    PaperSize::A4,
+                    PaperSize::A3,
+                    PaperSize::A2,
+                    PaperSize::A1,
+                    PaperSize::A0,
+                ];
+                let current = intent.operations.iter().find_map(|op| match op {
+                    Operation::TitleBlock { paper, .. } => Some(*paper),
+                    _ => None,
+                });
+                let at = current.and_then(|p| order.iter().position(|o| *o == p));
+                let smallest = at.and_then(|at| {
+                    order[..at]
+                        .iter()
+                        .rev()
+                        .take_while(|smaller| {
+                            let mut tried = intent.clone();
+                            for op in &mut tried.operations {
+                                if let Operation::TitleBlock { paper, .. } = op {
+                                    *paper = **smaller;
+                                }
+                            }
+                            run(&tried).is_ok()
+                        })
+                        .last()
+                        .copied()
+                });
+                if let (Some(paper), Some(smaller)) = (current, smallest) {
+                    findings.push(format!(
+                        "The views take under a third of the {paper:?} sheet, and they compose on {smaller:?} at the same scale: use {smaller:?}, so the drawing fills its sheet."
+                    ));
+                }
+            }
             findings.extend(ran.iter().filter_map(|r| r.skipped.as_ref()).map(|why| {
                 format!(
                     "HATCH was skipped, {why}: draw the closed outline it fills in that view, its point well inside it, or leave the hatch out."
@@ -602,6 +1061,7 @@ fn on_layer_zero(drawing: &Drawing) -> Vec<String> {
         crate::bom::TABLE_LAYER,
         crate::bom::BALLOON_LAYER,
         crate::commands::NOTES_LAYER,
+        crate::commands::VIEWPORTS_LAYER,
     ];
     let own_layers = drawing.layers().iter().any(|(_, layer)| {
         layer.name != cad_document::Layer::ZERO && !machinery.contains(&layer.name.as_str())
@@ -763,6 +1223,242 @@ mod tests {
                 && !findings[0].contains("or smaller fits")
                 && !findings[0].contains("composes on"),
             "{findings:?}"
+        );
+    }
+
+    /// Beam V01's bottom-bar callout lay on the bars it names (#358): found;
+    /// the same callout below the beam, with a leader to the bars on its own
+    /// layer, and a label inside a closed outline it does not touch, not.
+    #[test]
+    fn a_label_laid_over_the_drawing_is_found() {
+        let beam = |label_y: i32, leader: &str| {
+            cad_intent::parse(&format!(
+                r#"{{"version": {}, "operations": [
+                   {{"op": "title_block", "paper": "A3", "scale": 20, "title": "V01", "at": [0, 0]}},
+                   {{"op": "dim_scale", "scale": 20}},
+                   {{"op": "view", "id": "elevation", "placed": "principal", "operations": [
+                       {{"op": "layer", "name": "CONCRETE", "current": true}},
+                       {{"op": "rectangle", "corner": [0, 0], "opposite": [6300, 600]}},
+                       {{"op": "layer", "name": "REBAR", "current": true}},
+                       {{"op": "line", "points": [[70, 60], [6230, 60]]}},
+                       {{"op": "layer", "name": "ANNO", "current": true}},
+                       {{"op": "text", "at": [2500, {label_y}], "height": 50, "text": "3Ø20 BOTTOM"}}{leader},
+                       {{"op": "text", "at": [4500, 300], "height": 50, "text": "V01 300 × 600"}},
+                       {{"op": "dim_linear", "from": [0, 0], "to": [6300, 0], "at": [3150, -400]}}]}}]}}"#,
+                cad_intent::VERSION
+            ))
+            .unwrap()
+        };
+        let said = |findings: &[String]| {
+            findings
+                .iter()
+                .find(|f| f.contains("over the drawing's lines"))
+                .cloned()
+        };
+        let on = review_document(&beam(45, ""), Some("mm")).unwrap();
+        assert_eq!(
+            said(&on).as_deref(),
+            Some(
+                "1 label lies over the drawing's lines — \"3Ø20 BOTTOM\" on REBAR: hard to read, and read as part of what is drawn. Move each clear of what it names, beside it, with a `leader` to it where it is not plain what it labels."
+            ),
+            "{on:?}"
+        );
+        let clear = review_document(
+            &beam(
+                -200,
+                r#", {"op": "line", "points": [[2600, -150], [2600, 60]]}"#,
+            ),
+            Some("mm"),
+        )
+        .unwrap();
+        assert_eq!(said(&clear), None, "{clear:?}");
+    }
+
+    /// Culvert H01's inlet face was hatched whole, its opening drawn after
+    /// and hatched over, and its walls hatched again on top (#358): both
+    /// found. Drawn as material — both outlines, one hatch between — not.
+    #[test]
+    fn hatching_over_an_opening_and_hatching_twice_are_found() {
+        let face = |operations: &str| {
+            cad_intent::parse(&format!(
+                r#"{{"version": {}, "operations": [
+                   {{"op": "title_block", "paper": "A3", "scale": 25, "title": "H01", "at": [0, 0]}},
+                   {{"op": "dim_scale", "scale": 25}},
+                   {{"op": "view", "id": "inlet", "placed": "principal", "operations": [
+                       {{"op": "layer", "name": "CONCRETE", "current": true}},
+                       {operations},
+                       {{"op": "dim_linear", "from": [0, 0], "to": [2500, 0], "at": [1250, -400]}}]}}]}}"#,
+                cad_intent::VERSION
+            ))
+            .unwrap()
+        };
+        let said = |findings: &[String]| {
+            (
+                findings
+                    .iter()
+                    .any(|f| f.contains("fill ground another hatch fills too")),
+                findings
+                    .iter()
+                    .any(|f| f.contains("openings hatched as if solid")),
+            )
+        };
+        let wrong = review_document(
+            &face(
+                r#"{"op": "rectangle", "corner": [0, 0], "opposite": [2500, 2050]},
+                   {"op": "hatch", "pattern": "ANSI31", "scale": 25, "inside": [1250, 1000]},
+                   {"op": "rectangle", "corner": [250, 250], "opposite": [2250, 1750]},
+                   {"op": "hatch", "pattern": "ANSI31", "scale": 25, "inside": [125, 1000]}"#,
+            ),
+            Some("mm"),
+        )
+        .unwrap();
+        assert_eq!(said(&wrong), (true, true), "{wrong:?}");
+        let right = review_document(
+            &face(
+                r#"{"op": "rectangle", "corner": [0, 0], "opposite": [2500, 2050]},
+                   {"op": "rectangle", "corner": [250, 250], "opposite": [2250, 1750]},
+                   {"op": "hatch", "pattern": "ANSI31", "scale": 25, "inside": [125, 1000]}"#,
+            ),
+            Some("mm"),
+        )
+        .unwrap();
+        assert_eq!(said(&right), (false, false), "{right:?}");
+    }
+
+    /// Spillway H02's section B-B said 1:50 in its own text and was drawn
+    /// at the sheet's 1:100, its title written twice (#358): both found;
+    /// the section at its own 1:50, titled by the program alone, neither.
+    /// (The program letters a sheet's sections from A: this one is A-A.)
+    #[test]
+    fn a_scale_said_must_be_the_scale_drawn_and_a_title_said_once() {
+        let sheet = |bb: &str| {
+            cad_intent::parse(&format!(
+                r#"{{"version": {}, "operations": [
+                   {{"op": "title_block", "paper": "A1", "scale": 100, "title": "H02", "at": [0, 0]}},
+                   {{"op": "dim_scale", "scale": 100}},
+                   {{"op": "view", "id": "plan", "placed": "principal", "title": "TOP PLAN", "operations": [
+                       {{"op": "rectangle", "corner": [0, -600], "opposite": [44000, 10600]}},
+                       {{"op": "dim_linear", "from": [0, -600], "to": [44000, -600], "at": [22000, -2000]}}]}},
+                   {{"op": "view", "id": "bb", "placed": "section", "title": "SECTION B-B", "cut": {{"of": "plan", "from": [28500, -1000], "to": [28500, 11000], "toward": [40000, 5000]}}{bb}}}]}}"#,
+                cad_intent::VERSION
+            ))
+            .unwrap()
+        };
+        let said = |findings: &[String]| {
+            (
+                findings
+                    .iter()
+                    .any(|f| f.starts_with("View bb says 1:50 and is drawn at 1:100")),
+                findings
+                    .iter()
+                    .any(|f| f.starts_with("View bb's title is written twice")),
+            )
+        };
+        let wrong = review_document(
+            &sheet(r#", "operations": [
+                {"op": "rectangle", "corner": [-600, 0], "opposite": [10600, 1000]},
+                {"op": "text", "at": [0, -1500], "height": 250, "text": "TRANSVERSE SECTION A-A — SCALE 1:50"}]"#),
+            Some("mm"),
+        )
+        .unwrap();
+        assert_eq!(said(&wrong), (true, true), "{wrong:?}");
+        let right = review_document(
+            &sheet(
+                r#", "scale": "1:50", "operations": [
+                {"op": "rectangle", "corner": [-600, 0], "opposite": [10600, 1000]}]"#,
+            ),
+            Some("mm"),
+        )
+        .unwrap();
+        assert_eq!(said(&right), (false, false), "{right:?}");
+    }
+
+    /// The U01 plan, 400 × 300 m at 1:1000, was sheeted on A0 and left most
+    /// of it empty (#358): told the smallest paper it composes on; on that
+    /// paper, or on A0 when the request named A0, told nothing.
+    #[test]
+    fn a_sheet_larger_than_its_views_need_is_told_the_one_that_holds_them() {
+        let plan = |paper: &str| {
+            cad_intent::parse(&format!(
+                r#"{{"version": {}, "operations": [
+                   {{"op": "title_block", "paper": "{paper}", "scale": 1000, "title": "U01", "at": [0, 0]}},
+                   {{"op": "dim_scale", "scale": 1000}},
+                   {{"op": "view", "id": "plan", "placed": "principal", "operations": [
+                       {{"op": "rectangle", "corner": [0, 0], "opposite": [400000, 300000]}},
+                       {{"op": "dim_linear", "from": [0, 0], "to": [400000, 0], "at": [200000, -20000]}}]}}]}}"#,
+                cad_intent::VERSION
+            ))
+            .unwrap()
+        };
+        let told = |findings: &[String]| {
+            findings
+                .iter()
+                .find(|f| f.starts_with("The views take under a third"))
+                .cloned()
+        };
+        let on_a0 = review_document(&plan("A0"), Some("mm")).unwrap();
+        assert_eq!(
+            told(&on_a0).as_deref(),
+            Some(
+                "The views take under a third of the A0 sheet, and they compose on A2 at the same scale: use A2, so the drawing fills its sheet."
+            ),
+            "{on_a0:?}"
+        );
+        assert_eq!(
+            told(&review_document(&plan("A2"), Some("mm")).unwrap()),
+            None
+        );
+        let stated = crate::stated::stated("the plan on an A0 sheet");
+        assert_eq!(
+            told(&review_stated(&plan("A0"), Some("mm"), &stated).unwrap()),
+            None
+        );
+    }
+
+    /// The U01 sheet's roads were filled black under their crosswalks and
+    /// its parcels cross-hatched 3.2 mm apart under their labels (#358):
+    /// both found; a light fill and a hatch scaled up are not.
+    #[test]
+    fn fills_that_hide_what_is_on_them_are_found() {
+        let sheet = |road_colour: &str, parcel_scale: u32| {
+            cad_intent::parse(&format!(
+                r#"{{"version": {}, "operations": [
+                   {{"op": "title_block", "paper": "A2", "scale": 1000, "title": "U01", "at": [0, 0]}},
+                   {{"op": "dim_scale", "scale": 1000}},
+                   {{"op": "view", "id": "plan", "placed": "principal", "operations": [
+                       {{"op": "layer", "name": "ROAD", "current": true{road_colour}}},
+                       {{"op": "rectangle", "corner": [0, 140000], "opposite": [400000, 160000]}},
+                       {{"op": "hatch", "pattern": "SOLID", "inside": [100000, 150000]}},
+                       {{"op": "layer", "name": "CROSSWALK", "current": true}},
+                       {{"op": "segments", "segments": [[[180000, 142000], [180000, 158000]], [[182000, 142000], [182000, 158000]]]}},
+                       {{"op": "layer", "name": "PARCEL", "current": true}},
+                       {{"op": "rectangle", "corner": [0, 0], "opposite": [38000, 140000]}},
+                       {{"op": "hatch", "pattern": "ANSI37", "scale": {parcel_scale}, "inside": [19000, 30000]}},
+                       {{"op": "text", "at": [10000, 70000], "height": 5000, "text": "P01"}},
+                       {{"op": "dim_linear", "from": [0, 0], "to": [400000, 0], "at": [200000, -20000]}}]}}]}}"#,
+                cad_intent::VERSION
+            ))
+            .unwrap()
+        };
+        let findings = review_document(&sheet("", 1000), Some("mm")).unwrap();
+        assert!(
+            findings.iter().any(|f| f.starts_with(
+                "The solid fill on ROAD prints in the colour of what is drawn on it — CROSSWALK"
+            )),
+            "{findings:?}"
+        );
+        assert!(
+            findings.iter().any(|f| f.starts_with(
+                "1 label lies on ANSI37 hatching on PARCEL, its lines 3.17 mm apart on paper"
+            ) && f.contains("`scale` at least 1260")),
+            "{findings:?}"
+        );
+        let light = review_document(&sheet(r#", "color": 9"#, 2000), Some("mm")).unwrap();
+        assert!(
+            !light
+                .iter()
+                .any(|f| f.contains("solid fill") || f.contains("hatching on")),
+            "{light:?}"
         );
     }
 

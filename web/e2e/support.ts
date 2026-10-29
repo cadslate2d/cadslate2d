@@ -72,13 +72,25 @@ function installFileSystemAccess(mode: string): void {
     getFile: () => Promise.resolve(new File([files.get(name) ?? ""], name)),
     createWritable: () =>
       Promise.resolve({
-        // Text as it is; a DWG's bytes as the text of their first six, the version id.
+        // Text as it is; a DWG's bytes as the text of their first six, the
+        // version id; a DXF's as a DXF reader reads them (#358).
         write: (content: string | Uint8Array) => {
+          const text = (bytes: Uint8Array) => {
+            try {
+              return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+            } catch {
+              return new TextDecoder("windows-1252").decode(bytes);
+            }
+          };
+          const dwg = (bytes: Uint8Array) =>
+            new TextDecoder().decode(bytes.subarray(0, 4)) === "AC10";
           files.set(
             name,
             typeof content === "string"
               ? content
-              : new TextDecoder().decode(content.subarray(0, 6)),
+              : dwg(content)
+                ? new TextDecoder().decode(content.subarray(0, 6))
+                : text(content),
           );
           return Promise.resolve();
         },
@@ -349,8 +361,21 @@ export async function downloadFrom(
   const download = await pending;
   return {
     name: download.suggestedFilename(),
-    text: await readFile(await download.path(), "utf8"),
+    text: decoded(await readFile(await download.path())),
   };
+}
+
+/**
+ * A file's text as a DXF reader reads it: UTF-8 when it is, Windows-1252
+ * otherwise — the code page a DXF is written in, its `—`, `²`, `×`, `í` as
+ * themselves (#358).
+ */
+export function decoded(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder("windows-1252").decode(bytes);
+  }
 }
 
 /** Runs `action`, which must open a file picker, and chooses `file` in it. */

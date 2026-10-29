@@ -675,7 +675,7 @@ impl CadSession {
     pub fn snapshot_file(&mut self, format: &str) -> Vec<u8> {
         let drawing = self.session.drawing();
         match FileFormat::from_id(format) {
-            Some(FileFormat::Dxf) => cad_dxf::export(drawing).into_bytes(),
+            Some(FileFormat::Dxf) => cad_dxf::export_bytes(drawing),
             Some(format) => match cad_dwg::export(drawing, dwg_version(format)) {
                 Ok(bytes) => bytes,
                 Err(error) => {

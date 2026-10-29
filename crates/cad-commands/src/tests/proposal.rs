@@ -300,3 +300,32 @@ fn the_ai_context_describes_the_selection_with_its_ids_and_the_layers() {
         context.objects[0].geometry
     );
 }
+
+/// A composed sheet's layout is said, not drawn over the model (#358):
+/// its viewport is on the layout's paper, which the canvas shown is not.
+#[test]
+fn a_sheets_layout_is_said_in_the_proposal_and_not_drawn_over_the_model() {
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    h.session.propose(document(
+        r#"{"op": "title_block", "paper": "A2", "portrait": true, "scale": 50, "title": "SECTIONS", "number": "H-03", "at": [0, 0]},
+           {"op": "view", "id": "aa", "placed": "principal", "operations": [
+               {"op": "rectangle", "corner": [0, 0], "opposite": [7000, 6000]}]}"#,
+    ));
+    let proposal = h.session.proposal().unwrap();
+    assert_eq!(proposal.layouts, vec!["H-03".to_owned()]);
+    assert!(
+        !proposal
+            .added
+            .iter()
+            .any(|(_, e)| matches!(e, Entity::Viewport(_)))
+    );
+    let summary = proposal.summary();
+    assert!(
+        summary.headline.ends_with("; lays it out as H-03"),
+        "{}",
+        summary.headline
+    );
+    h.session.accept_proposal();
+    assert!(h.session.drawing().layouts().find("H-03").is_some());
+}

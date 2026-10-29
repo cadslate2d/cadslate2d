@@ -79,8 +79,9 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 56] = [
+pub const COMMANDS: [&str; 57] = [
     "CENTERVIEWS",
+    "SHEETLAYOUT",
     "DIMCONTINUE",
     "NOTES",
     "BOMTABLE",
@@ -206,6 +207,15 @@ pub fn compile(intent: &Intent) -> Vec<Compiled> {
             operation: sheet,
             op: "title_block",
             command: "CENTERVIEWS",
+            steps: Vec::new(),
+            view: None,
+        });
+        // And laid out on its paper, a viewport showing it at 1:N, so it
+        // plots at its scale from the layout (#358).
+        out.push(Compiled {
+            operation: sheet,
+            op: "title_block",
+            command: "SHEETLAYOUT",
             steps: Vec::new(),
             view: None,
         });

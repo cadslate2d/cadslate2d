@@ -687,8 +687,9 @@ export class CadApp {
       this.ui.refresh(this.engine);
       return;
     }
-    // A DXF travels as text, as it always has; a DWG as its bytes.
-    const content = format === "dxf" ? new TextDecoder().decode(bytes) : bytes;
+    // Saved as the engine wrote them: a DXF's bytes are in its code page,
+    // Windows-1252, and decoding them as UTF-8 would lose its `—`, `²` (#358).
+    const content = bytes;
     const mimeType = format === "dxf" ? DXF_MIME_TYPE : DWG_MIME_TYPE;
     // Written back only to a file of the same format: SAVEAS to another
     // format, or SAVE of a drawing whose file came in otherwise, asks where.

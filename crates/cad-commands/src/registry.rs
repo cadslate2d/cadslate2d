@@ -30,11 +30,11 @@ use crate::commands::{
     PartViewsCommand, PasteClipCommand, PeditCommand, PickStyleCommand, PlineCommand, PlotCommand,
     PointCommand, PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand,
     QdimCommand, QselectCommand, RayCommand, RectangCommand, RedoCommand, RenameCommand,
-    RevCloudCommand, SLOT, SaveCommand, SelectCommand, SettingsCommand, SketchCommand, SnapCommand,
-    SplineCommand, SplineEditCommand, StairCommand, StretchCommand, StyleCommand, TanArcCommand,
-    TextCommand, TextEditCommand, TextToFrontCommand, TitleBlockCommand, TransformCommand,
-    UndoCommand, UngroupCommand, UnitsCommand, ViewCommand, ViewFrameCommand, WBlockCommand,
-    WallsCommand, WipeoutCommand, XLineCommand, ZoomCommand,
+    RevCloudCommand, SLOT, SaveCommand, SelectCommand, SettingsCommand, SheetLayoutCommand,
+    SketchCommand, SnapCommand, SplineCommand, SplineEditCommand, StairCommand, StretchCommand,
+    StyleCommand, TanArcCommand, TextCommand, TextEditCommand, TextToFrontCommand,
+    TitleBlockCommand, TransformCommand, UndoCommand, UngroupCommand, UnitsCommand, ViewCommand,
+    ViewFrameCommand, WBlockCommand, WallsCommand, WipeoutCommand, XLineCommand, ZoomCommand,
 };
 use crate::session::select_keywords;
 
@@ -71,7 +71,7 @@ impl CommandRegistry {
     /// The commands that ship with CadSlate2D.
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        let standard: [(&'static str, &[&str], CommandFactory); 181] = [
+        let standard: [(&'static str, &[&str], CommandFactory); 182] = [
             ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
             ("RAY", &[], || Box::new(RayCommand::new())),
             ("LEADER", &["LE", "LEAD"], || Box::new(LeaderCommand::new())),
@@ -202,6 +202,7 @@ impl CommandRegistry {
             ("SKETCH", &[], || Box::new(SketchCommand::new())),
             ("STAIR", &[], || Box::new(StairCommand::new())),
             ("WALLS", &[], || Box::new(WallsCommand::new())),
+            ("SHEETLAYOUT", &[], || Box::new(SheetLayoutCommand::new())),
             ("ELEVATION", &[], || Box::new(ElevationCommand::new())),
             ("BSECTION", &[], || Box::new(BuildingSectionCommand::new())),
             ("PARTVIEWS", &[], || Box::new(PartViewsCommand::new())),

@@ -2986,3 +2986,40 @@ fn autocad_constraints_are_reported_and_their_geometry_read() {
         report.summary()
     );
 }
+
+/// A file's text in its code page (#358): the U01 sheet's `—`, `²`, and
+/// `×` were written as `\U+` escapes, which readers that do not decode them
+/// showed as written. Every character Windows-1252 has is its byte; one it
+/// has not — an arrow — stays an escape; and the file reads back the same.
+#[test]
+fn characters_of_the_code_page_are_written_as_themselves() {
+    let source = "  0\nSECTION\n  2\nENTITIES\n  0\nTEXT\n  8\n0\n 10\n0.0\n 20\n0.0\n 40\n2.5\n  1\nPARK \\U+2014 26,600 m\\U+00B2, 400 \\U+00D7 300, \\U+00D812 at 30\\U+00B0 \\U+2192 N\n  0\nENDSEC\n  0\nEOF\n";
+    let first = cad_dxf::import(source.as_bytes()).unwrap();
+    let words = |drawing: &cad_document::Drawing| {
+        drawing
+            .entities()
+            .find_map(|(_, e)| match e {
+                cad_document::Entity::Text(t) => Some(t.content.clone()),
+                _ => None,
+            })
+            .unwrap()
+    };
+    assert_eq!(
+        words(&first.drawing),
+        "PARK — 26,600 m², 400 × 300, Ø12 at 30° → N"
+    );
+    let bytes = cad_dxf::export_bytes(&first.drawing);
+    let line = bytes
+        .split(|b| *b == b'\n')
+        .find(|l| l.starts_with(b"PARK"))
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        line,
+        b"PARK \x97 26,600 m\xb2, 400 \xd7 300, \xd812 at 30\xb0 \\U+2192 N".to_vec()
+    );
+    // The text file, byte for byte, but for those characters.
+    assert_eq!(cad_dxf::code_page(&export(&first.drawing)), bytes);
+    let again = cad_dxf::import(&bytes).unwrap();
+    assert_eq!(words(&again.drawing), words(&first.drawing));
+}

@@ -51,6 +51,20 @@ const mixedFile = dxf(
 );
 
 /** One slot in memory, counting what was written. */
+/**
+ * A saved file's text: a DXF's bytes as a DXF reader reads them — UTF-8, or
+ * its code page, Windows-1252 (#358); none for a DWG's.
+ */
+function textOf(content: string | Uint8Array): string {
+  if (typeof content === "string") return content;
+  if (new TextDecoder().decode(content.subarray(0, 4)) === "AC10") return "";
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(content);
+  } catch {
+    return new TextDecoder("windows-1252").decode(content);
+  }
+}
+
 class FakeAutosave implements AutosaveStore {
   record: AutosaveRecord | undefined;
   saves = 0;
@@ -91,7 +105,7 @@ class FakeFiles implements FileAccess {
     mimeType: string,
     format?: string,
   ): Promise<FileTarget | undefined> {
-    const text = typeof content === "string" ? content : "";
+    const text = textOf(content);
     const bytes = typeof content === "string" ? undefined : content;
     this.saved.push({ name, text, bytes, mimeType, format });
     return Promise.resolve({ name });
@@ -99,7 +113,7 @@ class FakeFiles implements FileAccess {
 
   write(target: FileTarget, content: FileContent): Promise<boolean> {
     if (!this.writeAnswer) return Promise.resolve(false);
-    const text = typeof content === "string" ? content : "";
+    const text = textOf(content);
     const bytes = typeof content === "string" ? undefined : content;
     this.written.push({ name: target.name, text, bytes });
     return Promise.resolve(true);
@@ -376,6 +390,23 @@ describe("export", () => {
     expect(app.ui.getSnapshot().unsavedChanges).toBe(false);
     expect(app.ui.getSnapshot().log.at(-1)).toBe("Drawing exported as DXF.");
     expect(host.confirmations).toEqual([]);
+  });
+
+  // #358: a DXF is saved in its code page as the engine wrote it; decoded
+  // as UTF-8 on the way, its `—` and `²` became U+FFFD in the file.
+  test("a DXF is saved as the engine's bytes, its text in Windows-1252", async () => {
+    const { host, tick, enter } = harness();
+    enter("TEXT", "0,0", "2.5", "0", "Ø12 — 2 m²");
+    await tick();
+    enter("DXFOUT");
+    await tick();
+    const [file] = host.files.saved;
+    const bytes = [...(file?.bytes ?? [])];
+    const line = [0xd8, 0x31, 0x32, 0x20, 0x97, 0x20, 0x32, 0x20, 0x6d, 0xb2];
+    const at = bytes.findIndex((_, i) => line.every((b, k) => bytes[i + k] === b));
+    expect(at).toBeGreaterThan(0);
+    expect(bytes).not.toContain(0xef);
+    expect(file?.text).toContain("Ø12 — 2 m²");
   });
 
   test("the save shortcut exports too", async () => {

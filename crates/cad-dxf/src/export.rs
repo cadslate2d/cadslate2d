@@ -256,6 +256,61 @@ fn records_in(drawing: &Drawing, space: LayoutId) -> Vec<EntityId> {
     painted.into_iter().map(|(_, _, id)| id).collect()
 }
 
+/// The drawing as the bytes of a DXF file (#358): [`export`]'s text in
+/// its code page, Windows-1252, every character the code page has written
+/// as itself — `—`, `²`, `×`, `Ø`, `°` — as AutoCAD writes them, and only
+/// the others as `\U+XXXX` escapes. A reader that does not decode escapes
+/// shows these characters right; one that does reads the same text.
+pub fn export_bytes(drawing: &Drawing) -> Vec<u8> {
+    code_page(&export(drawing))
+}
+
+/// `text`, all ASCII with `\U+XXXX` escapes, in Windows-1252: each escape
+/// of a character the code page has as its byte, the others as written.
+pub fn code_page(text: &str) -> Vec<u8> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && bytes.get(i + 1) == Some(&b'U') && bytes.get(i + 2) == Some(&b'+') {
+            let byte = text
+                .get(i + 3..i + 7)
+                .filter(|d| d.bytes().all(|b| b.is_ascii_hexdigit()))
+                .and_then(|d| u32::from_str_radix(d, 16).ok())
+                .and_then(char::from_u32)
+                .and_then(to_windows_1252);
+            if let Some(byte) = byte {
+                out.push(byte);
+                i += 7;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
+/// The Windows-1252 byte of a character outside ASCII, if it has one.
+fn to_windows_1252(c: char) -> Option<u8> {
+    const HIGH: [char; 32] = [
+        '\u{20AC}', '\u{81}', '\u{201A}', '\u{192}', '\u{201E}', '\u{2026}', '\u{2020}',
+        '\u{2021}', '\u{2C6}', '\u{2030}', '\u{160}', '\u{2039}', '\u{152}', '\u{8D}', '\u{17D}',
+        '\u{8F}', '\u{90}', '\u{2018}', '\u{2019}', '\u{201C}', '\u{201D}', '\u{2022}', '\u{2013}',
+        '\u{2014}', '\u{2DC}', '\u{2122}', '\u{161}', '\u{203A}', '\u{153}', '\u{9D}', '\u{17E}',
+        '\u{178}',
+    ];
+    match u32::from(c) {
+        0xA0..=0xFF => u8::try_from(u32::from(c)).ok(),
+        _ => HIGH
+            .iter()
+            .position(|h| *h == c)
+            // The five bytes the code page leaves undefined stand for nothing.
+            .filter(|at| ![0x01, 0x0D, 0x0F, 0x10, 0x1D].contains(at))
+            .and_then(|at| u8::try_from(0x80 + at).ok()),
+    }
+}
+
 /// Serialises the drawing as ASCII DXF.
 ///
 /// Output is deterministic: entities are written in `EntityId` order with

@@ -672,16 +672,19 @@ proptest! {
             .operations
             .iter()
             .any(|op| matches!(op, cad_intent::Operation::TitleBlock { .. }));
-        wanted += usize::from(composes && sheet);
+        // A composed sheet ends centred, then laid out.
+        wanted += 2 * usize::from(composes && sheet);
         prop_assert_eq!(compiled.len(), wanted);
         let mut last = 0;
         for c in &compiled {
             // VIEWFRAME is its run's first view's, CENTERVIEWS the title
             // block's, and asks nothing.
-            prop_assert!(c.operation >= last || ["VIEWFRAME", "CENTERVIEWS"].contains(&c.command));
+            prop_assert!(
+                c.operation >= last || ["VIEWFRAME", "CENTERVIEWS", "SHEETLAYOUT"].contains(&c.command)
+            );
             last = last.max(c.operation);
             prop_assert!(COMMANDS.contains(&c.command));
-            prop_assert!(!c.steps.is_empty() || c.command == "CENTERVIEWS");
+            prop_assert!(!c.steps.is_empty() || ["CENTERVIEWS", "SHEETLAYOUT"].contains(&c.command));
         }
     }
 

@@ -22,6 +22,9 @@ pub struct Proposal {
     pub changed: Vec<(EntityId, Entity, Entity)>,
     /// Objects it removes, as they are.
     pub removed: Vec<(EntityId, Entity)>,
+    /// The layouts it makes, by name: a composed sheet's (#358), on paper
+    /// the overlay of the space shown does not draw.
+    pub layouts: Vec<String>,
     /// What ran, or what stopped it. A run that stopped is still a
     /// proposal: what ran before the stop is what it would do.
     pub outcome: Result<Vec<Ran>, RunError>,
@@ -66,6 +69,12 @@ impl Proposal {
             }
             text
         };
+        // A layout made, said: it is not on the canvas shown (#358).
+        match self.layouts.as_slice() {
+            [] => {}
+            [one] => headline.push_str(&format!("; lays it out as {one}")),
+            many => headline.push_str(&format!("; lays it out as {}", many.join(", "))),
+        }
         // What was passed over is said where it is seen first (#358).
         let skipped = self
             .outcome
@@ -135,7 +144,20 @@ impl Session {
         let after = scratch.drawing();
         let mut added = Vec::new();
         let mut changed = Vec::new();
-        for (id, entity) in after.entities() {
+        // What is shown is the space the session is in: what the proposal
+        // puts on another — a sheet's viewport, on its layout's paper — is
+        // said, not drawn over this one (#358).
+        let space = self.space();
+        let here = |drawing: &cad_document::Drawing, id: EntityId| {
+            drawing.record(id).is_some_and(|r| r.space == space)
+        };
+        let layouts: Vec<String> = after
+            .layouts()
+            .iter()
+            .map(|(_, l)| l.name.clone())
+            .filter(|name| before.layouts().find(name).is_none())
+            .collect();
+        for (id, entity) in after.entities().filter(|(id, _)| here(after, *id)) {
             match before.entity(id) {
                 None => added.push((id, entity.clone())),
                 Some(was) if was != entity || before.properties(id) != after.properties(id) => {
@@ -146,7 +168,7 @@ impl Session {
         }
         let removed: Vec<(EntityId, Entity)> = before
             .entities()
-            .filter(|(id, _)| after.entity(*id).is_none())
+            .filter(|(id, _)| here(before, *id) && after.entity(*id).is_none())
             .map(|(id, entity)| (id, entity.clone()))
             .collect();
         // Where the proposal is: what it adds and what it changes as they
@@ -169,6 +191,7 @@ impl Session {
             added,
             changed,
             removed,
+            layouts,
             outcome,
         }));
         // A proposal is judged by seeing it: one not wholly in view is

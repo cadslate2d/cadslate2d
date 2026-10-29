@@ -1722,3 +1722,59 @@ fn one_stair_by_its_id_agrees_in_plan_along_and_across() {
         "{refused}"
     );
 }
+
+/// A composed sheet is laid out on its paper too (#358): two reviews
+/// asked for a paper-space layout with its viewport at the sheet's scale,
+/// to plot from. A sheet numbered H-03 on A2 portrait at 1:50 gets layout
+/// H-03, 420 × 594, one viewport over it showing the sheet at 1:50; a
+/// second time, it is said to be there.
+#[test]
+fn a_composed_sheet_is_laid_out_with_a_viewport_at_its_scale() {
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    h.session
+        .run_intent(&document(
+            r#"
+        {"op": "title_block", "paper": "A2", "portrait": true, "scale": 50, "title": "SECTIONS", "number": "H-03", "at": [0, 0]},
+        {"op": "view", "id": "aa", "placed": "principal", "operations": [
+            {"op": "rectangle", "corner": [0, 0], "opposite": [7000, 6000]}]}
+    "#,
+        ))
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", h.log()));
+    assert!(
+        h.log()
+            .iter()
+            .any(|l| l == "Layout H-03: A2 portrait, the sheet through one viewport at 1:50."),
+        "{:?}",
+        h.log()
+    );
+    let drawing = h.session.drawing();
+    let layout = drawing.layouts().find("H-03").expect("the sheet's layout");
+    let row = drawing.layouts().get(layout).unwrap();
+    assert_eq!(row.paper_size, Some(cad_core::Vec2::new(420.0, 594.0)));
+    let viewports: Vec<cad_document::ViewportEntity> = drawing
+        .entities()
+        .filter(|(id, _)| drawing.record(*id).is_some_and(|r| r.space == layout))
+        .filter_map(|(_, e)| match e {
+            Entity::Viewport(v) => Some(*v),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(viewports.len(), 1);
+    let v = &viewports[0];
+    assert!((v.scale - 0.02).abs() < 1e-12);
+    assert_eq!((v.width, v.height), (420.0, 594.0));
+    assert_eq!(v.center, Point2::new(210.0, 297.0));
+    // The sheet's middle: its title block's corner at the origin, 1:50.
+    assert_eq!(v.view_center, Point2::new(10500.0, 14850.0));
+    // The model's sheet is as composed: nothing moved into the layout.
+    assert!(
+        drawing
+            .entities()
+            .filter(|(id, _)| drawing.record(*id).is_some_and(|r| r.space == layout))
+            .count()
+            == 1
+    );
+    h.enter("SHEETLAYOUT");
+    assert_eq!(h.log().last().unwrap(), "H-03 is a layout already.");
+}
