@@ -17,11 +17,13 @@ use cad_core::{LengthUnit, Point2};
 use serde::{Deserialize, Serialize};
 
 mod compile;
+pub mod requirements;
 mod validate;
 
 mod datums;
 pub use compile::{Answer, COMMANDS, Compiled, Step, compile};
 pub use datums::unused_datums;
+pub use requirements::{Check, Requirement};
 pub use validate::{IntentError, Reason, limits};
 
 #[cfg(any(test, feature = "testing"))]

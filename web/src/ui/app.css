@@ -1522,6 +1522,30 @@ body {
   font-weight: 600;
 }
 
+.ai__trail {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.ai__trail summary {
+  cursor: pointer;
+}
+
+.ai__checklist {
+  margin: var(--space-1) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai__check--met span {
+  color: var(--canvas-proposal);
+}
+
+.ai__check--unmet span {
+  color: var(--color-danger);
+}
+
 .ai__changed {
   padding-top: var(--space-2);
   border-top: 1px solid var(--color-border);

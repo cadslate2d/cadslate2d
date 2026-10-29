@@ -52,6 +52,10 @@ This ADR records those decisions, draws the line they leave untouched, and sets 
 - **New tests:** per-operation compile tests, a property test that any valid IR runs without a panic, a fuzz target on the IR parser, a snapshot of the schema, recorded replays in CI, e2e flows with a fake model, and an e2e test that context is never sent without consent.
 - **What does not change:** everything else. A user who never opens the AI panel sees one more panel in the View menu and nothing more.
 
+## As built
+
+- **#362, #363 (M26).** An answer is held to its request item by item, and shown with how it was checked, after StructureClaw's traceable, artifact-checked workflow (arXiv 2607.14896), whose finding is that fluent output hides an incomplete result. Beside its document the model writes the request's measurable `requirements` — each in the request's words, with a check: a view by id at a scale, a dimension reading a value, a text, a count of closed outlines of a size, a layer with something on it (`cad_intent::Requirement`). The engine checks each on the document drawn as the review draws it (`cad_commands::requirements`); an unmet one goes back to the model with what the drawing has instead, as a finding does. The answer carries its `trail` — what was read from the request of its sheet, why each answer after the first was asked for, the requirements checked, where it still departs — and the panel shows it under the proposal, collapsed: "How this was checked — 4 of 5 requirements met · asked 2 times". Nothing of the drawing is added to it.
+
 ## Revisit when
 
 - A model small enough for the download budget reads intent well: a local adapter would remove the account and the network for AI too.

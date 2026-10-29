@@ -29,6 +29,7 @@ mod overlay;
 pub mod partviews;
 pub mod proposal;
 mod registry;
+pub mod requirements;
 pub mod review;
 mod selection;
 mod session;

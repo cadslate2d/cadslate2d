@@ -21,6 +21,8 @@ interface Answer {
   explanation?: string;
   /** For a revision: what it changed, as the service measures it (#358). */
   changed?: string[];
+  /** How it was checked, as the service says (#363). */
+  trail?: unknown;
 }
 
 const CORPUS = new URL("../../test-data/ai/", import.meta.url);
@@ -294,6 +296,7 @@ export class FakeAiService {
         alternatives: pro ? alternatives : [],
         ...(more ? { more } : {}),
         ...(answer.changed && body["previous"] ? { changed: answer.changed } : {}),
+        ...(answer.trail ? { trail: answer.trail } : {}),
         allowance: this.#allowance(account),
       });
     }

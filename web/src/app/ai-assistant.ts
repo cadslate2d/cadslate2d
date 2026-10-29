@@ -16,6 +16,7 @@ import {
   type Allowance,
   type Billing,
   type PlanNeed,
+  type Trail,
 } from "./ai-client";
 
 /** What the assistant needs of the app. */
@@ -68,6 +69,8 @@ export interface AiSnapshot {
     readonly at: number;
     /** For a revision: what it changed of the proposal it revises; empty when nothing (#358). */
     readonly revised?: readonly string[];
+    /** How it was checked (#363). */
+    readonly trail?: Trail;
     /** Which of the request's options is on the canvas, 0 the first, and how many there are (#10). */
     readonly option: number;
     readonly options: number;
@@ -439,6 +442,7 @@ export class AiAssistant {
                 option: 0,
                 options: 1,
                 ...(answer.revised ? { revised: answer.revised } : {}),
+                ...(answer.trail ? { trail: answer.trail } : {}),
                 ...(answer.more ? { more: answer.more } : {}),
               }
             : undefined,

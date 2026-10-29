@@ -13,6 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import type { AiAssistant, AiSnapshot } from "../app/ai-assistant";
+import type { Trail } from "../app/ai-client";
 
 /** How many selected objects the consent lists before "and N more". */
 const LISTED = 12;
@@ -31,6 +32,56 @@ export function elapsed(seconds: number): string {
   if (whole < 60) return `${whole}s`;
   const minutes = Math.floor(whole / 60);
   return `${minutes}m ${String(whole % 60).padStart(2, "0")}s`;
+}
+
+/**
+ * How an answer was checked (#363), collapsed under its proposal: what was
+ * read from the request, each requirement met or not (#362), why the model
+ * was asked again, and what still departs from the request.
+ */
+function HowChecked({ trail }: { trail: Trail }) {
+  const { stated, rounds, checked, departs } = trail;
+  if (stated.length + rounds.length + checked.length + departs.length === 0) return null;
+  const met = checked.filter((c) => c.met).length;
+  const gist = [
+    checked.length > 0 ? `${met} of ${checked.length} requirements met` : undefined,
+    rounds.length > 0
+      ? `asked ${rounds.length + 1} times`
+      : checked.length > 0
+        ? "asked once"
+        : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <details className="ai__trail" data-testid="ai-trail">
+      <summary>How this was checked{gist ? ` — ${gist}` : ""}</summary>
+      {stated.length > 0 && (
+        <p className="ai__note">Read from your request: {stated.join(" · ")}</p>
+      )}
+      {checked.length > 0 && (
+        <ul className="ai__checklist" data-testid="ai-checklist">
+          {checked.map((c, index) => (
+            <li key={index} className={c.met ? "ai__check--met" : "ai__check--unmet"}>
+              <span aria-label={c.met ? "met" : "not met"}>{c.met ? "✓" : "✗"}</span> {c.says}
+              {!c.met && c.found ? ` — ${c.found}` : ""}
+            </li>
+          ))}
+        </ul>
+      )}
+      {rounds.length > 0 && (
+        <>
+          <p className="ai__note">Sent back to the model before you saw it:</p>
+          <ol className="ai__steps">
+            {rounds.map((findings, index) => (
+              <li key={index}>{findings.join(" ")}</li>
+            ))}
+          </ol>
+        </>
+      )}
+      {departs.length > 0 && <p className="ai__note">Still not as asked: {departs.join(" ")}</p>}
+    </details>
+  );
 }
 
 /** Copies a turn's words; says "Copied" a moment once they are. */
@@ -405,6 +456,7 @@ function Conversation({
                   )}
                 </div>
               )}
+              {snapshot.proposal.trail && <HowChecked trail={snapshot.proposal.trail} />}
               {snapshot.proposal.error && <p className="ai__error">{snapshot.proposal.error}</p>}
               <div className="ai__actions">
                 <button

@@ -851,3 +851,35 @@ test("a reply is copied by its button or by Ctrl+C on its words", async ({
     "1 object copied to the clipboard.",
   );
 });
+
+// #362, #363: an answer shows how it was checked — what was read from the
+// request, each requirement met or not, why it was asked again.
+test("a proposal says how it was checked", async ({ page }) => {
+  const service = await fakeAiService(page);
+  await openApp(page);
+  await signIn(page, service);
+  service.answers.set(CIRCLE, {
+    reply: "A circle of radius 25.",
+    intent: { version: 1, operations: [{ op: "circle", center: [100, 100], radius: 25 }] },
+    trail: {
+      stated: ["A4", "1:1"],
+      rounds: [['The request requires "radius 25", and the drawing does not do it.']],
+      checked: [
+        { says: "radius 25", met: true },
+        { says: "on a CIRCLES layer", met: false, found: "there is no layer CIRCLES" },
+      ],
+      departs: [],
+    },
+  });
+  await ask(page, CIRCLE);
+  const trail = panel(page).getByTestId("ai-trail");
+  await expect(trail).toContainText(
+    "How this was checked — 1 of 2 requirements met · asked 2 times",
+  );
+  await trail.locator("summary").click();
+  await expect(trail).toContainText("Read from your request: A4 · 1:1");
+  await expect(panel(page).getByTestId("ai-checklist")).toContainText(
+    "✗ on a CIRCLES layer — there is no layer CIRCLES",
+  );
+  await expect(trail).toContainText("Sent back to the model before you saw it:");
+});

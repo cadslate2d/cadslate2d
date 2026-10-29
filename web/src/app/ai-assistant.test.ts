@@ -172,6 +172,27 @@ describe("the AI assistant (#260)", () => {
     expect(assistant.getSnapshot().error).toBeUndefined();
   });
 
+  // #363: how an answer was checked comes with its proposal.
+  test("an answer's trail is its proposal's", async () => {
+    const { assistant, client } = await signedIn();
+    const trail = {
+      stated: ["A2", "1:50"],
+      rounds: [['The request requires "a WALL layer", and the drawing does not do it.']],
+      checked: [{ says: "a WALL layer", met: true }],
+      departs: [],
+    };
+    client.answer = {
+      request: 7,
+      reply: "The walls.",
+      intent: CIRCLE,
+      alternatives: [],
+      trail,
+      allowance: allowance(98),
+    };
+    await assistant.ask("walls on a WALL layer");
+    expect(assistant.getSnapshot().proposal?.trail).toEqual(trail);
+  });
+
   test("a suggested request waits for the prompt, is taken once, and is never sent", async () => {
     const { assistant, client } = await signedIn();
     const asked = client.asked.length;

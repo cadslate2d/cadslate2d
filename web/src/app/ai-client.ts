@@ -34,6 +34,22 @@ export interface AiAccount {
   readonly billing: Billing;
 }
 
+/**
+ * How an answer was checked (#363): what was read from the request of its
+ * sheet, why each answer after the first was asked for, the request's
+ * requirements checked on the drawing (#362), and where it still departs.
+ */
+export interface Trail {
+  readonly stated: readonly string[];
+  readonly rounds: readonly (readonly string[])[];
+  readonly checked: readonly {
+    readonly says: string;
+    readonly met: boolean;
+    readonly found?: string;
+  }[];
+  readonly departs: readonly string[];
+}
+
 /** What a refused feature needs: the plan, and the feature's name. */
 export interface PlanNeed {
   readonly plan: string;
@@ -101,6 +117,8 @@ export interface AiAnswer {
    * empty when it changed nothing (#358).
    */
   readonly revised?: readonly string[];
+  /** How it was checked, when the service says. */
+  readonly trail?: Trail;
   readonly allowance: Allowance;
 }
 
@@ -267,6 +285,7 @@ export function httpAiClient(service: URL, fetcher: typeof fetch = globalThis.fe
         alternatives?: unknown[];
         more?: { count: number; needs: PlanNeed };
         changed?: string[];
+        trail?: Trail;
         allowance: WireAllowance;
       };
       return {
@@ -276,6 +295,7 @@ export function httpAiClient(service: URL, fetcher: typeof fetch = globalThis.fe
         alternatives: answer.alternatives ?? [],
         ...(answer.more ? { more: answer.more } : {}),
         ...(answer.changed ? { revised: answer.changed } : {}),
+        ...(answer.trail ? { trail: answer.trail } : {}),
         allowance: allowanceOf(answer.allowance),
       };
     },
