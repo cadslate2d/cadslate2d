@@ -160,9 +160,11 @@ pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Optio
             });
             // Only a sheet without room is told of paper and scale.
             // A view at its own scale is told in the reason what fits:
-            // the sheet's paper and scale do not size it.
+            // the sheet's paper and scale do not size it; nor does any
+            // scale a view whose text and dimensions are its size (#358).
             let room = reason.contains("there is not that much room")
-                && !reason.contains("its own scale alone sets its size");
+                && !reason.contains("its own scale alone sets its size")
+                && !reason.contains("a smaller scale would not make room");
             let fits = current.filter(|_| room).and_then(|paper| {
                 larger(paper).into_iter().find(|bigger| {
                     let mut tried = intent.clone();
@@ -671,6 +673,50 @@ mod tests {
 
     /// A sheet that cannot be composed is a finding, for the model to lay
     /// out again; a refusal of another kind is not.
+    /// The maintainer's house (#358): a 7 × 15 m ground floor at 1:50 and
+    /// a 10 × 30 m site inset at 1:200 on A2 portrait take 140 × 300 mm and
+    /// 50 × 150 mm of a 420 × 594 mm sheet, and compose with nothing to
+    /// say. An inset made large by its labels is told so, measured — its
+    /// drawing's size and its tallest text on paper — and never sent to a
+    /// smaller scale or a larger sheet, which would not make room.
+    #[test]
+    fn a_site_inset_at_its_own_scale_fits_and_one_too_large_says_what_makes_it() {
+        let house = |label_height: u32| {
+            cad_intent::parse(&format!(
+                r#"{{"version": {}, "operations": [
+                   {{"op": "title_block", "paper": "A2", "portrait": true, "scale": 50, "title": "HOUSE", "at": [0, 0]}},
+                   {{"op": "dim_scale", "scale": 50}},
+                   {{"op": "view", "id": "plan", "placed": "principal", "title": "GROUND FLOOR PLAN", "operations": [
+                       {{"op": "rectangle", "corner": [1500, 5000], "opposite": [8500, 20000]}},
+                       {{"op": "rectangle", "corner": [1700, 5200], "opposite": [8300, 19800]}},
+                       {{"op": "dim_linear", "from": [1500, 5000], "to": [8500, 5000], "at": [5000, 3800]}},
+                       {{"op": "dim_linear", "from": [1500, 5000], "to": [1500, 20000], "at": [300, 12500]}},
+                       {{"op": "text", "at": [3000, 7000], "height": 125, "text": "LIVING"}}]}},
+                   {{"op": "view", "id": "site", "placed": "free", "looking": "from_above", "scale": "1:200", "title": "SITE PLAN", "operations": [
+                       {{"op": "rectangle", "corner": [0, 0], "opposite": [10000, 30000]}},
+                       {{"op": "rectangle", "corner": [1500, 5000], "opposite": [8500, 20000]}},
+                       {{"op": "segments", "segments": [[[1500, 0], [1500, 30000]], [[8500, 0], [8500, 30000]], [[0, 5000], [10000, 5000]], [[0, 20000], [10000, 20000]]]}},
+                       {{"op": "text", "at": [2500, 24000], "height": {label_height}, "text": "GARDEN / PATIO"}},
+                       {{"op": "dim_linear", "from": [0, 0], "to": [10000, 0], "at": [5000, -1500]}},
+                       {{"op": "dim_linear", "from": [10000, 0], "to": [10000, 30000], "at": [11500, 15000]}}]}}]}}"#,
+                cad_intent::VERSION
+            ))
+            .unwrap()
+        };
+        assert_eq!(review_document(&house(125), Some("mm")), Some(vec![]));
+        // A label 60 mm high on paper, as if the inset's scale sized it.
+        let findings = review_document(&house(3000), Some("mm")).unwrap();
+        assert!(
+            findings[0].contains("View site, at its own scale 1:200, needs")
+                && findings[0].contains("yet its drawing at that scale is only 50 × 150 mm")
+                && findings[0].contains("\"GARDEN / PATIO\", is 60 mm high on paper")
+                && findings[0].contains("Keep the scale")
+                && !findings[0].contains("or smaller fits")
+                && !findings[0].contains("composes on"),
+            "{findings:?}"
+        );
+    }
+
     #[test]
     fn a_sheet_with_no_room_is_a_finding_and_other_refusals_are_not() {
         let parse = |operations: &str| {

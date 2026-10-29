@@ -261,6 +261,35 @@ fn what_is_refused_says_where_and_why() {
             "0 and 1 are both [0, 0]: two points in a row must differ — leave one out".into(),
         ),
     );
+    // A dimension scale other than the sheet's set in a view would resize
+    // every view's dimensions: the house's sheet had no room (#358). The
+    // sheet's own is harmless, and models give it.
+    match refused(
+        r#"{"op": "title_block", "paper": "A2", "portrait": true, "scale": 50, "title": "X", "at": [0, 0]},
+           {"op": "view", "id": "site", "placed": "free", "scale": "1:200", "operations": [
+            {"op": "rectangle", "corner": [0, 0], "opposite": [10000, 30000]},
+            {"op": "dim_scale", "scale": 200}]}"#,
+    ) {
+        IntentError::Invalid { field, reason, .. } => {
+            assert_eq!(field, "operations");
+            assert!(
+                reason
+                    .to_string()
+                    .contains("`dim_scale` 200 (in view `site`, its operation 1) sets the scale of every dimension on the sheet, the other views' too, and a view's own `scale` sizes its dimensions for the sheet already — give one `dim_scale`, the sheet's scale 50, at the top level"),
+                "{reason}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(
+        parse(&document(
+            r#"{"op": "title_block", "paper": "A2", "scale": 50, "title": "X", "at": [0, 0]},
+               {"op": "view", "id": "plan", "placed": "principal", "operations": [
+                   {"op": "dim_scale", "scale": 50},
+                   {"op": "rectangle", "corner": [0, 0], "opposite": [7000, 15000]}]}"#
+        ))
+        .is_ok()
+    );
     // In a view: where among the view's own operations.
     match refused(
         r#"{"op": "view", "id": "front", "placed": "principal", "operations": [

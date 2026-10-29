@@ -349,11 +349,13 @@ const STANDARD_RATIOS: [f64; 19] = [
 ];
 
 /// A ratio as a drafter writes it: `2:1`, `1:5`.
+/// A number as said to a reader: three places at most, no trailing zeros.
+fn plain(v: f64) -> String {
+    let text = format!("{v:.3}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
 pub fn ratio_text(ratio: f64) -> String {
-    let plain = |v: f64| {
-        let text = format!("{v:.3}");
-        text.trim_end_matches('0').trim_end_matches('.').to_owned()
-    };
     if ratio >= 1.0 {
         format!("{}:1", plain(ratio))
     } else {
@@ -463,6 +465,11 @@ pub fn compose(
     // the style each of its dimensions had, its lengths read through 1/k.
     let mut prepared: Vec<Vec<(EntityId, Entity)>> = Vec::new();
     let mut derived: Vec<(usize, DimStyleId, DimStyle)> = Vec::new();
+    // What each view draws, without its text and dimensions, which keep
+    // their size on paper at any ratio; and its tallest text: what a view
+    // with no room is told it is made of (#358).
+    let mut drawings: Vec<Option<Aabb>> = Vec::new();
+    let mut tallest: Vec<Option<(f64, String)>> = Vec::new();
     for (index, view) in views.iter().enumerate() {
         if !valid_id(&view.id) {
             return Err(format!(
@@ -494,6 +501,8 @@ pub fn compose(
             .iter()
             .map(|e| e.bounds(tables))
             .reduce(|a, b| a.union(&b));
+        let mut drawing_extent = extent;
+        let mut tallest_text: Option<(f64, String)> = None;
         let mut objects = Vec::new();
         for &id in &view.entities {
             let Some(entity) = drawing.entity(id) else {
@@ -541,8 +550,26 @@ pub fn compose(
                 _ => drawn.bounds(tables),
             };
             extent = Some(extent.map_or(b, |e| e.union(&b)));
+            let text = match &drawn {
+                Entity::Text(t) => Some((t.height, t.content.clone())),
+                Entity::MText(t) => Some((t.height, t.content.clone())),
+                _ => None,
+            };
+            match text {
+                Some((height, content)) => {
+                    if tallest_text.as_ref().is_none_or(|(h, _)| height > *h) {
+                        tallest_text = Some((height, content));
+                    }
+                }
+                None if !matches!(drawn, Entity::Dimension(_)) => {
+                    drawing_extent = Some(drawing_extent.map_or(b, |e| e.union(&b)));
+                }
+                None => {}
+            }
             objects.push((id, drawn));
         }
+        drawings.push(drawing_extent);
+        tallest.push(tallest_text);
         prepared.push(objects);
         let extent = extent.expect("not empty");
         let relative = Aabb::from_points(
@@ -627,13 +654,44 @@ pub fn compose(
             // A view at its own scale is as large as that scale makes it,
             // whatever the sheet's: say so, or a larger sheet scale is
             // tried and changes nothing.
-            match views.iter().find(|v| v.id == view).and_then(|v| v.ratio) {
-                Some(ratio) => {
-                    // The largest standard scale at which it takes no more
-                    // than half the sheet each way: a number to give back.
+            let index = views.iter().position(|v| v.id == view);
+            match index.and_then(|i| views[i].ratio.map(|r| (i, r))) {
+                Some((i, ratio)) => {
                     let border = sheet.frame.border;
-                    let room = ((border.max().x - border.min().x) / unit / 2.0 / w)
-                        .min((border.max().y - border.min().y) / unit / 2.0 / h);
+                    let (bw, bh) = (
+                        (border.max().x - border.min().x) / unit,
+                        (border.max().y - border.min().y) / unit,
+                    );
+                    // What its scale sizes: its drawing, without the text
+                    // and dimensions, which keep their size on paper. When
+                    // that is small, a smaller scale would not make room,
+                    // and what does is said, measured (#358).
+                    let (dw, dh) = drawings[i].map_or((0.0, 0.0), |d| {
+                        (
+                            (d.max().x - d.min().x) / unit,
+                            (d.max().y - d.min().y) / unit,
+                        )
+                    });
+                    if dw <= bw / 2.0 && dh <= bh / 2.0 {
+                        let text = tallest[i].as_ref().map_or_else(String::new, |(height, content)| {
+                            let words: String = content.chars().take(40).collect();
+                            format!(
+                                " Its tallest text, \"{words}\", is {} mm high on paper — height {}, at the sheet's {} drawing units to a paper millimetre: a text's height in any view is the sheet's, so 2.5 mm is {}.",
+                                plain(height / unit),
+                                plain(*height),
+                                plain(unit),
+                                plain(2.5 * unit),
+                            )
+                        });
+                        return format!(
+                            "View {view}, at its own scale {}, needs {w:.0} × {h:.0} mm of the sheet free, and there is not that much room — yet its drawing at that scale is only {dw:.0} × {dh:.0} mm: its text and dimensions make it the rest, and they keep their size on paper at any scale, so a smaller scale would not make room.{text} Keep the scale; make its text the sheet's size and keep it near what it labels.",
+                            ratio_text(ratio)
+                        );
+                    }
+                    // The largest standard scale at which its drawing takes
+                    // no more than half the sheet each way: a number to give
+                    // back.
+                    let room = (bw / 2.0 / dw).min(bh / 2.0 / dh);
                     let fits = ratio * room;
                     let suggestion = STANDARD_RATIOS
                         .iter()

@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use cad_core::tolerance::LinearTolerance;
+use cad_core::tolerance::{LinearTolerance, ParametricTolerance};
 
 use crate::{Color, Intent, Measure, Operation, Pick, Point, StairKind, Targets, VERSION, point};
 
@@ -185,6 +185,16 @@ pub(crate) fn validate(intent: &Intent) -> Result<(), IntentError> {
         });
     }
     let mut views: Vec<&str> = Vec::new();
+    // The sheet's scale, 1:N: a view's `dim_scale` other than it resizes
+    // every view's dimensions.
+    let sheet_scale = intent
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            Operation::TitleBlock { scale, .. } => Some(scale.unwrap_or(1.0)),
+            _ => None,
+        })
+        .unwrap_or(1.0);
     for (index, operation) in intent.operations.iter().enumerate() {
         let check = Check {
             operation: index,
@@ -235,6 +245,20 @@ pub(crate) fn validate(intent: &Intent) -> Result<(), IntentError> {
                         Reason::Said(
                             "hold only what the view draws: `notes`, `bill_of_materials`, `balloon`, and `title_block` are placed on the sheet itself, so give them after the views, at the top level",
                         ),
+                    ));
+                }
+                // The dimension style is the drawing's, and a dimension is
+                // laid out from it when read: a scale other than the sheet's
+                // set inside one view resizes every view's dimensions, and a
+                // scaled view's are sized for the sheet already (#358).
+                if let Operation::DimScale { scale } = inner
+                    && !ParametricTolerance::DEFAULT.eq(*scale / sheet_scale, 1.0)
+                {
+                    return Err(check.refuse(
+                        "operations",
+                        Reason::Told(format!(
+                            "hold only what the view draws: `dim_scale` {scale} (in view `{id}`, its operation {k}) sets the scale of every dimension on the sheet, the other views' too, and a view's own `scale` sizes its dimensions for the sheet already — give one `dim_scale`, the sheet's scale {sheet_scale}, at the top level before the views"
+                        )),
                     ));
                 }
                 // Said with where in the view it is: the view's operation
