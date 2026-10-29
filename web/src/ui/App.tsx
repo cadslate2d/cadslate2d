@@ -10,6 +10,7 @@ import { ImportReport } from "./ImportReport";
 import { Recovery } from "./Recovery";
 import { LayersPanel } from "./LayersPanel";
 import { About } from "./About";
+import { Tutorial } from "./Tutorial";
 import { HatchDialog } from "./HatchDialog";
 import { AccountButton, AccountDialog } from "./AccountDialog";
 import { MenuBar } from "./MenuBar";
@@ -46,6 +47,7 @@ function assistantFor(app: CadApp): AiAssistant {
       proposalSummary: () => app.engine.proposalSummary(),
       // Beside the app, so the drawing in this tab is not left (ADR-0002).
       openPage: (url) => void window.open(url, "_blank", "noopener"),
+      copyText: (text) => navigator.clipboard.writeText(text),
     },
     AI_SERVICE_URL ? httpAiClient(AI_SERVICE_URL) : undefined,
     browserSessionStore,
@@ -75,6 +77,8 @@ function useVisibilityPreference(key: string, shownAtFirst = true): Visibility {
 export function App() {
   const [core, setCore] = useState<CoreState>({ status: "loading" });
   const [about, setAbout] = useState(false);
+  const [tutorial, setTutorial] = useState(false);
+  const closeTutorial = useCallback(() => setTutorial(false), []);
   const [hatch, setHatch] = useState(false);
   const closeHatch = useCallback(() => setHatch(false), []);
   const [account, setAccount] = useState(false);
@@ -177,6 +181,7 @@ export function App() {
           ?.scrollIntoView({ block: "nearest" }),
       );
     } else if (action.dialog === "about") setAbout(true);
+    else if (action.dialog === "tutorial") setTutorial(true);
     else if (action.dialog === "hatch") setHatch(true);
   };
   const panels = layers.visible || properties.visible || ai.visible;
@@ -208,6 +213,24 @@ export function App() {
       <Recovery app={core.app} />
       <Failure app={core.app} />
       {about && <About version={core.version} onClose={() => setAbout(false)} />}
+      {tutorial && (
+        <Tutorial
+          onRun={(macro) => {
+            setTutorial(false);
+            act({ macro });
+          }}
+          onTry={
+            core.assistant.getSnapshot().status === "unconfigured"
+              ? undefined
+              : (prompt) => {
+                  setTutorial(false);
+                  act({ show: "ai" });
+                  core.assistant.suggest(prompt);
+                }
+          }
+          onClose={closeTutorial}
+        />
+      )}
       {hatch && <HatchDialog app={core.app} onClose={closeHatch} />}
       {account && (
         <AccountDialog

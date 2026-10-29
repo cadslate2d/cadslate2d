@@ -15,9 +15,15 @@
 //! floor cuts the stair.
 //!
 //! **Section.** The profile of risers and treads, with the floors below and
-//! above and the underside of the stair a waist below the nosings; for an L,
-//! a U, and a helix, the profile unrolled along the walking line, landings
-//! flat.
+//! above and the underside of the stair a waist below the nosings; for an L
+//! and a helix, the profile unrolled along the walking line, landings flat.
+//! A U is cut as a building section along its flights cuts it (#358): the
+//! first flight and the landing cut, the second flight seen beyond, coming
+//! back over the first in the same length — not unrolled to twice it.
+//!
+//! **Across.** A straight or U stair cut square to its flights at a
+//! distance along the climb (#358): each flight the cut meets, cut at its
+//! height there; the steps it climbs to beyond, and the landing.
 //!
 //! **In a room.** [`fit`] finds where a straight, L, or U stair goes in a
 //! rectangular room: against a corner, turned a quarter at a time, with
@@ -96,6 +102,8 @@ pub enum StairError {
     /// A helix climbs less than [`HEADROOM`] in a full turn: one would hit
     /// one's head on the stair above. Carries what a turn climbs.
     Headroom(f64),
+    /// A cut across is drawn for a straight or U stair only.
+    Across,
 }
 
 /// What a helix must climb in one full turn: the headroom under the stair
@@ -189,6 +197,8 @@ pub struct Drawing {
     pub cut: Vec<Piece>,
     /// The riser count and size.
     pub label: Vec<Piece>,
+    /// In a section, what is seen beyond the cut: a U's second flight.
+    pub beyond: Vec<Piece>,
 }
 
 /// The height a plan cuts a stair at.
@@ -497,10 +507,178 @@ impl Stair {
         Ok([profile, underside])
     }
 
-    /// The stair in section, unrolled along its walking line: the foot at
-    /// the origin, the floor below along y = 0, the floor above at the
-    /// height, climbing along +x.
+    /// The stair in section: the foot at the origin, the floor below along
+    /// y = 0, the floor above at the height, climbing along +x. A U is cut
+    /// along its flights ([`Self::along`]); the others unrolled along their
+    /// walking line.
     pub fn section(&self) -> Result<Drawing, StairError> {
+        if self.kind == Kind::U {
+            return self.along();
+        }
+        self.unrolled()
+    }
+
+    /// A U cut along its first flight, as a building section through it
+    /// cuts it (#358): that flight and the landing cut, one closed outline
+    /// from the nosings to the underside a waist below; the second flight
+    /// beyond, coming back from the landing over the first to the floor
+    /// above; the floor above reached where it ends. Its length is the
+    /// flights' and the landing's — the stair's footprint — never twice it.
+    fn along(&self) -> Result<Drawing, StairError> {
+        let sizing = self.check()?;
+        let (h, g, w) = (sizing.riser, sizing.tread, self.width);
+        let (first, second) = self.flights(&sizing);
+        let (a, b) = (g * first as f64, g * second as f64);
+        let landing = h * (first + 1) as f64;
+        let top = h * sizing.risers as f64;
+        let pitch = (g * g + h * h).sqrt() / g;
+        // The first flight up to the landing, and the landing.
+        let mut nosings = vec![p(0.0, 0.0)];
+        let (mut x, mut y) = (0.0, 0.0);
+        for k in 0..=first {
+            y += h;
+            nosings.push(p(x, y));
+            x += if k == first { w } else { g };
+            nosings.push(p(x, y));
+        }
+        let mut cut = nosings.clone();
+        // The underside back to the foot: flat under the landing, then a
+        // waist below the nosings, square to the pitch.
+        cut.push(p(a + w, landing - WAIST));
+        cut.push(p(a, landing - WAIST));
+        // At the foot the underside meets the floor, never below it.
+        cut.push(p(0.0, (h - WAIST * pitch).max(0.0)));
+        cut.push(p(0.0, 0.0));
+        let mut out = Drawing::default();
+        out.treads.push(Piece::Polyline {
+            points: cut,
+            closed: true,
+        });
+        // The second flight beyond: from the landing's near edge back
+        // towards the foot, a riser and a tread each, the last riser to
+        // the floor above.
+        let mut back = vec![p(a, landing)];
+        let (mut x, mut y) = (a, landing);
+        for j in 0..=second {
+            y += h;
+            back.push(p(x, y));
+            if j == second {
+                break;
+            }
+            x -= g;
+            back.push(p(x, y));
+        }
+        out.beyond.push(Piece::Polyline {
+            points: back,
+            closed: false,
+        });
+        out.beyond.push(Piece::Line(
+            p(a, landing + h - WAIST * pitch),
+            p(a - b, top - WAIST * pitch),
+        ));
+        // The floors: below, from before the foot; above, from where the
+        // second flight arrives, back over the foot.
+        out.treads.push(Piece::Polyline {
+            points: vec![p(-1.0, 0.0), p(0.0, 0.0), p(0.0, -SLAB), p(-1.0, -SLAB)],
+            closed: false,
+        });
+        out.treads.push(Piece::Polyline {
+            points: vec![
+                p(a - b, top),
+                p(a - b - 1.0, top),
+                p(a - b - 1.0, top - SLAB),
+                p(a - b, top - SLAB),
+            ],
+            closed: false,
+        });
+        out.label.push(label(&sizing, p(0.0, -SLAB - 0.25)));
+        Ok(out)
+    }
+
+    /// A straight or U stair cut square to its flights `at` metres along
+    /// the climb from its foot (#358), seen looking up the first flight:
+    /// across, the stair's own x — the first flight from −w/2 to w/2, a U's
+    /// second beside it from −3w/2 to −w/2 — and up, the height from the
+    /// floor below. Each flight the cut meets is cut: from the tread there
+    /// down to its underside, a waist below the nosings. Beyond it, the
+    /// nosings of the first flight's steps still to climb, and the landing;
+    /// a U's second flight, when the cut is short of it, as the nosings it
+    /// climbs by.
+    pub fn across(&self, at: f64) -> Result<Drawing, StairError> {
+        if !matches!(self.kind, Kind::Straight | Kind::U) {
+            return Err(StairError::Across);
+        }
+        let sizing = self.check()?;
+        let (h, g, w) = (sizing.riser, sizing.tread, self.width);
+        let half = w / 2.0;
+        let pitch = (g * g + h * h).sqrt() / g;
+        let (first, second) = match self.kind {
+            Kind::U => self.flights(&sizing),
+            _ => (sizing.treads(), 0),
+        };
+        let a = g * first as f64;
+        let b = g * second as f64;
+        let landing = (self.kind == Kind::U).then(|| h * (first + 1) as f64);
+        let mut out = Drawing::default();
+        let block = |x0: f64, x1: f64, low: f64, high: f64| Piece::Polyline {
+            points: vec![p(x0, low), p(x1, low), p(x1, high), p(x0, high)],
+            closed: true,
+        };
+        // The first flight: the step the cut is on, and those beyond.
+        let last = if landing.is_some() {
+            first
+        } else {
+            sizing.treads()
+        };
+        if (0.0..g * last as f64).contains(&at) {
+            let k = (at / g).floor() as usize;
+            let tread = h * (k + 1) as f64;
+            let under = (h + at * h / g - WAIST * pitch).max(0.0);
+            out.treads.push(block(-half, half, under, tread));
+            for j in k + 1..last {
+                let y = h * (j + 1) as f64;
+                out.beyond.push(Piece::Line(p(-half, y), p(half, y)));
+            }
+        }
+        if let Some(level) = landing {
+            let left = -half - w;
+            if (a..=a + w).contains(&at) {
+                out.treads.push(block(left, half, level - WAIST, level));
+            } else if at < a {
+                out.beyond.push(Piece::Line(p(left, level), p(half, level)));
+            }
+            // The second flight: cut where the cut meets it, its nosings
+            // seen when the cut is short of it.
+            if (a - b..a).contains(&at) {
+                let d = a - at;
+                let j = (d / g).floor() as usize;
+                let tread = level + h * (j + 1) as f64;
+                let under = level + h + d * h / g - WAIST * pitch;
+                out.treads.push(block(left, -half, under, tread));
+            } else if at < a - b {
+                for j in 0..=second {
+                    let y = level + h * (j + 1) as f64;
+                    out.beyond.push(Piece::Line(p(left, y), p(-half, y)));
+                }
+            }
+        }
+        // The floor below, across the stair.
+        let left = if landing.is_some() { -half - w } else { -half };
+        out.treads.push(Piece::Polyline {
+            points: vec![
+                p(left - 0.3, 0.0),
+                p(half + 0.3, 0.0),
+                p(half + 0.3, -SLAB),
+                p(left - 0.3, -SLAB),
+            ],
+            closed: false,
+        });
+        out.label.push(label(&sizing, p(left, -SLAB - 0.25)));
+        Ok(out)
+    }
+
+    /// The stair in section, unrolled along its walking line.
+    fn unrolled(&self) -> Result<Drawing, StairError> {
         let sizing = self.check()?;
         let (h, g) = (sizing.riser, sizing.tread);
         let (first, _) = self.flights(&sizing);
@@ -825,6 +1003,104 @@ mod tests {
                 .iter()
                 .any(|q| close(q.x, landing[1].x) && close(q.y, landing[1].y - WAIST))
         );
+    }
+
+    fn points(piece: &Piece) -> Vec<Point2> {
+        match piece {
+            Piece::Line(a, b) => vec![*a, *b],
+            Piece::Polyline { points, .. } => points.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// A U cut along its flights is as long as its footprint, not twice
+    /// it (#358): the house's section drew its stair 7.18 m long in a
+    /// 4 m stair zone, the profile unrolled.
+    #[test]
+    fn a_u_section_is_as_long_as_its_footprint_with_the_second_flight_beyond() {
+        let u = Stair {
+            height: 3.2,
+            width: 1.2,
+            ..stair(Kind::U)
+        };
+        let plan = u.footprint().unwrap();
+        let d = u.section().unwrap();
+        let cut = points(&d.treads[0]);
+        let run = |q: &[Point2]| {
+            q.iter().map(|q| q.x).fold(f64::INFINITY, f64::min)
+                ..=q.iter().map(|q| q.x).fold(f64::NEG_INFINITY, f64::max)
+        };
+        // The first flight and the landing, from the foot to the landing's
+        // far side: the footprint's length along the climb.
+        let along = run(&cut);
+        assert!(
+            close(*along.start(), 0.0) && close(*along.end(), plan.max().y),
+            "{along:?}"
+        );
+        // The second flight beyond, inside the same length, up to the floor
+        // above.
+        let back = points(&d.beyond[0]);
+        let seen = run(&back);
+        assert!(*seen.start() >= plan.min().y - 1e-9 && *seen.end() <= plan.max().y + 1e-9);
+        assert!(back.iter().any(|q| close(q.y, 3.2)));
+        // Every rise is a riser.
+        let sizing = u.sizing().unwrap();
+        for pair in back.windows(2) {
+            let step = pair[1] - pair[0];
+            assert!(close(step.x, 0.0) && close(step.y, sizing.riser) || close(step.y, 0.0));
+        }
+    }
+
+    /// A cut across meets each flight at the height the plan puts it at
+    /// (#358): the house's B-B drew one flight climbing across the house.
+    #[test]
+    fn a_cut_across_a_u_meets_each_flight_at_its_height_there() {
+        let u = Stair {
+            height: 3.2,
+            width: 1.2,
+            ..stair(Kind::U)
+        };
+        let sizing = u.sizing().unwrap();
+        let (h, g, w) = (sizing.riser, sizing.tread, 1.2);
+        let (first, second) = u.flights(&sizing);
+        let a = g * first as f64;
+        let level = h * (first + 1) as f64;
+        // Inside both flights' reach: each cut, the second higher.
+        let at = a - g * 1.5;
+        assert!(at > a - g * second as f64);
+        let d = u.across(at).unwrap();
+        let blocks: Vec<Vec<Point2>> = d
+            .treads
+            .iter()
+            .filter(|piece| matches!(piece, Piece::Polyline { closed: true, .. }))
+            .map(points)
+            .collect();
+        assert_eq!(blocks.len(), 2, "{blocks:?}");
+        let top = |q: &[Point2]| q.iter().map(|q| q.y).fold(f64::NEG_INFINITY, f64::max);
+        let right = |q: &[Point2]| q.iter().map(|q| q.x).fold(f64::NEG_INFINITY, f64::max);
+        let (one, two) = if right(&blocks[0]) > 0.0 {
+            (&blocks[0], &blocks[1])
+        } else {
+            (&blocks[1], &blocks[0])
+        };
+        let k = (at / g).floor();
+        assert!(close(top(one), h * (k + 1.0)));
+        let j = ((a - at) / g).floor();
+        assert!(close(top(two), level + h * (j + 1.0)));
+        // The first flight between −w/2 and w/2, the second beside it.
+        assert!(close(right(one), w / 2.0) && close(right(two), -w / 2.0));
+        // The landing beyond, at its level.
+        assert!(
+            d.beyond
+                .iter()
+                .any(|piece| points(piece).iter().all(|q| close(q.y, level)))
+        );
+        // Through the landing: cut flat, across both flights.
+        let through = u.across(a + w / 2.0).unwrap();
+        let slab = points(&through.treads[0]);
+        assert!(close(top(&slab), level) && close(right(&slab), w / 2.0));
+        // An L is cut along it, not across.
+        assert_eq!(stair(Kind::L).across(0.5), Err(StairError::Across));
     }
 
     fn room(w: f64, h: f64) -> Aabb {

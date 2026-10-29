@@ -25,6 +25,57 @@ export function resetDate(iso: string): string {
   });
 }
 
+/** How long a request has been out, as the panel counts it: `47s`, `1m 05s`. */
+export function elapsed(seconds: number): string {
+  const whole = Math.max(0, Math.floor(seconds));
+  if (whole < 60) return `${whole}s`;
+  const minutes = Math.floor(whole / 60);
+  return `${minutes}m ${String(whole % 60).padStart(2, "0")}s`;
+}
+
+/** Copies a turn's words; says "Copied" a moment once they are. */
+function Copy({ assistant, text }: { assistant: AiAssistant; text: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const back = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(back);
+  }, [copied]);
+  return (
+    <button
+      type="button"
+      className="ai__copy"
+      data-testid="ai-copy"
+      onClick={() => void assistant.copy(text).then((done) => done && setCopied(true))}
+    >
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
+/**
+ * "Thinking…" with the seconds since the request went out, counted from
+ * when it is shown: a sheet takes a minute or two, and a count that moves
+ * says the request has not hung.
+ */
+function Thinking() {
+  const [started] = useState(() => Date.now());
+  const [now, setNow] = useState(started);
+  useEffect(() => {
+    const tick = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(tick);
+  }, []);
+  return (
+    <li className="ai__turn ai__turn--notice ai__thinking" data-testid="ai-thinking">
+      <span className="ai__thinking-dot" aria-hidden="true" />
+      Thinking…{" "}
+      <span className="ai__thinking-time" data-testid="ai-thinking-time">
+        {elapsed((now - started) / 1000)}
+      </span>
+    </li>
+  );
+}
+
 /**
  * Keys typed into the panel's fields are the panel's: the command line does
  * not see them. Keys pressed on its buttons go on to the command line, so
@@ -252,6 +303,21 @@ function Conversation({
   pricingUrl?: string;
 }) {
   const [text, setText] = useState("");
+  // A request suggested — a tutorial's example — is put in the prompt,
+  // unsent, as it is rendered; then taken from the assistant, and the
+  // prompt focused to read and change it.
+  const prompt = useRef<HTMLTextAreaElement>(null);
+  const suggested = snapshot.suggested;
+  const [placed, setPlaced] = useState<string | undefined>(undefined);
+  if (suggested !== placed) {
+    setPlaced(suggested);
+    if (suggested !== undefined) setText(suggested);
+  }
+  useEffect(() => {
+    if (suggested === undefined) return;
+    assistant.takeSuggestion();
+    prompt.current?.focus();
+  }, [assistant, suggested]);
   // Up and Down step through the requests already made, as a command
   // line's history does: `recalled` is how far back, 0 the draft.
   const [recalled, setRecalled] = useState(0);
@@ -264,6 +330,16 @@ function Conversation({
     const scroller = scroll.current;
     if (scroller) scroller.scrollTop = scroller.scrollHeight;
   }, [snapshot.turns.length, snapshot.proposal, snapshot.consent, snapshot.busy, snapshot.error]);
+  // The proposal is shown where its answer came: the turns before it,
+  // then it, then what was said after — a revision asked of it.
+  const at = Math.min(snapshot.proposal?.at ?? snapshot.turns.length, snapshot.turns.length);
+  // A request made and a reply can be copied, to reuse or keep; a notice cannot.
+  const turn = (each: AiSnapshot["turns"][number], index: number) => (
+    <li key={index} className={`ai__turn ai__turn--${each.role}`} data-role={each.role}>
+      <span className="ai__turn-text">{each.text}</span>
+      {each.role !== "notice" && <Copy assistant={assistant} text={each.text} />}
+    </li>
+  );
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!text.trim()) return;
@@ -274,81 +350,102 @@ function Conversation({
   return (
     <>
       <div className="ai__scroll" ref={scroll}>
-        <ol className="ai__turns" data-testid="ai-turns" aria-live="polite">
-          {snapshot.turns.map((turn, index) => (
-            <li key={index} className={`ai__turn ai__turn--${turn.role}`} data-role={turn.role}>
-              {turn.text}
-            </li>
-          ))}
-          {snapshot.busy && <li className="ai__turn ai__turn--notice">Thinking…</li>}
-        </ol>
+        <div className="ai__exchange" data-testid="ai-turns" aria-live="polite">
+          <ol className="ai__turns">{snapshot.turns.slice(0, at).map(turn)}</ol>
 
-        {snapshot.proposal && (
-          <section className="ai__proposal" aria-label="Proposal" data-testid="ai-proposal">
-            {snapshot.proposal.options > 1 && (
-              <div className="ai__options" data-testid="ai-options">
+          {snapshot.proposal && (
+            <section className="ai__proposal" aria-label="Proposal" data-testid="ai-proposal">
+              {snapshot.proposal.options > 1 && (
+                <div className="ai__options" data-testid="ai-options">
+                  <button
+                    type="button"
+                    className="ai__button ai__button--quiet"
+                    aria-label="Previous option"
+                    onClick={() => assistant.showOption(-1)}
+                  >
+                    ‹
+                  </button>
+                  <span className="ai__options-count">
+                    Option {snapshot.proposal.option + 1} of {snapshot.proposal.options}
+                  </span>
+                  <button
+                    type="button"
+                    className="ai__button ai__button--quiet"
+                    aria-label="Next option"
+                    onClick={() => assistant.showOption(1)}
+                  >
+                    ›
+                  </button>
+                </div>
+              )}
+              <p className="ai__proposal-headline">{snapshot.proposal.headline}</p>
+              {snapshot.proposal.operations.length > 0 && (
+                <ol className="ai__steps">
+                  {snapshot.proposal.operations.map((step, index) => (
+                    <li key={index}>{step}</li>
+                  ))}
+                </ol>
+              )}
+              {snapshot.proposal.revised && (
+                <div className="ai__changed" data-testid="ai-changed">
+                  {snapshot.proposal.revised.length === 0 ? (
+                    <p className="ai__note">
+                      The same as the proposal it revises: nothing changed.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="ai__note">Changed from the proposal it revises:</p>
+                      <ul className="ai__steps">
+                        {snapshot.proposal.revised.map((change) => (
+                          <li key={change}>{change}</li>
+                        ))}
+                      </ul>
+                      <p className="ai__note">Everything else is as it was.</p>
+                    </>
+                  )}
+                </div>
+              )}
+              {snapshot.proposal.error && <p className="ai__error">{snapshot.proposal.error}</p>}
+              <div className="ai__actions">
                 <button
                   type="button"
-                  className="ai__button ai__button--quiet"
-                  aria-label="Previous option"
-                  onClick={() => assistant.showOption(-1)}
+                  className="ai__button ai__button--primary"
+                  disabled={snapshot.proposal.error !== undefined}
+                  onClick={() => assistant.accept()}
                 >
-                  ‹
+                  Accept
                 </button>
-                <span className="ai__options-count">
-                  Option {snapshot.proposal.option + 1} of {snapshot.proposal.options}
-                </span>
-                <button
-                  type="button"
-                  className="ai__button ai__button--quiet"
-                  aria-label="Next option"
-                  onClick={() => assistant.showOption(1)}
-                >
-                  ›
+                <button type="button" className="ai__button" onClick={() => assistant.revise()}>
+                  Revise
+                </button>
+                <button type="button" className="ai__button" onClick={() => assistant.reject()}>
+                  Reject
                 </button>
               </div>
-            )}
-            <p className="ai__proposal-headline">{snapshot.proposal.headline}</p>
-            {snapshot.proposal.operations.length > 0 && (
-              <ol className="ai__steps">
-                {snapshot.proposal.operations.map((step, index) => (
-                  <li key={index}>{step}</li>
-                ))}
-              </ol>
-            )}
-            {snapshot.proposal.error && <p className="ai__error">{snapshot.proposal.error}</p>}
-            <div className="ai__actions">
-              <button
-                type="button"
-                className="ai__button ai__button--primary"
-                disabled={snapshot.proposal.error !== undefined}
-                onClick={() => assistant.accept()}
-              >
-                Accept
-              </button>
-              <button type="button" className="ai__button" onClick={() => assistant.revise()}>
-                Revise
-              </button>
-              <button type="button" className="ai__button" onClick={() => assistant.reject()}>
-                Reject
-              </button>
-            </div>
-            {snapshot.revising !== undefined && (
-              <p className="ai__note" data-testid="ai-revising">
-                Say how to change it: the next request refines this one.
-              </p>
-            )}
-            {snapshot.proposal.more && (
-              <div className="ai__more" data-testid="ai-more">
-                <p className="ai__note">
-                  Pro shows {snapshot.proposal.more.count} more{" "}
-                  {snapshot.proposal.more.count === 1 ? "option" : "options"} for this request.
+              {snapshot.revising !== undefined && (
+                <p className="ai__note" data-testid="ai-revising">
+                  Say how to change it: the next request refines this one.
                 </p>
-                <Upgrade assistant={assistant} snapshot={snapshot} pricingUrl={pricingUrl} />
-              </div>
-            )}
-          </section>
-        )}
+              )}
+              {snapshot.proposal.more && (
+                <div className="ai__more" data-testid="ai-more">
+                  <p className="ai__note">
+                    Pro shows {snapshot.proposal.more.count} more{" "}
+                    {snapshot.proposal.more.count === 1 ? "option" : "options"} for this request.
+                  </p>
+                  <Upgrade assistant={assistant} snapshot={snapshot} pricingUrl={pricingUrl} />
+                </div>
+              )}
+            </section>
+          )}
+
+          {(at < snapshot.turns.length || snapshot.busy) && (
+            <ol className="ai__turns">
+              {snapshot.turns.slice(at).map((each, index) => turn(each, at + index))}
+              {snapshot.busy && <Thinking />}
+            </ol>
+          )}
+        </div>
 
         {snapshot.consent && (
           <section
@@ -438,6 +535,7 @@ function Conversation({
           </label>
           <textarea
             id="ai-prompt"
+            ref={prompt}
             className="ai__input ai__prompt"
             rows={3}
             value={text}

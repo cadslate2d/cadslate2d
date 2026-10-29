@@ -114,7 +114,7 @@ test("the M20 scenario: drawing and editing by request, accepted, undone, to the
   // 5. The month's allowance reached: what cannot be done is answered and
   // counted, then the prompt closes and says when it comes back.
   await ask(page, IMPOSSIBLE);
-  await expect(panel(page).getByTestId("ai-turns").locator("li").last()).toContainText("2D");
+  await expect(panel(page).getByTestId("ai-turns").locator(".ai__turn").last()).toContainText("2D");
   await expect(panel(page).getByTestId("ai-allowance")).toContainText("0 of 3 left");
   await expect(panel(page).getByTestId("ai-limit")).toContainText("used this month's 3 AI actions");
   await expect(panel(page).getByRole("button", { name: "Ask" })).toBeDisabled();

@@ -115,6 +115,29 @@ fn rescaled(
 /// it. `None` when it does not run there — it acts on objects of a drawing
 /// it was not given — so there is nothing to review.
 pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Option<Vec<String>> {
+    review_stated(intent, unit, &crate::stated::Stated::default())
+}
+
+/// [`review_document`], held to what the request `stated` of its sheet
+/// (#358): where the document departs from the paper or a scale the
+/// request names is a finding, and no finding advises another paper or
+/// scale than the one stated — what does not fit is said, not changed.
+pub fn review_stated(
+    intent: &cad_intent::Intent,
+    unit: Option<&str>,
+    stated: &crate::stated::Stated,
+) -> Option<Vec<String>> {
+    let departures = crate::stated::departures(intent, stated);
+    let mut findings = review_unstated(intent, unit, stated)?;
+    findings.extend(departures);
+    Some(findings)
+}
+
+fn review_unstated(
+    intent: &cad_intent::Intent,
+    unit: Option<&str>,
+    stated: &crate::stated::Stated,
+) -> Option<Vec<String>> {
     let run = |intent: &cad_intent::Intent| {
         let mut session = crate::Session::new();
         session.resize(800.0, 600.0);
@@ -165,7 +188,17 @@ pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Optio
             let room = reason.contains("there is not that much room")
                 && !reason.contains("its own scale alone sets its size")
                 && !reason.contains("a smaller scale would not make room");
-            let fits = current.filter(|_| room).and_then(|paper| {
+            // What the request fixed is not advised away (#358): no other
+            // paper when it named one, no other scale when it gave the
+            // sheet's.
+            let sheet_scale = intent.operations.iter().find_map(|op| match op {
+                Operation::TitleBlock { scale, .. } => Some(scale.unwrap_or(1.0)),
+                _ => None,
+            });
+            let paper_fixed = stated.paper.is_some();
+            let scale_fixed = sheet_scale
+                .is_some_and(|n| stated.scales.iter().any(|s| (s * n - 1.0).abs() < 1e-9));
+            let fits = current.filter(|_| room && !paper_fixed).and_then(|paper| {
                 larger(paper).into_iter().find(|bigger| {
                     let mut tried = intent.clone();
                     for op in &mut tried.operations {
@@ -179,7 +212,7 @@ pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Optio
             // No paper large enough at this scale: the first standard scale,
             // on this paper or on A0, at which it does compose — a number to
             // give back, as a detail is told the ratio that fits (#358).
-            let scaled = (room && fits.is_none())
+            let scaled = (room && fits.is_none() && !paper_fixed && !scale_fixed)
                 .then(|| {
                     let (paper, scale) = intent.operations.iter().find_map(|op| match op {
                         Operation::TitleBlock { paper, scale, .. } => {
@@ -202,8 +235,15 @@ pub fn review_document(intent: &cad_intent::Intent, unit: Option<&str>) -> Optio
                     })
                 })
                 .flatten();
+            // A view's own scale the request gave is not advised away either.
+            let reason = match reason.find(" A `scale` of") {
+                Some(at) if !stated.scales.is_empty() => &reason[..at],
+                _ => reason.as_str(),
+            };
             let reason = reason.trim_end_matches('.');
+            let fixed = paper_fixed || scale_fixed || !stated.scales.is_empty();
             let advice = match (fits, scaled) {
+                (None, None) if room && fixed => " The request fixes this sheet and its scales: make room on it — less drawn around each view, fewer or narrower notes, views stacked rather than side by side — or keep them as they are and say in `reply` what does not fit, rather than choosing another sheet or scale.".to_owned(),
                 (Some(paper), _) => format!(
                     " At this scale it composes on {paper:?}: use {paper:?}, or a smaller scale, narrower notes, or fewer views."
                 ),
@@ -427,8 +467,17 @@ fn structure(drawing: &Drawing) -> Vec<String> {
 /// that do not draw them (ADR-0041 §7). `None` when it is no document, or
 /// does not run on an empty drawing.
 pub fn review_text(text: &str, unit: Option<&str>) -> Option<Vec<String>> {
+    review_text_stated(text, unit, &crate::stated::Stated::default())
+}
+
+/// [`review_text`], held to what the request stated of its sheet (#358).
+pub fn review_text_stated(
+    text: &str,
+    unit: Option<&str>,
+    stated: &crate::stated::Stated,
+) -> Option<Vec<String>> {
     let intent = cad_intent::parse(text).ok()?;
-    let mut findings = review_document(&intent, unit)?;
+    let mut findings = review_stated(&intent, unit, stated)?;
     findings.extend(cad_intent::unused_datums(text));
     Some(findings)
 }
@@ -713,6 +762,52 @@ mod tests {
                 && findings[0].contains("Keep the scale")
                 && !findings[0].contains("or smaller fits")
                 && !findings[0].contains("composes on"),
+            "{findings:?}"
+        );
+    }
+
+    /// A sheet the request fixed is never advised onto another (#358): the
+    /// house's sections were asked for on A2 and answered on A1, the review
+    /// having said "use A1". Stated, the advice is to make room on A2 or to
+    /// say what does not fit; and the departure itself is a finding.
+    #[test]
+    fn a_sheet_and_scale_the_request_fixed_are_not_advised_away() {
+        let crowded = cad_intent::parse(&format!(
+            r#"{{"version": {}, "operations": [
+               {{"op": "title_block", "paper": "A4", "scale": 1, "title": "X", "at": [0, 0]}},
+               {{"op": "view", "id": "front", "placed": "principal", "operations": [
+                   {{"op": "rectangle", "corner": [0, 0], "opposite": [600, 400]}}]}}]}}"#,
+            cad_intent::VERSION
+        ))
+        .unwrap();
+        let unstated = review_document(&crowded, Some("mm")).unwrap();
+        assert!(
+            unstated[0].contains("it composes on A1: use A1"),
+            "{unstated:?}"
+        );
+        let stated = crate::stated::stated("an A4 sheet at 1:1");
+        let findings = review_stated(&crowded, Some("mm"), &stated).unwrap();
+        assert!(
+            findings[0].contains("The request fixes this sheet and its scales: make room on it")
+                && !findings[0].contains("A1")
+                && !findings[0].contains("smaller scale"),
+            "{findings:?}"
+        );
+        // Answered on A3 instead, it is told to keep A4.
+        let moved = cad_intent::parse(&format!(
+            r#"{{"version": {}, "operations": [
+               {{"op": "title_block", "paper": "A3", "scale": 1, "title": "X", "at": [0, 0]}},
+               {{"op": "view", "id": "front", "placed": "principal", "operations": [
+                   {{"op": "rectangle", "corner": [0, 0], "opposite": [100, 60]}}]}}]}}"#,
+            cad_intent::VERSION
+        ))
+        .unwrap();
+        let findings = review_stated(&moved, Some("mm"), &stated).unwrap();
+        assert!(
+            findings
+                .iter()
+                .any(|f| f
+                    .starts_with("The request asks for an A4 sheet, and the title block is A3.")),
             "{findings:?}"
         );
     }

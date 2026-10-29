@@ -12,6 +12,7 @@ pub mod bom;
 pub mod bsection;
 mod command;
 mod commands;
+pub mod compare;
 pub mod compose;
 pub mod constraint_display;
 mod dirty;
@@ -34,6 +35,7 @@ mod session;
 mod settings;
 pub mod snap;
 pub mod stair;
+pub mod stated;
 mod summary;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

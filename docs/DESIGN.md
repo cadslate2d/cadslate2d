@@ -3,7 +3,7 @@
 **Status:** Implementation Baseline v5, annotated with M0 evidence (2026-10-04)  
 **Date:** 2026-08-18  
 **Product:** CadSlate2D  
-**Tagline:** Classic 2D CAD. In your browser.
+**Tagline:** Free 2D CAD in your browser. Draw it yourself, or describe it and the AI drafts it.
 
 ---
 

@@ -567,9 +567,9 @@ fn what_is_refused_says_where_and_why() {
         IntentError::Json { .. }
     ));
     assert!(matches!(
-        parse(r#"{"version": 25, "operations": []}"#).unwrap_err(),
+        parse(r#"{"version": 26, "operations": []}"#).unwrap_err(),
         IntentError::Version {
-            found: 25,
+            found: 26,
             expected: VERSION
         }
     ));
@@ -613,7 +613,7 @@ fn what_is_refused_says_where_and_why() {
 fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../test-data/intent/schema-v24.json"
+        "/../../test-data/intent/schema-v25.json"
     );
     let generated = serde_json::to_string_pretty(&schema()).unwrap() + "\n";
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
@@ -625,7 +625,7 @@ fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
         "the schema changed: bump cad_intent::VERSION, re-record with UPDATE_SNAPSHOTS=1, and name the file after the new version"
     );
     assert!(generated.contains(r#""version""#));
-    assert_eq!(VERSION, 24);
+    assert_eq!(VERSION, 25);
 }
 
 proptest! {
@@ -710,6 +710,6 @@ fn the_selection_word_and_an_intent_serialise_as_the_document_says() {
     };
     assert_eq!(
         serde_json::to_string(&intent).unwrap(),
-        r#"{"version":24,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
+        r#"{"version":25,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
     );
 }

@@ -30,6 +30,7 @@ pub fn entities(drawing: &stair::Drawing, foot: Point2, turn: f64, scale: f64) -
         .chain(&drawing.walking)
         .chain(&drawing.cut)
         .chain(&drawing.label)
+        .chain(&drawing.beyond)
         .map(|piece| match piece {
             Piece::Line(a, b) => LineEntity::new(at(*a), at(*b)).into(),
             Piece::Polyline { points, closed } => {
@@ -103,6 +104,10 @@ pub fn explain(error: stair::StairError) -> String {
             "No riser and tread keep Blondel's rule with these limits.".to_owned()
         }
         stair::StairError::Newel => "A helix's newel must be narrower than the stair.".to_owned(),
+        stair::StairError::Across => {
+            "A cut across the flights is drawn for a straight or U stair; cut an L or a helix along it."
+                .to_owned()
+        }
         stair::StairError::Headroom(climb) => format!(
             "A full turn climbs only {:.2} m: less than the {:.1} m of headroom under the stair above. Make the stair wider.",
             climb,

@@ -15,6 +15,7 @@ import {
   group,
   num,
   openApp,
+  prompt,
   rendererStats,
 } from "./support";
 
@@ -121,8 +122,49 @@ test("a request is previewed, accepted as one undo, rejected, and revised", asyn
   await proposal.getByRole("button", { name: "Revise" }).click();
   await expect(panel(page).getByTestId("ai-revising")).toBeVisible();
   await expect(proposal).toContainText("Adds 1 object");
+  // The revision asked comes after the proposal it revises; the answer's
+  // proposal after the answer, to accept, revise, or reject again.
+  const order = () =>
+    panel(page)
+      .getByTestId("ai-turns")
+      .locator(".ai__turn, .ai__proposal")
+      .evaluateAll((items) =>
+        items.map((item) =>
+          item.classList.contains("ai__proposal")
+            ? "proposal"
+            : `${(item as HTMLElement).dataset["role"]}: ${
+                item.querySelector(".ai__turn-text")?.textContent ?? item.textContent ?? ""
+              }`,
+        ),
+      );
+  // The service measures what a revision changed (#358); the panel says it.
+  service.answers.set(BIGGER, {
+    reply: "The circle, radius 40.",
+    intent: { version: 1, operations: [{ op: "circle", center: [100, 100], radius: 40 }] },
+    changed: ["sheet · 0: 1 replaced"],
+  });
+  service.latency = 1500;
   await ask(page, BIGGER);
-  await expect(panel(page).getByTestId("ai-turns")).toContainText("40");
+  await expect(panel(page).getByTestId("ai-thinking")).toBeVisible();
+  expect((await order()).slice(-3)).toEqual([
+    "proposal",
+    `you: ${BIGGER}`,
+    expect.stringMatching(/^undefined: .*Thinking…/),
+  ]);
+  service.latency = 0;
+  await expect(panel(page).getByTestId("ai-thinking")).toHaveCount(0);
+  const after = await order();
+  expect(after.slice(-4, -2)).toEqual([
+    "notice: Adds 1 object: replaced by the answer below.",
+    `you: ${BIGGER}`,
+  ]);
+  expect(after.at(-2)).toMatch(/^ai: /);
+  expect(after.at(-1)).toBe("proposal");
+  await expect(proposal.getByRole("button", { name: "Revise" })).toBeVisible();
+  await expect(proposal.getByRole("button", { name: "Reject" })).toBeVisible();
+  await expect(proposal.getByTestId("ai-changed")).toContainText(
+    "Changed from the proposal it revises:sheet · 0: 1 replacedEverything else is as it was.",
+  );
   expect(service.interpreted.at(-1)).toMatchObject({
     prompt: BIGGER,
     previous: {
@@ -139,7 +181,7 @@ test("a request is previewed, accepted as one undo, rejected, and revised", asyn
 
   // A request the operations cannot do is answered, and proposes nothing.
   await ask(page, IMPOSSIBLE);
-  await expect(panel(page).getByTestId("ai-turns").locator("li").last()).toContainText("2D");
+  await expect(panel(page).getByTestId("ai-turns").locator(".ai__turn").last()).toContainText("2D");
   await expect(proposal).toHaveCount(0);
 });
 
@@ -288,7 +330,7 @@ test("a floor plan by a brief, a revision, and Accept", async ({ page }) => {
     prompt: BIGGER_KITCHEN,
     previous: { prompt: HOUSE, intent: { operations: [{ op: "floor_plan" }] } },
   });
-  await expect(panel(page).getByTestId("ai-turns").locator("li").last()).toContainText("14");
+  await expect(panel(page).getByTestId("ai-turns").locator(".ai__turn").last()).toContainText("14");
   await proposal.getByRole("button", { name: "Accept" }).click();
   await expect(proposal).toHaveCount(0);
 
@@ -317,7 +359,9 @@ test("what the engine refuses is explained, and nothing is proposed", async ({ p
   await expect
     .poll(() => service.explained.map(([, reason]) => reason))
     .toEqual(["operation 0: FILLET refused: The radius is too large for these lines"]);
-  await expect(panel(page).getByTestId("ai-turns").locator("li").last()).toContainText("smaller");
+  await expect(panel(page).getByTestId("ai-turns").locator(".ai__turn").last()).toContainText(
+    "smaller",
+  );
   await expect(panel(page).getByTestId("ai-proposal")).toHaveCount(0);
   expect(await contents(page)).toBe("2 lines");
   expect(service.outcomes).toEqual([]);
@@ -702,3 +746,108 @@ async function onLayerOf(page: Page, layer: string) {
   const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
   return entities(file.text).filter((entity) => group(entity, 8) === layer);
 }
+
+// A request out says how long it has been, so a sheet's minute or two
+// does not look like a hang; and a whole specification past Free's 2000
+// characters is told it is Pro's, the model not asked.
+test("a request out counts its seconds; Free's long request names Pro", async ({ page }) => {
+  const service = await fakeAiService(page);
+  await openApp(page);
+  await signIn(page, service);
+  service.latency = 2500;
+  await ask(page, CIRCLE);
+  const thinking = panel(page).getByTestId("ai-thinking");
+  await expect(thinking).toContainText("Thinking…");
+  await expect(panel(page).getByTestId("ai-thinking-time")).toHaveText(/^[12]s$/);
+  await expect(panel(page).getByTestId("ai-proposal")).toContainText("Adds 1 object");
+  await expect(thinking).toHaveCount(0);
+  await panel(page).getByRole("button", { name: "Reject" }).click();
+
+  service.latency = 0;
+  const asked = service.interpreted.length;
+  await ask(page, `${CIRCLE} ${"x".repeat(2000)}`);
+  const error = panel(page).getByTestId("ai-error");
+  await expect(error).toHaveAttribute("data-kind", "plan");
+  await expect(error).toContainText("longer than 2000 characters are part of Pro");
+  await expect(panel(page).getByTestId("ai-upgrade")).toBeVisible();
+  expect(service.interpreted.length).toBe(asked);
+});
+
+// Help › Tutorial: the basics, each tried by running its command; then the
+// AI's examples, each put in the prompt unsent, for the user to send.
+test("the tutorial runs a step's command and puts an AI example in the prompt", async ({
+  page,
+}) => {
+  const service = await fakeAiService(page);
+  await openApp(page);
+  await signIn(page, service);
+  await chooseMenu(page, "Help", "Tutorial...");
+  const tutorial = page.getByTestId("tutorial");
+  await expect(tutorial).toContainText("Type a command");
+  await tutorial.getByRole("button", { name: "Try LINE" }).first().click();
+  await expect(tutorial).toHaveCount(0);
+  await expect(prompt(page)).toContainText("Specify first point");
+  await page.keyboard.press("Escape");
+
+  await chooseMenu(page, "Help", "Tutorial...");
+  await tutorial.getByRole("tab", { name: "Drawing with the AI" }).click();
+  await expect(tutorial).toContainText("Say what, how big, and where");
+  const asked = service.interpreted.length;
+  await tutorial
+    .getByRole("button", { name: "Try: Draw a circle of radius 25 centred at 100,100" })
+    .click();
+  await expect(tutorial).toHaveCount(0);
+  const field = panel(page).getByLabel("What should be drawn or changed?");
+  await expect(field).toHaveValue("Draw a circle of radius 25 centred at 100,100");
+  await expect(field).toBeFocused();
+  expect(service.interpreted.length).toBe(asked);
+  // Sent as any request is.
+  await panel(page).getByRole("button", { name: "Ask" }).click();
+  await expect(panel(page).getByTestId("ai-proposal")).toContainText("Adds 1 object");
+});
+
+// A request made or a reply can be copied, by its button or by selecting
+// its words and pressing Ctrl+C, which then copies them rather than the
+// drawing's selection; a click on the drawing gives Ctrl+C back to it.
+test("a reply is copied by its button or by Ctrl+C on its words", async ({
+  page,
+  context,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "the clipboard is read back in Chromium only");
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const service = await fakeAiService(page);
+  await openApp(page);
+  await signIn(page, service);
+  await ask(page, CIRCLE);
+  await expect(panel(page).getByTestId("ai-proposal")).toBeVisible();
+  const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
+  const reply = panel(page).locator(".ai__turn--ai").last();
+  const words = (await reply.locator(".ai__turn-text").textContent()) ?? "";
+  await reply.getByTestId("ai-copy").click();
+  await expect(reply.getByTestId("ai-copy")).toHaveText("Copied");
+  expect(await clipboard()).toBe(words);
+
+  // A line selected in the drawing, then the request's words on the page:
+  // Ctrl+C copies the words, and the drawing's clipboard is not touched.
+  await panel(page).getByRole("button", { name: "Reject" }).click();
+  await enter(page, "L", "0,0", "40,0", "");
+  await enter(page, "SELECT", "ALL", "");
+  const request = panel(page).locator(".ai__turn--you").first();
+  await request.locator(".ai__turn-text").selectText();
+  await page.keyboard.press("Control+c");
+  expect(await clipboard()).toBe(CIRCLE);
+  await expect(page.getByTestId("command-scroll")).not.toContainText("copied to the clipboard");
+
+  // A click on the drawing leaves no words selected: Ctrl+C is the drawing's again.
+  await page
+    .getByRole("region", { name: "Model space" })
+    .locator("canvas")
+    .click({ position: { x: 40, y: 40 } });
+  expect(await page.evaluate(() => window.getSelection()?.toString() ?? "")).toBe("");
+  await enter(page, "SELECT", "ALL", "");
+  await page.keyboard.press("Control+c");
+  await expect(page.getByTestId("command-scroll")).toContainText(
+    "1 object copied to the clipboard.",
+  );
+});

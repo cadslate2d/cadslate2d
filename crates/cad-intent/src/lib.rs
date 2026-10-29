@@ -29,7 +29,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 24;
+pub const VERSION: u32 = 25;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -48,9 +48,11 @@ pub const VERSION: u32 = 24;
 /// `linetype` (#356), version 21 `datum` and a coordinate given as one
 /// (#361), version 22 a section or free view `looking` `from_front`
 /// (#358), version 23 `segments` and a layer's `lineweight` (#358),
-/// version 24 a view's `scale` as written, "1:20" (#358).
-pub const READS: [u32; 24] = [
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+/// version 24 a view's `scale` as written, "1:20" (#358), version 25 a
+/// stair's `id`, shared by every view of one stair, its cut `across` the
+/// flights, and `walls` with their thickness and openings (#358).
+pub const READS: [u32; 25] = [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
 ];
 
 /// A point, `[x, y]`, in the document's units.
@@ -260,6 +262,81 @@ pub enum PaperSize {
     A0,
 }
 
+/// A wall (#358): its centreline from `from` to `to`, and how thick it is.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct WallLine {
+    pub from: Point,
+    pub to: Point,
+    pub thickness: f64,
+}
+
+/// What fills an opening in a wall (#358).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum OpeningKind {
+    Door,
+    Window,
+    /// A gap with nothing in it: a passage, an arch.
+    Opening,
+}
+
+/// The side of a wall a door swings to, looking from the wall's `from` to
+/// its `to` (#358).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum Swing {
+    #[default]
+    Left,
+    Right,
+}
+
+/// The end of an opening a door hangs from: the one nearer the wall's
+/// `from`, or the other (#358).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum Hinge {
+    #[default]
+    Start,
+    End,
+}
+
+/// An opening in a wall (#358): on wall `wall`, by its index, its middle
+/// `at` along the wall's centreline from its `from`, `width` wide.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct WallOpening {
+    pub wall: usize,
+    pub at: f64,
+    pub width: f64,
+    pub kind: OpeningKind,
+    #[serde(default)]
+    pub swing: Swing,
+    #[serde(default)]
+    pub hinge: Hinge,
+}
+
+/// Walls as the `WALLS` command reads them whole (#358): the operation's
+/// walls and openings, and the document's `units` they are in.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WallsSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub units: Option<Unit>,
+    pub walls: Vec<WallLine>,
+    #[serde(default)]
+    pub openings: Vec<WallOpening>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub door_layer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_layer: Option<String>,
+}
+
 /// A stair's kind (#331).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -283,8 +360,12 @@ pub enum StairView {
     /// Seen from above, cut 1.2 m up.
     #[default]
     Plan,
-    /// The profile of its risers and treads, the floors below and above.
+    /// Cut along its flights: the profile of its risers and treads, the
+    /// floors below and above; a U's second flight seen beyond the first.
     Section,
+    /// Cut square to its flights, `cut` along the climb from the foot: a
+    /// straight or U stair, each flight the cut meets at its height there.
+    Across,
 }
 
 /// A geometric constraint's kind (ADR-0038).
@@ -952,7 +1033,12 @@ pub enum Operation {
     /// `at` and climbing along `direction` (degrees, 90 when absent); in
     /// section, its foot `at` on the floor below and running along
     /// `direction` (0 when absent). A helix turns round a newel of
-    /// `newel`'s radius, 15 cm when absent; only a helix has one.
+    /// `newel`'s radius, 15 cm when absent; only a helix has one. Cut
+    /// `across` its flights (#358), `cut` along the climb from the foot —
+    /// the middle of the first flight when absent — its first flight's
+    /// middle `at` on the floor below, across running along `direction`.
+    /// One stair in several views — two floors' plans, its sections — has
+    /// one `id` in each, and the same height, width, and kind (#358).
     Stair {
         height: f64,
         width: f64,
@@ -965,6 +1051,29 @@ pub enum Operation {
         at: Point,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         direction: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cut: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    /// Walls with their thickness (#358): each wall its centreline and
+    /// `thickness`, drawn as the faces a plan shows — one wall where walls
+    /// meet, no line across a joint — with its `openings`: a door, a window,
+    /// or a plain gap, its middle `at` along its wall from the wall's
+    /// `from`, `width` wide; a door swinging to the `left` or `right` of
+    /// the wall looking from `from` to `to`, hung at the opening's `start`
+    /// (nearer `from`) or `end`. The faces go on the current layer; doors on
+    /// `door_layer` and windows on `window_layer`, made if missing, the
+    /// current layer when absent. One operation for a floor's walls:
+    /// a revision gives them again whole, never faces beside a line.
+    Walls {
+        walls: Vec<WallLine>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        openings: Vec<WallOpening>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        door_layer: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window_layer: Option<String>,
     },
 }
 
@@ -1269,6 +1378,7 @@ impl Operation {
             Self::SetParameter { .. } => "set_parameter",
             Self::FloorPlan { .. } => "floor_plan",
             Self::Stair { .. } => "stair",
+            Self::Walls { .. } => "walls",
             Self::Elevation { .. } => "elevation",
             Self::BuildingSection { .. } => "building_section",
             Self::PartViews { .. } => "part_views",

@@ -112,6 +112,12 @@ class FakeHost implements AssistantHost {
     this.rejected += 1;
   }
   opened: string[] = [];
+  copied: string[] = [];
+  refuseClipboard = false;
+  async copyText(text: string) {
+    if (this.refuseClipboard) throw new Error("not allowed");
+    this.copied.push(text);
+  }
   openPage(url: string) {
     this.opened.push(url);
   }
@@ -153,6 +159,28 @@ describe("the AI assistant (#260)", () => {
     expect(assistant.getSnapshot().status).toBe("unconfigured");
     expect(await assistant.start("#ai-sign-in=x")).toBe("#ai-sign-in=x");
     await assistant.ask("a circle");
+    expect(assistant.getSnapshot().turns).toEqual([]);
+  });
+
+  test("a request or a reply is copied to the clipboard; a refusal copies nothing and breaks nothing", async () => {
+    const { assistant, host } = await signedIn();
+    expect(await assistant.copy("A circle.")).toBe(true);
+    expect(host.copied).toEqual(["A circle."]);
+    host.refuseClipboard = true;
+    expect(await assistant.copy("again")).toBe(false);
+    expect(host.copied).toEqual(["A circle."]);
+    expect(assistant.getSnapshot().error).toBeUndefined();
+  });
+
+  test("a suggested request waits for the prompt, is taken once, and is never sent", async () => {
+    const { assistant, client } = await signedIn();
+    const asked = client.asked.length;
+    assistant.suggest("A round flange centred at 0,0");
+    expect(assistant.getSnapshot().suggested).toBe("A round flange centred at 0,0");
+    expect(assistant.takeSuggestion()).toBe("A round flange centred at 0,0");
+    expect(assistant.getSnapshot().suggested).toBeUndefined();
+    expect(assistant.takeSuggestion()).toBeUndefined();
+    expect(client.asked.length).toBe(asked);
     expect(assistant.getSnapshot().turns).toEqual([]);
   });
 
@@ -297,11 +325,39 @@ describe("the AI assistant (#260)", () => {
     // The revised proposal replaced the first, which was not taken.
     expect(host.rejected).toBe(2);
     expect(assistant.getSnapshot().proposal?.request).toBe(4);
+    // Each proposal is shown where its answer came: the revision asked
+    // after the first, the first's place saying it was replaced, the
+    // revised one after its own answer, to accept, revise, or reject.
+    const { turns, proposal } = assistant.getSnapshot();
+    const at = turns.findIndex((turn) => turn.text === "make it bigger");
+    expect(turns.slice(at - 3, at + 1).map((turn) => [turn.role, turn.text])).toEqual([
+      ["you", "a circle"],
+      ["ai", "A circle."],
+      ["notice", "Adds 1 object: replaced by the answer below."],
+      ["you", "make it bigger"],
+    ]);
+    expect(turns[at + 1]).toEqual({ role: "ai", text: "A bigger one." });
+    expect(proposal?.at).toBe(at + 2);
+    expect(turns).toHaveLength(at + 2);
+    // What the service measured the revision to change is the proposal's.
+    expect(proposal?.revised).toBeUndefined();
+    assistant.revise();
+    client.answer = {
+      request: 5,
+      reply: "The stair, again.",
+      intent: CIRCLE,
+      alternatives: [],
+      revised: ["B-B · STAIR: 10 replaced"],
+      allowance: allowance(95),
+    };
+    await assistant.ask("the stair only");
+    expect(assistant.getSnapshot().proposal?.revised).toEqual(["B-B · STAIR: 10 replaced"]);
     await Promise.resolve();
     expect(client.outcomes).toEqual([
       [1, "accepted"],
       [1, "rejected"],
       [3, "rejected"],
+      [4, "rejected"],
     ]);
     // Once taken or dropped, the next request revises nothing.
     assistant.accept();

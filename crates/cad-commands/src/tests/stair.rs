@@ -31,7 +31,7 @@ fn a_straight_stair_in_plan_is_sized_said_and_drawn_as_one_undo() {
         "What kind of stair? [Straight/L/U/Helical] <Straight>:"
     );
     h.enter("");
-    assert_eq!(h.prompt(), "Which view? [Plan/Section] <Plan>:");
+    assert_eq!(h.prompt(), "Which view? [Plan/Section/Across] <Plan>:");
     h.enter_all(&["", "", ""]);
     assert_eq!(h.prompt(), "Command:");
     assert_eq!(
@@ -72,19 +72,78 @@ fn a_u_stair_in_section_in_centimetres_turned_climbs_its_height() {
     assert_eq!(h.prompt(), "Command:");
     let message = h.log().last().unwrap().clone();
     assert!(message.contains("risers of"), "{message}");
-    let profile = on_stair(&h)
-        .into_iter()
+    // Cut along its flights (#358): the first flight and the landing one
+    // closed outline from the foot at 100,50, along +x; the second flight
+    // beyond reaching the floor above, 300 cm higher, inside the same run.
+    let drawn = on_stair(&h);
+    let cut = drawn
+        .iter()
         .find_map(|e| match e {
-            Entity::Polyline(p) if p.vertices.len() > 20 => Some(p),
+            Entity::Polyline(p) if p.closed && p.vertices.len() > 20 => Some(p),
             _ => None,
         })
-        .expect("the profile");
-    // Climbing along +x from 100,50: the floor above 300 cm higher.
-    let top = profile.vertices.last().unwrap();
-    assert!((top.y - 350.0).abs() < 1e-6, "{top:?}");
-    assert!(top.x > 100.0);
-    assert!(profile.vertices.iter().all(|v| v.x >= 100.0 - 1e-6));
+        .expect("the first flight and landing, cut");
+    let run = cut
+        .vertices
+        .iter()
+        .map(|v| v.x)
+        .fold(f64::NEG_INFINITY, f64::max);
+    assert!(cut.vertices.iter().all(|v| v.x >= 100.0 - 1e-6));
+    let beyond = drawn
+        .iter()
+        .find_map(|e| match e {
+            Entity::Polyline(p)
+                if !p.closed
+                    && p.vertices.len() > 4
+                    && p.vertices.iter().any(|v| (v.y - 350.0).abs() < 1e-6) =>
+            {
+                Some(p)
+            }
+            _ => None,
+        })
+        .expect("the second flight beyond");
+    assert!(
+        beyond
+            .vertices
+            .iter()
+            .all(|v| v.x >= 100.0 - 1e-6 && v.x <= run + 1e-6)
+    );
     let _ = Point2::ORIGIN;
+}
+
+/// A U cut across its flights (#358): each flight a block at its height
+/// where the cut meets it, side by side, the first to the right.
+#[test]
+fn a_u_stair_cut_across_is_two_flights_side_by_side() {
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "M", "STAIR", "3.2", "1.2", "U", "A"]);
+    assert!(
+        h.prompt()
+            .starts_with("Specify how far along the climb to cut <"),
+        "{}",
+        h.prompt()
+    );
+    // Well up the first flight, where the second flight is cut too.
+    h.enter_all(&["1.8", "0,0", ""]);
+    assert_eq!(h.prompt(), "Command:");
+    let blocks: Vec<Vec<Point2>> = on_stair(&h)
+        .into_iter()
+        .filter_map(|e| match e {
+            Entity::Polyline(p) if p.closed && p.vertices.len() == 4 => Some(p.vertices),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(blocks.len(), 2, "{blocks:?}");
+    let top = |b: &[Point2]| b.iter().map(|v| v.y).fold(f64::NEG_INFINITY, f64::max);
+    let right = |b: &[Point2]| b.iter().map(|v| v.x).fold(f64::NEG_INFINITY, f64::max);
+    let (first, second) = if right(&blocks[0]) > 0.0 {
+        (&blocks[0], &blocks[1])
+    } else {
+        (&blocks[1], &blocks[0])
+    };
+    assert!((right(first) - 0.6).abs() < 1e-9 && (right(second) + 0.6).abs() < 1e-9);
+    // The second flight, coming back over the first, is the higher there.
+    assert!(top(second) > top(first) && top(second) < 3.2);
 }
 
 #[test]

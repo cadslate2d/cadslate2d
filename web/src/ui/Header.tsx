@@ -16,7 +16,13 @@ export function Header({ coreVersion, account }: HeaderProps) {
       <h1 className="header__brand">
         CadSlate<span className="header__brand-accent">2D</span>
       </h1>
-      <span className="header__tagline">Classic 2D CAD. In your browser.</span>
+      <p className="header__tagline">
+        Free 2D CAD in your browser.{" "}
+        <span className="header__tagline-ai">
+          Draw it yourself, or describe it and the <span className="header__brand-accent">AI</span>{" "}
+          drafts it.
+        </span>
+      </p>
       <div className="header__end">
         <a
           className="header__link"

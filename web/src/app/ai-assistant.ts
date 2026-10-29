@@ -29,6 +29,8 @@ export interface AssistantHost {
   proposalSummary(): ProposalSummary | undefined;
   /** Opens a page of the service's payment provider — Checkout, the billing portal — beside the app. */
   openPage(url: string): void;
+  /** Puts `text` on the system clipboard: a request or a reply, copied. */
+  copyText(text: string): Promise<void>;
 }
 
 /** Somewhere to keep the session between visits: `localStorage`, or a map in tests. */
@@ -62,6 +64,10 @@ export interface AiSnapshot {
   /** The proposal on the canvas, and the service's record of it. */
   readonly proposal?: ProposalSummary & {
     readonly request: number;
+    /** Where the conversation shows it: after this many turns, the answer that made it. */
+    readonly at: number;
+    /** For a revision: what it changed of the proposal it revises; empty when nothing (#358). */
+    readonly revised?: readonly string[];
     /** Which of the request's options is on the canvas, 0 the first, and how many there are (#10). */
     readonly option: number;
     readonly options: number;
@@ -70,6 +76,11 @@ export interface AiSnapshot {
   };
   /** The request Revise will refine. */
   readonly revising?: string;
+  /**
+   * A request to put in the prompt for the user to send or change — a
+   * tutorial's example — until the panel takes it.
+   */
+  readonly suggested?: string;
   /** Why the last call failed, and what kind of failure it was. */
   readonly error?: {
     readonly kind: AiErrorKind;
@@ -267,6 +278,29 @@ export class AiAssistant {
     }
   }
 
+  /** Copies a turn's words — a request made, a reply — to the clipboard; whether it could. */
+  async copy(text: string): Promise<boolean> {
+    try {
+      await this.host.copyText(text);
+      return true;
+    } catch {
+      // A browser that refuses the clipboard: nothing is copied, nothing breaks.
+      return false;
+    }
+  }
+
+  /** Offers `text` for the prompt, unsent: the user reads it, changes it, asks. */
+  suggest(text: string): void {
+    this.#set({ suggested: text });
+  }
+
+  /** The suggestion, taken into the prompt once: gone from the snapshot. */
+  takeSuggestion(): string | undefined {
+    const text = this.#snapshot.suggested;
+    if (text !== undefined) this.#set({ suggested: undefined });
+    return text;
+  }
+
   /** Back to the sign-in form, from "check your email". */
   restartSignIn(): void {
     this.#set({ status: "signed-out", error: undefined });
@@ -341,13 +375,19 @@ export class AiAssistant {
           accepted: false,
         },
       });
-      // A new answer replaces the proposal waiting: that one was not taken.
+      // A new answer replaces the proposal waiting: that one was not taken,
+      // and where it was shown says so.
       const previous = this.#snapshot.proposal;
+      const said = [...this.#snapshot.turns];
       if (previous) {
         this.host.rejectProposal();
         void this.#report(previous.request, "rejected");
+        said.splice(Math.min(previous.at, said.length), 0, {
+          role: "notice",
+          text: `${previous.headline}: replaced by the answer below.`,
+        });
       }
-      const turns = [...this.#snapshot.turns, { role: "ai" as const, text: answer.reply }];
+      const turns = [...said, { role: "ai" as const, text: answer.reply }];
       this.#options = answer.intent ? [answer.intent, ...answer.alternatives] : [];
       if (this.#options.length > 1) {
         // Options: the first on the canvas, the others a step away. One
@@ -395,8 +435,10 @@ export class AiAssistant {
             ? {
                 ...summary,
                 request: answer.request,
+                at: turns.length,
                 option: 0,
                 options: 1,
+                ...(answer.revised ? { revised: answer.revised } : {}),
                 ...(answer.more ? { more: answer.more } : {}),
               }
             : undefined,
@@ -429,11 +471,14 @@ export class AiAssistant {
     const summary = this.host.proposalSummary();
     this.#proposed = { prompt, intent };
     this.#remember(request, { intent });
+    // Another option of the same request is shown where the first was.
+    const shown = this.#snapshot.proposal;
     this.#set({
       proposal: summary
         ? {
             ...summary,
             request,
+            at: shown?.request === request ? shown.at : this.#snapshot.turns.length,
             option: index,
             options: this.#options.length,
             ...(more ? { more } : {}),

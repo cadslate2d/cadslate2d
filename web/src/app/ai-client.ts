@@ -95,6 +95,12 @@ export interface AiAnswer {
   readonly alternatives: readonly unknown[];
   /** The options the plan does not hold: how many, and the plan they need. */
   readonly more?: { readonly count: number; readonly needs: PlanNeed };
+  /**
+   * For a revision: what it changed of the proposal it revises, view by view
+   * and layer by layer (`B-B · STAIR: 10 replaced`), measured by the service;
+   * empty when it changed nothing (#358).
+   */
+  readonly revised?: readonly string[];
   readonly allowance: Allowance;
 }
 
@@ -260,6 +266,7 @@ export function httpAiClient(service: URL, fetcher: typeof fetch = globalThis.fe
         intent: unknown;
         alternatives?: unknown[];
         more?: { count: number; needs: PlanNeed };
+        changed?: string[];
         allowance: WireAllowance;
       };
       return {
@@ -268,6 +275,7 @@ export function httpAiClient(service: URL, fetcher: typeof fetch = globalThis.fe
         intent: answer.intent,
         alternatives: answer.alternatives ?? [],
         ...(answer.more ? { more: answer.more } : {}),
+        ...(answer.changed ? { revised: answer.changed } : {}),
         allowance: allowanceOf(answer.allowance),
       };
     },

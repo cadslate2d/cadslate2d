@@ -189,6 +189,10 @@ export class CanvasController {
     // and keep keyboard focus on the command line.
     this.#canvas.setPointerCapture(event.pointerId);
     event.preventDefault();
+    // Which also keeps words selected on the page — a reply in the AI panel —
+    // selected, and Ctrl+C would copy them, not the drawing's selection: a
+    // press on the drawing clears them, as a click elsewhere on a page does.
+    window.getSelection()?.removeAllRanges();
     if (this.#app.failed) return;
     this.#app.loop.flushPointerMove();
     const { x, y } = this.#position(event);

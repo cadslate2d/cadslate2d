@@ -19,7 +19,10 @@ export function CommandLine({ app }: { app: CadApp }) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const typed = inputRef.current?.value ?? "";
-      const intent = classifyKey(event, app.ui.getSnapshot().spaceAccepts, typed === "");
+      // Words selected on the page — a reply, a line of the log — are what
+      // Ctrl+C copies, not the drawing's selection.
+      const selected = (window.getSelection()?.toString() ?? "") !== "";
+      const intent = classifyKey(event, app.ui.getSnapshot().spaceAccepts, typed === "", selected);
       switch (intent.kind) {
         case "ignore":
           return;

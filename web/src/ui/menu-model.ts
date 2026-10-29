@@ -9,7 +9,7 @@ import type { Macro } from "../app/macro";
 export type Panel = "toolbar" | "layers" | "properties" | "ai";
 
 /** A dialog of the shell's own that an item opens. */
-export type Dialog = "about" | "hatch";
+export type Dialog = "about" | "hatch" | "tutorial";
 
 export type MenuAction =
   | { readonly macro: Macro }

@@ -4,7 +4,9 @@ use std::fmt;
 
 use cad_core::tolerance::{LinearTolerance, ParametricTolerance};
 
-use crate::{Color, Intent, Measure, Operation, Pick, Point, StairKind, Targets, VERSION, point};
+use crate::{
+    Color, Intent, Measure, Operation, Pick, Point, StairKind, StairView, Targets, VERSION, point,
+};
 
 /// Two points of a document are the same point when the drawing would
 /// treat them so (DESIGN §21).
@@ -287,7 +289,73 @@ pub(crate) fn validate(intent: &Intent) -> Result<(), IntentError> {
             }
         }
     }
+    one_stair_per_id(intent)
+}
+
+/// Every `stair` of one `id` is one stair (#358): the same height, width,
+/// kind, and newel in each view that draws it — the two floors' plans and
+/// the sections of the house drew four different stairs.
+fn one_stair_per_id(intent: &Intent) -> Result<(), IntentError> {
+    let mut seen: Vec<(&str, usize, [f64; 3], StairKind)> = Vec::new();
+    let all = intent
+        .operations
+        .iter()
+        .enumerate()
+        .flat_map(|(index, op)| {
+            let inner: Vec<&Operation> = match op {
+                Operation::View { operations, .. } => operations.iter().collect(),
+                other => vec![other],
+            };
+            inner.into_iter().map(move |op| (index, op))
+        });
+    for (index, op) in all {
+        let Operation::Stair {
+            height,
+            width,
+            kind,
+            newel,
+            id: Some(id),
+            ..
+        } = op
+        else {
+            continue;
+        };
+        let sizes = [*height, *width, newel.unwrap_or(0.0)];
+        match seen.iter().find(|(name, ..)| name == id) {
+            None => seen.push((id, index, sizes, *kind)),
+            Some((_, first, was, was_kind))
+                if was_kind != kind
+                    || was
+                        .iter()
+                        .zip(&sizes)
+                        .any(|(a, b)| !LinearTolerance::DEFAULT.eq(*a, *b)) =>
+            {
+                return Err(IntentError::Invalid {
+                    operation: index,
+                    op: "stair",
+                    field: "id",
+                    reason: Reason::Told(format!(
+                        "names stair `{id}`, drawn by operation {first} with height {}, width {} and kind {}, and here with height {height}, width {width} and kind {}: one stair has the same sizes and kind in every view that draws it — give them, or another `id` for another stair",
+                        was[0],
+                        was[1],
+                        kind_name(*was_kind),
+                        kind_name(*kind)
+                    )),
+                });
+            }
+            Some(_) => {}
+        }
+    }
     Ok(())
+}
+
+fn kind_name(kind: StairKind) -> &'static str {
+    match kind {
+        StairKind::Straight => "straight",
+        StairKind::L => "l",
+        StairKind::U => "u",
+        StairKind::Helical => "helical",
+    }
 }
 
 /// The checks, each naming the field it refuses.
@@ -1312,12 +1380,37 @@ impl Check {
                 width,
                 kind,
                 newel,
+                view,
                 at,
                 direction,
-                ..
+                cut,
+                id,
             } => {
                 self.positive("height", *height)?;
                 self.positive("width", *width)?;
+                if let Some(at) = cut {
+                    if *view != StairView::Across {
+                        return Err(self.refuse(
+                            "cut",
+                            Reason::Said(
+                                "is only for a stair cut `across` its flights: how far along the climb from the foot",
+                            ),
+                        ));
+                    }
+                    self.positive("cut", *at)?;
+                }
+                if *view == StairView::Across && !matches!(kind, StairKind::Straight | StairKind::U)
+                {
+                    return Err(self.refuse(
+                        "view",
+                        Reason::Said(
+                            "is `across` only for a straight or U stair; an L or a helix is cut along it, `section`",
+                        ),
+                    ));
+                }
+                if let Some(id) = id {
+                    self.name("id", id)?;
+                }
                 if let Some(radius) = newel {
                     if *kind != StairKind::Helical {
                         return Err(self.refuse("newel", Reason::Unwanted));
@@ -1327,6 +1420,48 @@ impl Check {
                 self.point("at", *at)?;
                 if let Some(angle) = direction {
                     self.number("direction", *angle)?;
+                }
+                Ok(())
+            }
+            Operation::Walls {
+                walls,
+                openings,
+                door_layer,
+                window_layer,
+            } => {
+                if walls.is_empty() {
+                    return Err(self.refuse("walls", Reason::TooFew(1)));
+                }
+                for (i, wall) in walls.iter().enumerate() {
+                    self.point("walls", wall.from)?;
+                    self.point("walls", wall.to)?;
+                    self.positive("walls", wall.thickness)?;
+                    if same_point(wall.from, wall.to) {
+                        return Err(self.refuse(
+                            "walls",
+                            Reason::Told(format!(
+                                "{i} has no length: its `from` and `to` are both {:?}",
+                                wall.from
+                            )),
+                        ));
+                    }
+                }
+                for (i, opening) in openings.iter().enumerate() {
+                    self.positive("openings", opening.width)?;
+                    self.number("openings", opening.at)?;
+                    if opening.wall >= walls.len() {
+                        return Err(self.refuse(
+                            "openings",
+                            Reason::Told(format!(
+                                "{i} is on wall {}, and there are {} walls, counted from 0",
+                                opening.wall,
+                                walls.len()
+                            )),
+                        ));
+                    }
+                }
+                for layer in [door_layer, window_layer].into_iter().flatten() {
+                    self.name("door_layer", layer)?;
                 }
                 Ok(())
             }

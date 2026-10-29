@@ -1645,3 +1645,80 @@ fn a_second_sheet_is_drawn_beside_the_first_with_views_named_as_its_own() {
     }
     assert_eq!(crate::compose::view_group("TITLE-2", "plan"), "VIEW-plan$2");
 }
+
+/// One stair in every view (#358): the house's plans and sections drew
+/// four different stairs. One `id`, one height, width, and kind: the plan's
+/// run along the climb is the section's, and the cut across is as wide as
+/// the plan's two flights; another height for the same id is refused.
+#[test]
+fn one_stair_by_its_id_agrees_in_plan_along_and_across() {
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    h.session
+        .run_intent(&document(
+            r#"
+        {"op": "stair", "id": "S1", "height": 3200, "width": 1200, "kind": "u", "view": "plan", "at": [0, 0]},
+        {"op": "stair", "id": "S1", "height": 3200, "width": 1200, "kind": "u", "view": "section", "at": [20000, 0]},
+        {"op": "stair", "id": "S1", "height": 3200, "width": 1200, "kind": "u", "view": "across", "cut": 1800, "at": [40000, 0]}
+    "#,
+        ))
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", h.log()));
+    let extent = |lo: f64, hi: f64| {
+        let boxes: Vec<cad_core::Aabb> = h
+            .entities()
+            .iter()
+            .filter(|e| matches!(e, Entity::Polyline(_)))
+            .map(|e| e.bounds(h.session.drawing().tables()))
+            .filter(|b| b.min().x >= lo && b.max().x < hi)
+            .collect();
+        boxes.into_iter().reduce(|a, b| a.union(&b)).unwrap()
+    };
+    let plan = extent(-10000.0, 10000.0);
+    let section = extent(15000.0, 30000.0);
+    let across = extent(35000.0, 50000.0);
+    // The plan climbs along +y; the section runs along +x, its cut from
+    // the foot to the landing's far side, and its floors a metre beyond.
+    let along = plan.max().y - plan.min().y;
+    let cut = h
+        .entities()
+        .iter()
+        .filter_map(|e| match e {
+            Entity::Polyline(p)
+                if p.closed
+                    && p.vertices
+                        .first()
+                        .is_some_and(|v| (19000.0..30000.0).contains(&v.x)) =>
+            {
+                Some(e.bounds(h.session.drawing().tables()))
+            }
+            _ => None,
+        })
+        .reduce(|a, b| a.union(&b))
+        .unwrap();
+    assert!(
+        (cut.max().x - cut.min().x - along).abs() < 1e-6,
+        "{cut:?} {plan:?}"
+    );
+    assert!(section.max().y > 3199.0);
+    // Across: both flights, side by side, as wide as the plan.
+    let wide = plan.max().x - plan.min().x;
+    assert!(
+        (across.max().x - across.min().x - wide - 600.0).abs() < 1e-6,
+        "{across:?} {plan:?}"
+    );
+
+    // The same id with another height is another stair: refused.
+    let refused = parse(&format!(
+        r#"{{"version": {VERSION}, "operations": [
+        {{"op": "stair", "id": "S1", "height": 3200, "width": 1200, "kind": "u", "at": [0, 0]}},
+        {{"op": "view", "id": "bb", "placed": "free", "operations": [
+            {{"op": "stair", "id": "S1", "height": 3000, "width": 1200, "kind": "u", "view": "across", "at": [0, 0]}}]}}]}}"#
+    ))
+    .unwrap_err();
+    assert!(
+        refused
+            .to_string()
+            .contains("names stair `S1`, drawn by operation 0 with height 3200"),
+        "{refused}"
+    );
+}

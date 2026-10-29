@@ -90,5 +90,6 @@ mod units;
 mod view;
 mod viewframe;
 mod viewport;
+mod walls;
 mod wblock;
 mod zoom;

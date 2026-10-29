@@ -66,6 +66,11 @@ describe("classifyKey", () => {
   test("Ctrl+C, Ctrl+X, Ctrl+V are the drawing's clipboard only with nothing typed", () => {
     const empty = (name: string) => classifyKey(key(name, { ctrlKey: true }), true, true).kind;
     expect([empty("c"), empty("x"), empty("v")]).toEqual(["copy", "cut", "paste"]);
+    // Words selected on the page — a reply in the AI panel — are the
+    // browser's to copy; pasting is still the drawing's.
+    const selected = (name: string) =>
+      classifyKey(key(name, { ctrlKey: true }), true, true, true).kind;
+    expect([selected("c"), selected("x"), selected("v")]).toEqual(["ignore", "ignore", "paste"]);
     expect(classifyKey(key("v", { metaKey: true }), true, true).kind).toBe("paste");
     // With text typed, they are the browser's, on the text.
     expect(classifyKey(key("c", { ctrlKey: true }), true, false).kind).toBe("ignore");

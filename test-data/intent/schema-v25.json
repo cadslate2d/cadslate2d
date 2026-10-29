@@ -317,6 +317,14 @@
       ],
       "type": "object"
     },
+    "Hinge": {
+      "description": "The end of an opening a door hangs from: the one nearer the wall's\n`from`, or the other (#358).",
+      "enum": [
+        "start",
+        "end"
+      ],
+      "type": "string"
+    },
     "IsoPlane": {
       "description": "An isometric plane (#336): the face of a box two axes span.",
       "oneOf": [
@@ -386,6 +394,23 @@
         "width"
       ],
       "type": "object"
+    },
+    "OpeningKind": {
+      "description": "What fills an opening in a wall (#358).",
+      "oneOf": [
+        {
+          "enum": [
+            "door",
+            "window"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "opening",
+          "description": "A gap with nothing in it: a passage, an arch.",
+          "type": "string"
+        }
+      ]
     },
     "Operation": {
       "description": "One operation of the catalogue. Every length and coordinate is in the\ndocument's units; every angle is in degrees, counter-clockwise.",
@@ -2973,7 +2998,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "A stair sized by Blondel's rule (#331) — two risers and a tread\nmake 63 cm, risers at most 18 cm, treads at least 28 — climbing a\nfloor-to-floor `height`, `width` wide: in plan, its foot's middle\n`at` and climbing along `direction` (degrees, 90 when absent); in\nsection, its foot `at` on the floor below and running along\n`direction` (0 when absent). A helix turns round a newel of\n`newel`'s radius, 15 cm when absent; only a helix has one.",
+          "description": "A stair sized by Blondel's rule (#331) — two risers and a tread\nmake 63 cm, risers at most 18 cm, treads at least 28 — climbing a\nfloor-to-floor `height`, `width` wide: in plan, its foot's middle\n`at` and climbing along `direction` (degrees, 90 when absent); in\nsection, its foot `at` on the floor below and running along\n`direction` (0 when absent). A helix turns round a newel of\n`newel`'s radius, 15 cm when absent; only a helix has one. Cut\n`across` its flights (#358), `cut` along the climb from the foot —\nthe middle of the first flight when absent — its first flight's\nmiddle `at` on the floor below, across running along `direction`.\nOne stair in several views — two floors' plans, its sections — has\none `id` in each, and the same height, width, and kind (#358).",
           "properties": {
             "at": {
               "items": {
@@ -2991,6 +3016,13 @@
               "minItems": 2,
               "type": "array"
             },
+            "cut": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
             "direction": {
               "format": "double",
               "type": [
@@ -3001,6 +3033,12 @@
             "height": {
               "format": "double",
               "type": "number"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "kind": {
               "$ref": "#/$defs/StairKind",
@@ -3031,6 +3069,45 @@
             "height",
             "width",
             "at"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Walls with their thickness (#358): each wall its centreline and\n`thickness`, drawn as the faces a plan shows — one wall where walls\nmeet, no line across a joint — with its `openings`: a door, a window,\nor a plain gap, its middle `at` along its wall from the wall's\n`from`, `width` wide; a door swinging to the `left` or `right` of\nthe wall looking from `from` to `to`, hung at the opening's `start`\n(nearer `from`) or `end`. The faces go on the current layer; doors on\n`door_layer` and windows on `window_layer`, made if missing, the\ncurrent layer when absent. One operation for a floor's walls:\na revision gives them again whole, never faces beside a line.",
+          "properties": {
+            "door_layer": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "op": {
+              "const": "walls",
+              "type": "string"
+            },
+            "openings": {
+              "items": {
+                "$ref": "#/$defs/WallOpening"
+              },
+              "type": "array"
+            },
+            "walls": {
+              "items": {
+                "$ref": "#/$defs/WallLine"
+              },
+              "type": "array"
+            },
+            "window_layer": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "walls"
           ],
           "type": "object"
         }
@@ -3402,10 +3479,23 @@
         },
         {
           "const": "section",
-          "description": "The profile of its risers and treads, the floors below and above.",
+          "description": "Cut along its flights: the profile of its risers and treads, the\nfloors below and above; a U's second flight seen beyond the first.",
+          "type": "string"
+        },
+        {
+          "const": "across",
+          "description": "Cut square to its flights, `cut` along the climb from the foot: a\nstraight or U stair, each flight the cut meets at its height there.",
           "type": "string"
         }
       ]
+    },
+    "Swing": {
+      "description": "The side of a wall a door swings to, looking from the wall's `from` to\nits `to` (#358).",
+      "enum": [
+        "left",
+        "right"
+      ],
+      "type": "string"
     },
     "Targets": {
       "anyOf": [
@@ -3472,6 +3562,91 @@
           "type": "string"
         }
       ]
+    },
+    "WallLine": {
+      "additionalProperties": false,
+      "description": "A wall (#358): its centreline from `from` to `to`, and how thick it is.",
+      "properties": {
+        "from": {
+          "items": {
+            "anyOf": [
+              {
+                "format": "double",
+                "type": "number"
+              },
+              {
+                "$ref": "#/$defs/DatumRef"
+              }
+            ]
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "thickness": {
+          "format": "double",
+          "type": "number"
+        },
+        "to": {
+          "items": {
+            "anyOf": [
+              {
+                "format": "double",
+                "type": "number"
+              },
+              {
+                "$ref": "#/$defs/DatumRef"
+              }
+            ]
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "thickness"
+      ],
+      "type": "object"
+    },
+    "WallOpening": {
+      "additionalProperties": false,
+      "description": "An opening in a wall (#358): on wall `wall`, by its index, its middle\n`at` along the wall's centreline from its `from`, `width` wide.",
+      "properties": {
+        "at": {
+          "format": "double",
+          "type": "number"
+        },
+        "hinge": {
+          "$ref": "#/$defs/Hinge",
+          "default": "start"
+        },
+        "kind": {
+          "$ref": "#/$defs/OpeningKind"
+        },
+        "swing": {
+          "$ref": "#/$defs/Swing",
+          "default": "left"
+        },
+        "wall": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "width": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "wall",
+        "at",
+        "width",
+        "kind"
+      ],
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

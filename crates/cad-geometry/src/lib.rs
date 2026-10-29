@@ -39,6 +39,7 @@ pub mod tangent;
 mod transform;
 mod trim;
 pub mod views;
+pub mod walls;
 
 pub use arc::{Arc, Circle, normalize_angle};
 pub use cloud::{CLOUD_BULGE, MAX_CLOUD_ARCS};

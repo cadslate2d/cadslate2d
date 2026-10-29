@@ -57,8 +57,15 @@ const EDITING_KEYS = new Set(["Backspace", "Delete", "ArrowLeft", "ArrowRight", 
 /**
  * @param spaceAccepts whether Space submits like Enter at the current prompt
  * @param inputEmpty   whether the command line has no text; Delete then acts on the selection
+ * @param textSelected whether words are selected on the page — a reply in the AI panel, a line
+ *                     of the log: Ctrl+C and Ctrl+X then copy them, as on any page
  */
-export function classifyKey(event: KeyLike, spaceAccepts: boolean, inputEmpty = false): KeyIntent {
+export function classifyKey(
+  event: KeyLike,
+  spaceAccepts: boolean,
+  inputEmpty = false,
+  textSelected = false,
+): KeyIntent {
   const command = event.ctrlKey || event.metaKey;
   if (command) {
     const key = event.key.toLowerCase();
@@ -72,10 +79,11 @@ export function classifyKey(event: KeyLike, spaceAccepts: boolean, inputEmpty = 
     if (key === "s" && event.shiftKey) return { kind: "command", command: "SAVEAS" };
     // With text typed, Ctrl+A selects the text, as in any field.
     if (key === "a" && inputEmpty) return { kind: "select-all" };
-    // With text typed, copying and pasting are the browser's, on the text.
+    // With text typed, copying and pasting are the browser's, on the text;
+    // with words selected on the page, copying them is.
     if (inputEmpty && !event.shiftKey) {
-      if (key === "c") return { kind: "copy" };
-      if (key === "x") return { kind: "cut" };
+      if (key === "c") return textSelected ? { kind: "ignore" } : { kind: "copy" };
+      if (key === "x") return textSelected ? { kind: "ignore" } : { kind: "cut" };
       if (key === "v") return { kind: "paste" };
     }
     // Reload, devtools, copy/paste, and every other browser shortcut stay with the browser.

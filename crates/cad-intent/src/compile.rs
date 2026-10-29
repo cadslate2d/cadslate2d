@@ -79,7 +79,7 @@ pub struct Compiled {
 
 /// The commands the catalogue compiles to: the allowlist. No file, host,
 /// or settings command is among them.
-pub const COMMANDS: [&str; 55] = [
+pub const COMMANDS: [&str; 56] = [
     "CENTERVIEWS",
     "DIMCONTINUE",
     "NOTES",
@@ -130,6 +130,7 @@ pub const COMMANDS: [&str; 55] = [
     "ERASE",
     "MEMBERS",
     "STAIR",
+    "WALLS",
     "ELLIPSE",
     "ELEVATION",
     "BSECTION",
@@ -144,7 +145,7 @@ pub fn compile(intent: &Intent) -> Vec<Compiled> {
     let mut index = 0;
     while index < operations.len() {
         if !matches!(operations[index], Operation::View { .. }) {
-            for (command, steps) in commands_of(&operations[index]) {
+            for (command, steps) in commands_of(&operations[index], intent.units) {
                 out.push(Compiled {
                     operation: index,
                     op: operations[index].name(),
@@ -168,7 +169,7 @@ pub fn compile(intent: &Intent) -> Vec<Compiled> {
                 unreachable!("a run of views")
             };
             for inner in operations {
-                for (command, steps) in commands_of(inner) {
+                for (command, steps) in commands_of(inner, intent.units) {
                     out.push(Compiled {
                         operation: first + offset,
                         op: inner.name(),
@@ -214,7 +215,10 @@ pub fn compile(intent: &Intent) -> Vec<Compiled> {
 
 /// The commands an operation runs: one, but a chain of dimensions — its
 /// first dimension, then DIMCONTINUE for the rest (#355).
-fn commands_of(operation: &Operation) -> Vec<(&'static str, Vec<Step>)> {
+fn commands_of(
+    operation: &Operation,
+    units: Option<crate::Unit>,
+) -> Vec<(&'static str, Vec<Step>)> {
     // A datum is read into the coordinates that name it: it runs nothing.
     if matches!(operation, Operation::Datum { .. }) {
         return Vec::new();
@@ -227,7 +231,7 @@ fn commands_of(operation: &Operation) -> Vec<(&'static str, Vec<Step>)> {
             .collect();
     }
     let Operation::DimChain { points, side } = operation else {
-        return vec![steps_of(operation)];
+        return vec![steps_of(operation, units)];
     };
     // Its direction said, not left to where the line's point falls.
     let (axis, points) = crate::chain(points);
@@ -360,7 +364,7 @@ fn pick(pick: &Pick) -> Step {
     Step::Pick(pick.clone())
 }
 
-fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
+fn steps_of(operation: &Operation, units: Option<crate::Unit>) -> (&'static str, Vec<Step>) {
     match operation {
         // Compiled with the run of views it is in (`compile`).
         Operation::View { .. } => ("VIEWFRAME", Vec::new()),
@@ -1154,6 +1158,8 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
             view,
             at: foot,
             direction,
+            cut,
+            ..
         } => {
             let mut steps = vec![
                 length(*height),
@@ -1171,10 +1177,39 @@ fn steps_of(operation: &Operation) -> (&'static str, Vec<Step>) {
             steps.push(keyword(match view {
                 StairView::Plan => "Plan",
                 StairView::Section => "Section",
+                StairView::Across => "Across",
             }));
+            if *view == StairView::Across {
+                steps.push(cut.map_or_else(enter, length));
+            }
             steps.push(at(*foot));
             steps.push(answer(direction.map_or(Answer::Enter, Answer::Angle)));
             ("STAIR", steps)
+        }
+        Operation::Walls {
+            walls,
+            openings,
+            door_layer,
+            window_layer,
+        } => {
+            let spec = crate::WallsSpec {
+                units,
+                walls: walls.clone(),
+                openings: openings.clone(),
+                door_layer: door_layer.clone(),
+                window_layer: window_layer.clone(),
+            };
+            (
+                "WALLS",
+                vec![
+                    keyword("Json"),
+                    answer(Answer::Text(
+                        serde_json::to_string(&spec).expect("walls are plain data"),
+                    )),
+                    // The walls' origin, where a view's are drawn from.
+                    at([0.0, 0.0]),
+                ],
+            )
         }
         Operation::SetParameter { name, value } => (
             "-PARAMETERS",

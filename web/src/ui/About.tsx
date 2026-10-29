@@ -18,7 +18,9 @@ export function About({ version, onClose }: { version: string; onClose: () => vo
       <p className="about__title">
         CadSlate<span className="header__brand-accent">2D</span>
       </p>
-      <p className="about__line">Classic 2D CAD. In your browser.</p>
+      <p className="about__line">
+        Free 2D CAD in your browser. Draw it yourself, or describe it and the AI drafts it.
+      </p>
       <p className="about__line" data-testid="about-version">
         Core version {version}
       </p>

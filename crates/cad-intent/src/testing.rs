@@ -342,6 +342,7 @@ pub fn operation() -> impl Strategy<Value = Operation> {
         constraint(),
         floor_plan(),
         stair(),
+        walls(),
         isometric(),
         elevation(),
         part_views(),
@@ -514,9 +515,9 @@ fn isometric() -> impl Strategy<Value = Operation> {
     ]
 }
 
-/// A stair (#331): of any kind, in plan or section; many sizes are
-/// refused — a helix too tight for headroom, a newel wider than the
-/// stair — and the engine says why.
+/// A stair (#331): of any kind, in plan, in section, or cut across (#358);
+/// many sizes are refused — a helix too tight for headroom, a newel wider
+/// than the stair — and the engine says why.
 fn stair() -> impl Strategy<Value = Operation> {
     (
         (0.5..6.0f64, 0.3..3.0f64),
@@ -527,21 +528,90 @@ fn stair() -> impl Strategy<Value = Operation> {
             Just(StairKind::Helical),
         ],
         proptest::option::of(0.05..1.0f64),
-        prop_oneof![Just(StairView::Plan), Just(StairView::Section)],
+        prop_oneof![
+            Just(StairView::Plan),
+            Just(StairView::Section),
+            Just(StairView::Across)
+        ],
         point(),
         proptest::option::of(-360.0..360.0f64),
+        // An id each, as different stairs have (`one_stair_per_id`).
+        (
+            proptest::option::of(0.01..8.0f64),
+            proptest::option::of((0u32..u32::MAX).prop_map(|n| format!("S{n}"))),
+        ),
     )
         .prop_map(
-            |((height, width), kind, newel, view, at, direction)| Operation::Stair {
-                height,
-                width,
-                kind,
-                newel: newel.filter(|_| kind == StairKind::Helical),
-                view,
-                at,
-                direction,
+            |((height, width), kind, newel, view, at, direction, (cut, id))| {
+                // Across is for a straight or U stair, and only it is cut.
+                let view = match (view, kind) {
+                    (StairView::Across, StairKind::L | StairKind::Helical) => StairView::Section,
+                    (view, _) => view,
+                };
+                Operation::Stair {
+                    height,
+                    width,
+                    kind,
+                    newel: newel.filter(|_| kind == StairKind::Helical),
+                    view,
+                    at,
+                    direction,
+                    cut: cut.filter(|_| view == StairView::Across),
+                    id,
+                }
             },
         )
+}
+
+/// Walls (#358): one to four, with an opening or two on the first; many
+/// openings miss their wall, and the engine says why.
+fn walls() -> impl Strategy<Value = Operation> {
+    use crate::{Hinge, OpeningKind, Swing, WallLine, WallOpening};
+    (
+        prop::collection::vec((point(), point(), 50.0..400.0f64), 1..5),
+        prop::collection::vec(
+            (
+                0.0..5000.0f64,
+                100.0..2000.0f64,
+                prop_oneof![
+                    Just(OpeningKind::Door),
+                    Just(OpeningKind::Window),
+                    Just(OpeningKind::Opening)
+                ],
+                prop_oneof![Just(Swing::Left), Just(Swing::Right)],
+                prop_oneof![Just(Hinge::Start), Just(Hinge::End)],
+            ),
+            0..3,
+        ),
+    )
+        .prop_filter("walls have a length", |(walls, _)| {
+            walls
+                .iter()
+                .all(|(a, b, _)| (a[0] - b[0]).abs() + (a[1] - b[1]).abs() > 1.0)
+        })
+        .prop_map(|(walls, openings)| Operation::Walls {
+            walls: walls
+                .into_iter()
+                .map(|(from, to, thickness)| WallLine {
+                    from,
+                    to,
+                    thickness,
+                })
+                .collect(),
+            openings: openings
+                .into_iter()
+                .map(|(at, width, kind, swing, hinge)| WallOpening {
+                    wall: 0,
+                    at,
+                    width,
+                    kind,
+                    swing,
+                    hinge,
+                })
+                .collect(),
+            door_layer: None,
+            window_layer: None,
+        })
 }
 
 /// A floor plan (#282): a brief of one to six rooms on a plot, some of

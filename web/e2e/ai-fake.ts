@@ -19,6 +19,8 @@ interface Answer {
   alternatives?: unknown[] | null;
   /** Why the engine stopped the document, as the model explained it. */
   explanation?: string;
+  /** For a revision: what it changed, as the service measures it (#358). */
+  changed?: string[];
 }
 
 const CORPUS = new URL("../../test-data/ai/", import.meta.url);
@@ -79,6 +81,8 @@ export class FakeAiService {
   readonly explained: [number, string][] = [];
   /** Each answered request's prompt, by its record. */
   readonly #requests = new Map<number, string>();
+  /** How long an interpret request takes to answer, in milliseconds. */
+  latency = 0;
   /** Free's allowance, and Pro's. */
   allowance = 100;
   proAllowance = 2000;
@@ -237,7 +241,18 @@ export class FakeAiService {
     }
     if (path === "POST /v1/interpret") {
       if (!account) return signedOut();
+      if (this.latency > 0) await new Promise((done) => setTimeout(done, this.latency));
       const pro = this.planOf(account) === "pro";
+      const length = [...String(body["prompt"] ?? "")].length;
+      if (length > 8000) {
+        return reply(422, { error: "That request is longer than 8000 characters." });
+      }
+      if (length > 2000 && !pro) {
+        return reply(403, {
+          error: "Requests longer than 2000 characters are part of Pro: shorten it to 2000.",
+          needs: { plan: "pro", feature: "long_requests" },
+        });
+      }
       if (body["previous"] && !pro) {
         return reply(403, {
           error: "Revising a proposal is part of Pro.",
@@ -278,6 +293,7 @@ export class FakeAiService {
         intent: answer.intent ?? null,
         alternatives: pro ? alternatives : [],
         ...(more ? { more } : {}),
+        ...(answer.changed && body["previous"] ? { changed: answer.changed } : {}),
         allowance: this.#allowance(account),
       });
     }

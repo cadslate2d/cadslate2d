@@ -393,7 +393,11 @@ const PARAMETRIC: Menu = {
 
 const HELP: Menu = {
   label: "&Help",
-  items: [{ kind: "item", label: "&About CadSlate2D...", action: { dialog: "about" } }],
+  items: [
+    { kind: "item", label: "&Tutorial...", action: { dialog: "tutorial" } },
+    SEPARATOR,
+    { kind: "item", label: "&About CadSlate2D...", action: { dialog: "about" } },
+  ],
 };
 
 /** The menu bar, left to right, as AutoCAD 2007/2008's classic workspace orders it. */
