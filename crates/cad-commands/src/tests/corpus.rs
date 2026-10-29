@@ -340,3 +340,57 @@ fn a_sheet_is_judged_on_structure_agreement_dimensions_and_print_scale() {
     let wrong_scale = miss(sheet(left, r#"["front", "left"]"#, 80.0, 2)).unwrap();
     assert!(wrong_scale.starts_with("print scale:"), "{wrong_scale}");
 }
+
+/// A request whose right answer is a question or a stated conflict
+/// (#365): no document, and a reply that says what is missing — one of
+/// each entry's words; a drawing that guesses is a miss, and so is a reply
+/// that does not say it.
+#[test]
+fn a_case_that_asks_is_met_by_saying_what_is_missing_and_drawing_nothing() {
+    let cases = r#"{"name": "stair", "lang": "en", "prompt": "Draw a staircase to the upper floor, 90 cm wide", "asks": ["height|floor to floor|storey"]}"#;
+    let corpus = Corpus {
+        level: "test".to_owned(),
+        cases: Corpus::parse(cases).unwrap(),
+    };
+    assert!(matches!(corpus.cases[0].expected, Expected::Asks(_)));
+    assert!(corpus.faults().is_empty(), "{:?}", corpus.faults());
+    let recording = |reply: &str, intent: serde_json::Value| {
+        let case = &corpus.cases[0];
+        let content = serde_json::json!({"reply": reply, "intent": intent, "alternatives": null});
+        serde_json::json!({"name": "stair", "request": crate::evaluation::request(case),
+            "raw": [{"content": content.to_string(), "usage": {"input": 1, "cached_input": 0, "output": 1}}]})
+        .to_string()
+    };
+    let asked = corpus.score(&recording(
+        "What is the floor-to-floor height? A stair is sized by Blondel's rule from it.",
+        serde_json::Value::Null,
+    ));
+    assert_eq!(asked.passed(), 1, "{:?}", asked.results);
+    let guessed = corpus.score(&recording(
+        "I have drawn the stair for a storey of 2.8 m, since the height was not given in the request.",
+        serde_json::json!({"version": cad_intent::VERSION, "operations": [
+            {"op": "stair", "height": 2800, "width": 900, "at": [0, 0]}]}),
+    ));
+    assert!(
+        guessed.results[0]
+            .miss
+            .as_deref()
+            .unwrap()
+            .starts_with("drew a guess"),
+        "{:?}",
+        guessed.results
+    );
+    let vague = corpus.score(&recording(
+        "I need more information.",
+        serde_json::Value::Null,
+    ));
+    assert!(
+        vague.results[0]
+            .miss
+            .as_deref()
+            .unwrap()
+            .starts_with("the reply does not say height|floor to floor|storey"),
+        "{:?}",
+        vague.results
+    );
+}

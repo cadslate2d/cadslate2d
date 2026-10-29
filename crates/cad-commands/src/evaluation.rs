@@ -38,6 +38,11 @@ pub enum Expected {
     Drawing(Vec<Intent>),
     /// No document: the reply says why.
     Nothing,
+    /// No document, and a reply that asks what is missing or says what
+    /// conflicts (#365): each entry alternatives (`height|altura`), one of
+    /// which the reply must say, case aside. A drawing that guesses is a
+    /// miss.
+    Asks(Vec<String>),
     /// The engine refuses this, and the reply explains.
     Refused(Intent),
     /// A floor plan (#282) whose brief has these properties — what the
@@ -709,6 +714,15 @@ impl Corpus {
                         example: document(&case["example"]).map_err(at)?,
                     },
                     (Value::String(word), _) if word == "nothing" => Expected::Nothing,
+                    _ if case.get("asks").is_some() => Expected::Asks(
+                        case["asks"]
+                            .as_array()
+                            .ok_or_else(|| at("`asks` is a list".to_owned()))?
+                            .iter()
+                            .map(|v| v.as_str().map(str::to_owned))
+                            .collect::<Option<_>>()
+                            .ok_or_else(|| at("`asks` holds text".to_owned()))?,
+                    ),
                     (Value::Array(alternatives), _) => Expected::Drawing(
                         alternatives
                             .iter()
@@ -845,6 +859,11 @@ impl Corpus {
                     Err(error) => faults.push(format!("{}: the example: {error}", case.name)),
                 },
                 Expected::Nothing => {}
+                Expected::Asks(wanted) => {
+                    if wanted.iter().any(|w| w.split('|').any(str::is_empty)) {
+                        faults.push(format!("{}: an empty word in `asks`", case.name));
+                    }
+                }
             }
         }
         faults
@@ -1287,6 +1306,7 @@ fn wanted(case: &Case, intent: &Intent) -> Result<Vec<String>, String> {
             }
         }
         Expected::Nothing => Err("proposed what cannot be done".to_owned()),
+        Expected::Asks(_) => Err("drew a guess where it should ask".to_owned()),
         Expected::Refused(_) => Err("not refused".to_owned()),
     }
 }
@@ -1342,6 +1362,20 @@ fn judge(case: &Case, recording: &Value) -> Result<(), String> {
             }
             (Expected::Nothing, None) => Ok(()),
             (Expected::Nothing, Some(_)) => Err("proposed what cannot be done".to_owned()),
+            (Expected::Asks(_), Some(_)) => Err(format!(
+                "drew a guess where it should ask or say what conflicts: {reply}"
+            )),
+            (Expected::Asks(wanted), None) => {
+                let said = reply.to_lowercase();
+                match wanted.iter().find(|alternatives| {
+                    !alternatives
+                        .split('|')
+                        .any(|word| said.contains(&word.to_lowercase()))
+                }) {
+                    None => Ok(()),
+                    Some(missing) => Err(format!("the reply does not say {missing}: {reply}")),
+                }
+            }
             (Expected::Refused(_), intent) => {
                 // Refused by the engine, or seen to be impossible by the model:
                 // either way nothing is proposed, and the reply says why.
