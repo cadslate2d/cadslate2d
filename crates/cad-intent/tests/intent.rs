@@ -385,11 +385,17 @@ fn what_is_refused_says_where_and_why() {
             other => panic!("{bad}: {other:?}"),
         }
     }
-    // A section given an `of` is told where its parent goes.
-    match refused(
-        r#"{"op": "view", "id": "aa", "placed": "section", "of": "plan", "cut": {"of": "plan", "from": [0, 0], "to": [10, 0], "toward": [5, 5]},
-            "operations": [{"op": "line", "points": [[0, 0], [10, 0]]}]}"#,
-    ) {
+    // A section's `of` naming the view its cut crosses is the cut's own,
+    // said twice, and taken: three answers of one nightly run were refused
+    // for it (#358). One naming another view is told where its parent goes.
+    let section = |of: &str| {
+        format!(
+            r#"{{"op": "view", "id": "aa", "placed": "section", "of": "{of}", "cut": {{"of": "plan", "from": [0, 0], "to": [10, 0], "toward": [5, 5]}},
+                "operations": [{{"op": "line", "points": [[0, 0], [10, 0]]}}]}}"#
+        )
+    };
+    assert!(parse(&document(&section("plan"))).is_ok());
+    match refused(&section("front")) {
         IntentError::Invalid {
             field: "of",
             reason: reason @ Reason::Said(_),

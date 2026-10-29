@@ -672,9 +672,16 @@ impl Check {
                         }
                     }
                     // A free view or a section may say where it looks from,
-                    // which gives its datums their axes (#361).
+                    // which gives its datums their axes (#361). A section's
+                    // `of` naming the view its cut crosses says the same
+                    // thing twice, as models write it: only one that
+                    // disagrees with the cut is refused (#358).
                     _ => {
-                        if of.is_some() {
+                        let agrees = matches!(
+                            (of, cut),
+                            (Some(of), Some(cut)) if *of == cut.of
+                        );
+                        if of.is_some() && !agrees {
                             return Err(self.refuse(
                                 "of",
                                 Reason::Said(
