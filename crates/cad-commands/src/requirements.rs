@@ -177,9 +177,9 @@ fn check_one(drawing: &Drawing, requirement: &Requirement, factor: f64) -> Outco
             let found = ids
                 .iter()
                 .filter_map(|id| match drawing.entity(*id)? {
-                    Entity::Polyline(p) if p.closed => {
-                        Some(Entity::Polyline(p.clone()).bounds(tables))
-                    }
+                    entity @ Entity::Polyline(p) if p.closed => Some(entity.bounds(tables)),
+                    // A hole is an outline as much as a block is.
+                    entity @ Entity::Circle(_) => Some(entity.bounds(tables)),
                     _ => None,
                 })
                 .filter(|b: &Aabb| {
@@ -354,5 +354,33 @@ mod tests {
             ),
             "{finding}"
         );
+    }
+
+    #[test]
+    fn holes_are_outlines_and_need_no_square_drawn_round_them() {
+        // A plate's four holes, as the nightly evaluation found a model
+        // drawing squares round them to meet a count of outlines.
+        let plate = cad_intent::parse(&format!(
+            r#"{{"version": {}, "operations": [
+               {{"op": "rectangle", "corner": [0, 0], "opposite": [120, 80]}},
+               {{"op": "circle", "center": [10, 10], "radius": 5}},
+               {{"op": "circle", "center": [110, 10], "radius": 5}},
+               {{"op": "circle", "center": [10, 70], "radius": 5}},
+               {{"op": "circle", "center": [110, 70], "radius": 5}}]}}"#,
+            cad_intent::VERSION
+        ))
+        .unwrap();
+        let wanted = [
+            requirement(
+                "Four holes of 10 mm diameter",
+                r#"{"kind": "outlines", "count": 4, "width": 10, "height": 10}"#,
+            ),
+            requirement(
+                "A 120 × 80 plate",
+                r#"{"kind": "outlines", "count": 1, "width": 120, "height": 80}"#,
+            ),
+        ];
+        let met = check_document(&plate, &wanted, None).unwrap();
+        assert!(met.iter().all(|o| o.met), "{met:?}");
     }
 }

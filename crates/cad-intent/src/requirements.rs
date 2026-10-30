@@ -42,8 +42,9 @@ pub enum Check {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         view: Option<String>,
     },
-    /// `count` closed outlines `width` × `height`, either way round — in the
-    /// view `view`, when given: three baffle blocks, fifteen parcels.
+    /// `count` closed outlines `width` × `height`, either way round — closed
+    /// polylines and circles, in the view `view` when given: three baffle
+    /// blocks, fifteen parcels, four holes.
     Outlines {
         count: u32,
         width: f64,
