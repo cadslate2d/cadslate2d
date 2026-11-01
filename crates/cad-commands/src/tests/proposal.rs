@@ -138,6 +138,42 @@ fn accept_is_one_undo_and_makes_what_was_shown() {
     assert_eq!(h.session.drawing().len(), 3);
 }
 
+/// #371: Accept while a command is still asking ends the command first,
+/// outside the proposal's undo step: one U takes back the proposal alone,
+/// and the next the work the command did before.
+#[test]
+fn accept_during_a_command_leaves_its_work_out_of_the_proposals_undo() {
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "10,0"]);
+    assert_eq!(
+        h.session.drawing().len(),
+        1,
+        "one segment, LINE still asking"
+    );
+    h.session.propose(document(
+        r#"{"op": "circle", "center": [50, 50], "radius": 5}"#,
+    ));
+    h.session.accept_proposal();
+    assert_eq!(h.session.drawing().len(), 2);
+    assert_eq!(h.prompt(), "Command:");
+    h.undo();
+    let left: Vec<Entity> = h
+        .session
+        .drawing()
+        .entities()
+        .map(|(_, e)| e.clone())
+        .collect();
+    assert_eq!(
+        left,
+        vec![Entity::Line(LineEntity::new(
+            Point2::new(0.0, 0.0),
+            Point2::new(10.0, 0.0)
+        ))]
+    );
+    h.undo();
+    assert_eq!(h.session.drawing().len(), 0);
+}
+
 #[test]
 fn reject_leaves_no_trace_and_a_new_proposal_replaces_the_old() {
     let mut h = with_a_line();

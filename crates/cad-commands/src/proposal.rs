@@ -213,10 +213,18 @@ impl Session {
         let Some(proposal) = self.take_proposal() else {
             return Dirty::NONE;
         };
+        // A command still asking is ended first, outside the proposal's
+        // group: what it already made is its own undo step, not part of
+        // the proposal's (#371).
+        let cancelled = if self.command_active() {
+            self.key(crate::KeyAction::Escape)
+        } else {
+            Dirty::NONE
+        };
         self.begin_undo_group();
         let outcome = self.run_intent(&proposal.intent);
         self.end_undo_group();
-        let dirty = Dirty::SCENE | Dirty::OVERLAY | Dirty::UI;
+        let dirty = Dirty::SCENE | Dirty::OVERLAY | Dirty::UI | cancelled;
         match outcome {
             Ok(_) => dirty | self.notify("Proposal accepted."),
             Err(error) => dirty | self.notify(format!("Proposal stopped: {error}.")),
