@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use cad_core::Point2;
-use cad_document::{Drawing, Entity, TableId, TextEntity};
+use cad_document::{Drawing, Entity, Table, TableId, TableRef};
 use cad_geometry::Transform;
 use cad_intent::Intent;
 
@@ -89,50 +89,21 @@ fn objects(drawing: &Drawing) -> BTreeMap<(String, String, String), usize> {
 /// a view's dimension style, derived for each scaled view in view order —
 /// gives the same object another id (#370).
 fn by_name(drawing: &Drawing, mut entity: Entity) -> String {
-    fn name<Row>(
-        table: &cad_document::Table<Row>,
-        id: TableId<Row>,
-        of: impl Fn(&Row) -> &str,
-    ) -> String {
-        table
-            .get(id)
-            .map_or_else(String::new, |row| of(row).to_owned())
+    fn named<Row>(table: &Table<Row>, id: &mut TableId<Row>, of: impl Fn(&Row) -> &str) -> String {
+        let name = table.get(*id).map_or("", of).to_owned();
+        *id = TableId::FIRST;
+        name
     }
-    let first = |text: &mut TextEntity| {
-        let style = name(drawing.text_styles(), text.style, |r| &r.name);
-        text.style = TableId::FIRST;
-        style
-    };
-    let rows: String = match &mut entity {
-        Entity::Dimension(d) => {
-            let style = name(drawing.dim_styles(), d.style, |r| &r.name);
-            d.style = TableId::FIRST;
-            style
-        }
-        Entity::Leader(l) => {
-            let style = name(drawing.dim_styles(), l.style, |r| &r.name);
-            l.style = TableId::FIRST;
-            style
-        }
-        Entity::MLeader(m) => {
-            let style = name(drawing.mleader_styles(), m.style, |r| &r.name);
-            m.style = TableId::FIRST;
-            style
-        }
-        Entity::Text(t) => first(t),
-        Entity::AttributeDefinition(a) => first(&mut a.text),
-        Entity::MText(t) => {
-            let style = name(drawing.text_styles(), t.style, |r| &r.name);
-            t.style = TableId::FIRST;
-            style
-        }
-        Entity::BlockRef(b) => {
-            let block = name(drawing.blocks(), b.block, |r| &r.name);
-            b.block = TableId::FIRST;
-            block
-        }
-        _ => String::new(),
-    };
+    let rows: Vec<String> = entity
+        .table_refs_mut()
+        .into_iter()
+        .map(|row| match row {
+            TableRef::TextStyle(id) => named(drawing.text_styles(), id, |r| &r.name),
+            TableRef::DimStyle(id) => named(drawing.dim_styles(), id, |r| &r.name),
+            TableRef::MLeaderStyle(id) => named(drawing.mleader_styles(), id, |r| &r.name),
+            TableRef::Block(id) => named(drawing.blocks(), id, |r| &r.name),
+        })
+        .collect();
     format!("{entity:?} {rows:?}")
 }
 
@@ -347,6 +318,98 @@ mod tests {
             vec!["CC · 0: 2 added", "CC · VIEW-TITLES: 1 added"]
         );
         assert!(undeclared(&changes, &["CC".into()]).is_empty());
+    }
+
+    /// #370: every row an object refers to — each kind of reference — is
+    /// compared by its name: the same object naming a row made in another
+    /// order reads the same, and one naming another row does not.
+    #[test]
+    fn every_row_an_object_refers_to_is_compared_by_name_not_by_id() {
+        use cad_document::{
+            AttributeDefinitionEntity, Block, BlockReferenceEntity, DimStyle, DimensionEntity,
+            EntityRecord, LeaderEntity, LineEntity, MLeaderContent, MLeaderEntity, MLeaderStyle,
+            MTextEntity, Measure, Properties, TextEntity, TextStyle,
+        };
+        let p = Point2::new;
+        // One row of each table named "S"; with `padded`, a row named
+        // "Other" made first in each, so every "S" has another id.
+        let made = |padded: bool| {
+            let mut drawing = Drawing::new();
+            let mut tx = drawing.transaction();
+            let block = |name: &str| {
+                Block::new(
+                    name,
+                    Point2::ORIGIN,
+                    vec![EntityRecord::new(
+                        Entity::Line(LineEntity::new(p(0.0, 0.0), p(1.0, 1.0))),
+                        Properties::default(),
+                    )],
+                )
+            };
+            if padded {
+                tx.add_text_style(TextStyle::named("Other")).unwrap();
+                tx.add_dim_style(DimStyle::named("Other")).unwrap();
+                tx.add_mleader_style(MLeaderStyle::named("Other")).unwrap();
+                tx.define_block(block("Other")).unwrap();
+            }
+            let text_style = tx.add_text_style(TextStyle::named("S")).unwrap();
+            let dim_style = tx.add_dim_style(DimStyle::named("S")).unwrap();
+            let mleader_style = tx.add_mleader_style(MLeaderStyle::named("S")).unwrap();
+            let defined = tx.define_block(block("S")).unwrap();
+            tx.commit();
+            let mut text = TextEntity::new(p(0.0, 0.0), 2.5, 0.0, "A");
+            text.style = text_style;
+            let mut mtext = MTextEntity::new(p(0.0, 0.0), 20.0, 2.5, 0.0, "A");
+            mtext.style = text_style;
+            let mut dimension = DimensionEntity::new(
+                Measure::Aligned {
+                    a: p(0.0, 0.0),
+                    b: p(10.0, 0.0),
+                },
+                p(5.0, 5.0),
+            );
+            dimension.style = dim_style;
+            let mut leader = LeaderEntity::new(vec![p(0.0, 0.0), p(5.0, 5.0)]);
+            leader.style = dim_style;
+            let mut styled = MLeaderEntity::new(p(0.0, 0.0), p(5.0, 5.0), MLeaderContent::None);
+            styled.style = mleader_style;
+            let mut holding = MLeaderEntity::new(
+                p(0.0, 0.0),
+                p(5.0, 5.0),
+                MLeaderContent::Block {
+                    block: defined,
+                    scale: 1.0,
+                },
+            );
+            holding.style = mleader_style;
+            let entities: Vec<Entity> = vec![
+                text.clone().into(),
+                mtext.into(),
+                AttributeDefinitionEntity::new("T", "Tag?", text).into(),
+                dimension.into(),
+                leader.into(),
+                styled.into(),
+                holding.into(),
+                BlockReferenceEntity::new(defined, p(0.0, 0.0), 1.0, 0.0).into(),
+            ];
+            (drawing, entities)
+        };
+        let (first, plain) = made(false);
+        let (second, padded) = made(true);
+        for (a, b) in plain.iter().zip(&padded) {
+            assert_ne!(a, b, "the rows have other ids");
+            assert_eq!(
+                by_name(&first, a.clone()),
+                by_name(&second, b.clone()),
+                "the same rows by name"
+            );
+        }
+        // The first drawing's ids name the "Other" rows in the second:
+        // another row is another object.
+        for (a, b) in padded.iter().zip(&plain) {
+            let other = by_name(&second, b.clone());
+            assert_ne!(by_name(&second, a.clone()), other, "{a:?}");
+        }
     }
 
     #[test]

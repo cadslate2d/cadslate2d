@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use super::{TransactionBuilder, TransactionError};
 use crate::{
     Block, BlockId, DimStyleId, Drawing, Entity, EntityRecord, LayerId, Linetype, LinetypeId,
-    MLeaderContent, MLeaderStyleId, Properties, TextStyleId,
+    MLeaderStyleId, Properties, TableRef, TextStyleId,
 };
 
 /// Which of this drawing's rows each of the other drawing's rows became.
@@ -66,40 +66,13 @@ impl TransactionBuilder<'_> {
         rows: &mut Rows,
     ) -> Result<Entity, TransactionError> {
         let mut entity = entity.clone();
-        match &mut entity {
-            Entity::Text(text) => text.style = self.bring_text_style(source, text.style, rows)?,
-            Entity::MText(text) => text.style = self.bring_text_style(source, text.style, rows)?,
-            Entity::AttributeDefinition(definition) => {
-                definition.text.style =
-                    self.bring_text_style(source, definition.text.style, rows)?;
+        for row in entity.table_refs_mut() {
+            match row {
+                TableRef::TextStyle(id) => *id = self.bring_text_style(source, *id, rows)?,
+                TableRef::DimStyle(id) => *id = self.bring_dim_style(source, *id, rows)?,
+                TableRef::MLeaderStyle(id) => *id = self.bring_mleader_style(source, *id, rows)?,
+                TableRef::Block(id) => *id = self.bring_block(source, *id, rows)?,
             }
-            Entity::Dimension(dimension) => {
-                dimension.style = self.bring_dim_style(source, dimension.style, rows)?;
-            }
-            Entity::Leader(leader) => {
-                leader.style = self.bring_dim_style(source, leader.style, rows)?;
-            }
-            Entity::MLeader(mleader) => {
-                mleader.style = self.bring_mleader_style(source, mleader.style, rows)?;
-                if let MLeaderContent::Block { block, .. } = &mut mleader.content {
-                    *block = self.bring_block(source, *block, rows)?;
-                }
-            }
-            Entity::BlockRef(reference) => {
-                reference.block = self.bring_block(source, reference.block, rows)?;
-            }
-            Entity::Line(_)
-            | Entity::Circle(_)
-            | Entity::Arc(_)
-            | Entity::Ellipse(_)
-            | Entity::Spline(_)
-            | Entity::Polyline(_)
-            | Entity::Hatch(_)
-            | Entity::Viewport(_)
-            | Entity::Wipeout(_)
-            | Entity::Point(_)
-            | Entity::XLine(_)
-            | Entity::Ray(_) => {}
         }
         Ok(entity)
     }

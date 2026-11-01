@@ -464,6 +464,53 @@ pub enum Entity {
     MLeader(MLeaderEntity),
 }
 
+/// A row of a table an entity refers to, by its ID, to be read or
+/// replaced: matched by name when objects come in from another drawing
+/// (#222), named when two runs are compared (#370).
+#[derive(Debug)]
+pub enum TableRef<'a> {
+    TextStyle(&'a mut crate::TextStyleId),
+    DimStyle(&'a mut crate::DimStyleId),
+    MLeaderStyle(&'a mut crate::MLeaderStyleId),
+    Block(&'a mut BlockId),
+}
+
+impl Entity {
+    /// Every table row this entity refers to: the one list of them, so a
+    /// new kind that refers to a row is a decision made here, once.
+    pub fn table_refs_mut(&mut self) -> Vec<TableRef<'_>> {
+        match self {
+            Entity::Text(text) => vec![TableRef::TextStyle(&mut text.style)],
+            Entity::MText(text) => vec![TableRef::TextStyle(&mut text.style)],
+            Entity::AttributeDefinition(definition) => {
+                vec![TableRef::TextStyle(&mut definition.text.style)]
+            }
+            Entity::Dimension(dimension) => vec![TableRef::DimStyle(&mut dimension.style)],
+            Entity::Leader(leader) => vec![TableRef::DimStyle(&mut leader.style)],
+            Entity::MLeader(MLeaderEntity { style, content, .. }) => {
+                let mut refs = vec![TableRef::MLeaderStyle(style)];
+                if let MLeaderContent::Block { block, .. } = content {
+                    refs.push(TableRef::Block(block));
+                }
+                refs
+            }
+            Entity::BlockRef(reference) => vec![TableRef::Block(&mut reference.block)],
+            Entity::Line(_)
+            | Entity::Circle(_)
+            | Entity::Arc(_)
+            | Entity::Ellipse(_)
+            | Entity::Spline(_)
+            | Entity::Polyline(_)
+            | Entity::Hatch(_)
+            | Entity::Viewport(_)
+            | Entity::Wipeout(_)
+            | Entity::Point(_)
+            | Entity::XLine(_)
+            | Entity::Ray(_) => Vec::new(),
+        }
+    }
+}
+
 impl Entity {
     /// World-space bounding box, used by the spatial index. A block
     /// reference's comes from its definition, a dimension's from its
