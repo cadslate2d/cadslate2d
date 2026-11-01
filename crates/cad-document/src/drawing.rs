@@ -27,8 +27,8 @@ use crate::layout::{Layout, LayoutId, LayoutPlot, LayoutTable, initial_layouts};
 use crate::leader::LeaderError;
 use crate::linetype::{LinetypeDef, LinetypeError, LinetypeId, LinetypeTable, initial_linetypes};
 use crate::mleader::{
-    MLeaderContent, MLeaderEntity, MLeaderError, MLeaderStyle, MLeaderStyleError, MLeaderStyleId,
-    MLeaderStyleTable, initial_mleader_styles,
+    MLeaderError, MLeaderStyle, MLeaderStyleError, MLeaderStyleId, MLeaderStyleTable,
+    initial_mleader_styles,
 };
 use crate::named_view::{NamedView, NamedViewId, NamedViewTable, initial_named_views};
 use crate::names::{NameError, check_name, same_name};
@@ -42,8 +42,7 @@ use crate::text_style::{
 use crate::viewport::ViewportError;
 use crate::{
     Change, Color, DrawingSettings, Entity, EntityChange, EntityRecord, EntityStore, Linetype,
-    Lineweight, MTextEntity, Properties, Revision, SettingsChange, SpatialIndex, TextEntity,
-    Transaction,
+    Lineweight, Properties, Revision, SettingsChange, SpatialIndex, TableRow, Transaction,
 };
 
 /// A 2D drawing.
@@ -914,33 +913,30 @@ impl Drawing {
         {
             return Err(TransactionError::UnknownLinetype(id));
         }
+        // Every row it refers to is there (#370).
+        for row in entity.table_refs() {
+            match row {
+                TableRow::TextStyle(id) if !drawing.text_styles.contains(id) => {
+                    return Err(TransactionError::UnknownTextStyle(id));
+                }
+                TableRow::DimStyle(id) if !drawing.dim_styles.contains(id) => {
+                    return Err(TransactionError::UnknownDimStyle(id));
+                }
+                TableRow::MLeaderStyle(id) if !drawing.mleader_styles.contains(id) => {
+                    return Err(TransactionError::UnknownMLeaderStyle(id));
+                }
+                TableRow::Block(id) if !drawing.blocks.contains(id) => {
+                    return Err(TransactionError::UnknownBlock(id));
+                }
+                _ => {}
+            }
+        }
         match entity {
-            Entity::Text(TextEntity { style, .. }) | Entity::MText(MTextEntity { style, .. })
-                if !drawing.text_styles.contains(*style) =>
-            {
-                Err(TransactionError::UnknownTextStyle(*style))
-            }
-            Entity::BlockRef(reference) if !drawing.blocks.contains(reference.block) => {
-                Err(TransactionError::UnknownBlock(reference.block))
-            }
-            Entity::Dimension(dimension) if !drawing.dim_styles.contains(dimension.style) => {
-                Err(TransactionError::UnknownDimStyle(dimension.style))
-            }
             Entity::Dimension(dimension) if dimension.check().is_err() => Err(
                 TransactionError::BadDimension(dimension.check().unwrap_err()),
             ),
-            Entity::Leader(leader) if !drawing.dim_styles.contains(leader.style) => {
-                Err(TransactionError::UnknownDimStyle(leader.style))
-            }
             Entity::Leader(leader) if leader.check().is_err() => {
                 Err(TransactionError::BadLeader(leader.check().unwrap_err()))
-            }
-            Entity::MLeader(MLeaderEntity {
-                content: MLeaderContent::Block { block, .. },
-                ..
-            }) if !drawing.blocks.contains(*block) => Err(TransactionError::UnknownBlock(*block)),
-            Entity::MLeader(mleader) if !drawing.mleader_styles.contains(mleader.style) => {
-                Err(TransactionError::UnknownMLeaderStyle(mleader.style))
             }
             Entity::MLeader(mleader) => mleader.check().map_err(TransactionError::BadMLeader),
             Entity::BlockRef(reference)
@@ -1715,9 +1711,10 @@ impl Drawing {
                         let dependents: Vec<EntityId> = self
                             .entities
                             .iter()
-                            .filter_map(|(entity_id, entity)| match &**entity {
-                                Entity::MLeader(mleader) if mleader.style == *id => Some(entity_id),
-                                _ => None,
+                            .filter_map(|(entity_id, entity)| {
+                                entity
+                                    .refers_to(TableRow::MLeaderStyle(*id))
+                                    .then_some(entity_id)
                             })
                             .collect();
                         for entity_id in dependents {
@@ -1738,12 +1735,10 @@ impl Drawing {
                         let dependents: Vec<EntityId> = self
                             .entities
                             .iter()
-                            .filter_map(|(entity_id, entity)| match &**entity {
-                                Entity::Dimension(dimension) if dimension.style == *id => {
-                                    Some(entity_id)
-                                }
-                                Entity::Leader(leader) if leader.style == *id => Some(entity_id),
-                                _ => None,
+                            .filter_map(|(entity_id, entity)| {
+                                entity
+                                    .refers_to(TableRow::DimStyle(*id))
+                                    .then_some(entity_id)
                             })
                             .collect();
                         for entity_id in dependents {
@@ -1881,8 +1876,7 @@ impl TransactionBuilder<'_> {
             .ok_or(TransactionError::UnknownEntity(source))?;
         let (properties, space, order) = (record.properties, record.space, record.order);
         let entity = entity.into();
-        self.known_text_style(&entity)?;
-        self.known_block(&entity)?;
+        self.known_rows(&entity)?;
         viewport_placeable(&entity, space)?;
         let record = EntityRecord::new(entity, properties).in_space(space);
         Ok(self.insert_record(record.in_order(order)))
@@ -1904,8 +1898,7 @@ impl TransactionBuilder<'_> {
             lineweight: settings.current_lineweight,
         };
         let entity = entity.into();
-        self.known_text_style(&entity)?;
-        self.known_block(&entity)?;
+        self.known_rows(&entity)?;
         viewport_placeable(&entity, space)?;
         let record = EntityRecord::new(entity, properties).in_space(space);
         Ok(self.insert_record(record.in_order(self.drawing.top_order())))
@@ -1922,8 +1915,7 @@ impl TransactionBuilder<'_> {
         self.known_layer(properties.layer)?;
         self.known_linetype(properties.linetype)?;
         let entity = entity.into();
-        self.known_text_style(&entity)?;
-        self.known_block(&entity)?;
+        self.known_rows(&entity)?;
         viewport_placeable(&entity, space)?;
         let record = EntityRecord::new(entity, properties).in_space(space);
         Ok(self.insert_record(record.in_order(self.drawing.top_order())))
@@ -2218,8 +2210,7 @@ impl TransactionBuilder<'_> {
             return Err(TransactionError::PermanentMLeaderStyle);
         }
         let row = self.existing_mleader_style(id)?;
-        let uses =
-            |entity: &Entity| matches!(entity, Entity::MLeader(mleader) if mleader.style == id);
+        let uses = |entity: &Entity| entity.refers_to(TableRow::MLeaderStyle(id));
         let pending = self.changes.iter().any(|change| match change {
             Change::Entity(EntityChange::Insert { record, .. })
             | Change::Entity(EntityChange::Replace { after: record, .. }) => uses(&record.entity),
@@ -2427,8 +2418,7 @@ impl TransactionBuilder<'_> {
         entity: impl Into<Entity>,
     ) -> Result<(), TransactionError> {
         let entity = entity.into();
-        self.known_text_style(&entity)?;
-        self.known_block(&entity)?;
+        self.known_rows(&entity)?;
         let before = self.existing(id)?;
         viewport_placeable(&entity, before.space)?;
         let after = before.with_entity(entity);
@@ -2483,8 +2473,7 @@ impl TransactionBuilder<'_> {
         properties: Properties,
     ) -> Result<(), TransactionError> {
         let entity = entity.into();
-        self.known_text_style(&entity)?;
-        self.known_block(&entity)?;
+        self.known_rows(&entity)?;
         self.known_layer(properties.layer)?;
         self.known_linetype(properties.linetype)?;
         let before = self.existing(id)?;
@@ -3164,12 +3153,7 @@ impl TransactionBuilder<'_> {
         if self.settings_now().current_text_style == id {
             return Err(TransactionError::TextStyleInUse(id));
         }
-        let uses = |entity: &Entity| match entity {
-            Entity::Text(text) => text.style == id,
-            Entity::MText(text) => text.style == id,
-            Entity::AttributeDefinition(definition) => definition.text.style == id,
-            _ => false,
-        };
+        let uses = |entity: &Entity| entity.refers_to(TableRow::TextStyle(id));
         let pending = self.changes.iter().any(|change| match change {
             Change::Entity(EntityChange::Insert { record, .. }) => uses(&record.entity),
             Change::Entity(EntityChange::Replace { after, .. }) => uses(&after.entity),
@@ -3238,11 +3222,7 @@ impl TransactionBuilder<'_> {
         if self.settings_now().current_dim_style == id {
             return Err(TransactionError::DimStyleInUse(id));
         }
-        let uses = |entity: &Entity| match entity {
-            Entity::Dimension(dimension) => dimension.style == id,
-            Entity::Leader(leader) => leader.style == id,
-            _ => false,
-        };
+        let uses = |entity: &Entity| entity.refers_to(TableRow::DimStyle(id));
         let pending = self.changes.iter().any(|change| match change {
             Change::Entity(EntityChange::Insert { record, .. }) => uses(&record.entity),
             Change::Entity(EntityChange::Replace { after, .. }) => uses(&after.entity),
@@ -3508,33 +3488,6 @@ impl TransactionBuilder<'_> {
         }
     }
 
-    /// Whether `entity` may be stored: a block reference must place a
-    /// block that exists — never the drawing itself — at a positive scale.
-    fn known_block(&self, entity: &Entity) -> Result<(), TransactionError> {
-        // A multileader's block note (#241): a block that is there.
-        if let Entity::MLeader(MLeaderEntity {
-            content: MLeaderContent::Block { block, .. },
-            ..
-        }) = entity
-            && (*block == BlockId::FIRST || self.block_now(*block).is_none())
-        {
-            return Err(TransactionError::UnknownBlock(*block));
-        }
-        let Entity::BlockRef(reference) = entity else {
-            return Ok(());
-        };
-        if reference.block == BlockId::FIRST {
-            return Err(TransactionError::PermanentBlock);
-        }
-        if self.block_now(reference.block).is_none() {
-            return Err(TransactionError::UnknownBlock(reference.block));
-        }
-        if !(reference.scale.is_finite() && reference.scale > 0.0) {
-            return Err(TransactionError::BadBlockScale);
-        }
-        Ok(())
-    }
-
     /// Whether a definition's entities are ones the drawing could hold,
     /// and none of them places `id` itself, directly or through others.
     fn check_block_contents(&self, id: BlockId, block: &Block) -> Result<(), TransactionError> {
@@ -3548,8 +3501,7 @@ impl TransactionBuilder<'_> {
         for record in block.entities.iter() {
             self.known_layer(record.properties.layer)?;
             self.known_linetype(record.properties.linetype)?;
-            self.known_text_style(&record.entity)?;
-            self.known_block(&record.entity)?;
+            self.known_rows(&record.entity)?;
         }
         if self.drawing.blocks.would_cycle(id, block) {
             return Err(TransactionError::BlockCycle(id));
@@ -3944,33 +3896,48 @@ impl TransactionBuilder<'_> {
         }
     }
 
-    /// Whether the entity may be stored: a text's style must exist once
-    /// this transaction commits; a dimension's too, and the dimension must
-    /// be one that can be laid out.
-    fn known_text_style(&self, entity: &Entity) -> Result<(), TransactionError> {
-        let style = match entity {
-            Entity::Text(text) => text.style,
-            Entity::MText(text) => text.style,
+    /// Whether `entity` is one the drawing could hold as this transaction
+    /// leaves it: a dimension or multileader of a shape it can be drawn
+    /// from, every row it refers to there (#370) — a block other than the
+    /// model's — and a reference at a scale.
+    fn known_rows(&self, entity: &Entity) -> Result<(), TransactionError> {
+        match entity {
             Entity::Dimension(dimension) => {
                 dimension.check().map_err(TransactionError::BadDimension)?;
-                if self.dim_style_now(dimension.style).is_none() {
-                    return Err(TransactionError::UnknownDimStyle(dimension.style));
-                }
-                return Ok(());
             }
-            // A multileader's style likewise, and points it can be drawn
-            // from (#240).
-            Entity::MLeader(mleader) => {
-                mleader.check().map_err(TransactionError::BadMLeader)?;
-                if self.mleader_style_now(mleader.style).is_none() {
-                    return Err(TransactionError::UnknownMLeaderStyle(mleader.style));
+            // Points a multileader can be drawn from (#240).
+            Entity::MLeader(mleader) => mleader.check().map_err(TransactionError::BadMLeader)?,
+            _ => {}
+        }
+        for row in entity.table_refs() {
+            match row {
+                TableRow::TextStyle(id) if self.text_style_now(id).is_none() => {
+                    return Err(TransactionError::UnknownTextStyle(id));
                 }
-                return Ok(());
+                TableRow::DimStyle(id) if self.dim_style_now(id).is_none() => {
+                    return Err(TransactionError::UnknownDimStyle(id));
+                }
+                TableRow::MLeaderStyle(id) if self.mleader_style_now(id).is_none() => {
+                    return Err(TransactionError::UnknownMLeaderStyle(id));
+                }
+                // The model's block is placed by nothing; a multileader's
+                // block note (#241) naming it names no block.
+                TableRow::Block(id) if id == BlockId::FIRST => {
+                    return Err(match entity {
+                        Entity::BlockRef(_) => TransactionError::PermanentBlock,
+                        _ => TransactionError::UnknownBlock(id),
+                    });
+                }
+                TableRow::Block(id) if self.block_now(id).is_none() => {
+                    return Err(TransactionError::UnknownBlock(id));
+                }
+                _ => {}
             }
-            _ => return Ok(()),
-        };
-        if self.text_style_now(style).is_none() {
-            return Err(TransactionError::UnknownTextStyle(style));
+        }
+        if let Entity::BlockRef(reference) = entity
+            && !(reference.scale.is_finite() && reference.scale > 0.0)
+        {
+            return Err(TransactionError::BadBlockScale);
         }
         Ok(())
     }
@@ -6239,6 +6206,22 @@ mod tests {
         assert_eq!(
             tx.insert(ghost.clone()),
             Err(TransactionError::UnknownTextStyle(TextStyleId::from_raw(9)))
+        );
+        // An attribute definition's text and a leader refer to rows too,
+        // and are refused the ones that are not there (#370).
+        assert_eq!(
+            tx.insert(crate::AttributeDefinitionEntity::new(
+                "T",
+                "Tag?",
+                ghost.clone()
+            )),
+            Err(TransactionError::UnknownTextStyle(TextStyleId::from_raw(9)))
+        );
+        let mut leader = crate::LeaderEntity::new(vec![Point2::ORIGIN, Point2::new(5.0, 5.0)]);
+        leader.style = DimStyleId::from_raw(9);
+        assert_eq!(
+            tx.insert(leader),
+            Err(TransactionError::UnknownDimStyle(DimStyleId::from_raw(9)))
         );
         tx.commit();
 

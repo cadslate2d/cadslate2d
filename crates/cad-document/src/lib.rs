@@ -74,7 +74,7 @@ pub use editing::{
 };
 pub use entity::{
     ArcEntity, AttributeDefinitionEntity, CircleEntity, EllipseEntity, Entity, LineEntity,
-    MTextEntity, PolylineEntity, SharedEntity, SplineEntity, TableRef, TextEntity,
+    MTextEntity, PolylineEntity, SharedEntity, SplineEntity, TableRef, TableRow, TextEntity,
 };
 pub use exploding::ExplodeError;
 pub use grips::{EntityGrip, GripKind};

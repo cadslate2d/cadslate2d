@@ -464,9 +464,19 @@ pub enum Entity {
     MLeader(MLeaderEntity),
 }
 
-/// A row of a table an entity refers to, by its ID, to be read or
-/// replaced: matched by name when objects come in from another drawing
-/// (#222), named when two runs are compared (#370).
+/// A row of a table an entity refers to: whether it is there, and whether
+/// a row is in use, are read from these (#370).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TableRow {
+    TextStyle(crate::TextStyleId),
+    DimStyle(crate::DimStyleId),
+    MLeaderStyle(crate::MLeaderStyleId),
+    Block(BlockId),
+}
+
+/// A row of a table an entity refers to, by its ID, to be replaced:
+/// matched by name when objects come in from another drawing (#222),
+/// named when two runs are compared (#370).
 #[derive(Debug)]
 pub enum TableRef<'a> {
     TextStyle(&'a mut crate::TextStyleId),
@@ -476,8 +486,50 @@ pub enum TableRef<'a> {
 }
 
 impl Entity {
-    /// Every table row this entity refers to: the one list of them, so a
-    /// new kind that refers to a row is a decision made here, once.
+    /// Every table row this entity refers to. With `table_refs_mut`, the
+    /// one list of them: whether a row is there, whether it is in use, and
+    /// how it is matched or named all read it, so a new kind that refers
+    /// to a row is a decision made here, once. The two matches are kept
+    /// alike, and a test holds them so.
+    pub fn table_refs(&self) -> Vec<TableRow> {
+        match self {
+            Entity::Text(text) => vec![TableRow::TextStyle(text.style)],
+            Entity::MText(text) => vec![TableRow::TextStyle(text.style)],
+            Entity::AttributeDefinition(definition) => {
+                vec![TableRow::TextStyle(definition.text.style)]
+            }
+            Entity::Dimension(dimension) => vec![TableRow::DimStyle(dimension.style)],
+            Entity::Leader(leader) => vec![TableRow::DimStyle(leader.style)],
+            Entity::MLeader(MLeaderEntity { style, content, .. }) => {
+                let mut rows = vec![TableRow::MLeaderStyle(*style)];
+                if let MLeaderContent::Block { block, .. } = content {
+                    rows.push(TableRow::Block(*block));
+                }
+                rows
+            }
+            Entity::BlockRef(reference) => vec![TableRow::Block(reference.block)],
+            Entity::Line(_)
+            | Entity::Circle(_)
+            | Entity::Arc(_)
+            | Entity::Ellipse(_)
+            | Entity::Spline(_)
+            | Entity::Polyline(_)
+            | Entity::Hatch(_)
+            | Entity::Viewport(_)
+            | Entity::Wipeout(_)
+            | Entity::Point(_)
+            | Entity::XLine(_)
+            | Entity::Ray(_) => Vec::new(),
+        }
+    }
+
+    /// Whether this entity refers to `row`.
+    pub fn refers_to(&self, row: TableRow) -> bool {
+        self.table_refs().contains(&row)
+    }
+
+    /// Every table row this entity refers to, to be replaced: the same
+    /// list as `table_refs`.
     pub fn table_refs_mut(&mut self) -> Vec<TableRef<'_>> {
         match self {
             Entity::Text(text) => vec![TableRef::TextStyle(&mut text.style)],
@@ -555,14 +607,10 @@ impl Entity {
     /// The block the entity places: a reference's, or a multileader's
     /// block note's (#241).
     pub fn placed_block(&self) -> Option<BlockId> {
-        match self {
-            Entity::BlockRef(reference) => Some(reference.block),
-            Entity::MLeader(MLeaderEntity {
-                content: MLeaderContent::Block { block, .. },
-                ..
-            }) => Some(*block),
+        self.table_refs().into_iter().find_map(|row| match row {
+            TableRow::Block(block) => Some(block),
             _ => None,
-        }
+        })
     }
 
     /// Whether the entity is drawn as an area — a solid hatch, a wipeout,
@@ -1224,6 +1272,101 @@ mod tests {
             .unwrap()
             .into(),
         ]
+    }
+
+    /// #370: the rows an entity refers to, read and to be rewritten, are
+    /// the same list — two matches kept alike — for every kind that refers
+    /// to one, and none for the rest.
+    #[test]
+    fn the_rows_read_are_the_rows_rewritten() {
+        use crate::{
+            AttributeDefinitionEntity, BlockReferenceEntity, DimStyleId, DimensionEntity,
+            LeaderEntity, MLeaderStyleId, Measure, TextStyleId,
+        };
+        let p = Point2::new;
+        let mut text = TextEntity::new(p(0.0, 0.0), 2.5, 0.0, "A");
+        text.style = TextStyleId::from_raw(3);
+        let mut mtext = MTextEntity::new(p(0.0, 0.0), 20.0, 2.5, 0.0, "A");
+        mtext.style = TextStyleId::from_raw(4);
+        let mut dimension = DimensionEntity::new(
+            Measure::Aligned {
+                a: p(0.0, 0.0),
+                b: p(10.0, 0.0),
+            },
+            p(5.0, 5.0),
+        );
+        dimension.style = DimStyleId::from_raw(5);
+        let mut leader = LeaderEntity::new(vec![p(0.0, 0.0), p(5.0, 5.0)]);
+        leader.style = DimStyleId::from_raw(6);
+        let mut holding = MLeaderEntity::new(
+            p(0.0, 0.0),
+            p(5.0, 5.0),
+            MLeaderContent::Block {
+                block: BlockId::from_raw(7),
+                scale: 1.0,
+            },
+        );
+        holding.style = MLeaderStyleId::from_raw(8);
+        let mut saying = holding.clone();
+        saying.content = MLeaderContent::Text("A".into());
+        let referring: Vec<(Entity, Vec<TableRow>)> = vec![
+            (
+                text.clone().into(),
+                vec![TableRow::TextStyle(TextStyleId::from_raw(3))],
+            ),
+            (
+                mtext.into(),
+                vec![TableRow::TextStyle(TextStyleId::from_raw(4))],
+            ),
+            (
+                AttributeDefinitionEntity::new("T", "Tag?", text).into(),
+                vec![TableRow::TextStyle(TextStyleId::from_raw(3))],
+            ),
+            (
+                dimension.into(),
+                vec![TableRow::DimStyle(DimStyleId::from_raw(5))],
+            ),
+            (
+                leader.into(),
+                vec![TableRow::DimStyle(DimStyleId::from_raw(6))],
+            ),
+            (
+                holding.into(),
+                vec![
+                    TableRow::MLeaderStyle(MLeaderStyleId::from_raw(8)),
+                    TableRow::Block(BlockId::from_raw(7)),
+                ],
+            ),
+            (
+                saying.into(),
+                vec![TableRow::MLeaderStyle(MLeaderStyleId::from_raw(8))],
+            ),
+            (
+                BlockReferenceEntity::new(BlockId::from_raw(9), p(0.0, 0.0), 1.0, 0.0).into(),
+                vec![TableRow::Block(BlockId::from_raw(9))],
+            ),
+        ];
+        let rewritten = |mut entity: Entity| -> Vec<TableRow> {
+            entity
+                .table_refs_mut()
+                .into_iter()
+                .map(|row| match row {
+                    TableRef::TextStyle(id) => TableRow::TextStyle(*id),
+                    TableRef::DimStyle(id) => TableRow::DimStyle(*id),
+                    TableRef::MLeaderStyle(id) => TableRow::MLeaderStyle(*id),
+                    TableRef::Block(id) => TableRow::Block(*id),
+                })
+                .collect()
+        };
+        for (entity, rows) in referring {
+            assert_eq!(entity.table_refs(), rows, "{entity:?}");
+            assert_eq!(rewritten(entity.clone()), rows, "{entity:?}");
+            assert!(rows.iter().all(|row| entity.refers_to(*row)));
+        }
+        for entity in one_of_each() {
+            assert!(entity.table_refs().is_empty(), "{entity:?}");
+            assert!(rewritten(entity).is_empty());
+        }
     }
 
     /// Sample points along an entity: enough to tell whether two entities
