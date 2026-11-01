@@ -26,8 +26,9 @@ use crate::{Command, CommandContext, CommandInput, OverlayItem, Prompt, Step};
 
 const DIAMETER: Keyword = Keyword::new("Diameter");
 const MEASURE: Keyword = Keyword::new("Measure");
-/// The most items an array along a path or over a grid makes.
-const ITEM_LIMIT: usize = 10_000;
+/// The most items an array makes — along a path, over a grid, or ARRAY's
+/// rows by columns or round a centre — the original counted (#386).
+pub(super) const ITEM_LIMIT: usize = 10_000;
 
 /// A curve picked for a tangency: the object, the curve its piece nearest
 /// the pick lies on — a line as the whole line, an arc as its circle —
