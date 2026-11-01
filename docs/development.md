@@ -65,7 +65,7 @@ First-time Playwright setup: `pnpm --dir web exec playwright install chromium fi
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](../CONTRIBUTING.md): start from an issue, run `make check`, ship tests with the change, and sign the [CLA](../CLA.md) on your first pull request.
+See [`CONTRIBUTING.md`](../CONTRIBUTING.md): start from an issue, run `make check`, ship tests with the change, and read the [CLA](../CLA.md), which a pull request accepts.
 
 ## Deployment
 

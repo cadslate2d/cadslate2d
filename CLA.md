@@ -1,12 +1,12 @@
 # CadSlate2D Individual Contributor License Agreement
 
-Version 1.0, 2026-10-20. Legal review is still owed on this text (issue #292); it is in force as written until superseded.
+Version 1.1, 2026-11-01. Legal review is still owed on this text (issue #292); it is in force as written until superseded.
 
 Thank you for your interest in contributing to CadSlate2D (the "Project"). The Project is maintained by Leonardo Araujo (the "Maintainer") and is licensed to the public under the GNU Affero General Public License, version 3 or later ([ADR-0035](docs/adr/0035-licence.md)).
 
 This agreement records the terms under which you contribute. It protects you, the Maintainer, and the Project's users, and it lets the Maintainer keep the Project's licensing coherent, including offering the Project's code under other licences where the Project needs to, for example in the separately licensed hosted service that accompanies the application. **It does not take your copyright from you.** You keep every right to use your own contribution for any purpose.
 
-By commenting on a pull request that you have read and agree to this agreement, or by signing it in any other way the Project accepts, you accept these terms for every contribution you make to the Project, now and in future, until you tell the Maintainer in writing that you withdraw for future contributions.
+By submitting a Contribution — by opening a pull request or otherwise — you accept these terms for every contribution you make to the Project, now and in future, until you tell the Maintainer in writing that you withdraw for future contributions.
 
 ## 1. Definitions
 
@@ -46,8 +46,4 @@ This agreement is governed by the laws of the Maintainer's place of residence, a
 
 ---
 
-To accept, comment on your pull request:
-
-> I have read the CLA Document and I hereby sign the CLA
-
-The Project's CLA check records your signature in the `cla-signatures` branch of the repository, with your GitHub username and the time.
+Nothing more is needed to accept: submitting a pull request is accepting. The Project's CLA workflow says so on an outside pull request when it is opened. Version 1.0 asked for a comment; the signatures given that way are kept in the `cla-signatures` branch of the repository.

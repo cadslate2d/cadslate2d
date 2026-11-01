@@ -139,7 +139,7 @@ make e2e
 ## Workflow
 
 - Work through issues in number order within the current milestone; respect "Blocked by".
-- The maintainer commits directly to `main` and pushes; no feature branches for the maintainer's own work. Contributions from outside come by pull request from a fork, with the CI check and the CLA check passing; the maintainer reviews and merges (`CONTRIBUTING.md`, #294).
+- The maintainer commits directly to `main` and pushes; no feature branches for the maintainer's own work. Contributions from outside come by pull request from a fork, with the CI check passing; the maintainer reviews and merges (`CONTRIBUTING.md`, #294).
 - One issue per commit where practical. Reference the issue in the commit message and close it with `Closes #N` once every acceptance criterion is met.
 - Never push with failing checks.
 - The program has one version, semantic from 0.1.0: the workspace's in `Cargo.toml` (the About box's "Core version") and `web/package.json`, kept equal by `scripts/check-version.sh`. Raise the minor version when a milestone closes, the patch for a release of fixes; the AI service's own `Cargo.toml` follows the same numbers.
@@ -147,7 +147,7 @@ make e2e
 - Decisions that resolve a PROVISIONAL or EXPERIMENT item, or change the baseline, get an ADR with evidence.
 - A dependency version is taken only once it has been published for two weeks: pnpm refuses younger ones (`minimumReleaseAge` in `web/pnpm-workspace.yaml`), and Dependabot waits as long (`cooldown` in `.github/dependabot.yml`). Cargo has no such setting: check a crate's release date by hand before raising a version in `Cargo.toml`. A security fix younger than that — or a version the maintainer chooses to take early — is taken deliberately, saying so in the commit; in the web project as an exact version under `minimumReleaseAgeExclude`, with the date it may come out.
 
-- Contributors sign the Contributor License Agreement (`CLA.md`) once, on their first pull request; the `CLA` workflow asks and records it. It is what lets the maintainer license the code under other terms as well (ADR-0035).
+- A contribution is made under the Contributor License Agreement (`CLA.md`): submitting a pull request accepts it, and the `CLA` workflow says so on an outside pull request when it is opened — it asks nothing and blocks nothing. It is what lets the maintainer license the code under other terms as well (ADR-0035).
 
 ## Scope discipline
 

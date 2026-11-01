@@ -72,7 +72,7 @@ Version 0.2.21. Milestones M0 to M25 are complete: the classic drafting set, DXF
 
 ## Contributing
 
-Start from an issue, run `make check`, ship tests with the change, and sign the [CLA](CLA.md) on your first pull request: [`CONTRIBUTING.md`](CONTRIBUTING.md). Report vulnerabilities privately: [`SECURITY.md`](SECURITY.md). The project keeps a short [code of conduct](CODE_OF_CONDUCT.md).
+Start from an issue, run `make check`, ship tests with the change, and read the [CLA](CLA.md), which a pull request accepts: [`CONTRIBUTING.md`](CONTRIBUTING.md). Report vulnerabilities privately: [`SECURITY.md`](SECURITY.md). The project keeps a short [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
