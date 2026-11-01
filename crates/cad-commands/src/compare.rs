@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use cad_core::Point2;
-use cad_document::Drawing;
+use cad_document::{Drawing, Entity, TableId, TextEntity};
 use cad_geometry::Transform;
 use cad_intent::Intent;
 
@@ -78,10 +78,62 @@ fn objects(drawing: &Drawing) -> BTreeMap<(String, String, String), usize> {
             .and_then(|p| drawing.layers().get(p.layer))
             .map_or_else(String::new, |layer| layer.name.clone());
         let local = entity.transformed(&Transform::translation(Point2::ORIGIN - origin));
-        *out.entry((view, layer, rounded(&format!("{local:?}"))))
+        *out.entry((view, layer, rounded(&by_name(drawing, local))))
             .or_insert(0) += 1;
     }
     out
+}
+
+/// An object's geometry as text, its table rows by name: an id is the
+/// order a row was made in, and a run that makes rows in another order —
+/// a view's dimension style, derived for each scaled view in view order —
+/// gives the same object another id (#370).
+fn by_name(drawing: &Drawing, mut entity: Entity) -> String {
+    fn name<Row>(
+        table: &cad_document::Table<Row>,
+        id: TableId<Row>,
+        of: impl Fn(&Row) -> &str,
+    ) -> String {
+        table
+            .get(id)
+            .map_or_else(String::new, |row| of(row).to_owned())
+    }
+    let first = |text: &mut TextEntity| {
+        let style = name(drawing.text_styles(), text.style, |r| &r.name);
+        text.style = TableId::FIRST;
+        style
+    };
+    let rows: String = match &mut entity {
+        Entity::Dimension(d) => {
+            let style = name(drawing.dim_styles(), d.style, |r| &r.name);
+            d.style = TableId::FIRST;
+            style
+        }
+        Entity::Leader(l) => {
+            let style = name(drawing.dim_styles(), l.style, |r| &r.name);
+            l.style = TableId::FIRST;
+            style
+        }
+        Entity::MLeader(m) => {
+            let style = name(drawing.mleader_styles(), m.style, |r| &r.name);
+            m.style = TableId::FIRST;
+            style
+        }
+        Entity::Text(t) => first(t),
+        Entity::AttributeDefinition(a) => first(&mut a.text),
+        Entity::MText(t) => {
+            let style = name(drawing.text_styles(), t.style, |r| &r.name);
+            t.style = TableId::FIRST;
+            style
+        }
+        Entity::BlockRef(b) => {
+            let block = name(drawing.blocks(), b.block, |r| &r.name);
+            b.block = TableId::FIRST;
+            block
+        }
+        _ => String::new(),
+    };
+    format!("{entity:?} {rows:?}")
 }
 
 /// Every number with a fraction in `text` to the thousandth: two runs of
@@ -261,6 +313,40 @@ mod tests {
         let left = undeclared(&changes, &["BB/STAIR".into()]);
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].key(), "AA/ROOF");
+    }
+
+    /// #370: a view at its own scale added ahead of another gives the
+    /// other's dimension another derived style id; the dimension is the
+    /// same, and only the new view is told.
+    #[test]
+    fn a_scaled_view_added_ahead_leaves_another_scaled_views_dimension_unchanged() {
+        let document = |inserted: &str| {
+            cad_intent::parse(&format!(
+                r#"{{"version": {}, "operations": [
+                   {{"op": "title_block", "paper": "A1", "scale": 50, "title": "X", "at": [0, 0]}},
+                   {{"op": "view", "id": "AA", "placed": "principal", "operations": [
+                       {{"op": "rectangle", "corner": [0, 0], "opposite": [7000, 6000]}}]}}{inserted},
+                   {{"op": "view", "id": "BB", "placed": "free", "scale": "1:20", "operations": [
+                       {{"op": "layer", "name": "DET", "current": true}},
+                       {{"op": "rectangle", "corner": [0, 0], "opposite": [800, 400]}},
+                       {{"op": "dim_linear", "from": [0, 0], "to": [800, 0], "at": [400, -150]}}]}}]}}"#,
+                cad_intent::VERSION
+            ))
+            .unwrap()
+        };
+        let before = document("");
+        let after = document(
+            r#",
+                   {"op": "view", "id": "CC", "placed": "free", "scale": "1:10", "operations": [
+                       {"op": "rectangle", "corner": [0, 0], "opposite": [300, 200]},
+                       {"op": "dim_linear", "from": [0, 0], "to": [300, 0], "at": [150, -80]}]}"#,
+        );
+        let changes = compare(&before, &after, Some("mm")).unwrap();
+        assert_eq!(
+            described(&changes),
+            vec!["CC · 0: 2 added", "CC · VIEW-TITLES: 1 added"]
+        );
+        assert!(undeclared(&changes, &["CC".into()]).is_empty());
     }
 
     #[test]
