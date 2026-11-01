@@ -472,6 +472,36 @@ fn arraygrid_fills_a_boundary_but_its_islands() {
     );
 }
 
+/// #386: ARRAYGRID counts the selection's own place among its items, as
+/// ARRAY and ARRAYPATH do: 100 by 100 places is 10 000 items and is made,
+/// 73 by 137 is 10 001 and is refused.
+#[test]
+fn arraygrid_counts_the_original_among_its_items() {
+    let grid = |w: &str, ht: &str| {
+        let mut h = Harness::new();
+        h.enter_all(&[
+            "LINE",
+            "0,0",
+            &format!("{w},0"),
+            &format!("{w},{ht}"),
+            &format!("0,{ht}"),
+            "C",
+        ]);
+        h.enter_all(&["CIRCLE", "10,10", "3"]);
+        h.click_world(p(13.0, 10.0));
+        h.enter_all(&["ARRAYGRID", "500,500", "20", "20"]);
+        h.log().last().cloned().unwrap_or_default()
+    };
+    assert_eq!(
+        grid("2000", "2000"),
+        "9999 copies made inside the boundary."
+    );
+    assert_eq!(
+        grid("1460", "2740"),
+        "That would be more than 10000 items: a larger spacing."
+    );
+}
+
 /// Each placement by command and by the intent IR makes the same drawing:
 /// the entities and the constraints.
 #[test]
