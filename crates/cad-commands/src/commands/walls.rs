@@ -9,7 +9,7 @@
 //! from, as one undo (`cad_geometry::walls`).
 
 use cad_core::Point2;
-use cad_document::{ArcEntity, Group, Layer, LineEntity, Properties};
+use cad_document::{ArcEntity, Group, Layer, LineEntity, Properties, same_name};
 use cad_geometry::walls::{self, Kind, Opening, Wall, WallsError};
 use cad_input::{ExpectedInput, Keyword};
 use cad_intent::{Hinge, OpeningKind, Swing, WallLine, WallsSpec};
@@ -160,7 +160,14 @@ fn draw(spec: &WallsSpec, base: Point2, ctx: &mut CommandContext<'_>) -> Result<
             Some((name, None)) => transaction.add_layer(Layer::named(name)).map_err(|e| e.to_string()),
         }
     };
-    let (door_layer, window_layer) = (layer_of(doors)?, layer_of(windows)?);
+    let door_layer = layer_of(doors)?;
+    // A door and a window naming the same not-yet-existing layer (#369),
+    // give or take its case, as a layer's name is never taken twice: made
+    // once, not asked for again.
+    let window_layer = match (&spec.door_layer, &spec.window_layer) {
+        (Some(a), Some(b)) if same_name(a, b) => door_layer,
+        _ => layer_of(windows)?,
+    };
     let on = |layer| Properties {
         layer,
         ..Properties::default()

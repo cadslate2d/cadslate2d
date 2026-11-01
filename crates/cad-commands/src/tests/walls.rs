@@ -161,6 +161,65 @@ fn a_floor_by_intent_in_a_view_has_every_wall_its_thickness() {
     assert_eq!(on("A-WINDOW"), 2);
 }
 
+/// A door and a window naming the same not-yet-existing layer (#369), give
+/// or take its case — a natural thing for a model to write, one `OPENINGS`
+/// layer for both. The layer is made once and both are drawn on it, instead
+/// of the second `add_layer` colliding with the first and the walls
+/// drawing nothing.
+#[test]
+fn a_door_and_window_sharing_one_new_layer_are_both_drawn() {
+    let mut h = Harness::new();
+    h.enter_all(&["UNITS", "mm"]);
+    let document = parse(&format!(
+        r#"{{"version": {VERSION}, "operations": [
+        {{"op": "walls", "walls": [
+            {{"from": [0, 0], "to": [5000, 0], "thickness": 200}},
+            {{"from": [5000, 0], "to": [5000, 4000], "thickness": 200}}],
+          "openings": [
+            {{"wall": 0, "at": 1000, "width": 900, "kind": "door"}},
+            {{"wall": 1, "at": 1000, "width": 1200, "kind": "window"}}],
+          "door_layer": "OPENINGS", "window_layer": "Openings"}}]}}"#
+    ))
+    .unwrap();
+    let ran = h
+        .session
+        .run_intent(&document)
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", h.log()));
+    assert!(
+        ran[0].changed && !ran[0].made.is_empty(),
+        "WALLS drew nothing with one shared new layer: {:?}",
+        h.log()
+    );
+    // One layer made for both names, whatever their case — not two, one
+    // shadowing the other unreachably.
+    let drawing = h.session.drawing();
+    let opening_layers: Vec<_> = drawing
+        .layers()
+        .iter()
+        .filter(|(_, layer)| layer.name.eq_ignore_ascii_case("OPENINGS"))
+        .collect();
+    assert_eq!(
+        opening_layers.len(),
+        1,
+        "a door and a window naming the same layer, give or take its case, should make it once: {opening_layers:?}"
+    );
+    let (opening_layer, _) = opening_layers[0];
+    let on_opening_layer = ran[0]
+        .made
+        .iter()
+        .filter(|id| {
+            drawing
+                .properties(**id)
+                .is_some_and(|p| p.layer == opening_layer)
+        })
+        .count();
+    assert_eq!(
+        on_opening_layer,
+        4 + 1 + 2,
+        "the door's leaf and swing, and the window's glass, all on the one layer"
+    );
+}
+
 #[test]
 fn walls_that_cannot_be_are_refused_with_why() {
     let mut h = Harness::new();
