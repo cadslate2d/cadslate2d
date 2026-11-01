@@ -730,7 +730,8 @@ impl ArrayGridCommand {
                 }
             }
         }
-        if offsets.len() > ITEM_LIMIT {
+        // The copies and the selection's own place: the original counted.
+        if offsets.len() >= ITEM_LIMIT {
             return Err(format!(
                 "That would be more than {ITEM_LIMIT} items: a larger spacing."
             ));

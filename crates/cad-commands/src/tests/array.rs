@@ -383,14 +383,20 @@ fn rows_by_columns_and_the_polar_count_are_held_to_the_most_items_an_array_makes
         "2000 rows by 2000 columns would be more than 10000 items."
     );
     assert_eq!(h.prompt(), "Enter the number of columns (|||) <1>:");
-    let revision = h.session.drawing().revision();
-    h.move_to(450.0, 250.0);
-    assert_eq!(h.session.drawing().revision(), revision);
     h.enter("10001");
     assert_eq!(last(&h), "Enter a whole number of columns, 1 to 10000.");
-    // At the limit, the original counted: 2000 by 5 goes on to the spacing.
+    // At the limit, the original counted: 2000 by 5 goes on to the spacing,
+    // and a pointer move previews the 9 999 copies, no more.
     h.enter("5");
     assert_eq!(h.prompt(), "Specify the distance between rows:");
+    h.move_to(450.0, 250.0);
+    let previewed = h
+        .session
+        .overlay()
+        .into_iter()
+        .filter(|item| matches!(item, OverlayItem::PreviewTransformed { .. }))
+        .count();
+    assert_eq!(previewed, 9_999);
     h.escape();
     h.escape();
     h.click_world(p(5.0, 0.0));
