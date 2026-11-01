@@ -60,6 +60,8 @@ This ADR records those decisions, draws the line they leave untouched, and sets 
 
 - **0.2.21.** The first nightly evaluation of 0.2.20 fell from about 100% to 69% at l1, 41–45% at l2, and 25% at l5 en: the model had read a size to draw at as a size to dimension, written it as a requirement, and, asked again for it, dimensioned plain circles and rectangles; it had written a plate's holes as a count of outlines, which counted closed polylines only, and drawn a square round each hole to meet it; and it refused requests that only left something open. Now a circle is an outline, a dimension is required only of a request that asks for dimensions (in the instructions, and in the service, which drops any other before checking), and only a request that cannot be drawn stops a drawing: what a request leaves open is chosen.
 
+- **0.2.22.** The nightly evaluation of 0.2.21 recovered l3, l5 en, and l6 and left l1 at 93–95%, l2 at 79–83%, l4 at 78–89%: every first answer was right, and the requirement the model had written of a plain drawing was failed by the check's reading of it — a generator's outline is lines, not a closed polyline; a count is taken on the intent alone, not with what the conversation drew; a layer just made has nothing on it — and the answer asked for again drew for the check: a label on the new layer, a slot as a polyline of short segments, a sheet round a stair, a second "BRACKET" beside the title block's. Requirements are of a sheet: `check_document` checks nothing that is not one, the instructions ask for them of a sheet alone, and say that what an operation draws itself counts.
+
 ## Revisit when
 
 - A model small enough for the download budget reads intent well: a local adapter would remove the account and the network for AI too.

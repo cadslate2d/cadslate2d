@@ -4,6 +4,14 @@
 //! number of outlines of a size, a layer — and said met or not, with what
 //! was found instead. An unmet one goes back to the model; every one is
 //! shown to the user with the answer.
+//!
+//! Only a sheet is checked. The nightly evaluation of 0.2.21 found that a
+//! requirement of a plain drawing — a count of outlines, a layer with
+//! something on it, a view — is met by the model's first answer and failed
+//! by the check's reading of it (a generator's outline is lines, a count
+//! is taken on the intent alone, a layer just made is empty), and the
+//! answer asked for again draws for the check: a label on the layer, a
+//! slot as a polyline, a sheet round a stair.
 
 use cad_core::{Aabb, EntityId};
 use cad_document::{Drawing, Entity};
@@ -222,7 +230,7 @@ pub fn check(drawing: &Drawing, requirements: &[Requirement], factor: f64) -> Ve
 
 /// `requirements` checked on `intent` drawn on an empty drawing in `unit`
 /// (a suffix, `mm`), as the review draws it; `None` when it does not run
-/// there.
+/// there, or when what it draws is not a sheet.
 pub fn check_document(
     intent: &Intent,
     requirements: &[Requirement],
@@ -236,6 +244,7 @@ pub fn check_document(
     }
     session.run_intent(intent).ok()?;
     let drawing = session.drawing();
+    sheet_of(drawing)?;
     let factor = match (intent.units, drawing.unit()) {
         (Some(from), Some(to)) => from.length_unit().metres() / to.metres(),
         _ => 1.0,
@@ -268,6 +277,7 @@ mod tests {
                    {{"op": "rectangle", "corner": [28, 1.5], "opposite": [29, 2.5]}},
                    {{"op": "rectangle", "corner": [28, 4.5], "opposite": [29, 5.5]}},
                    {{"op": "rectangle", "corner": [28, 7.5], "opposite": [29, 8.5]}},
+                   {{"op": "circle", "center": [20, 5], "radius": 0.75}},
                    {{"op": "dim_linear", "from": [0, 0], "to": [0, 10], "at": [-2, 5]}},
                    {{"op": "text", "at": [40, 11], "height": 0.25, "text": "SILL EL+93.000"}}]}},
                {{"op": "view", "id": "bb", "placed": "section", "title": "SECTION B-B"{bb_scale}, "cut": {{"of": "plan", "from": [28.5, -1], "to": [28.5, 11], "toward": [40, 5]}}, "operations": [
@@ -302,6 +312,10 @@ mod tests {
             requirement(
                 "Three baffle blocks 1000 × 1000",
                 r#"{"kind": "outlines", "count": 3, "width": 1, "height": 1, "view": "plan"}"#,
+            ),
+            requirement(
+                "A pier of 1500 mm",
+                r#"{"kind": "outlines", "count": 1, "width": 1.5, "height": 1.5, "view": "plan"}"#,
             ),
             requirement("A HATCH layer", r#"{"kind": "layer", "name": "HATCH"}"#),
         ];
@@ -357,9 +371,9 @@ mod tests {
     }
 
     #[test]
-    fn holes_are_outlines_and_need_no_square_drawn_round_them() {
-        // A plate's four holes, as the nightly evaluation found a model
-        // drawing squares round them to meet a count of outlines.
+    fn a_drawing_that_is_not_a_sheet_is_not_checked() {
+        // A plate, as the nightly evaluations found a model drawing squares
+        // round its holes, then constraints, to meet a count of outlines.
         let plate = cad_intent::parse(&format!(
             r#"{{"version": {}, "operations": [
                {{"op": "rectangle", "corner": [0, 0], "opposite": [120, 80]}},
@@ -380,7 +394,6 @@ mod tests {
                 r#"{"kind": "outlines", "count": 1, "width": 120, "height": 80}"#,
             ),
         ];
-        let met = check_document(&plate, &wanted, None).unwrap();
-        assert!(met.iter().all(|o| o.met), "{met:?}");
+        assert_eq!(check_document(&plate, &wanted, None), None);
     }
 }
