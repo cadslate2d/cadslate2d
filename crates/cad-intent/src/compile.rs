@@ -245,6 +245,11 @@ fn commands_of(
     };
     // Its direction said, not left to where the line's point falls.
     let (axis, points) = crate::chain(points);
+    // Validation refuses a chain with nothing to dimension (#367); a
+    // document compiled without it makes nothing rather than panic.
+    if points.len() < 2 {
+        return Vec::new();
+    }
     let points = &points;
     let all: Vec<Point2> = points.iter().map(|p| point(*p)).collect();
     let mut out = vec![(
