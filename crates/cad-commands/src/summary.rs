@@ -247,8 +247,9 @@ pub(crate) fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, St
             vec![
                 row("Centre", point(arc.center)),
                 row("Radius", number(arc.radius)),
-                row("Start angle", degrees(arc.start_angle)),
-                row("End angle", degrees(arc.end_angle)),
+                // The directions from the centre to each end (#377).
+                row("Start angle", direction(arc.start_angle)),
+                row("End angle", direction(arc.end_angle)),
                 row("Arc length", number(geometry.radius * geometry.sweep)),
             ]
         }
@@ -491,6 +492,23 @@ mod tests {
         assert_eq!(direction(-std::f64::consts::FRAC_PI_2), "270.0000°");
         let drawing = Drawing::new();
         let line = Entity::Line(LineEntity::new(p(0.0, 0.0), p(100.0, -1e-10)));
+        // An arc's ends are directions from its centre: one a hair below
+        // +X, as ROTATE or MIRROR may leave it, reads 0.
+        let arc = Entity::Arc(ArcEntity::new(
+            p(0.0, 0.0),
+            10.0,
+            std::f64::consts::TAU - 1e-12,
+            std::f64::consts::FRAC_PI_2,
+        ));
+        let rows = geometry_of(&arc, &drawing);
+        let angle = |label: &str| {
+            rows.iter()
+                .find(|(l, _)| l == label)
+                .map(|(_, v)| v.clone())
+                .unwrap()
+        };
+        assert_eq!(angle("Start angle"), "0.0000°");
+        assert_eq!(angle("End angle"), "90.0000°");
         assert_eq!(
             geometry_of(&line, &drawing),
             vec![
