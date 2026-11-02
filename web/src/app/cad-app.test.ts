@@ -464,6 +464,7 @@ describe("saving to a file", () => {
     const log = () => app.ui.getSnapshot().log;
 
     host.files.refusal = new DOMException("disk full", "QuotaExceededError");
+    const traced = vi.spyOn(console, "error").mockImplementation(() => undefined);
     for (const command of ["DXFOUT", "SAVE"]) {
       enter(command);
       await tick();
@@ -478,6 +479,9 @@ describe("saving to a file", () => {
     await tick();
     await tick();
     expect(log().at(-1)).toBe("The plot was not saved: The request is not allowed.");
+    // Each refusal also keeps its trace in the console.
+    expect(traced).toHaveBeenCalledTimes(3);
+    traced.mockRestore();
 
     // The browser writes again: so does SAVE.
     host.files.refusal = undefined;

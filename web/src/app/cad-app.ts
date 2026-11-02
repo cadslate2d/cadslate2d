@@ -586,6 +586,9 @@ export class CadApp {
       await work();
     } catch (error) {
       if (this.#failed) return;
+      // The log says it for the user; the console keeps the trace, for
+      // whoever finds it was not the browser at all.
+      console.error(error);
       this.#afterInput(this.engine.notify(`${what}: ${refusal(error)}.`));
     }
   }
