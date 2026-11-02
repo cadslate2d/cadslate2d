@@ -10,7 +10,7 @@ use std::f64::consts::{PI, TAU};
 use cad_commands::constraint_display::{Glyph, glyph_square};
 use cad_commands::{OverlayItem, SnapMode};
 use cad_core::{Aabb, Point2, Vec2, View};
-use cad_document::{Drawing, Entity, LayoutId};
+use cad_document::{Drawing, Entity, LayoutId, ViewportEntity};
 use cad_geometry::{Arc, Segment};
 
 use crate::{GeometrySink, PackedFrame, StyleRole, viewport_view, viewports_shown, walk_entity};
@@ -450,31 +450,20 @@ impl OverlayFrame {
         far_curves(drawing, space, view, &bounds, |a, b| {
             frame.push_segment(StyleRole::Entity, a, b);
         });
-        if space == LayoutId::MODEL {
-            return;
-        }
         // On a layout, the model through each viewport that is on (#402):
-        // its far curves under the viewport's view, as far as the frame
-        // shows it on screen, put on the paper and clipped to the frame.
-        for window in viewports_shown(drawing, space) {
-            let frame_on_paper = window.frame();
-            let Some(seen) = overlap(&frame_on_paper, &bounds) else {
-                continue;
-            };
-            let through = viewport_view(view, &window);
-            let model_bounds = Aabb::from_points(
-                window.model_point(seen.min()),
-                window.model_point(seen.max()),
-            )
-            .expanded(through.pixels_to_world(FAR_CURVE_MARGIN_PIXELS));
-            let frame = &mut self.frame;
-            far_curves(drawing, LayoutId::MODEL, &through, &model_bounds, |a, b| {
-                let on_paper = Segment::new(window.paper_point(a), window.paper_point(b));
-                if let Some(piece) = on_paper.clipped_to(&frame_on_paper) {
-                    frame.push_segment(StyleRole::Entity, piece.start, piece.end);
-                }
-            });
-        }
+        // its far curves under the viewport's view.
+        through_viewports(
+            &mut self.frame,
+            drawing,
+            space,
+            &bounds,
+            |window, model_bounds, emit| {
+                let through = viewport_view(view, window);
+                let model_bounds =
+                    model_bounds.expanded(through.pixels_to_world(FAR_CURVE_MARGIN_PIXELS));
+                far_curves(drawing, LayoutId::MODEL, &through, &model_bounds, emit);
+            },
+        );
     }
 
     /// The construction lines of the space, clipped to the view (ADR-0031):
@@ -487,50 +476,25 @@ impl OverlayFrame {
         for (_, entity) in drawing.unbounded_shown_in(space) {
             self.push_construction(StyleRole::Entity, entity, &bounds);
         }
-        if space == LayoutId::MODEL {
-            return;
-        }
-        // On a layout, the model's through each viewport that is on (#416),
-        // as the far curves are: clipped to what the frame shows on screen,
-        // put on the paper, and kept inside the frame.
-        for window in viewports_shown(drawing, space) {
-            let frame_on_paper = window.frame();
-            let Some(seen) = overlap(&frame_on_paper, &bounds) else {
-                continue;
-            };
-            let model_bounds = Aabb::from_points(
-                window.model_point(seen.min()),
-                window.model_point(seen.max()),
-            );
-            for (_, entity) in drawing.unbounded_shown_in(LayoutId::MODEL) {
-                let piece = match entity {
-                    Entity::XLine(line) => line.clipped(&model_bounds),
-                    Entity::Ray(ray) => ray.clipped(&model_bounds),
-                    _ => None,
-                };
-                let on_paper = piece.and_then(|piece| {
-                    Segment::new(
-                        window.paper_point(piece.start),
-                        window.paper_point(piece.end),
-                    )
-                    .clipped_to(&frame_on_paper)
-                });
-                if let Some(piece) = on_paper {
-                    self.frame
-                        .push_segment(StyleRole::Entity, piece.start, piece.end);
+        // On a layout, the model's through each viewport that is on (#416).
+        through_viewports(
+            &mut self.frame,
+            drawing,
+            space,
+            &bounds,
+            |_, model_bounds, emit| {
+                for (_, entity) in drawing.unbounded_shown_in(LayoutId::MODEL) {
+                    if let Some(piece) = construction_piece(entity, model_bounds) {
+                        emit(piece.start, piece.end);
+                    }
                 }
-            }
-        }
+            },
+        );
     }
 
     /// An xline or a ray, the part of it within `bounds`, in `role`.
     fn push_construction(&mut self, role: StyleRole, entity: &Entity, bounds: &Aabb) {
-        let piece = match entity {
-            Entity::XLine(line) => line.clipped(bounds),
-            Entity::Ray(ray) => ray.clipped(bounds),
-            _ => None,
-        };
-        if let Some(piece) = piece {
+        if let Some(piece) = construction_piece(entity, bounds) {
             self.frame.push_segment(role, piece.start, piece.end);
         }
     }
@@ -834,6 +798,48 @@ fn far_arc(arc: &Arc, view: &View, bounds: &Aabb, segment: &mut impl FnMut(Point
         for i in 0..count {
             segment(at(i), at(i + 1));
         }
+    }
+}
+
+/// The part of an xline or a ray within `bounds`, if any.
+fn construction_piece(entity: &Entity, bounds: &Aabb) -> Option<Segment> {
+    match entity {
+        Entity::XLine(line) => line.clipped(bounds),
+        Entity::Ray(ray) => ray.clipped(bounds),
+        _ => None,
+    }
+}
+
+/// On a layout, the model through each viewport of `space` that is on,
+/// as far as the screen shows it within `bounds`: `draw` is handed the
+/// viewport, the part of the model the screen shows through it, and where
+/// to hand the model's segments, which are put on the paper and clipped to
+/// the viewport's frame (#402, #416).
+fn through_viewports(
+    frame: &mut PackedFrame,
+    drawing: &Drawing,
+    space: LayoutId,
+    bounds: &Aabb,
+    mut draw: impl FnMut(&ViewportEntity, &Aabb, &mut dyn FnMut(Point2, Point2)),
+) {
+    if space == LayoutId::MODEL {
+        return;
+    }
+    for window in viewports_shown(drawing, space) {
+        let frame_on_paper = window.frame();
+        let Some(seen) = overlap(&frame_on_paper, bounds) else {
+            continue;
+        };
+        let model_bounds = Aabb::from_points(
+            window.model_point(seen.min()),
+            window.model_point(seen.max()),
+        );
+        draw(&window, &model_bounds, &mut |a, b| {
+            let on_paper = Segment::new(window.paper_point(a), window.paper_point(b));
+            if let Some(piece) = on_paper.clipped_to(&frame_on_paper) {
+                frame.push_segment(StyleRole::Entity, piece.start, piece.end);
+            }
+        });
     }
 }
 
