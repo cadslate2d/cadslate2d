@@ -155,6 +155,41 @@ fn pedit_open_clears_a_flag_that_closes_nothing() {
     assert_eq!(last(&h), "The polyline is already open.");
 }
 
+/// #382: a closed flag on two vertices in a line closes nothing, so the
+/// polyline joins as the open segment it is — by PEDIT Join and by JOIN
+/// — down in the geometry as well as above it.
+#[test]
+fn a_flag_that_closes_nothing_does_not_stop_a_join() {
+    let entities = || -> [Entity; 2] {
+        [
+            PolylineEntity::with_bulges(vec![p(0.0, 0.0), p(10.0, 0.0)], vec![0.0, 0.0], true)
+                .into(),
+            LineEntity::new(p(10.0, 0.0), p(10.0, 5.0)).into(),
+        ]
+    };
+    let mut h = Harness::with_entities(entities());
+    h.enter_all(&["ZOOM", "E", "PE"]);
+    h.click_world(p(5.0, 0.0));
+    h.enter("J");
+    h.select_box(p(-1.0, -1.0), p(11.0, 6.0));
+    h.enter("");
+    assert_eq!(last(&h), "1 object added to the polyline.");
+    assert_eq!(
+        polyline(&h, 0).vertices,
+        vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 5.0)]
+    );
+
+    let mut h = Harness::with_entities(entities());
+    h.enter_all(&["ZOOM", "E", "JOIN"]);
+    h.select_box(p(-1.0, -1.0), p(11.0, 6.0));
+    h.enter("");
+    assert_eq!(h.entities().len(), 1, "{:?}", h.log());
+    assert_eq!(
+        polyline(&h, 0).vertices,
+        vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 5.0)]
+    );
+}
+
 #[test]
 fn pedit_joins_what_meets_the_polylines_ends_and_keeps_its_width() {
     let mut h = Harness::with_entities([
