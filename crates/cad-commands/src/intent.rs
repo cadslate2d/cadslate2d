@@ -13,7 +13,7 @@ use cad_intent::{Answer, Compiled, Intent, Pick, Step, Targets};
 
 use cad_input::InputKind;
 
-use crate::{Dirty, KeyAction, Modifiers, PointerButton, Session};
+use crate::{Dirty, Modifiers, PointerButton, Session};
 
 /// What stopped an operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -274,7 +274,7 @@ impl Session {
         // The slate is clean: no command in progress, and no selection the
         // command would take as its objects unless the operation names one.
         if self.command_active() {
-            self.key(KeyAction::Escape);
+            self.cancel_active();
         }
         let log_from = self.log_total();
         let revision = self.drawing().revision();
@@ -298,7 +298,7 @@ impl Session {
         let changed = self.drawing().revision() != revision;
         if self.command_active() {
             let prompt = self.prompt();
-            self.key(KeyAction::Escape);
+            self.cancel_active();
             return Err(result.err().unwrap_or(match reason {
                 Some(reason) => RunError::Refused {
                     operation,

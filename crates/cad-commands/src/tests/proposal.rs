@@ -172,6 +172,30 @@ fn accept_during_a_command_leaves_its_work_out_of_the_proposals_undo() {
     );
     h.undo();
     assert_eq!(h.session.drawing().len(), 0);
+
+    // One Escape would only close a fence being drawn, and leave the
+    // command asking: Accept ends the command itself, whatever it is in
+    // the middle of, before the proposal's group opens.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "10,0", ""]);
+    h.enter_all(&["ERASE", "F", "20,20"]);
+    assert_eq!(h.prompt(), "Next fence point or [Undo]:");
+    h.session.propose(document(
+        r#"{"op": "circle", "center": [50, 50], "radius": 5}"#,
+    ));
+    h.session.accept_proposal();
+    assert_eq!(h.prompt(), "Command:");
+    assert_eq!(h.session.drawing().len(), 2);
+    h.undo();
+    assert_eq!(h.session.drawing().len(), 1, "the circle alone taken back");
+    assert!(matches!(
+        h.session
+            .drawing()
+            .entities()
+            .next()
+            .map(|(_, e)| e.clone()),
+        Some(Entity::Line(_))
+    ));
 }
 
 #[test]

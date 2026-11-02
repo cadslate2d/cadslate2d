@@ -217,7 +217,7 @@ impl Session {
         // group: what it already made is its own undo step, not part of
         // the proposal's (#371).
         let cancelled = if self.command_active() {
-            self.key(crate::KeyAction::Escape)
+            self.cancel_active()
         } else {
             Dirty::NONE
         };
