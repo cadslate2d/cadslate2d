@@ -162,6 +162,49 @@ describe("the AI assistant (#260)", () => {
     expect(assistant.getSnapshot().turns).toEqual([]);
   });
 
+  // #408: an answer belongs to the account it was asked in.
+  test("an answer that arrives after signing out, or as an error, is dropped", async () => {
+    for (const ending of ["sign out", "delete"] as const) {
+      for (const comes of ["answer", "error"] as const) {
+        const { assistant, client, host } = await signedIn();
+        let settle!: (answer: AiAnswer) => void;
+        let fail!: (error: AiError) => void;
+        client.interpret = (session, request) => {
+          client.asked.push({ session, request });
+          return new Promise<AiAnswer>((resolve, reject) => {
+            settle = resolve;
+            fail = reject;
+          });
+        };
+        const asking = assistant.ask("a circle");
+        expect(assistant.getSnapshot().busy).toBe(true);
+        if (ending === "sign out") await assistant.signOut();
+        else await assistant.deleteAccount();
+        if (comes === "answer") {
+          settle({
+            request: 7,
+            reply: "A circle.",
+            intent: CIRCLE,
+            alternatives: [],
+            allowance: allowance(98),
+          });
+        } else {
+          fail(new AiError("unavailable", "The service is not answering."));
+        }
+        await asking;
+        const what = `${ending}, then the ${comes}`;
+        expect(host.proposed, what).toHaveLength(0);
+        expect(assistant.getSnapshot(), what).toMatchObject({
+          status: "signed-out",
+          turns: [],
+          busy: false,
+          error: undefined,
+          proposal: undefined,
+        });
+      }
+    }
+  });
+
   test("a request or a reply is copied to the clipboard; a refusal copies nothing and breaks nothing", async () => {
     const { assistant, host } = await signedIn();
     expect(await assistant.copy("A circle.")).toBe(true);

@@ -361,14 +361,21 @@ export class AiAssistant {
       error: undefined,
       turns: [...this.#snapshot.turns, { role: "you", text: prompt }],
     });
+    // The account the request is asked in: an answer that comes back after
+    // it was signed out of, or deleted, is no one's (#408).
+    const asker = this.#kept;
     try {
-      const answer = await this.client.interpret(this.#kept.session, {
+      const answer = await this.client.interpret(asker.session, {
         prompt,
         ...(unit ? { unit } : {}),
         ...(context ? { context } : {}),
         ...(revised ? { previous: revised } : {}),
         ...(this.#history.length > 0 ? { history: this.#recent() } : {}),
       });
+      if (this.#kept !== asker) {
+        this.#set({ busy: false });
+        return;
+      }
       this.#history.push({
         request: answer.request,
         exchange: {
@@ -458,6 +465,10 @@ export class AiAssistant {
         });
       }
     } catch (error) {
+      if (this.#kept !== asker) {
+        this.#set({ busy: false });
+        return;
+      }
       this.#fail(error);
     }
   }
