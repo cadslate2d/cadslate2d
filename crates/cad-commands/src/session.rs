@@ -1502,6 +1502,8 @@ impl Session {
         self.active = None;
         self.selection_box = None;
         self.selection.clear();
+        // The previous selection named the other drawing's objects (#372).
+        self.previous_selection = Selection::default();
         self.last_point = Point2::ORIGIN;
         self.space = LayoutId::MODEL;
         self.space_epoch += 1;
@@ -1786,7 +1788,20 @@ impl Session {
         remove: bool,
         method: SelectionMethod,
     ) -> Dirty {
-        let ids = self.with_groups(ids);
+        // Only what is there to be picked can be selected: an object that
+        // exists, on a layer shown, in this space — the rule ALL and LAST
+        // follow. Remembered ids (Previous) and ids from outside (an
+        // intent) may name objects since erased, hidden, or elsewhere
+        // (#372). Removing takes out what is there whatever it is.
+        let ids: Vec<EntityId> = if remove {
+            ids.to_vec()
+        } else {
+            ids.iter()
+                .copied()
+                .filter(|id| self.drawing.is_shown_in(*id, self.space))
+                .collect()
+        };
+        let ids = self.with_groups(&ids);
         let ids = ids.as_slice();
         let locked = if remove {
             0
