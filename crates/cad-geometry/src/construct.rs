@@ -9,7 +9,7 @@
 use cad_core::Point2;
 use cad_core::tolerance::LinearTolerance;
 
-use crate::intersect::Hits;
+use crate::intersect::{Hits, on_arc};
 use crate::{Circle, Primitive, Segment};
 
 const LINEAR: LinearTolerance = LinearTolerance::DEFAULT;
@@ -79,6 +79,11 @@ impl Circle {
 
 impl Primitive {
     /// The feet of perpendiculars from `from` that land on the primitive.
+    ///
+    /// A foot or tangent point on an arc is on its circle by construction:
+    /// whether it is on the arc is whether it is within the sweep, as
+    /// intersection decides it — never its distance measured again, which
+    /// far from the origin is a few spacings of the numbers (ADR-0012, #381).
     pub fn perpendicular_feet(&self, from: Point2) -> Hits {
         match self {
             Primitive::Segment(segment) => segment
@@ -88,7 +93,7 @@ impl Primitive {
             Primitive::Arc(arc) => arc
                 .circle()
                 .perpendicular_feet(from)
-                .filtered(|foot| LINEAR.is_zero(arc.distance_to_point(foot))),
+                .filtered(|foot| on_arc(arc, foot)),
         }
     }
 
@@ -101,7 +106,7 @@ impl Primitive {
             Primitive::Arc(arc) => arc
                 .circle()
                 .tangent_points(from)
-                .filtered(|point| LINEAR.is_zero(arc.distance_to_point(point))),
+                .filtered(|point| on_arc(arc, point)),
         }
     }
 }
@@ -181,6 +186,38 @@ mod tests {
         assert_eq!(
             circle.perpendicular_feet(p(5.0, 0.0)).as_slice(),
             &[p(-5.0, 0.0)]
+        );
+    }
+
+    /// #381: far from the origin a perpendicular foot or tangent point on
+    /// an arc, a few spacings of the numbers off its circle, is still on
+    /// it: the middle foot of an arc seen from outside is found at every
+    /// angle, and both tangent points of an arc that holds them.
+    #[test]
+    fn far_from_the_origin_an_arc_keeps_its_feet_and_tangent_points() {
+        let centre = Point2::new(1e7 + 123.4, 1e7 - 77.7);
+        let mut lost = Vec::new();
+        for i in 0..2000 {
+            let a = f64::from(i) / 2000.0 * std::f64::consts::TAU;
+            let toward = cad_core::Vec2::new(a.cos(), a.sin());
+            let arc = Arc::new(centre, 1000.0, a - 1.0, 2.0);
+            let feet = Primitive::Arc(arc).perpendicular_feet(centre + toward * 1500.0);
+            if feet.len() != 1 {
+                lost.push(format!("feet at {i}: {:?}", feet.as_slice()));
+            }
+            // Tangent points from 3000 away lie 1.23 rad either side: an
+            // arc 2 rad either side holds both.
+            let wide = Arc::new(centre, 1000.0, a - 2.0, 4.0);
+            let points = Primitive::Arc(wide).tangent_points(centre + toward * 3000.0);
+            if points.len() != 2 {
+                lost.push(format!("tangents at {i}: {:?}", points.as_slice()));
+            }
+        }
+        assert!(
+            lost.is_empty(),
+            "{} lost, first: {:?}",
+            lost.len(),
+            lost.first()
         );
     }
 
