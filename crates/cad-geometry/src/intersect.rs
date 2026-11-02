@@ -332,7 +332,7 @@ impl Primitive {
 /// Whether `point` — already known to be on the segment's line, because
 /// that is how it was computed — is on the segment: between its ends, or
 /// within the tolerance of one.
-fn on_segment(segment: &Segment, point: Point2) -> bool {
+pub(crate) fn on_segment(segment: &Segment, point: Point2) -> bool {
     let direction = segment.end - segment.start;
     let length = direction.length();
     let along = (point - segment.start).dot(direction) / (length * length);

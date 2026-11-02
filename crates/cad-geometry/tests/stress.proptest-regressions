@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 90fe63b4c3a36e5eab38dac354cd5e14338891a4773478f533de1eff33e4a42a # shrinks to frame = Frame { origin: Point2 { x: 0.0, y: 0.0 }, scale: 945.6191859027789 }, direction = 3.767174224654964, radius = 25.043402400284073, sweep = 1.539524884357837, first = 0.6866074827687224, second = None, nudge = Some(2.697714908453474e-14)
 cc 9c39da929e9a539f31a22a581c9d08f1cf6a9661ac440151ce8af908db1481c8 # shrinks to frame = Frame { origin: Point2 { x: -9591256.860340573, y: 0.0 }, scale: 1.0 }, direction = 2.101871314475325, slant = 0.3, radius = 1.0, sweep = 2.6187956397300627
+cc 41d516a6e2a9dd93ecac4a7b587e1f7782006df65c8e705ac7d6119b897ac21b # shrinks to frame = Frame { origin: Point2 { x: -300.1660783447657, y: -9772070.226716302 }, scale: 538.0258383196146 }, direction = 0.6465100201027008, ahead = 58.81579034092414, slant = 2.6584417352269463
