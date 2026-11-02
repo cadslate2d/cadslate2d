@@ -963,6 +963,60 @@ describe("the autosave in slices", () => {
     expect(kept.split("\nAcDbLine\n").length - 1).toBe(SNAPSHOT_SLICE + 1);
     expect(app.ui.getSnapshot().unsavedChanges).toBe(true);
   });
+
+  test("a save while the autosave is in slices leaves the drawing kept as exported (#407)", async () => {
+    const { app, host, tick, timers, enter, decode } = harness();
+    await tick();
+    enter("L");
+    for (let i = 0; i <= SNAPSHOT_SLICE + 1; i += 1) enter(`${i},0`);
+    enter("");
+    await tick();
+    // The pause ends: the autosave's first slice runs and schedules the next.
+    timers.splice(0).forEach((timer) => timer.callback());
+    expect(timers.map((timer) => timer.ms)).toEqual([0]);
+
+    // Saved now, before the autosave's slices are done.
+    enter("DXFOUT");
+    await tick();
+    for (let round = 0; round < 100 && timers.length > 0; round += 1) {
+      timers.splice(0).forEach((timer) => timer.callback());
+      await tick();
+    }
+    await tick();
+    expect(host.files.saved).toHaveLength(1);
+    expect(app.ui.getSnapshot().unsavedChanges).toBe(false);
+    expect(host.autosave.record?.exported, "a file holds the drawing").toBe(true);
+    expect((decode(host.autosave.record) ?? "").split("\nAcDbLine\n").length - 1).toBe(
+      SNAPSHOT_SLICE + 1,
+    );
+  });
+
+  test("an edit after the save, before the waiting keep runs, is kept as not exported (#407)", async () => {
+    const { app, host, tick, timers, enter, decode } = harness();
+    await tick();
+    enter("L");
+    for (let i = 0; i <= SNAPSHOT_SLICE + 1; i += 1) enter(`${i},0`);
+    enter("");
+    await tick();
+    timers.splice(0).forEach((timer) => timer.callback());
+    expect(timers.map((timer) => timer.ms)).toEqual([0]);
+
+    // Saved during the autosave's slices; then, before its keep runs, a
+    // circle the file does not hold.
+    enter("DXFOUT");
+    await tick();
+    enter("C", "10,10", "5");
+    for (let round = 0; round < 100 && timers.length > 0; round += 1) {
+      timers.splice(0).forEach((timer) => timer.callback());
+      await tick();
+    }
+    await tick();
+    expect(host.files.saved).toHaveLength(1);
+    expect(host.files.saved[0]?.text).not.toContain("CIRCLE");
+    expect(app.ui.getSnapshot().unsavedChanges).toBe(true);
+    expect(host.autosave.record?.exported, "no file holds the circle").toBe(false);
+    expect(decode(host.autosave.record)).toContain("CIRCLE");
+  });
 });
 
 // #186: what the browser kept is given back on start, and kept again when it changes.

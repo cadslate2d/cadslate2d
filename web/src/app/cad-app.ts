@@ -122,6 +122,10 @@ export class CadApp {
   #render: (() => void) | undefined;
   /** The revision last kept, so an unchanged drawing is not written again. */
   #keptRevision: number | undefined;
+  /** The newest keep, settled: the next waits for it (#407). */
+  #keeping: Promise<void> = Promise.resolve();
+  /** How many keeps are under way or waiting. */
+  #keepsUnderWay = 0;
   /** Cancels the pending autosave, while one is pending. */
   #cancelAutosave: (() => void) | undefined;
   /** The autosave found on start, while the user has not decided about it. */
@@ -448,10 +452,36 @@ export class CadApp {
   }
 
   /** Writes the drawing to the autosave slot; `exported` says a file holds it too. */
-  async #keep(exported: boolean): Promise<void> {
+  /**
+   * Keeps the drawing in the browser, `exported` when a file holds it. One
+   * keep at a time (#407): the engine writes one snapshot at a time, so a
+   * keep asked for while another is in slices — a save during an autosave
+   * — waits for it, and reads the drawing then; the newest says last
+   * whether a file holds it.
+   */
+  #keep(exported: boolean): Promise<void> {
+    // None under way: it starts at once, its first slice with it.
+    const kept =
+      this.#keepsUnderWay === 0
+        ? this.#keepNow(exported)
+        : this.#keeping.then(() => this.#keepNow(exported));
+    this.#keepsUnderWay += 1;
+    this.#keeping = kept
+      .catch(() => undefined)
+      .finally(() => {
+        this.#keepsUnderWay -= 1;
+      });
+    return kept;
+  }
+
+  async #keepNow(exported: boolean): Promise<void> {
     if (this.#failed) return;
     const state = this.engine.uiState();
-    if (!exported && !state.unsavedChanges) return;
+    // Whether a file holds what is kept is read now, with the drawing it
+    // keeps: a keep that waited may find the drawing changed since the
+    // file was written (#407).
+    const held = exported && !state.unsavedChanges;
+    if (!held && !state.unsavedChanges) return;
     this.#keptRevision = state.revision;
     // The drawing changed while the snapshot was being written: what the
     // next pause keeps will have the change too.
@@ -471,7 +501,7 @@ export class CadApp {
         handle: storable ? handle : undefined,
         bytes,
         savedAt,
-        exported,
+        exported: held,
       });
       this.#keptAt = savedAt;
     } catch {
