@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 
+use cad_core::tolerance::{LinearTolerance, ParametricTolerance};
 use cad_core::{Aabb, EntityId, LengthUnit, PixelTolerance, Point2, ScreenPoint, View};
 use cad_document::{
     Color, Drawing, Entity, FOREGROUND_INDEX, Layout, LayoutId, Paint, Revision, ViewportEntity,
@@ -845,6 +846,15 @@ impl Session {
     /// The canvas changed size, in CSS pixels.
     pub fn resize(&mut self, width: f64, height: f64) -> Dirty {
         self.view.resize(width, height);
+        // The paper behind the viewport worked through is on the same
+        // canvas: it keeps its size with the model's view, or the frame's
+        // centre is read through a canvas that is gone when the viewport
+        // takes the view back, and PSPACE restores the old size (#374).
+        // Both keep their centres and scales, so the viewport shows what
+        // it showed.
+        if let Some(through) = self.through.as_mut() {
+            through.paper_view.resize(width, height);
+        }
         Dirty::VIEW | Dirty::OVERLAY
     }
 
@@ -1212,14 +1222,21 @@ impl Session {
         let scale = self.view.scale() / paper_view.scale();
         let frame_center = paper_view.world_to_screen(window.center);
         let view_center = self.view.screen_to_world(frame_center);
+        // A view not panned or zoomed comes back a few roundings off — the
+        // centre through the frame's screen point and back — and is the
+        // same view: nothing to commit, nor a step to undo (#374).
+        let same_center = LinearTolerance::DEFAULT
+            .around(&[view_center, window.view_center])
+            .coincident(view_center, window.view_center);
+        let same_scale = ParametricTolerance::DEFAULT.eq(scale / window.scale, 1.0);
+        if same_center && same_scale {
+            return Dirty::NONE;
+        }
         let updated = ViewportEntity {
             view_center,
             scale,
             ..window
         };
-        if updated == window {
-            return Dirty::NONE;
-        }
         self.drawing.begin_group();
         let mut transaction = self.drawing.transaction();
         let dirty = match transaction.replace(through.viewport, updated) {
