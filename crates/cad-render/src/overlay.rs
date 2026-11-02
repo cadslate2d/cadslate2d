@@ -487,6 +487,40 @@ impl OverlayFrame {
         for (_, entity) in drawing.unbounded_shown_in(space) {
             self.push_construction(StyleRole::Entity, entity, &bounds);
         }
+        if space == LayoutId::MODEL {
+            return;
+        }
+        // On a layout, the model's through each viewport that is on (#416),
+        // as the far curves are: clipped to what the frame shows on screen,
+        // put on the paper, and kept inside the frame.
+        for window in viewports_shown(drawing, space) {
+            let frame_on_paper = window.frame();
+            let Some(seen) = overlap(&frame_on_paper, &bounds) else {
+                continue;
+            };
+            let model_bounds = Aabb::from_points(
+                window.model_point(seen.min()),
+                window.model_point(seen.max()),
+            );
+            for (_, entity) in drawing.unbounded_shown_in(LayoutId::MODEL) {
+                let piece = match entity {
+                    Entity::XLine(line) => line.clipped(&model_bounds),
+                    Entity::Ray(ray) => ray.clipped(&model_bounds),
+                    _ => None,
+                };
+                let on_paper = piece.and_then(|piece| {
+                    Segment::new(
+                        window.paper_point(piece.start),
+                        window.paper_point(piece.end),
+                    )
+                    .clipped_to(&frame_on_paper)
+                });
+                if let Some(piece) = on_paper {
+                    self.frame
+                        .push_segment(StyleRole::Entity, piece.start, piece.end);
+                }
+            }
+        }
     }
 
     /// An xline or a ray, the part of it within `bounds`, in `role`.
@@ -1039,6 +1073,56 @@ mod tests {
         // Looking elsewhere, at the same zoom: the curve passes nowhere near.
         let away = view_at(Point2::new(0.0, 0.0), 10_000.0);
         assert!(far_segments(drawing, &away).is_empty());
+    }
+
+    /// #416: on a layout, a model xline or ray is drawn through each
+    /// viewport that is on, as it is printed: on the paper, inside the frame.
+    #[test]
+    fn a_model_construction_line_is_drawn_through_a_layout_viewport() {
+        use cad_document::{Layout, RayEntity, ViewportEntity, XLineEntity};
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+        tx.insert(XLineEntity::through(Point2::ORIGIN, Point2::new(1.0, 0.0)).unwrap())
+            .unwrap();
+        // A ray pointing away from what the viewport shows is not seen.
+        tx.insert(
+            RayEntity::through(Point2::new(500.0, 500.0), Point2::new(501.0, 500.0)).unwrap(),
+        )
+        .unwrap();
+        let window =
+            ViewportEntity::new(Point2::new(100.0, 100.0), 150.0, 100.0, Point2::ORIGIN, 1.0);
+        let id = tx.insert_in(sheet, window).unwrap();
+        tx.commit();
+        let view = view_at(Point2::new(100.0, 100.0), 2.0);
+        let segments_in = |drawing: &Drawing| {
+            let mut overlay = OverlayFrame::new();
+            overlay.rebuild_in(&[], drawing, sheet, &view);
+            segments_of(&overlay, StyleRole::Entity)
+        };
+        // The model's y = 0 is the paper's y = 100, across the frame.
+        let segments = segments_in(&drawing);
+        assert_eq!(segments.len(), 1, "{segments:?}");
+        let [x0, y0, x1, y1] = segments[0];
+        let (left, right) = (x0.min(x1), x0.max(x1));
+        assert!(
+            (left - 25.0).abs() < 1e-9 && (right - 175.0).abs() < 1e-9,
+            "{segments:?}"
+        );
+        assert!((y0 - 100.0).abs() < 1e-9 && (y1 - 100.0).abs() < 1e-9);
+
+        // A viewport that is off shows nothing of the model.
+        let mut tx = drawing.transaction();
+        tx.replace(
+            id,
+            ViewportEntity {
+                on: false,
+                ..window
+            },
+        )
+        .unwrap();
+        tx.commit();
+        assert!(segments_in(&drawing).is_empty());
     }
 
     /// #402: on a layout, a model curve seen through a viewport past the
