@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 import type { AiContext, ProposalSummary } from "../cad/engine";
-import { AiAssistant, STALE_PAGE, type AssistantHost, type SessionStore } from "./ai-assistant";
+import {
+  AiAssistant,
+  STALE_PAGE,
+  withoutSignIn,
+  type AssistantHost,
+  type SessionStore,
+} from "./ai-assistant";
 import { AiError, type AiAnswer, type AiClient, type AiRequest, type Allowance } from "./ai-client";
 
 const allowance = (remaining: number): Allowance => ({
@@ -260,6 +266,21 @@ describe("the AI assistant (#260)", () => {
       status: "signed-out",
       error: undefined,
     });
+  });
+
+  // #409: what is left of the fragment is a fragment, wherever the token was.
+  test("the sign-in token is taken out of the fragment, and the rest kept as one", async () => {
+    expect(withoutSignIn("#ai-sign-in=t&tab=ai")).toBe("#tab=ai");
+    expect(withoutSignIn("#tab=ai&ai-sign-in=t")).toBe("#tab=ai");
+    expect(withoutSignIn("#a=1&ai-sign-in=t&b=2")).toBe("#a=1&b=2");
+    expect(withoutSignIn("#ai-sign-in=t")).toBe("");
+    expect(withoutSignIn("#tab=ai")).toBe("#tab=ai");
+    expect(withoutSignIn("#")).toBe("");
+    expect(withoutSignIn("")).toBe("");
+    const client = new FakeClient();
+    const assistant = new AiAssistant(new FakeHost(), client, new MemoryStore());
+    expect(await assistant.start("#ai-sign-in=good-token&tab=ai")).toBe("#tab=ai");
+    expect(assistant.getSnapshot().status).toBe("signed-in");
   });
 
   test("a request or a reply is copied to the clipboard; a refusal copies nothing and breaks nothing", async () => {

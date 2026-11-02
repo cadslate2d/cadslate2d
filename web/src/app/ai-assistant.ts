@@ -116,6 +116,20 @@ const HISTORY_CHARACTERS = 60_000;
 /** The fragment a sign-in link opens the app with. */
 const SIGN_IN = /(?:^#|&)ai-sign-in=([A-Za-z0-9_-]+)/;
 
+/**
+ * The fragment with the sign-in token taken out (#409): the parameters
+ * around it, joined again after one `#`, wherever the token was among
+ * them; nothing, when it was alone. One without a token is as it was.
+ */
+export function withoutSignIn(hash: string): string {
+  if (!SIGN_IN.test(hash)) return hash === "#" ? "" : hash;
+  const kept = hash
+    .replace(/^#/, "")
+    .split("&")
+    .filter((parameter) => parameter !== "" && !parameter.startsWith("ai-sign-in="));
+  return kept.length > 0 ? `#${kept.join("&")}` : "";
+}
+
 export class AiAssistant {
   #snapshot: AiSnapshot;
   readonly #listeners = new Set<() => void>();
@@ -190,7 +204,7 @@ export class AiAssistant {
   async start(hash: string): Promise<string> {
     if (!this.client) return hash;
     const token = SIGN_IN.exec(hash)?.[1];
-    const rest = hash.replace(SIGN_IN, "").replace(/^#&/, "#").replace(/^#$/, "");
+    const rest = withoutSignIn(hash);
     try {
       if (token) {
         const opened = await this.client.openSession(token);
