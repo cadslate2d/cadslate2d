@@ -348,3 +348,39 @@ fn a_resize_in_mspace_leaves_the_viewport_and_the_paper_at_the_canvas_size() {
         (1200.0, 900.0)
     );
 }
+
+/// #375: MSPACE and back with no pan or zoom between is no edit: the
+/// viewport is as it was, nothing is committed, nothing to undo, nothing
+/// unsaved.
+#[test]
+fn mspace_then_pspace_with_no_change_commits_nothing() {
+    let mut h = Harness::new();
+    h.enter_all(&["REC", "0,0", "1000,500"]);
+    h.enter_all(&["LAYOUT", "N", "Sheet"]);
+    let sheet = h.session.space();
+    h.enter_all(&["MVIEW", "10,10", "210,110"]);
+    let before = viewport(&h, sheet);
+    let revision = h.session.drawing().revision();
+    let unsaved = h.session.ui_state().unsaved_changes;
+    let log_length = h.log().len();
+    h.enter("MSPACE");
+    h.enter("PSPACE");
+    assert_eq!(h.session.drawing().revision(), revision);
+    assert_eq!(viewport(&h, sheet), before);
+    assert_eq!(h.session.ui_state().unsaved_changes, unsaved);
+    assert!(
+        !h.log()[log_length..]
+            .iter()
+            .any(|line| line == "The viewport shows the model as you left it."),
+        "{:?}",
+        &h.log()[log_length..]
+    );
+    // U takes back the viewport itself, not a view edit.
+    h.undo();
+    assert!(
+        !h.session
+            .drawing()
+            .shown_in(sheet)
+            .any(|(_, e)| matches!(e, Entity::Viewport(_)))
+    );
+}
