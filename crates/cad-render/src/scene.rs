@@ -73,6 +73,22 @@ struct Chunk {
 /// so a drawing of ordinary size is one run per kind, as before.
 pub const MAX_ORIGIN_OFFSET: f64 = 100_000.0;
 
+/// The viewports through which the model is shown on the layout `space`
+/// (#193): those shown there and switched on. The scene draws the model
+/// through these, and the overlay its far curves (#402); one rule for
+/// both.
+pub fn viewports_shown(
+    drawing: &Drawing,
+    space: LayoutId,
+) -> impl Iterator<Item = ViewportEntity> + '_ {
+    drawing
+        .shown_in(space)
+        .filter_map(|(_, entity)| match entity {
+            Entity::Viewport(viewport) if viewport.on => Some(*viewport),
+            _ => None,
+        })
+}
+
 /// The view of the model through `viewport` as seen on `paper`, the view
 /// of the layout (#193): the pixels inside the viewport's frame show the
 /// model points the viewport shows there. The model's scene is drawn

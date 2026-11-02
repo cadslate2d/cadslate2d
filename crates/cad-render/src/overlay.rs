@@ -10,10 +10,10 @@ use std::f64::consts::{PI, TAU};
 use cad_commands::constraint_display::{Glyph, glyph_square};
 use cad_commands::{OverlayItem, SnapMode};
 use cad_core::{Aabb, Point2, Vec2, View};
-use cad_document::{Drawing, Entity, LayoutId, ViewportEntity};
+use cad_document::{Drawing, Entity, LayoutId};
 use cad_geometry::{Arc, Segment};
 
-use crate::{GeometrySink, PackedFrame, StyleRole, viewport_view, walk_entity};
+use crate::{GeometrySink, PackedFrame, StyleRole, viewport_view, viewports_shown, walk_entity};
 
 /// Half-length of each crosshair arm, in CSS pixels.
 const CROSSHAIR_ARM_PIXELS: f64 = 24.0;
@@ -456,14 +456,7 @@ impl OverlayFrame {
         // On a layout, the model through each viewport that is on (#402):
         // its far curves under the viewport's view, as far as the frame
         // shows it on screen, put on the paper and clipped to the frame.
-        let windows: Vec<ViewportEntity> = drawing
-            .shown_in(space)
-            .filter_map(|(_, entity)| match entity {
-                Entity::Viewport(viewport) if viewport.on => Some(*viewport),
-                _ => None,
-            })
-            .collect();
-        for window in windows {
+        for window in viewports_shown(drawing, space) {
             let frame_on_paper = window.frame();
             let Some(seen) = overlap(&frame_on_paper, &bounds) else {
                 continue;
