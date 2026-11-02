@@ -293,7 +293,7 @@ pub(crate) fn loops_of(entities: &[&Entity]) -> Vec<Path> {
     let mut open: Vec<&Entity> = Vec::new();
     for entity in entities {
         match entity {
-            Entity::Polyline(polyline) if polyline.closed => loops.push(polyline.path()),
+            Entity::Polyline(polyline) if polyline.closes() => loops.push(polyline.path()),
             Entity::Circle(circle) => loops.push(Path {
                 vertices: vec![
                     Point2::new(circle.center.x - circle.radius, circle.center.y),
@@ -333,7 +333,7 @@ pub(crate) fn loops_of(entities: &[&Entity]) -> Vec<Path> {
     {
         for result in joined {
             if let Entity::Polyline(polyline) = result.entity
-                && polyline.closed
+                && polyline.closes()
             {
                 loops.push(polyline.path());
             }

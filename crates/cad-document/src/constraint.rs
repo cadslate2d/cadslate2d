@@ -66,7 +66,7 @@ impl Part {
             (Entity::Polyline(polyline), Part::Segment(n)) => {
                 let n = n as usize;
                 let count = polyline.vertices.len();
-                let segments = if polyline.closed {
+                let segments = if polyline.closes() {
                     count
                 } else {
                     count.saturating_sub(1)

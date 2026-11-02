@@ -132,7 +132,7 @@ impl Command for WipeoutCommand {
             }
             (State::Polyline, CommandInput::Pick { entity, .. }) => {
                 match ctx.drawing.entity(entity) {
-                    Some(Entity::Polyline(polyline)) if !polyline.closed => {
+                    Some(Entity::Polyline(polyline)) if !polyline.closes() => {
                         ctx.message("The polyline is open: a wipeout needs a closed one.");
                         State::Polyline
                     }

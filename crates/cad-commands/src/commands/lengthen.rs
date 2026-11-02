@@ -112,7 +112,7 @@ impl LengthenCommand {
                 };
                 turn * geometry.radius
             }
-            Entity::Polyline(polyline) if !polyline.closed => {
+            Entity::Polyline(polyline) if !polyline.closes() => {
                 // The end segment, straight or an arc, dragged like a line
                 // or an arc of its own.
                 let path = polyline.path();

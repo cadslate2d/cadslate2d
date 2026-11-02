@@ -157,7 +157,7 @@ impl AreaCommand {
                 std::f64::consts::PI * circle.radius * circle.radius,
                 TAU * circle.radius,
             )),
-            Entity::Polyline(polyline) if polyline.closed => {
+            Entity::Polyline(polyline) if polyline.closes() => {
                 let path = polyline.path();
                 Ok((path.area().abs(), path.length()))
             }

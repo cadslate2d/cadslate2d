@@ -257,7 +257,7 @@ impl Command for PeditCommand {
                 };
                 match keyword {
                     CLOSE => {
-                        if polyline.closed {
+                        if polyline.closes() {
                             ctx.message("The polyline is already closed.");
                         } else if polyline.vertices.len() < 3 {
                             ctx.message("A polyline needs three vertices to close.");
@@ -266,6 +266,9 @@ impl Command for PeditCommand {
                         }
                     }
                     OPEN => {
+                        // The flag, not closes(): a flag set on two
+                        // vertices in a line closes nothing, but the panel
+                        // shows it, and Open clears it (#382).
                         if !polyline.closed {
                             ctx.message("The polyline is already open.");
                         } else {
@@ -273,7 +276,7 @@ impl Command for PeditCommand {
                         }
                     }
                     JOIN => {
-                        if polyline.closed {
+                        if polyline.closes() {
                             ctx.message("A closed polyline has no ends to join to.");
                         } else {
                             self.state = State::JoinSelect;

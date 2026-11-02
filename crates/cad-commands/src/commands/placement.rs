@@ -446,7 +446,7 @@ impl ArrayPathCommand {
     /// path, evenly round a closed one.
     fn spread(path: &Path, count: usize) -> Vec<f64> {
         let length = path.length();
-        let gaps = if path.closed { count } else { count - 1 };
+        let gaps = if path.closes() { count } else { count - 1 };
         (0..count)
             .map(|k| length * k as f64 / gaps as f64)
             .collect()
@@ -459,7 +459,7 @@ impl ArrayPathCommand {
         (0..)
             .map(|k| k as f64 * spacing)
             .take_while(|d| {
-                if path.closed {
+                if path.closes() {
                     *d < length - spacing * 1e-9
                 } else {
                     *d <= room

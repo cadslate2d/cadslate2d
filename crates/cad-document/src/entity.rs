@@ -292,6 +292,11 @@ pub struct PolylineEntity {
     pub vertices: Vec<Point2>,
     /// One per vertex, for the segment starting there; missing ones are zero.
     bulges: Vec<f64>,
+    /// The closed flag as made or read from a file, kept so a file
+    /// round-trips. Whether the polyline is a loop is [`Self::closes`]:
+    /// two vertices with a straight line between them are open whatever
+    /// the flag says (#382). Ask that for geometry; read this to copy the
+    /// polyline or to write it out.
     pub closed: bool,
     /// A constant width (#204): drawn as a filled band half this wide to
     /// either side of the path; zero for a plain polyline.
@@ -387,6 +392,15 @@ impl PolylineEntity {
     /// True when at least one segment is an arc.
     pub fn has_arcs(&self) -> bool {
         !self.bulges.is_empty()
+    }
+
+    /// Whether the polyline has a closing segment: flagged closed, with
+    /// three vertices or more, or two joined by an arc. Two vertices
+    /// flagged closed with nothing between them but a straight line — as a
+    /// file may hold — are one open segment (#382). The flag itself is kept
+    /// as read, so the file round-trips.
+    pub fn closes(&self) -> bool {
+        cad_geometry::polyline_closes(self.vertices.len(), self.closed, |at| self.bulge(at))
     }
 
     /// The polyline as a path that can be measured along and cut.
