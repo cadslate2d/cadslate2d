@@ -192,8 +192,23 @@ fn laylck_and_layulk_lock_and_unlock_and_laymcur_makes_a_layer_current() {
     assert_eq!(h.prompt(), "Command:", "one pick");
     assert!(layer(&h, "walls").locked);
 
-    // An object on a locked layer is what LAYULK picks.
+    // An object on a locked layer is what LAYULK picks, and the hover
+    // highlight offers it, as the click takes it (#378); a command asking
+    // for one object that does not take a locked one is offered nothing.
+    h.enter("LAYMCUR");
+    h.move_to_world(p(50.0, 20.0));
+    assert_eq!(h.session.hovered_object(), None, "LAYMCUR does not take it");
+    h.escape();
     h.enter("LAYULK");
+    h.move_to_world(p(50.0, 20.0));
+    let wall = h.session.hovered_object().expect("offered");
+    assert!(
+        h.session
+            .overlay()
+            .iter()
+            .any(|item| matches!(item, crate::OverlayItem::Hover(id) if *id == wall)),
+        "and drawn"
+    );
     h.click_world(p(50.0, 20.0));
     assert!(said(&h, "Layer \"walls\" is unlocked."));
     assert!(!layer(&h, "walls").locked);
