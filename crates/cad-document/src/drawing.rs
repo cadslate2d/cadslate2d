@@ -333,6 +333,10 @@ pub enum TransactionError {
     /// A viewport is a window of a layout's paper: it cannot be in the
     /// model, nor in a block.
     ViewportOffPaper,
+    /// An xline or a ray is drawn by the overlay, clipped to the view, and
+    /// kept out of the extents (ADR-0031): a block, placed as committed
+    /// geometry with bounds, cannot hold one (#415).
+    ConstructionInBlock,
     /// The layout does not exist, in the drawing or earlier in this
     /// transaction.
     UnknownLayout(LayoutId),
@@ -443,6 +447,7 @@ impl fmt::Display for TransactionError {
             Self::BadBlockScale => write!(f, "a block reference's scale must be positive"),
             Self::BadViewport(error) => write!(f, "{error}"),
             Self::ViewportOffPaper => write!(f, "a viewport belongs on a layout's paper"),
+            Self::ConstructionInBlock => write!(f, "a block cannot hold an xline or a ray"),
             Self::UnknownLayout(id) => write!(f, "layout {id} does not exist"),
             Self::PermanentLayout => write!(f, "the model cannot be removed or renamed"),
             Self::LayoutInUse(id) => write!(
@@ -3580,6 +3585,13 @@ impl TransactionBuilder<'_> {
         {
             return Err(TransactionError::ViewportOffPaper);
         }
+        if block
+            .entities
+            .iter()
+            .any(|record| record.entity.is_unbounded())
+        {
+            return Err(TransactionError::ConstructionInBlock);
+        }
         for record in block.entities.iter() {
             self.known_layer(record.properties.layer)?;
             self.known_linetype(record.properties.linetype)?;
@@ -6569,6 +6581,17 @@ mod tests {
         assert_eq!(
             tx.redefine_block(BlockId::FIRST, chair_block()),
             Err(TransactionError::PermanentBlock)
+        );
+        // Nor a construction line, which has no bounds to place (#415).
+        let xline =
+            crate::XLineEntity::through(Point2::new(0.0, 5.0), Point2::new(1.0, 5.0)).unwrap();
+        assert_eq!(
+            tx.define_block(Block::new(
+                "Guide",
+                Point2::ORIGIN,
+                vec![EntityRecord::new(xline, Properties::default())]
+            )),
+            Err(TransactionError::ConstructionInBlock)
         );
         // A reference must place something that exists, at a positive scale.
         assert_eq!(

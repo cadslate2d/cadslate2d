@@ -43,6 +43,7 @@ Precision: drawn in the overlay, a construction line's piece is computed in `f64
 
 - `XLINE` (`XL`: through points, `Hor`, `Ver`, `Ang`, `Bisect`, `Offset` by a distance or through a point) and `RAY` draw them; `TRIM`, `BREAK`, `OFFSET`, `MOVE` and the rest edit them; `EXTEND`, `FILLET`, `CHAMFER`, `JOIN`, `LENGTHEN` refuse them by name.
 - A construction line counts nowhere in the extents: a drawing of only construction lines has none, and `ZOOM Extents` leaves the view where it is.
+- A block cannot hold a construction line (#415): a reference is placed as committed geometry with bounds, which would leave the line unseen on screen yet printed, and stretch the extents to the reach. `BLOCK` and `INSERT` of a file leave them in the drawing or out of the block and say so; the DXF reader leaves one in a block's definition out and reports it.
 - Geometric questions more than a million units from a construction line's base point find nothing there.
 
 ## Revisit when
