@@ -1736,9 +1736,16 @@ impl<'a> Reader<'a> {
             return Ok(());
         };
         let (words, dropped) = plain_mtext(body.text.as_deref().unwrap_or(""));
-        let lines = words.lines().map(str::trim).filter(|line| !line.is_empty());
-        let words = lines.collect::<Vec<_>>().join(" ");
-        if dropped {
+        let lines: Vec<&str> = words
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        // Words under the dimension line, or on a line of their own, are
+        // run into the one line: a layout the drawing does not hold.
+        let split = lines.len() > 1;
+        let words = lines.join(" ");
+        if dropped || split {
             self.report.formatting_dropped += 1;
         }
         if !words.is_empty() && words != "<>" {
@@ -3677,7 +3684,7 @@ mod tests {
         };
         assert_eq!(shown("2X <> TYP"), ("2X 100.00 TYP".to_owned(), 0));
         assert_eq!(shown("%%c<>"), ("Ø100.00".to_owned(), 0));
-        assert_eq!(shown("<>\\XTYP"), ("100.00 TYP".to_owned(), 0));
+        assert_eq!(shown("<>\\XTYP"), ("100.00 TYP".to_owned(), 1));
         assert_eq!(shown("{\\H2;BIG} <>"), ("BIG 100.00".to_owned(), 1));
         assert_eq!(shown("a \\\\ b"), ("a \\ b".to_owned(), 0));
         assert_eq!(shown("<>"), ("100.00".to_owned(), 0));
