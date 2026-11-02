@@ -357,7 +357,15 @@ impl Session {
         self.proposal.take()
     }
 
+    /// Opens an undo group of the session's own — a proposal's (#254) —
+    /// never inside a command's, whose closing would merge what came
+    /// before into it (#371): end the command first, with
+    /// `cancel_active`.
     pub(crate) fn begin_undo_group(&mut self) {
+        debug_assert!(
+            self.active.is_none(),
+            "an undo group opened while a command is active nests in the command's"
+        );
         self.drawing.begin_group();
     }
 
@@ -1989,7 +1997,11 @@ impl Session {
         Dirty::OVERLAY | Dirty::UI
     }
 
-    fn cancel_active(&mut self) -> Dirty {
+    /// Ends the active command, whatever it is in the middle of — a fence,
+    /// a box — as many Escapes as it takes would: its undo group closes,
+    /// and what it made is its own step. One Escape cancels the innermost
+    /// thing first, which may leave the command asking (#371).
+    pub(crate) fn cancel_active(&mut self) -> Dirty {
         self.selection_box = None;
         self.selection_shape = None;
         self.removing = false;
