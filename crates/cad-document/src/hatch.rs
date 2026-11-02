@@ -18,8 +18,8 @@ use std::f64::consts::TAU;
 
 use cad_core::{Aabb, Point2};
 use cad_geometry::{
-    LineFamily, Path, Primitive, Segment, Transform, flatten_path, pattern_lines, ring_contains,
-    signed_area, tessellate,
+    LineFamily, Path, Primitive, Segment, Transform, even_odd_fill, flatten_path, pattern_lines,
+    ring_contains, rings_cross, signed_area, tessellate,
 };
 
 use crate::hatch_pattern::{HatchPattern, hatch_pattern};
@@ -243,9 +243,14 @@ impl HatchEntity {
 
     /// The triangles that fill the region — what a solid hatch is drawn
     /// with: each outer ring with the holes
-    /// one level inside it cut out (ADR-0021).
+    /// one level inside it cut out (ADR-0021). Loops that cross, which no
+    /// nesting describes, fill what an odd number of them hold (#414), as
+    /// picking, the page's `f*`, and [`area`](Self::area) take it.
     pub fn fill(&self) -> Vec<[Point2; 3]> {
         let rings = self.rings();
+        if rings_cross(&rings) {
+            return even_odd_fill(&rings);
+        }
         let depths = Self::depths(&rings);
         let mut triangles = Vec::new();
         for (i, ring) in rings.iter().enumerate() {
@@ -269,9 +274,18 @@ impl HatchEntity {
         triangles
     }
 
-    /// The filled area: the outer rings less their holes.
+    /// The filled area: the outer rings less their holes; of loops that
+    /// cross, what an odd number of them hold (#414).
     pub fn area(&self) -> f64 {
         let rings = self.rings();
+        if rings_cross(&rings) {
+            return even_odd_fill(&rings)
+                .iter()
+                .map(|&[a, b, c]| {
+                    ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)).abs() / 2.0
+                })
+                .sum();
+        }
         let depths = Self::depths(&rings);
         rings
             .iter()
@@ -473,6 +487,34 @@ mod tests {
             bulges: vec![1.0, 1.0],
             closed: true,
         }
+    }
+
+    /// #414: loops that cross, neither inside the other, are one region
+    /// everywhere — drawn, picked, plotted, measured: what an odd number
+    /// of them hold, the overlap empty.
+    #[test]
+    fn crossing_loops_are_filled_drawn_picked_and_measured_alike() {
+        let hatch = HatchEntity::solid(vec![square(0.0, 0.0, 10.0), square(5.0, 5.0, 10.0)]);
+        let fill = hatch.fill();
+        let drawn = |point: Point2| {
+            fill.iter().any(|&[a, b, c]| {
+                let side = |u: Point2, v: Point2| {
+                    (v.x - u.x) * (point.y - u.y) - (v.y - u.y) * (point.x - u.x)
+                };
+                side(a, b) > 0.0 && side(b, c) > 0.0 && side(c, a) > 0.0
+            })
+        };
+        for i in 0..32 {
+            for j in 0..32 {
+                let point = p(
+                    -0.25 + f64::from(i) * 0.5 + 0.13,
+                    -0.25 + f64::from(j) * 0.5 + 0.07,
+                );
+                assert_eq!(drawn(point), hatch.contains(point), "{point:?}");
+            }
+        }
+        assert!(!drawn(p(7.5, 7.5)), "the overlap is empty");
+        assert!((hatch.area() - 150.0).abs() < 1e-9, "{}", hatch.area());
     }
 
     #[test]
