@@ -5,8 +5,8 @@ use cad_commands::{
     SelectionSummary, Session, Toggle, Toggles, UiState,
 };
 use cad_core::{ClipTransform, LengthUnit, Point2, ScreenPoint};
-use cad_document::{Entity, LayoutId, ViewportEntity};
-use cad_render::{OverlayFrame, RenderScene, SceneCache, viewport_view};
+use cad_document::{LayoutId, ViewportEntity};
+use cad_render::{OverlayFrame, RenderScene, SceneCache, viewport_view, viewports_shown};
 use js_sys::{Float32Array, Uint8Array, Uint32Array};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -896,15 +896,7 @@ impl CadSession {
             return Vec::new();
         }
         let paper = self.session.view().clone();
-        let windows: Vec<ViewportEntity> = self
-            .session
-            .drawing()
-            .shown_in(space)
-            .filter_map(|(_, entity)| match entity {
-                Entity::Viewport(viewport) if viewport.on => Some(*viewport),
-                _ => None,
-            })
-            .collect();
+        let windows: Vec<ViewportEntity> = viewports_shown(self.session.drawing(), space).collect();
         let regions = self.scene().regions();
         let clip = paper.clip_transform(Point2::ORIGIN);
         let to_clip = |point: Point2| {

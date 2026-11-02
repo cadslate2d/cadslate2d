@@ -11,9 +11,9 @@ use cad_commands::constraint_display::{Glyph, glyph_square};
 use cad_commands::{OverlayItem, SnapMode};
 use cad_core::{Aabb, Point2, Vec2, View};
 use cad_document::{Drawing, Entity, LayoutId};
-use cad_geometry::Arc;
+use cad_geometry::{Arc, Segment};
 
-use crate::{GeometrySink, PackedFrame, StyleRole, walk_entity};
+use crate::{GeometrySink, PackedFrame, StyleRole, viewport_view, viewports_shown, walk_entity};
 
 /// Half-length of each crosshair arm, in CSS pixels.
 const CROSSHAIR_ARM_PIXELS: f64 = 24.0;
@@ -443,46 +443,37 @@ impl OverlayFrame {
     /// segments; the shader draws nothing for such an instance. The
     /// committed scene is untouched, so pan and zoom upload nothing.
     fn push_far_curves(&mut self, drawing: &Drawing, space: LayoutId, view: &View) {
-        let scale = view.scale();
-        // A margin, so a stroke whose curve passes just outside is drawn.
         let bounds = view
             .visible_bounds()
             .expanded(view.pixels_to_world(FAR_CURVE_MARGIN_PIXELS));
-        // Only a curve larger than this, in drawing units, can be far
-        // (#210). Zoomed out, few are or none, and the drawing's list of
-        // curves by size names them; zoomed in, the view holds little, and
-        // the index names what is in it.
-        let threshold = FAR_CURVE_RADIUS_PIXELS / scale;
-        let mut large: Vec<_> = drawing
-            .curves_larger_than(threshold)
-            .take(FAR_CURVE_CANDIDATES + 1)
-            .collect();
-        let candidates = if large.len() > FAR_CURVE_CANDIDATES {
-            drawing.query_shown_in(space, &bounds)
-        } else {
-            large.retain(|id| {
-                drawing.is_shown_in(*id, space)
-                    && drawing
-                        .entity(*id)
-                        .is_some_and(|entity| drawing.bounds_of(entity).intersects(&bounds))
-            });
-            large
-        };
-        for id in candidates {
-            let Some(entity) = drawing.entity(id) else {
+        let frame = &mut self.frame;
+        far_curves(drawing, space, view, &bounds, |a, b| {
+            frame.push_segment(StyleRole::Entity, a, b);
+        });
+        if space == LayoutId::MODEL {
+            return;
+        }
+        // On a layout, the model through each viewport that is on (#402):
+        // its far curves under the viewport's view, as far as the frame
+        // shows it on screen, put on the paper and clipped to the frame.
+        for window in viewports_shown(drawing, space) {
+            let frame_on_paper = window.frame();
+            let Some(seen) = overlap(&frame_on_paper, &bounds) else {
                 continue;
             };
-            // The arcs the committed scene draws for it — the one walk
-            // (ADR-0027) — so a dimension's arc, a point's marker circle,
-            // and whatever a block places are tessellated here when the
-            // adapter drops them for size (#390).
-            let mut arcs = Arcs::default();
-            walk_entity(entity, drawing.tables(), &mut arcs);
-            for arc in arcs.0 {
-                if arc.radius * scale > FAR_CURVE_RADIUS_PIXELS {
-                    self.push_far_arc(&arc, view, &bounds);
+            let through = viewport_view(view, &window);
+            let model_bounds = Aabb::from_points(
+                window.model_point(seen.min()),
+                window.model_point(seen.max()),
+            )
+            .expanded(through.pixels_to_world(FAR_CURVE_MARGIN_PIXELS));
+            let frame = &mut self.frame;
+            far_curves(drawing, LayoutId::MODEL, &through, &model_bounds, |a, b| {
+                let on_paper = Segment::new(window.paper_point(a), window.paper_point(b));
+                if let Some(piece) = on_paper.clipped_to(&frame_on_paper) {
+                    frame.push_segment(StyleRole::Entity, piece.start, piece.end);
                 }
-            }
+            });
         }
     }
 
@@ -558,38 +549,6 @@ impl OverlayFrame {
                     }
                 }
                 _ => {}
-            }
-        }
-    }
-
-    /// The part of `arc` within reach of the view, as segments with a chord
-    /// error under [`FAR_CURVE_CHORD_PIXELS`].
-    fn push_far_arc(&mut self, arc: &Arc, view: &View, bounds: &Aabb) {
-        let to_view = bounds.center() - arc.center;
-        let distance = to_view.length();
-        let reach = bounds.min().distance_to(bounds.max()) / 2.0;
-        if distance - reach > arc.radius || distance + reach < arc.radius {
-            return; // the curve passes nowhere near the view
-        }
-        // The curve within the view lies within this angle of the direction
-        // of the view from the centre: the chord's angle, with room.
-        let half = if reach >= arc.radius {
-            PI
-        } else {
-            ((reach / arc.radius).asin() * 1.5).min(PI)
-        };
-        let mid = to_view.y.atan2(to_view.x);
-        let step = (8.0 * FAR_CURVE_CHORD_PIXELS / view.scale() / arc.radius)
-            .sqrt()
-            .max(1e-9);
-        for (from, to) in arc_pieces(mid - half, mid + half, arc.start, arc.sweep) {
-            let count = ((to - from) / step).ceil().clamp(1.0, 100_000.0) as usize;
-            let at = |i: usize| {
-                let angle = from + (to - from) * (i as f64 / count as f64);
-                arc.center + Vec2::from_polar(arc.radius, angle)
-            };
-            for i in 0..count {
-                self.frame.push_segment(StyleRole::Entity, at(i), at(i + 1));
             }
         }
     }
@@ -760,6 +719,98 @@ impl GeometrySink for Arcs {
     fn triangle(&mut self, _corners: [Point2; 3]) {}
     fn hatch_fill(&mut self, _hatch: &cad_document::HatchEntity) {}
     fn mask(&mut self, _wipeout: &cad_document::WipeoutEntity) {}
+}
+
+/// The far curves of `space` under `view` within `bounds` (#112, #210),
+/// as the chords that stand for them, each handed to `segment`: the arcs a
+/// curve's walk makes whose radius on screen is past what the adapter
+/// draws, the part of each near `bounds`.
+fn far_curves(
+    drawing: &Drawing,
+    space: LayoutId,
+    view: &View,
+    bounds: &Aabb,
+    mut segment: impl FnMut(Point2, Point2),
+) {
+    let scale = view.scale();
+    // Only a curve larger than this, in drawing units, can be far
+    // (#210). Zoomed out, few are or none, and the drawing's list of
+    // curves by size names them; zoomed in, the view holds little, and
+    // the index names what is in it.
+    let threshold = FAR_CURVE_RADIUS_PIXELS / scale;
+    let mut large: Vec<_> = drawing
+        .curves_larger_than(threshold)
+        .take(FAR_CURVE_CANDIDATES + 1)
+        .collect();
+    let candidates = if large.len() > FAR_CURVE_CANDIDATES {
+        drawing.query_shown_in(space, bounds)
+    } else {
+        large.retain(|id| {
+            drawing.is_shown_in(*id, space)
+                && drawing
+                    .entity(*id)
+                    .is_some_and(|entity| drawing.bounds_of(entity).intersects(bounds))
+        });
+        large
+    };
+    for id in candidates {
+        let Some(entity) = drawing.entity(id) else {
+            continue;
+        };
+        // The arcs the committed scene draws for it — the one walk
+        // (ADR-0027) — so a dimension's arc, a point's marker circle,
+        // and whatever a block places are tessellated here when the
+        // adapter drops them for size (#390).
+        let mut arcs = Arcs::default();
+        walk_entity(entity, drawing.tables(), &mut arcs);
+        for arc in arcs.0 {
+            if arc.radius * scale > FAR_CURVE_RADIUS_PIXELS {
+                far_arc(&arc, view, bounds, &mut segment);
+            }
+        }
+    }
+}
+
+/// The part of `arc` within reach of the view, as segments with a chord
+/// error under [`FAR_CURVE_CHORD_PIXELS`].
+fn far_arc(arc: &Arc, view: &View, bounds: &Aabb, segment: &mut impl FnMut(Point2, Point2)) {
+    let to_view = bounds.center() - arc.center;
+    let distance = to_view.length();
+    let reach = bounds.min().distance_to(bounds.max()) / 2.0;
+    if distance - reach > arc.radius || distance + reach < arc.radius {
+        return; // the curve passes nowhere near the view
+    }
+    // The curve within the view lies within this angle of the direction
+    // of the view from the centre: the chord's angle, with room.
+    let half = if reach >= arc.radius {
+        PI
+    } else {
+        ((reach / arc.radius).asin() * 1.5).min(PI)
+    };
+    let mid = to_view.y.atan2(to_view.x);
+    let step = (8.0 * FAR_CURVE_CHORD_PIXELS / view.scale() / arc.radius)
+        .sqrt()
+        .max(1e-9);
+    for (from, to) in arc_pieces(mid - half, mid + half, arc.start, arc.sweep) {
+        let count = ((to - from) / step).ceil().clamp(1.0, 100_000.0) as usize;
+        let at = |i: usize| {
+            let angle = from + (to - from) * (i as f64 / count as f64);
+            arc.center + Vec2::from_polar(arc.radius, angle)
+        };
+        for i in 0..count {
+            segment(at(i), at(i + 1));
+        }
+    }
+}
+
+/// Where two boxes overlap, if they do.
+fn overlap(a: &Aabb, b: &Aabb) -> Option<Aabb> {
+    a.intersects(b).then(|| {
+        Aabb::from_points(
+            Point2::new(a.min().x.max(b.min().x), a.min().y.max(b.min().y)),
+            Point2::new(a.max().x.min(b.max().x), a.max().y.min(b.max().y)),
+        )
+    })
 }
 
 #[cfg(test)]
@@ -988,6 +1039,73 @@ mod tests {
         // Looking elsewhere, at the same zoom: the curve passes nowhere near.
         let away = view_at(Point2::new(0.0, 0.0), 10_000.0);
         assert!(far_segments(drawing, &away).is_empty());
+    }
+
+    /// #402: on a layout, a model curve seen through a viewport past the
+    /// shader's radius is drawn by the overlay as well: its span in the
+    /// viewport's view, put on the paper and kept inside the frame.
+    #[test]
+    fn a_far_model_curve_is_drawn_through_a_layout_viewport() {
+        use cad_document::{CircleEntity, Layout, ViewportEntity};
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+        tx.insert(CircleEntity::new(Point2::ORIGIN, 100_000.0))
+            .unwrap();
+        let window = ViewportEntity::new(
+            Point2::new(100.0, 100.0),
+            100.0,
+            100.0,
+            Point2::new(100_000.0, 0.0),
+            1.0,
+        );
+        let id = tx.insert_in(sheet, window).unwrap();
+        tx.commit();
+        // Ten pixels per unit on the paper, and through the viewport at 1:1:
+        // the circle's radius on screen is a million pixels.
+        let view = view_at(Point2::new(100.0, 100.0), 10.0);
+        let segments_in = |drawing: &Drawing| {
+            let mut overlay = OverlayFrame::new();
+            overlay.rebuild_in(&[], drawing, sheet, &view);
+            segments_of(&overlay, StyleRole::Entity)
+        };
+        let segments = segments_in(&drawing);
+        assert!(!segments.is_empty(), "the far curve is drawn");
+        let frame = window.frame().expanded(1e-3);
+        let (mut lowest, mut highest) = (f64::INFINITY, f64::NEG_INFINITY);
+        for [x0, y0, x1, y1] in &segments {
+            for paper in [Point2::new(*x0, *y0), Point2::new(*x1, *y1)] {
+                assert!(
+                    frame.contains_point(paper),
+                    "{paper:?} is outside the frame"
+                );
+                let model = window.model_point(paper);
+                // On the curve, or where the frame cuts a chord too short to
+                // see: under a third of a pixel from it.
+                let off = (model.distance_to(Point2::ORIGIN) - 100_000.0).abs();
+                assert!(
+                    off * view.scale() < 0.3,
+                    "{model:?} is {off} off the circle"
+                );
+                lowest = lowest.min(paper.y);
+                highest = highest.max(paper.y);
+            }
+        }
+        // It runs across what the screen shows of the frame: y 70 to 130.
+        assert!(lowest <= 70.0 && highest >= 130.0, "{lowest} to {highest}");
+
+        // A viewport that is off shows nothing of the model.
+        let mut tx = drawing.transaction();
+        tx.replace(
+            id,
+            ViewportEntity {
+                on: false,
+                ..window
+            },
+        )
+        .unwrap();
+        tx.commit();
+        assert!(segments_in(&drawing).is_empty());
     }
 
     #[test]
