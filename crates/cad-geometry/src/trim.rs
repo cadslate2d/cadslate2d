@@ -100,6 +100,10 @@ fn trim_open<C: OpenCurve>(
     tolerance: LinearTolerance,
 ) -> Option<Trimmed<C>> {
     let (start, end) = (curve.start_point(), curve.end_point());
+    // Whether a cut is at an end is judged at the ends' own magnitude: far
+    // from the origin a computed crossing a few spacings of the numbers
+    // off an end is on it (ADR-0012, #379).
+    let tolerance = tolerance.around(&[start, end]);
     let at = curve.parameter_of(pick);
     let dividing = cuts
         .iter()
@@ -144,6 +148,8 @@ fn break_open<C: OpenCurve>(
     tolerance: LinearTolerance,
 ) -> Option<Vec<C>> {
     let (start, end) = (curve.start_point(), curve.end_point());
+    // At the ends' own magnitude, as for a trim (ADR-0012, #379).
+    let tolerance = tolerance.around(&[start, end]);
     let (a, b) = (curve.nearest(first), curve.nearest(second));
     let (from, to) = if curve.parameter_of(a) <= curve.parameter_of(b) {
         (a, b)

@@ -353,10 +353,11 @@ impl Path {
             });
         }
 
-        // An open path: its own ends divide nothing.
+        // An open path: its own ends divide nothing — judged at the ends'
+        // own magnitude (ADR-0012, #379).
+        let at_ends = tolerance.around(&[start.point, end.point]);
         located.retain(|cut| {
-            !tolerance.coincident(cut.point, start.point)
-                && !tolerance.coincident(cut.point, end.point)
+            !at_ends.coincident(cut.point, start.point) && !at_ends.coincident(cut.point, end.point)
         });
         let before = located.iter().rev().find(|cut| cut.along() < at.along());
         let after = located.iter().find(|cut| cut.along() >= at.along());
@@ -408,10 +409,12 @@ impl Path {
         } else {
             (b, a)
         };
-        let head = (!tolerance.coincident(from.point, start.point))
+        // At the ends' own magnitude, as for a trim (ADR-0012, #379).
+        let at_ends = tolerance.around(&[start.point, end.point]);
+        let head = (!at_ends.coincident(from.point, start.point))
             .then(|| self.between(start, from, tolerance));
         let tail =
-            (!tolerance.coincident(to.point, end.point)).then(|| self.between(to, end, tolerance));
+            (!at_ends.coincident(to.point, end.point)).then(|| self.between(to, end, tolerance));
         match (head, tail) {
             (None, None) => None,
             (None, Some(_)) | (Some(_), None) if same => None,
