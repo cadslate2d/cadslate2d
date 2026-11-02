@@ -361,13 +361,15 @@ fn mspace_then_pspace_with_no_change_commits_nothing() {
     h.enter_all(&["MVIEW", "10,10", "210,110"]);
     let before = viewport(&h, sheet);
     let revision = h.session.drawing().revision();
-    let unsaved = h.session.ui_state().unsaved_changes;
+    // Saved: MSPACE and back must not make it unsaved.
+    h.session.mark_exported(None, crate::FileFormat::Dxf);
+    assert!(!h.session.ui_state().unsaved_changes);
     let log_length = h.log().len();
     h.enter("MSPACE");
     h.enter("PSPACE");
     assert_eq!(h.session.drawing().revision(), revision);
     assert_eq!(viewport(&h, sheet), before);
-    assert_eq!(h.session.ui_state().unsaved_changes, unsaved);
+    assert!(!h.session.ui_state().unsaved_changes);
     assert!(
         !h.log()[log_length..]
             .iter()
