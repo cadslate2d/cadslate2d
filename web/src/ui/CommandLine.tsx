@@ -1,8 +1,20 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { CadApp } from "../app/cad-app";
-import { classifyKey } from "../app/key-routing";
+import { classifyKey, keyBelongsToTarget } from "../app/key-routing";
 import { toggleSpec } from "../app/toggles";
 import { KeyAction } from "../cad/engine";
+
+/**
+ * What takes the keys typed in it (#411): a field to type in, a list, words
+ * being edited. A checkbox, a radio, a button take none of the command
+ * line's keys, so are not one: in a dialog they answer its keys alone.
+ */
+const FIELDS = [
+  'input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="range"]):not([type="color"]):not([type="file"])',
+  "textarea",
+  "select",
+  '[contenteditable="true"]',
+].join(", ");
 
 /**
  * The command line: recent log lines, the current prompt, and a native text
@@ -18,6 +30,15 @@ export function CommandLine({ app }: { app: CadApp }) {
   // the page drive the command line, without clicking it first.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      // A key typed in a dialog's field, or on its buttons, is the dialog's
+      // (#411): the command line takes the rest.
+      const element = event.target instanceof Element ? event.target : null;
+      const target = {
+        commandLine: element !== null && element === inputRef.current,
+        field: element?.closest(FIELDS) != null,
+        inDialog: element?.closest('[role="dialog"], [role="alertdialog"], dialog') != null,
+      };
+      if (keyBelongsToTarget(event.key, target)) return;
       const typed = inputRef.current?.value ?? "";
       // Words selected on the page — a reply, a line of the log — are what
       // Ctrl+C copies, not the drawing's selection.
