@@ -21,6 +21,26 @@ import {
 import { UiStore } from "./ui-store";
 
 const RENDER_FLAGS = Dirty.Scene | Dirty.Overlay | Dirty.View;
+
+/** What the log says first when the browser refuses a request's file (#410). */
+const FILE_REFUSED: Record<HostRequest, string> = {
+  [HostRequest.None]: "That could not be done",
+  [HostRequest.OpenFile]: "The file could not be opened",
+  [HostRequest.ExportFile]: "The drawing was not saved",
+  [HostRequest.SaveFile]: "The drawing was not saved",
+  [HostRequest.Settings]: "The settings could not be opened",
+  [HostRequest.Plot]: "The plot was not saved",
+  [HostRequest.InsertFile]: "The file could not be inserted",
+  [HostRequest.WriteBlock]: "The block was not written",
+  [HostRequest.NewDrawing]: "A new drawing could not be started",
+  [HostRequest.OpenBrief]: "The brief could not be read",
+};
+
+/** Why the browser refused, in its own words, without a full stop of its own. */
+function refusal(error: unknown): string {
+  const words = error instanceof Error ? error.message || error.name : String(error);
+  return words.trim().replace(/\.+$/, "");
+}
 /** What OPEN offers to pick (#318): the format is read from the bytes. */
 const DRAWING_ACCEPT = ".dxf,.dwg";
 /** What INSERT offers to pick (#222). */
@@ -551,7 +571,26 @@ export class CadApp {
     if (dirty & Dirty.Host) void this.#serveHostRequest(this.engine.takeHostRequest());
   }
 
+  /**
+   * Serves what a command asked of the browser. When the browser refuses
+   * to write or read a file — a full disk, a permission taken back — the
+   * log says so (#410), and nothing is marked saved.
+   */
   async #serveHostRequest(request: { kind: HostRequest; format?: DocumentFormat }): Promise<void> {
+    await this.#refusedSays(FILE_REFUSED[request.kind], () => this.#serve(request));
+  }
+
+  /** Runs `work`, and puts in the log what the browser refused of it, after `what`. */
+  async #refusedSays(what: string, work: () => Promise<void>): Promise<void> {
+    try {
+      await work();
+    } catch (error) {
+      if (this.#failed) return;
+      this.#afterInput(this.engine.notify(`${what}: ${refusal(error)}.`));
+    }
+  }
+
+  async #serve(request: { kind: HostRequest; format?: DocumentFormat }): Promise<void> {
     switch (request.kind) {
       case HostRequest.OpenFile:
         return this.#openFile();
@@ -665,7 +704,11 @@ export class CadApp {
     this.ui.setExportWarning(undefined);
     if (this.#failed) return;
     const pending = this.#pendingSave;
-    if (pending) void this.#performSave(pending.ask, pending.format);
+    if (pending) {
+      void this.#refusedSays(FILE_REFUSED[HostRequest.SaveFile], () =>
+        this.#performSave(pending.ask, pending.format),
+      );
+    }
   }
 
   /** The export the warning asked about: the user chose not to. */

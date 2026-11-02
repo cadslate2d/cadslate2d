@@ -734,6 +734,14 @@ impl CadSession {
         Uint8Array::from(text.as_bytes())
     }
 
+    /// A line for the command log from the host (#410): what the browser
+    /// refused when it was asked to write a file — a full disk, a
+    /// permission taken back — once per refusal.
+    pub fn notify(&mut self, message: &str) -> u32 {
+        let dirty = self.session.notify(message.trim().to_owned());
+        self.report(dirty)
+    }
+
     /// Records that the host has saved the drawing (the bytes of
     /// `snapshot_file`) as `format` — to `name`, when it has a file now
     /// (#159, #319).
