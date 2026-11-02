@@ -433,7 +433,7 @@ impl OpeningCommand {
 /// keeps more is taken.
 fn cut(entity: &Entity, p: Point2, q: Point2) -> Result<Vec<Entity>, BreakError> {
     let forwards = entity.broken(p, q);
-    if !matches!(entity, Entity::Polyline(polyline) if polyline.closed) {
+    if !matches!(entity, Entity::Polyline(polyline) if polyline.closes()) {
         return forwards;
     }
     let kept = |pieces: &[Entity]| -> f64 { pieces.iter().filter_map(Entity::curve_length).sum() };
