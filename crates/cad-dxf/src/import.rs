@@ -1231,7 +1231,10 @@ impl<'a> Reader<'a> {
                 None => self.report.count_unsupported(INVALID),
             },
             (_, "ELLIPSE") if entities => match body.ellipse(record.line)? {
-                Some(ellipse) => self.import(Entity::Ellipse(ellipse), body)?,
+                Some(ellipse) => {
+                    let ellipse = self.ellipse_in_world(ellipse, body.facing());
+                    self.import(Entity::Ellipse(ellipse), body)?;
+                }
                 None => self.report.count_unsupported(INVALID),
             },
             (_, "TEXT") if entities => {
@@ -1266,6 +1269,14 @@ impl<'a> Reader<'a> {
             }
             (_, "MTEXT") if entities => {
                 let (text, formatting) = body.mtext(record.line)?;
+                // Its insertion and any direction (11, 21) are the world's;
+                // a rotation alone is turned in `mtext` (#391). Facing down,
+                // AutoCAD draws it backwards.
+                match body.facing() {
+                    Facing::Up => {}
+                    Facing::Down => self.report.count_unsupported(TEXT_BACKWARDS),
+                    Facing::Tilted => self.report.count_unsupported(EXTRUSION_TILTED),
+                }
                 if formatting {
                     self.report.formatting_dropped += 1;
                 }
@@ -1973,6 +1984,35 @@ impl<'a> Reader<'a> {
                     cad_document::Transform::mirror(Point2::ORIGIN, Point2::new(0.0, 1.0))
                         .expect("the Y axis is a line");
                 entity.transformed(&across_y)
+            }
+        }
+    }
+
+    /// An ellipse whose normal faces some way (#391). Its centre and axis
+    /// are the world's whatever the normal, but its parameters run
+    /// counter-clockwise about the normal: facing down, the arc from `s` to
+    /// `e` is, seen from above, the arc from `-e` to `-s`. Tilted, it is
+    /// kept as read and reported.
+    fn ellipse_in_world(&mut self, ellipse: EllipseEntity, facing: Facing) -> EllipseEntity {
+        match facing {
+            Facing::Up => ellipse,
+            Facing::Tilted => {
+                self.report.count_unsupported(EXTRUSION_TILTED);
+                ellipse
+            }
+            Facing::Down => {
+                let whole = (ellipse.end_parameter - ellipse.start_parameter)
+                    .rem_euclid(std::f64::consts::TAU)
+                    == 0.0;
+                if whole {
+                    return ellipse;
+                }
+                let turn = |parameter: f64| (-parameter).rem_euclid(std::f64::consts::TAU);
+                EllipseEntity {
+                    start_parameter: turn(ellipse.end_parameter),
+                    end_parameter: turn(ellipse.start_parameter),
+                    ..ellipse
+                }
             }
         }
     }
@@ -3163,6 +3203,11 @@ impl RecordBody {
         let (content, dropped) = plain_mtext(&raw);
         // The direction may be given as a vector (11, 21) instead of an angle.
         let rotation = match (self.start_degrees, self.x1, self.y1) {
+            // A rotation is about the object's own X axis, which runs the
+            // other way when its system faces down (#391).
+            (Some(degrees), ..) if self.facing() == Facing::Down => {
+                std::f64::consts::PI - degrees.to_radians()
+            }
             (Some(degrees), ..) => degrees.to_radians(),
             (None, Some(x), Some(y)) if x != 0.0 || y != 0.0 => y.atan2(x),
             _ => 0.0,
@@ -3769,6 +3814,35 @@ mod tests {
             ],
             &down,
         ));
+        // A half ellipse, upper as its parameters run about a normal facing
+        // down: the lower half seen from above.
+        body.extend(with(
+            &[
+                (0, "ELLIPSE"),
+                (8, "0"),
+                (10, "0.0"),
+                (20, "0.0"),
+                (11, "4.0"),
+                (21, "0.0"),
+                (40, "0.5"),
+                (41, "0.0"),
+                (42, "3.141592653589793"),
+            ],
+            &down,
+        ));
+        // A paragraph turned by a rotation alone, about its own X axis.
+        body.extend(with(
+            &[
+                (0, "MTEXT"),
+                (8, "0"),
+                (10, "0.0"),
+                (20, "20.0"),
+                (40, "2.5"),
+                (50, "30.0"),
+                (1, "Ab"),
+            ],
+            &down,
+        ));
         // Facing up, said or not: as read.
         body.extend(with(
             &[
@@ -3823,16 +3897,37 @@ mod tests {
             panic!("{:?}", read[3])
         };
         assert!(text.insertion.x < 0.0, "placed where it stands: {text:?}");
-        let Entity::Circle(up) = &read[4] else {
+        let Entity::Ellipse(ellipse) = &read[4] else {
             panic!("{:?}", read[4])
         };
-        assert_eq!(up.center, Point2::new(3.0, 4.0));
-        let Entity::Circle(tilted) = &read[5] else {
+        let curve = ellipse.ellipse();
+        let middle = curve.point_at(curve.start + curve.sweep / 2.0);
+        assert!(close(curve.sweep, PI), "still a half: {ellipse:?}");
+        assert!(
+            middle.y < 0.0,
+            "the lower half, seen from above: {middle:?}"
+        );
+        let Entity::MText(mtext) = &read[5] else {
             panic!("{:?}", read[5])
+        };
+        assert!(
+            close(mtext.rotation, 150f64.to_radians()),
+            "π − 30°: {mtext:?}"
+        );
+        let Entity::Circle(up) = &read[6] else {
+            panic!("{:?}", read[6])
+        };
+        assert_eq!(up.center, Point2::new(3.0, 4.0));
+        let Entity::Circle(tilted) = &read[7] else {
+            panic!("{:?}", read[7])
         };
         assert_eq!(tilted.center, Point2::new(3.0, 4.0));
         assert_eq!(import.report.unsupported.get(EXTRUSION_TILTED), Some(&1));
-        assert_eq!(import.report.unsupported.get(TEXT_BACKWARDS), Some(&1));
+        assert_eq!(
+            import.report.unsupported.get(TEXT_BACKWARDS),
+            Some(&2),
+            "the text and the paragraph"
+        );
         assert_eq!(
             import.report.unsupported.len(),
             2,
