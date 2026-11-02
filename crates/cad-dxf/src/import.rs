@@ -265,20 +265,32 @@ fn decoded(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
     if !text.contains("\\U+") {
         return text;
     }
+    // The UTF-16 unit an escape at the start of `text` names.
+    fn unit(text: &str) -> Option<u16> {
+        text.strip_prefix("\\U+")
+            .and_then(|rest| rest.get(..4))
+            .filter(|d| d.bytes().all(|b| b.is_ascii_hexdigit()))
+            .and_then(|d| u16::from_str_radix(d, 16).ok())
+    }
     let mut out = String::with_capacity(text.len());
     let mut rest: &str = &text;
     while let Some(at) = rest.find("\\U+") {
         out.push_str(&rest[..at]);
-        let digits = rest.get(at + 3..at + 7);
-        match digits
-            .filter(|d| d.bytes().all(|b| b.is_ascii_hexdigit()))
-            .and_then(|d| u32::from_str_radix(d, 16).ok())
-            .and_then(char::from_u32)
-            .filter(|c| !c.is_control())
-        {
+        // A character beyond the first 65,536 is two escapes, a surrogate
+        // pair, as AutoCAD and our export write it (#393).
+        let first = unit(&rest[at..]);
+        let second = rest.get(at + 7..).and_then(unit);
+        let (c, length) = match (first, second) {
+            (Some(high @ 0xD800..=0xDBFF), Some(low @ 0xDC00..=0xDFFF)) => (
+                char::decode_utf16([high, low]).next().and_then(Result::ok),
+                14,
+            ),
+            (unit, _) => (unit.and_then(|u| char::from_u32(u32::from(u))), 7),
+        };
+        match c.filter(|c| !c.is_control()) {
             Some(c) => {
                 out.push(c);
-                rest = &rest[at + 7..];
+                rest = &rest[at + length..];
             }
             None => {
                 out.push_str("\\U+");
@@ -5062,6 +5074,21 @@ mod tests {
         // Not an escape, or one for a control character: left as written.
         assert_eq!(decoded(b"\\U+12 \\U+000A"), "\\U+12 \\U+000A");
         assert_eq!(decoded("plain ²".as_bytes()), "plain ²");
+    }
+
+    /// A character beyond the first 65,536 — an emoji, a mathematical
+    /// letter, a CJK Extension B character — is written as a surrogate
+    /// pair of escapes and read as the one character (#393). Half a pair
+    /// names no character and is left as written.
+    #[test]
+    fn a_surrogate_pair_of_escapes_reads_as_its_character() {
+        assert_eq!(decoded(b"smile \\U+D83D\\U+DE00 x"), "smile 😀 x");
+        assert_eq!(decoded(b"\\U+D835\\U+DC65\\U+D840\\U+DC0B"), "𝑥𠀋");
+        assert_eq!(decoded(b"\\U+D83D x"), "\\U+D83D x");
+        assert_eq!(decoded(b"\\U+DE00\\U+D83D"), "\\U+DE00\\U+D83D");
+        assert_eq!(decoded(b"\\U+D83D\\U+2014"), "\\U+D83D—");
+        assert_eq!(decoded(b"end \\U+D83D"), "end \\U+D83D");
+        assert_eq!(decoded("\\U+D8é\\U+DE00".as_bytes()), "\\U+D8é\\U+DE00");
     }
 
     // ── hostile files (§43, #156): every bound is reached by a test ──

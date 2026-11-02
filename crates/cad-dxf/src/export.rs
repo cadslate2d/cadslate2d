@@ -3738,6 +3738,42 @@ mod tests {
         assert_eq!(export(&back.drawing), text);
     }
 
+    /// A character beyond the first 65,536 — an emoji, a mathematical
+    /// letter, a CJK Extension B character — goes out as a surrogate pair
+    /// of escapes, as AutoCAD writes it, and comes back as itself (#393).
+    #[test]
+    fn a_character_beyond_the_basic_plane_survives() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.insert(TextEntity::new(Point2::ORIGIN, 2.5, 0.0, "smile 😀 x"))
+            .unwrap();
+        tx.insert(MTextEntity::new(
+            Point2::new(0.0, 10.0),
+            60.0,
+            2.5,
+            0.0,
+            "𝑥 = 𠀋\n😀".to_owned(),
+        ))
+        .unwrap();
+        tx.commit();
+        let text = export(&drawing);
+        assert!(text.contains("\nsmile \\U+D83D\\U+DE00 x\n"));
+        let back = crate::import(text.as_bytes()).unwrap();
+        let mut contents: Vec<String> = back
+            .drawing
+            .entities()
+            .map(|(_, entity)| match entity {
+                Entity::Text(text) => text.content.clone(),
+                Entity::MText(text) => text.content.clone(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        contents.sort();
+        assert_eq!(contents, vec!["smile 😀 x", "𝑥 = 𠀋\n😀"]);
+        assert!(!back.report.has_unsupported_content());
+        assert_eq!(export(&back.drawing), text);
+    }
+
     /// #181: an ellipse and an arc of one are written as DXF holds them and
     /// read back the same, byte for byte on the second pass.
     #[test]
