@@ -1013,6 +1013,37 @@ impl Drawing {
         self.orders.keys().next().copied().unwrap_or(0)
     }
 
+    /// Every entity whose geometry a change to `row` changes: those that
+    /// refer to it, and the references that place, directly or through
+    /// other blocks, a definition holding one — a block's dimension is laid
+    /// out by its style as a dimension of its own is (#388). For a block
+    /// row, that is every reference that places it or a block that does.
+    /// Each table change that redraws its dependents asks here.
+    fn dependents_of(&self, row: TableRow) -> Vec<EntityId> {
+        let holding: Vec<BlockId> = self
+            .blocks
+            .iter()
+            .filter(|(_, block)| {
+                block
+                    .entities
+                    .iter()
+                    .any(|record| record.entity.refers_to(row))
+            })
+            .map(|(id, _)| id)
+            .collect();
+        self.entities
+            .iter()
+            .filter_map(|(entity_id, entity)| {
+                let nested = entity.placed_block().is_some_and(|placed| {
+                    holding
+                        .iter()
+                        .any(|held| *held == placed || self.blocks.reaches(placed, *held))
+                });
+                (entity.refers_to(row) || nested).then_some(entity_id)
+            })
+            .collect()
+    }
+
     /// Notes the largest radius of a circle or arc in entity `id`, or that
     /// it has none — or that it is gone (#210).
     fn note_radius(&mut self, id: EntityId) {
@@ -1708,20 +1739,12 @@ impl Drawing {
                     // One row changed; every multileader drawn by it is
                     // laid out afresh, and its index entry with it.
                     if let TableChange::Replace { id, .. } = change {
-                        let dependents: Vec<EntityId> = self
-                            .entities
-                            .iter()
-                            .filter_map(|(entity_id, entity)| {
-                                entity
-                                    .refers_to(TableRow::MLeaderStyle(*id))
-                                    .then_some(entity_id)
-                            })
-                            .collect();
-                        for entity_id in dependents {
+                        for entity_id in self.dependents_of(TableRow::MLeaderStyle(*id)) {
                             if let Some(entity) = self.entities.get(entity_id) {
                                 let bounds = entity.bounds(self.tables());
                                 self.index.update(entity_id, bounds);
                             }
+                            self.note_radius(entity_id);
                             report.replaced.push(entity_id);
                         }
                     }
@@ -1732,16 +1755,7 @@ impl Drawing {
                     // One change to the row; every dimension drawn by it is
                     // laid out afresh, so its index entry is (§19.6).
                     if let TableChange::Replace { id, .. } = change {
-                        let dependents: Vec<EntityId> = self
-                            .entities
-                            .iter()
-                            .filter_map(|(entity_id, entity)| {
-                                entity
-                                    .refers_to(TableRow::DimStyle(*id))
-                                    .then_some(entity_id)
-                            })
-                            .collect();
-                        for entity_id in dependents {
+                        for entity_id in self.dependents_of(TableRow::DimStyle(*id)) {
                             if let Some(entity) = self.entities.get(entity_id) {
                                 let tables = Tables {
                                     blocks: &self.blocks,
@@ -1764,18 +1778,9 @@ impl Drawing {
                     // reference that places it, directly or through other
                     // blocks, is recomputed here (§19.6).
                     if let TableChange::Replace { id, .. } = change {
-                        let dependents: Vec<EntityId> = self
-                            .entities
-                            .iter()
-                            .filter_map(|(entity_id, entity)| {
-                                // A reference, or a multileader's block
-                                // note (#241).
-                                let placed = entity.placed_block()?;
-                                (placed == *id || self.blocks.reaches(placed, *id))
-                                    .then_some(entity_id)
-                            })
-                            .collect();
-                        for entity_id in dependents {
+                        // A reference, or a multileader's block note
+                        // (#241), placing it or a block that does.
+                        for entity_id in self.dependents_of(TableRow::Block(*id)) {
                             if let Some(entity) = self.entities.get(entity_id) {
                                 self.index.update(entity_id, entity.bounds(self.tables()));
                             }
@@ -8875,5 +8880,129 @@ mod tests {
             let (kept, afresh) = tiers(&drawing);
             prop_assert_eq!(kept, afresh);
         }
+    }
+
+    /// #388: a style change reaches the block references whose definition
+    /// holds a dimension or multileader in that style — directly or
+    /// through another block — as it reaches one of the drawing's own:
+    /// their index entries follow the new layout, and they are told
+    /// replaced, so their scene chunk is drawn again.
+    #[test]
+    fn a_style_change_reaches_references_that_hold_it() {
+        let p = Point2::new;
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let dimension = crate::DimensionEntity::new(
+            crate::Measure::Aligned {
+                a: p(0.0, 0.0),
+                b: p(10.0, 0.0),
+            },
+            p(5.0, 5.0),
+        );
+        let noted = tx
+            .define_block(crate::Block::new(
+                "noted",
+                p(0.0, 0.0),
+                vec![EntityRecord::new(
+                    Entity::Dimension(dimension),
+                    Properties::default(),
+                )],
+            ))
+            .unwrap();
+        let outer = tx
+            .define_block(crate::Block::new(
+                "outer",
+                p(0.0, 0.0),
+                vec![EntityRecord::new(
+                    Entity::BlockRef(crate::BlockReferenceEntity::new(
+                        noted,
+                        p(100.0, 0.0),
+                        1.0,
+                        0.0,
+                    )),
+                    Properties::default(),
+                )],
+            ))
+            .unwrap();
+        let leader = crate::MLeaderEntity::new(
+            p(300.0, 0.0),
+            p(310.0, 5.0),
+            crate::MLeaderContent::Text("note".into()),
+        );
+        let leadered = tx
+            .define_block(crate::Block::new(
+                "leadered",
+                p(0.0, 0.0),
+                vec![EntityRecord::new(
+                    Entity::MLeader(leader),
+                    Properties::default(),
+                )],
+            ))
+            .unwrap();
+        let direct = tx
+            .insert(crate::BlockReferenceEntity::new(
+                noted,
+                p(0.0, 0.0),
+                1.0,
+                0.0,
+            ))
+            .unwrap();
+        let nested = tx
+            .insert(crate::BlockReferenceEntity::new(
+                outer,
+                p(0.0, 0.0),
+                1.0,
+                0.0,
+            ))
+            .unwrap();
+        let with_leader = tx
+            .insert(crate::BlockReferenceEntity::new(
+                leadered,
+                p(0.0, 0.0),
+                1.0,
+                0.0,
+            ))
+            .unwrap();
+        let plain = tx
+            .insert(LineEntity::new(p(0.0, -50.0), p(10.0, -50.0)))
+            .unwrap();
+        tx.commit();
+
+        // The dimension style, ten times the size.
+        let before = drawing.bounds_of(drawing.entity(direct).unwrap());
+        let shown = drawing.shown_revision();
+        let mut style = drawing.dim_styles().get(DimStyleId::FIRST).unwrap().clone();
+        style.scale *= 10.0;
+        let mut tx = drawing.transaction();
+        tx.replace_dim_style(DimStyleId::FIRST, style).unwrap();
+        let report = tx.commit();
+        let after = drawing.bounds_of(drawing.entity(direct).unwrap());
+        assert!(after.max().y > before.max().y + 10.0, "the layout grew");
+        let mut replaced = report.replaced.clone();
+        replaced.sort();
+        assert_eq!(replaced, vec![direct, nested]);
+        let mut changed = drawing.shown_changes_since(shown).unwrap();
+        changed.sort();
+        assert_eq!(changed, vec![direct, nested]);
+        let grown = Aabb::from_points(p(0.0, before.max().y + 1.0), p(10.0, after.max().y - 1.0));
+        assert!(
+            drawing.query(&grown).contains(&direct),
+            "found where it grew"
+        );
+        assert!(!report.replaced.contains(&plain) && !report.replaced.contains(&with_leader));
+
+        // The multileader style, its text and arrows ten times the size.
+        let mut style = drawing
+            .mleader_styles()
+            .get(crate::MLeaderStyleId::FIRST)
+            .unwrap()
+            .clone();
+        style.text_height *= 10.0;
+        style.arrow_size *= 10.0;
+        let mut tx = drawing.transaction();
+        tx.replace_mleader_style(crate::MLeaderStyleId::FIRST, style)
+            .unwrap();
+        let report = tx.commit();
+        assert_eq!(report.replaced, vec![with_leader]);
     }
 }
