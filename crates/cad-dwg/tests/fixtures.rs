@@ -365,6 +365,27 @@ fn a_section_over_the_byte_limit_is_refused() {
     }
 }
 
+/// A page decompresses to the page size the section map gives, so that
+/// size is bounded too, not only the section's (#400): every section of
+/// the R2004 fixture fits 16 KiB, its pages of 29,696 bytes do not.
+#[test]
+fn a_section_page_over_the_byte_limit_is_refused() {
+    let bytes = fixture(MINIMAL[1]);
+    let limits = |max_section_bytes| ImportLimits {
+        max_section_bytes,
+        ..ImportLimits::default()
+    };
+    assert_eq!(
+        File::open_with_limits(&bytes, &limits(16 * 1024)).err(),
+        Some(DwgError::TooMany {
+            what: "bytes in a section page",
+            limit: 16 * 1024
+        })
+    );
+    // At the page size itself, it opens.
+    assert!(File::open_with_limits(&bytes, &limits(29_696)).is_ok());
+}
+
 #[test]
 fn too_many_objects_are_refused() {
     for name in MINIMAL {

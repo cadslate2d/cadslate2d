@@ -212,6 +212,15 @@ pub fn pages_and_sections(
                 limit: limits.max_section_bytes,
             });
         }
+        // A page decompresses to its page size, which bounds the output of
+        // the decompressor: a page size the limits do not allow is refused
+        // here, before a page of it is read (#400).
+        if page_size > limits.max_section_bytes {
+            return Err(DwgError::TooMany {
+                what: "bytes in a section page",
+                limit: limits.max_section_bytes,
+            });
+        }
         p += 0x60;
         let mut section_pages = Vec::with_capacity(page_count);
         for _ in 0..page_count {
