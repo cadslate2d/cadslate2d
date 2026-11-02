@@ -205,6 +205,63 @@ describe("the AI assistant (#260)", () => {
     }
   });
 
+  test("the AI's explanation of a stopped proposal, coming after signing out, is dropped", async () => {
+    const { assistant, client, host } = await signedIn();
+    host.stopped = "operation 0: FILLET refused: The lines are parallel";
+    let settle!: (text: string) => void;
+    client.explain = (_session, request, reason) => {
+      client.explained.push([request, reason]);
+      return new Promise<string>((resolve) => {
+        settle = resolve;
+      });
+    };
+    const asking = assistant.ask("fillet these");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(client.explained).toHaveLength(1);
+    await assistant.signOut();
+    settle("Those lines are parallel, so they never meet.");
+    await asking;
+    expect(assistant.getSnapshot()).toMatchObject({
+      status: "signed-out",
+      turns: [],
+      busy: false,
+    });
+  });
+
+  test("an account read back after signing out does not sign the panel in again", async () => {
+    const { assistant, client } = await signedIn();
+    let settle!: () => void;
+    const account = client.account.bind(client);
+    client.account = (session) =>
+      new Promise((resolve) => {
+        settle = () => resolve(account(session));
+      });
+    const refreshing = assistant.refresh();
+    await assistant.signOut();
+    settle();
+    await refreshing;
+    expect(assistant.getSnapshot()).toMatchObject({
+      status: "signed-out",
+      email: undefined,
+      error: undefined,
+    });
+
+    // Nor does an error then.
+    const again = await signedIn();
+    again.client.account = () =>
+      new Promise((_resolve, reject) => {
+        settle = () => reject(new AiError("unavailable", "The service is not answering."));
+      });
+    const failing = again.assistant.refresh();
+    await again.assistant.signOut();
+    settle();
+    await failing;
+    expect(again.assistant.getSnapshot()).toMatchObject({
+      status: "signed-out",
+      error: undefined,
+    });
+  });
+
   test("a request or a reply is copied to the clipboard; a refusal copies nothing and breaks nothing", async () => {
     const { assistant, host } = await signedIn();
     expect(await assistant.copy("A circle.")).toBe(true);

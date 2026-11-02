@@ -215,7 +215,9 @@ export class AiAssistant {
 
   async #refreshAccount(): Promise<void> {
     if (!this.client || !this.#kept) return;
-    const account = await this.client.account(this.#kept.session);
+    const asker = this.#kept;
+    const account = await this.client.account(asker.session);
+    if (!this.#current(asker)) return;
     this.#set({
       status: "signed-in",
       email: account.email,
@@ -231,13 +233,15 @@ export class AiAssistant {
    */
   async refresh(): Promise<void> {
     if (!this.client || !this.#kept || this.#snapshot.status !== "signed-in") return;
+    const asker = this.#kept;
     const error = this.#snapshot.error;
     try {
       await this.#refreshAccount();
     } catch (failure) {
-      this.#fail(failure);
+      if (this.#current(asker)) this.#fail(failure);
       return;
     }
+    if (!this.#current(asker)) return;
     const plan = this.#snapshot.allowance?.plan;
     if (error && !(error.kind === "plan" && plan === error.needs?.plan)) this.#set({ error });
   }
@@ -372,7 +376,7 @@ export class AiAssistant {
         ...(revised ? { previous: revised } : {}),
         ...(this.#history.length > 0 ? { history: this.#recent() } : {}),
       });
-      if (this.#kept !== asker) {
+      if (!this.#current(asker)) {
         this.#set({ busy: false });
         return;
       }
@@ -465,7 +469,7 @@ export class AiAssistant {
         });
       }
     } catch (error) {
-      if (this.#kept !== asker) {
+      if (!this.#current(asker)) {
         this.#set({ busy: false });
         return;
       }
@@ -513,14 +517,28 @@ export class AiAssistant {
   /** Asks the AI why the engine stopped the proposal of `request`. */
   async #explain(request: number, reason: string): Promise<void> {
     if (!this.client || !this.#kept) return;
+    const asker = this.#kept;
     let text: string;
     try {
-      text = await this.client.explain(this.#kept.session, request, reason);
+      text = await this.client.explain(asker.session, request, reason);
     } catch {
       // Without the AI's words, the engine's own.
       text = `That could not be done: ${reason}.`;
     }
+    if (!this.#current(asker)) {
+      this.#set({ busy: false });
+      return;
+    }
     this.#set({ busy: false, turns: [...this.#snapshot.turns, { role: "ai", text }] });
+  }
+
+  /**
+   * Whether `asker`, the account something was asked in, is still the one
+   * signed in (#408): what comes back for an account signed out of, or
+   * deleted, or signed in again, is no one's, and lands nowhere.
+   */
+  #current(asker: Kept): boolean {
+    return this.#kept === asker;
   }
 
   /** Changes what the conversation says of `request`: the option shown, or that it was drawn. */
