@@ -45,6 +45,16 @@ const SUBORDINATE_RECORDS: [&str; 0] = [];
 const POLYLINE_NOT_2D: i64 = 8 | 16 | 32 | 64;
 /// Polyline flag bit: closed.
 const POLYLINE_CLOSED: i64 = 1;
+/// POLYLINE flag bits for a polyline PEDIT has fitted, by arcs (2) or by a
+/// spline (4).
+const POLYLINE_FITTED: i64 = 2 | 4;
+/// VERTEX flag bit: a control point of a spline-fit polyline's frame,
+/// which is not drawn.
+const VERTEX_SPLINE_FRAME: i64 = 16;
+/// Report key for a fitted POLYLINE (#395): kept as it is drawn — the
+/// fitted vertices, with their bulges — and its fit dropped: a spline's
+/// frame, a curve's tangents, so it can no longer be decurved.
+pub(crate) const FITTED_POLYLINE: &str = "(fitted POLYLINE kept as drawn)";
 /// Report key for supported entity types with geometry the drawing cannot hold.
 pub(crate) const INVALID: &str = "(invalid geometry)";
 /// Report keys for table rows the drawing cannot hold as written.
@@ -1345,6 +1355,8 @@ impl<'a> Reader<'a> {
                 let unsupported = body.flags & POLYLINE_NOT_2D != 0;
                 if unsupported {
                     self.report.count_unsupported("POLYLINE");
+                } else if body.flags & POLYLINE_FITTED != 0 {
+                    self.report.count_unsupported(FITTED_POLYLINE);
                 }
                 // A POLYLINE's own 40 and 41 are the default widths of
                 // its vertices.
@@ -1365,10 +1377,13 @@ impl<'a> Reader<'a> {
                 });
             }
             (_, "VERTEX") if entities => {
+                // A spline frame's control point is not on the curve
+                // drawn; the vertices that are come with it (#395).
                 let open = self
                     .open_polyline
                     .as_mut()
-                    .filter(|polyline| !polyline.unsupported);
+                    .filter(|polyline| !polyline.unsupported)
+                    .filter(|_| body.flags & VERTEX_SPLINE_FRAME == 0);
                 if let Some(polyline) = open {
                     polyline
                         .vertices
@@ -4069,6 +4084,69 @@ mod tests {
                 vec![p(0.0, 0.0), p(4.0, 0.0), p(4.0, 3.0)],
                 true
             )]
+        );
+    }
+
+    /// A polyline PEDIT has fitted (#395): a spline's frame (vertex flag
+    /// 16) is not drawn and not read, the spline's vertices (8) are; a
+    /// curve's vertices, the ones it was made from and the ones fitting
+    /// added (1), are all on the curve with their bulges. Either is
+    /// reported, since its fit is not kept.
+    #[test]
+    fn a_fitted_polyline_is_read_as_it_is_drawn() {
+        let mut spline = vec![(0, "POLYLINE"), (66, "1"), (70, "4")];
+        let frame = [("0", "0"), ("5", "5"), ("10", "0")];
+        for (x, y) in frame {
+            spline.extend([(0, "VERTEX"), (10, x), (20, y), (70, "16")]);
+        }
+        let fitted: Vec<(String, String)> = (0..9)
+            .map(|i| {
+                let x = f64::from(i) * 1.25;
+                (x.to_string(), (2.5 - (x - 5.0).abs() / 2.0).to_string())
+            })
+            .collect();
+        for (x, y) in &fitted {
+            spline.extend([(0, "VERTEX"), (10, x), (20, y), (70, "8")]);
+        }
+        spline.push((0, "SEQEND"));
+        let curve = [
+            (0, "POLYLINE"),
+            (66, "1"),
+            (70, "2"),
+            (0, "VERTEX"),
+            (10, "0"),
+            (20, "0"),
+            (42, "0.2"),
+            (70, "0"),
+            (0, "VERTEX"),
+            (10, "2"),
+            (20, "1"),
+            (42, "0.1"),
+            (70, "1"),
+            (0, "VERTEX"),
+            (10, "4"),
+            (20, "0"),
+            (70, "0"),
+            (0, "SEQEND"),
+        ];
+        let import = import(entities(&[spline.as_slice(), &curve].concat()).as_bytes()).unwrap();
+        assert_eq!(import.report.polylines, 2);
+        assert_eq!(import.report.unsupported.get(FITTED_POLYLINE), Some(&2));
+        assert_eq!(import.report.unsupported.len(), 1);
+        let expected: Vec<Point2> = fitted
+            .iter()
+            .map(|(x, y)| p(x.parse().unwrap(), y.parse().unwrap()))
+            .collect();
+        assert_eq!(
+            polylines_of(&import),
+            vec![
+                PolylineEntity::new(expected, false),
+                PolylineEntity::with_bulges(
+                    vec![p(0.0, 0.0), p(2.0, 1.0), p(4.0, 0.0)],
+                    vec![0.2, 0.1, 0.0],
+                    false
+                ),
+            ]
         );
     }
 
