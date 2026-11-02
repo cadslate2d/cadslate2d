@@ -74,6 +74,26 @@ fn polygon_by_centre_and_radius_inscribed_circumscribed_or_by_an_edge() {
     h.escape();
 }
 
+/// #387: a typed radius is a size: a negative or zero one is refused and
+/// asked again, not drawn as a polygon turned half a turn.
+#[test]
+fn a_negative_or_zero_typed_radius_is_refused() {
+    let mut h = Harness::new();
+    h.enter_all(&["POLYGON", "4", "0,0", "", "-5"]);
+    assert_eq!(last(&h), "The radius must be a positive number.");
+    assert_eq!(h.session.drawing().len(), 0);
+    h.enter("0");
+    assert_eq!(last(&h), "The radius must be a positive number.");
+    assert_eq!(h.session.drawing().len(), 0);
+    h.enter("5");
+    let corners = polygon(&h);
+    assert_eq!(corners.len(), 4);
+    assert!(
+        corners[0].distance_to(p(5.0, 0.0)) < 1e-9,
+        "the first corner to the right: {corners:?}"
+    );
+}
+
 #[test]
 fn polygon_is_previewed_as_the_pointer_would_make_it() {
     let mut h = Harness::new();
