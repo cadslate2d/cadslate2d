@@ -54,12 +54,6 @@ const TOGGLE_KEYS: Readonly<
 
 const EDITING_KEYS = new Set(["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Home", "End"]);
 
-/**
- * @param spaceAccepts whether Space submits like Enter at the current prompt
- * @param inputEmpty   whether the command line has no text; Delete then acts on the selection
- * @param textSelected whether words are selected on the page — a reply in the AI panel, a line
- *                     of the log: Ctrl+C and Ctrl+X then copy them, as on any page
- */
 /** Where a key was pressed, as far as the command line cares (#411). */
 export interface KeyTarget {
   /** The command line's own input. */
@@ -95,6 +89,12 @@ export function keyBelongsToTarget(key: string, target: KeyTarget): boolean {
   return target.inDialog && DIALOG_KEYS.has(key);
 }
 
+/**
+ * @param spaceAccepts whether Space submits like Enter at the current prompt
+ * @param inputEmpty   whether the command line has no text; Delete then acts on the selection
+ * @param textSelected whether words are selected on the page — a reply in the AI panel, a line
+ *                     of the log: Ctrl+C and Ctrl+X then copy them, as on any page
+ */
 export function classifyKey(
   event: KeyLike,
   spaceAccepts: boolean,
