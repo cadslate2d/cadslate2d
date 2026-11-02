@@ -247,7 +247,7 @@ impl Entity {
                 let arc = arc.arc();
                 Some(arc.radius * arc.sweep)
             }
-            Entity::Polyline(polyline) if !polyline.closed => Some(polyline.path().length()),
+            Entity::Polyline(polyline) if !polyline.closes() => Some(polyline.path().length()),
             _ => None,
         }
     }
@@ -259,7 +259,7 @@ impl Entity {
     pub fn lengthened(&self, pick: Point2, how: Lengthening) -> Result<Entity, LengthenError> {
         let length = match self {
             Entity::Line(_) | Entity::Arc(_) => self.curve_length().expect("a curve"),
-            Entity::Polyline(polyline) if polyline.closed => {
+            Entity::Polyline(polyline) if polyline.closes() => {
                 return Err(LengthenError::Unsupported("closed polyline"));
             }
             Entity::Polyline(polyline) => polyline.path().length(),
@@ -528,7 +528,7 @@ impl Entity {
                 let vertices: Vec<Point2> = polyline.vertices.iter().copied().map(moved).collect();
                 let count = vertices.len();
                 let collapsed = (0..count)
-                    .filter(|index| polyline.closed || index + 1 < count)
+                    .filter(|index| polyline.closes() || index + 1 < count)
                     .any(|index| {
                         TOLERANCE.coincident(vertices[index], vertices[(index + 1) % count])
                     });
@@ -650,7 +650,7 @@ impl Entity {
                             .collect()
                     })
                     .ok_or_else(|| {
-                        if polyline.closed {
+                        if polyline.closes() {
                             return BreakError::NeedsTwoPoints("closed polyline");
                         }
                         let nearest = |point: Point2| {
@@ -796,7 +796,7 @@ impl Entity {
                     .ok_or(ExtendError::NoMeeting)
             }
             // A closed polyline has no ends, like a circle.
-            Entity::Polyline(polyline) if polyline.closed => {
+            Entity::Polyline(polyline) if polyline.closes() => {
                 Err(ExtendError::Unsupported("closed polyline"))
             }
             Entity::Ellipse(_)
@@ -855,7 +855,7 @@ impl Entity {
             }
             Entity::Arc(arc) => Some(arc.arc().circle().bounds()),
             // An open polyline reaches as its first or last segment would alone.
-            Entity::Polyline(polyline) if !polyline.closed => {
+            Entity::Polyline(polyline) if !polyline.closes() => {
                 let segments: Vec<Primitive> = polyline.primitives().collect();
                 let end_segment = if polyline_end_is_nearer(polyline, pick) {
                     segments.last()
@@ -3162,5 +3162,42 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    /// #382: a polyline flagged closed with two vertices and no arc
+    /// between them — as DXF may hold — is one open segment to every edit:
+    /// BREAK keeps what lies before the break, one cut TRIMs it, and it
+    /// can be EXTENDed and LENGTHENed from its end. Its flag is kept.
+    #[test]
+    fn a_closed_flag_on_one_straight_segment_edits_it_as_open() {
+        let polyline: Entity =
+            PolylineEntity::with_bulges(vec![p(0.0, 0.0), p(10.0, 0.0)], vec![0.0, 0.0], true)
+                .into();
+        let Entity::Polyline(flagged) = &polyline else {
+            unreachable!()
+        };
+        assert!(flagged.closed && !flagged.closes());
+
+        let pieces = polyline.broken(p(10.0, 0.0), p(5.0, 0.0)).unwrap();
+        match pieces.as_slice() {
+            [Entity::Polyline(piece)] => {
+                assert_eq!(piece.vertices, vec![p(0.0, 0.0), p(5.0, 0.0)]);
+            }
+            other => panic!("{other:?}"),
+        }
+        let cutter: Entity = LineEntity::new(p(5.0, -5.0), p(5.0, 5.0)).into();
+        assert_eq!(
+            polyline
+                .trimmed(&cutter, p(8.0, 0.0))
+                .map(|kept| kept.len()),
+            Ok(1)
+        );
+        let wall: Entity = LineEntity::new(p(20.0, -5.0), p(20.0, 5.0)).into();
+        assert!(polyline.extended(&wall, p(9.0, 0.0)).is_ok());
+        assert!(
+            polyline
+                .lengthened(p(9.0, 0.0), Lengthening::Delta(5.0))
+                .is_ok()
+        );
     }
 }

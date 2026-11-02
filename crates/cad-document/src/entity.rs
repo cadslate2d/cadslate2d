@@ -390,6 +390,15 @@ impl PolylineEntity {
     }
 
     /// The polyline as a path that can be measured along and cut.
+    /// Whether the polyline has a closing segment: flagged closed, with
+    /// three vertices or more, or two joined by an arc. Two vertices
+    /// flagged closed with nothing between them but a straight line — as a
+    /// file may hold — are one open segment (#382). The flag itself is kept
+    /// as read, so the file round-trips.
+    pub fn closes(&self) -> bool {
+        cad_geometry::polyline_closes(self.vertices.len(), self.closed, |at| self.bulge(at))
+    }
+
     pub fn path(&self) -> Path {
         Path {
             vertices: self.vertices.clone(),
