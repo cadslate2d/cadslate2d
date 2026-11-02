@@ -871,6 +871,9 @@ impl Session {
     }
 
     pub fn pointer_move(&mut self, at: ScreenPoint, _modifiers: Modifiers) -> Dirty {
+        if !on_screen(at) {
+            return Dirty::NONE;
+        }
         self.cursor = Some(at);
         if self.rested_at != Some(at) {
             self.rested_at = None;
@@ -935,6 +938,9 @@ impl Session {
         button: PointerButton,
         modifiers: Modifiers,
     ) -> Dirty {
+        if !on_screen(at) {
+            return Dirty::NONE;
+        }
         self.cursor = Some(at);
         match button {
             PointerButton::Middle => {
@@ -1007,6 +1013,9 @@ impl Session {
     /// opens with its words. A grip the two clicks took without moving is
     /// let go first. Anywhere else a double click is two clicks.
     pub fn double_click(&mut self, at: ScreenPoint) -> Dirty {
+        if !on_screen(at) {
+            return Dirty::NONE;
+        }
         let mut dirty = Dirty::NONE;
         if self.active_grip().is_some() && self.grip_press.is_none() {
             // The second click took the text's grip and nothing was moved:
@@ -1048,6 +1057,11 @@ impl Session {
                 self.pan_anchor = None;
                 Dirty::NONE
             }
+            // Released nowhere: a press is let go, and nothing is placed.
+            PointerButton::Primary if !on_screen(at) => {
+                self.grip_press = None;
+                Dirty::NONE
+            }
             PointerButton::Primary => {
                 // A grip that was pressed and dragged is dropped on release;
                 // one that was only clicked stays in hand until the next click.
@@ -1076,7 +1090,7 @@ impl Session {
 
     /// Wheel input at `at`. Negative `delta_y` (wheel up) zooms in about the cursor.
     pub fn wheel(&mut self, at: ScreenPoint, delta_y: f64, _modifiers: Modifiers) -> Dirty {
-        if !delta_y.is_finite() || delta_y == 0.0 {
+        if !delta_y.is_finite() || delta_y == 0.0 || !on_screen(at) {
             return Dirty::NONE;
         }
         let delta = delta_y.clamp(-MAX_WHEEL_DELTA, MAX_WHEEL_DELTA);
@@ -2190,6 +2204,14 @@ impl Session {
 
 /// Pointer travel, in pixels, beyond which press-and-release is a drag.
 const DRAG_THRESHOLD: f64 = 4.0;
+
+/// Whether a point the host gives for the pointer is a place on the screen
+/// (#403): a host's bug, a layout of no size, or a synthetic event can give
+/// one that is not a number, and nothing that comes of it — a point, a
+/// pick, a pan — can be drawn, saved, or read back.
+fn on_screen(at: ScreenPoint) -> bool {
+    at.x.is_finite() && at.y.is_finite()
+}
 
 fn dragged(from: ScreenPoint, to: ScreenPoint) -> bool {
     (to.x - from.x).hypot(to.y - from.y) > DRAG_THRESHOLD

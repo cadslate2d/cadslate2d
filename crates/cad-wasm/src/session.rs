@@ -1159,6 +1159,40 @@ SE",
             state.export_losses
         );
     }
+    /// #403: a pointer event at a point that is not a number places
+    /// nothing; the line is drawn between the clicks that were on the
+    /// screen, and what is saved opens again.
+    #[test]
+    fn a_pointer_event_that_is_not_on_the_screen_places_nothing() {
+        let mut cad = CadSession::new();
+        cad.resize(800.0, 600.0);
+        cad.submit_text("L");
+        assert_eq!(cad.pointer_down(f64::NAN, f64::NAN, 0, 0), 0);
+        assert_eq!(cad.pointer_up(f64::NAN, f64::NAN, 0, 0), 0);
+        assert_eq!(cad.pointer_move(f64::INFINITY, 300.0, 0), 0);
+        for (x, y) in [(400.0, 300.0), (500.0, 300.0)] {
+            cad.pointer_down(x, y, 0, 0);
+            cad.pointer_up(x, y, 0, 0);
+        }
+        cad.submit_text("");
+        let lines: Vec<_> = cad
+            .session
+            .drawing()
+            .entities()
+            .map(|(_, entity)| entity.clone())
+            .collect();
+        match lines.as_slice() {
+            [Entity::Line(line)] => {
+                assert!(line.start.is_finite() && line.end.is_finite(), "{line:?}");
+                assert!(line.start.distance_to(line.end) > 0.0);
+            }
+            other => panic!("{other:?}"),
+        }
+        let bytes = cad.snapshot_file("dxf");
+        let reopened = cad_dxf::import(&bytes).expect("the saved drawing opens");
+        assert_eq!(reopened.report.lines, 1);
+    }
+
     /// #254: a proposal through the calls the host makes: the drawing is
     /// untouched until Accept, which is one undo; an invalid document is
     /// refused in the log.
