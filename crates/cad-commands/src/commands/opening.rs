@@ -13,7 +13,7 @@
 
 use cad_core::tolerance::LinearTolerance;
 use cad_core::{Aabb, EntityId, Point2};
-use cad_document::{ArcEntity, Entity, Layer, LineEntity, PolylineEntity, Properties};
+use cad_document::{ArcEntity, BreakError, Entity, Layer, LineEntity, PolylineEntity, Properties};
 use cad_geometry::{Opening, OpeningError, Primitive, Segment};
 use cad_input::ExpectedInput;
 
@@ -139,7 +139,7 @@ impl OpeningCommand {
                 ctx.message("The wall is gone.");
                 return Step::Finished;
             };
-            match entity.broken(p, q) {
+            match cut(entity, p, q) {
                 Ok(pieces) => broken.push((id, pieces)),
                 Err(_) => {
                     ctx.message("That face cannot be cut there.");
@@ -421,5 +421,25 @@ impl OpeningCommand {
                 Step::Continue
             }
         }
+    }
+}
+
+/// A wall face broken at an opening's two points, losing only the stretch
+/// between them. A line or an open polyline loses that stretch whichever
+/// way the points come; a closed polyline loses the part from the first to
+/// the second in its own direction, so for a face running against the
+/// picked one the opening's order goes the long way round and takes the
+/// wall with it (#385). A closed one is broken both ways, and the one that
+/// keeps more is taken.
+fn cut(entity: &Entity, p: Point2, q: Point2) -> Result<Vec<Entity>, BreakError> {
+    let forwards = entity.broken(p, q);
+    if !matches!(entity, Entity::Polyline(polyline) if polyline.closed) {
+        return forwards;
+    }
+    let kept = |pieces: &[Entity]| -> f64 { pieces.iter().filter_map(Entity::curve_length).sum() };
+    match (forwards, entity.broken(q, p)) {
+        (Ok(a), Ok(b)) => Ok(if kept(&b) > kept(&a) { b } else { a }),
+        (Ok(a), Err(_)) => Ok(a),
+        (Err(_), backwards) => backwards,
     }
 }

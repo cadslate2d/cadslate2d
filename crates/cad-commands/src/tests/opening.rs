@@ -4,7 +4,7 @@
 //! and what is refused.
 
 use cad_core::Point2;
-use cad_document::{Entity, LineEntity};
+use cad_document::{Entity, LineEntity, PolylineEntity};
 use cad_layout::{Room, Setbacks, Spec, Terrain};
 
 use crate::floorplan::{DOORS, EXTERIOR_WALLS, WINDOWS};
@@ -330,4 +330,55 @@ fn a_door_goes_through_a_generated_plans_interior_wall() {
     );
     h.undo();
     assert_eq!(on(&h, DOORS).len(), doors_before);
+}
+
+/// #385: a wall whose other face is a closed polyline running against the
+/// picked face loses only the opening from it, as from a line: the
+/// rectangle keeps 38.8 of its 40, not 1.2. And so for a DOOR, and for the
+/// rectangle picked as the face.
+#[test]
+fn a_closed_face_running_the_other_way_loses_only_the_opening() {
+    // The wall's own polylines, on its layer: a door draws its own.
+    let polyline_length = |h: &Harness| -> f64 {
+        on(h, "0")
+            .iter()
+            .filter_map(|entity| match entity {
+                Entity::Polyline(polyline) => Some(polyline.path().length()),
+                _ => None,
+            })
+            .sum()
+    };
+    let walls = || {
+        Harness::with_entities([
+            PolylineEntity::new(
+                vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)],
+                true,
+            )
+            .into(),
+            LineEntity::new(p(9.0, 0.25), p(1.0, 0.25)).into(),
+        ])
+    };
+    // The opening's width is its default: 1.2 for a window, 0.9 for a door,
+    // which also asks the side it opens into.
+    for (command, pick, then, kept) in [
+        ("WINDOW", p(5.0, 0.25), &["5,0.125", ""][..], 40.0 - 1.2),
+        (
+            "DOOR",
+            p(5.0, 0.25),
+            &["5,0.125", "", "5,5"][..],
+            40.0 - 0.9,
+        ),
+        ("WINDOW", p(5.0, 0.0), &["5,0.125", ""][..], 40.0 - 1.2),
+    ] {
+        let mut h = walls();
+        h.enter_all(&["ZOOM", "E", command]);
+        h.click_world(pick);
+        h.enter_all(then);
+        let left = polyline_length(&h);
+        assert!(
+            (left - kept).abs() < 1e-9,
+            "{command} picked at {pick:?}: the rectangle kept {left}, not {kept}: {:?}",
+            h.log().last()
+        );
+    }
 }
