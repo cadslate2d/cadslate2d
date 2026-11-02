@@ -67,6 +67,7 @@ mod partviews;
 mod pedit;
 mod placement;
 mod plot;
+mod pointer;
 mod points;
 mod polygon;
 mod properties;
