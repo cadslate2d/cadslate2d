@@ -1406,3 +1406,159 @@ fn constraint_bars_and_dimensions_are_overlay_content() {
     assert_eq!(scenes.scene(h.session.drawing()).revision(), revision);
     assert_eq!(scenes.build_count(), 1, "the scene was built once");
 }
+
+/// #390: zoomed far in on an angular dimension's arc, or on a point's
+/// circle marker, the overlay draws the visible span, as it does a circle's:
+/// the adapter drops the committed arc for its size, and nothing else
+/// would draw it.
+#[test]
+fn far_in_on_a_dimension_arc_or_a_point_circle_the_overlay_draws_it() {
+    use cad_core::Point2;
+    use cad_document::{DimensionEntity, Drawing, Measure, PointEntity, PointStyle};
+    let p = Point2::new;
+    // The arc and the circle both pass through (70.71, 70.71), radius 100
+    // about the origin.
+    let dimension = || {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.insert(DimensionEntity::new(
+            Measure::Angular {
+                vertex: p(0.0, 0.0),
+                a: p(200.0, 0.0),
+                b: p(0.0, 200.0),
+            },
+            p(70.710_678, 70.710_678),
+        ))
+        .unwrap();
+        tx.commit();
+        drawing
+    };
+    let point = || {
+        let mut drawing = Drawing::new();
+        // The style first, then the point: a style changed after is #389's.
+        let mut tx = drawing.transaction();
+        tx.set_point_style(PointStyle::new(PointStyle::CIRCLE, 200.0))
+            .unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.insert(PointEntity::new(p(0.0, 0.0))).unwrap();
+        tx.commit();
+        drawing
+    };
+    // Segments in the overlay with the object, and without it.
+    let far_in = |drawing: Drawing| -> u32 {
+        let mut h = Harness::with_drawing(drawing);
+        h.enter_all(&["ZOOM", "C", "70.710678,70.710678", "0.06"]);
+        assert!(h.session.view().scale() * 100.0 > cad_render::FAR_CURVE_RADIUS_PIXELS);
+        let overlay = overlay_of(&h);
+        assert_frame_is_consistent(overlay.frame(), "far curve overlay");
+        overlay.frame().segment_count()
+    };
+    let empty = far_in(Drawing::new());
+    let with_dimension = far_in(dimension());
+    let with_point = far_in(point());
+    assert!(
+        with_dimension > empty,
+        "the dimension's arc is drawn: {with_dimension} over {empty}"
+    );
+    assert!(
+        with_point > empty,
+        "the point's circle is drawn: {with_point} over {empty}"
+    );
+}
+
+/// #390: the drawing's list of curves by size — what the far-curve overlay
+/// picks its candidates from — names every entity by the largest arc the
+/// committed scene draws for it, kind by kind. A kind that draws an arc and
+/// is not counted there would vanish far in; this pins the two together.
+#[test]
+fn the_curves_by_size_match_the_arcs_the_scene_draws() {
+    use cad_core::Point2;
+    use cad_document::{
+        ArcEntity, Block, BlockReferenceEntity, CircleEntity, DimensionEntity, Drawing, Entity,
+        EntityRecord, HatchEntity, LineEntity, Measure, Path, PointEntity, PointStyle,
+        PolylineEntity, Properties,
+    };
+    use cad_geometry::Arc;
+    use cad_render::{GeometrySink, walk_entity};
+
+    #[derive(Default)]
+    struct Arcs(Vec<Arc>);
+    impl GeometrySink for Arcs {
+        fn segment(&mut self, _: Point2, _: Point2, _: f64) {}
+        fn arc(&mut self, arc: &Arc, _: f64, _: bool) {
+            self.0.push(*arc);
+        }
+        fn triangle(&mut self, _: [Point2; 3]) {}
+    }
+
+    let p = Point2::new;
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    tx.set_point_style(PointStyle::new(PointStyle::CIRCLE, 6.0))
+        .unwrap();
+    let angular = DimensionEntity::new(
+        Measure::Angular {
+            vertex: p(0.0, 0.0),
+            a: p(50.0, 0.0),
+            b: p(0.0, 50.0),
+        },
+        p(21.0, 21.0),
+    );
+    let block = tx
+        .define_block(Block::new(
+            "parts",
+            p(0.0, 0.0),
+            vec![
+                EntityRecord::new(
+                    Entity::Circle(CircleEntity::new(p(0.0, 0.0), 4.0)),
+                    Properties::default(),
+                ),
+                EntityRecord::new(Entity::Dimension(angular.clone()), Properties::default()),
+            ],
+        ))
+        .unwrap();
+    let entities: Vec<Entity> = vec![
+        CircleEntity::new(p(0.0, 0.0), 7.0).into(),
+        ArcEntity::new(p(0.0, 0.0), 9.0, 0.0, 1.0).into(),
+        PolylineEntity::with_bulges(vec![p(0.0, 0.0), p(10.0, 0.0)], vec![1.0, 0.0], false).into(),
+        angular.into(),
+        PointEntity::new(p(0.0, 0.0)).into(),
+        HatchEntity::solid(vec![Path {
+            vertices: vec![p(0.0, 0.0), p(20.0, 0.0)],
+            bulges: vec![1.0, 1.0],
+            closed: true,
+        }])
+        .into(),
+        BlockReferenceEntity::new(block, p(0.0, 0.0), 2.0, 0.0).into(),
+        LineEntity::new(p(0.0, 0.0), p(10.0, 0.0)).into(),
+    ];
+    let ids: Vec<_> = entities
+        .into_iter()
+        .map(|entity| tx.insert(entity).unwrap())
+        .collect();
+    tx.commit();
+
+    for id in ids {
+        let entity = drawing.entity(id).unwrap();
+        let mut arcs = Arcs::default();
+        walk_entity(entity, drawing.tables(), &mut arcs);
+        let drawn = arcs.0.iter().map(|arc| arc.radius).reduce(f64::max);
+        match drawn {
+            Some(radius) => {
+                assert!(
+                    drawing.curves_larger_than(radius * 0.999).any(|c| c == id),
+                    "{entity:?} draws an arc of radius {radius} but is not listed"
+                );
+                assert!(
+                    !drawing.curves_larger_than(radius * 1.001).any(|c| c == id),
+                    "{entity:?} is listed larger than the arcs it draws"
+                );
+            }
+            None => assert!(
+                !drawing.curves_larger_than(0.0).any(|c| c == id),
+                "{entity:?} draws no arc but is listed"
+            ),
+        }
+    }
+}

@@ -11,9 +11,9 @@ use cad_commands::constraint_display::{Glyph, glyph_square};
 use cad_commands::{OverlayItem, SnapMode};
 use cad_core::{Aabb, Point2, Vec2, View};
 use cad_document::{Drawing, Entity, LayoutId};
-use cad_geometry::{Arc, Primitive};
+use cad_geometry::Arc;
 
-use crate::{PackedFrame, StyleRole};
+use crate::{GeometrySink, PackedFrame, StyleRole, walk_entity};
 
 /// Half-length of each crosshair arm, in CSS pixels.
 const CROSSHAIR_ARM_PIXELS: f64 = 24.0;
@@ -472,17 +472,13 @@ impl OverlayFrame {
             let Some(entity) = drawing.entity(id) else {
                 continue;
             };
-            for primitive in entity.primitives(drawing.tables()) {
-                let arc = match primitive {
-                    Primitive::Circle(circle) => Arc {
-                        center: circle.center,
-                        radius: circle.radius,
-                        start: 0.0,
-                        sweep: TAU,
-                    },
-                    Primitive::Arc(arc) => arc,
-                    Primitive::Segment(_) => continue,
-                };
+            // The arcs the committed scene draws for it — the one walk
+            // (ADR-0027) — so a dimension's arc, a point's marker circle,
+            // and whatever a block places are tessellated here when the
+            // adapter drops them for size (#390).
+            let mut arcs = Arcs::default();
+            walk_entity(entity, drawing.tables(), &mut arcs);
+            for arc in arcs.0 {
                 if arc.radius * scale > FAR_CURVE_RADIUS_PIXELS {
                     self.push_far_arc(&arc, view, &bounds);
                 }
@@ -749,6 +745,21 @@ impl OverlayFrame {
             segment(*corner, corners[(index + 1) % corners.len()]);
         }
     }
+}
+
+/// The arcs an entity is drawn with, and nothing else: what the far-curve
+/// overlay tessellates.
+#[derive(Default)]
+struct Arcs(Vec<Arc>);
+
+impl GeometrySink for Arcs {
+    fn segment(&mut self, _start: Point2, _end: Point2, _distance: f64) {}
+    fn arc(&mut self, arc: &Arc, _distance: f64, _forwards: bool) {
+        self.0.push(*arc);
+    }
+    fn triangle(&mut self, _corners: [Point2; 3]) {}
+    fn hatch_fill(&mut self, _hatch: &cad_document::HatchEntity) {}
+    fn mask(&mut self, _wipeout: &cad_document::WipeoutEntity) {}
 }
 
 #[cfg(test)]

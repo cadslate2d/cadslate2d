@@ -483,11 +483,37 @@ fn largest_radius(entity: &Entity, tables: Tables<'_>) -> Option<f64> {
             .filter(|radius| radius.is_finite())
             .reduce(f64::max)
     }
+    // Every arc the committed scene draws for the entity counts, as
+    // `cad_render::walk_entity` draws them (#390): a dimension's laid-out
+    // arc, a point's marker circle, a hatch's boundary, and whatever a
+    // block or a multileader's block note places.
     match entity {
         Entity::Circle(circle) => Some(circle.radius).filter(|radius| radius.is_finite()),
         Entity::Arc(arc) => Some(arc.radius).filter(|radius| radius.is_finite()),
         Entity::Polyline(polyline) if polyline.has_arcs() => largest(polyline.primitives()),
-        Entity::BlockRef(_) => largest(entity.primitives(tables).into_iter()),
+        Entity::BlockRef(reference) => tables
+            .blocks
+            .flatten(reference, crate::Properties::default())
+            .iter()
+            .filter_map(|(part, _)| largest_radius(part, tables))
+            .reduce(f64::max),
+        Entity::Dimension(dimension) => largest(
+            dimension
+                .layout(tables.dim_style(dimension.style))
+                .arcs
+                .into_iter()
+                .map(cad_geometry::Primitive::Arc),
+        ),
+        Entity::Point(point) => largest(tables.point_style.marker(point.position).into_iter()),
+        Entity::Hatch(hatch) => hatch
+            .loops
+            .iter()
+            .filter_map(|path| largest(crate::PolylineEntity::from(path.clone()).primitives()))
+            .reduce(f64::max),
+        Entity::MLeader(mleader) => mleader
+            .layout(tables.mleader_style(mleader.style), tables)
+            .block
+            .and_then(|(reference, _)| largest_radius(&Entity::BlockRef(reference), tables)),
         // Chords, segments, or no primitives at all.
         Entity::Polyline(_)
         | Entity::Line(_)
@@ -496,13 +522,9 @@ fn largest_radius(entity: &Entity, tables: Tables<'_>) -> Option<f64> {
         | Entity::AttributeDefinition(_)
         | Entity::Text(_)
         | Entity::MText(_)
-        | Entity::Dimension(_)
-        | Entity::Hatch(_)
         | Entity::Viewport(_)
         | Entity::Wipeout(_)
-        | Entity::Point(_)
         | Entity::Leader(_)
-        | Entity::MLeader(_)
         | Entity::XLine(_)
         | Entity::Ray(_) => None,
     }
