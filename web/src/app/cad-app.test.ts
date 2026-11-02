@@ -419,6 +419,32 @@ describe("export", () => {
 
 // DESIGN §25.3: where the browser can write back to a file, SAVE does; elsewhere, a download.
 describe("saving to a file", () => {
+  test("a file that cannot be opened is not the drawing's file, and the kept drawing stays unexported (#406)", async () => {
+    const { app, host, tick, enter, segmentCount } = harness();
+    host.files.writesBack = true;
+    enter("L", "0,0", "10,0", "");
+    await tick();
+    host.confirmAnswer = true;
+    host.files.fileToPick = {
+      name: "bad.dxf",
+      bytes: encode("not a drawing"),
+      target: { name: "bad.dxf" },
+    };
+    enter("OPEN");
+    await tick();
+    await tick();
+    expect(app.ui.getSnapshot().log.at(-1)).toMatch(/^Cannot open bad\.dxf/);
+    expect(segmentCount()).toBe(1);
+    expect(app.ui.getSnapshot()).toMatchObject({ documentName: undefined, unsavedChanges: true });
+    expect(host.autosave.record?.exported).not.toBe(true);
+
+    // Saved, it asks where: the file that could not be read is untouched.
+    enter("SAVE");
+    await tick();
+    expect(host.files.written.map((write) => write.name)).not.toContain("bad.dxf");
+    expect(host.files.saved.map((save) => save.name)).toEqual(["drawing.dxf"]);
+  });
+
   test("with write-back: OPEN keeps the file, SAVE writes to it, SAVEAS asks and switches", async () => {
     const { app, host, tick, enter } = harness();
     host.files.writesBack = true;

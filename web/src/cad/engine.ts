@@ -640,7 +640,8 @@ export class CadEngine {
   /**
    * Replaces the drawing with the contents of a drawing file — a DWG by its
    * first six bytes, a DXF otherwise (#318). A file that cannot be read
-   * leaves the drawing untouched and explains why in the command log.
+   * leaves the drawing untouched and explains why in the command log: then,
+   * and only then, `Dirty.Scene` is not among the flags returned (#406).
    */
   loadDrawing(bytes: Uint8Array, name: string): number {
     return this.#session.load_drawing(bytes, name);

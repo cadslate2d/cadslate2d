@@ -1187,6 +1187,24 @@ SE",
         assert_eq!(reopened.report.lines, 1);
     }
 
+    /// #406: what the host is told of an open: the scene changed when the
+    /// file was read and the drawing replaced, and only then; a file that
+    /// cannot be read leaves the drawing and says so in the log alone.
+    #[test]
+    fn an_open_says_whether_it_replaced_the_drawing() {
+        let mut cad = CadSession::new();
+        cad.submit_text("L");
+        cad.submit_text("0,0");
+        cad.submit_text("10,0");
+        cad.submit_text("");
+        let refused = cad.load_drawing(b"not a drawing", "bad.dxf");
+        assert_eq!(refused & Dirty::SCENE.bits(), 0);
+        assert_ne!(refused & Dirty::UI.bits(), 0);
+        assert_eq!(cad.session.drawing().len(), 1, "the drawing stays");
+        let opened = cad.load_drawing(&fixture("dxf/valid/minimal-line.dxf"), "plan.dxf");
+        assert_ne!(opened & Dirty::SCENE.bits(), 0);
+    }
+
     /// #254: a proposal through the calls the host makes: the drawing is
     /// untouched until Accept, which is one undo; an invalid document is
     /// refused in the log.
