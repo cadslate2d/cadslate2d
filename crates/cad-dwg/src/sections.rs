@@ -76,6 +76,9 @@ pub struct MapEntry {
 #[derive(Debug)]
 pub struct File<'a> {
     version: Version,
+    /// The code page the file header names (at 0x13): the one its
+    /// strings are in before R2007.
+    code_page: u16,
     limits: ImportLimits,
     sections: Vec<Section>,
     objects: Cow<'a, [u8]>,
@@ -99,6 +102,9 @@ impl<'a> File<'a> {
             });
         }
         let version = Version::detect(bytes)?;
+        let code_page = bytes
+            .get(0x13..0x15)
+            .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]));
         let mut sections = match version {
             Version::R2000 => r2000::sections(bytes, limits)?,
             Version::R2004 => r2004::sections(bytes, limits)?,
@@ -125,6 +131,7 @@ impl<'a> File<'a> {
         let (map, unreachable) = object_map(&handles.data, objects.len(), limits)?;
         Ok(Self {
             version,
+            code_page,
             limits: *limits,
             sections,
             objects,
@@ -135,6 +142,12 @@ impl<'a> File<'a> {
 
     pub fn version(&self) -> Version {
         self.version
+    }
+
+    /// The code page the file header names: 30 for ANSI 1252, as AutoCAD
+    /// writes it in the West and this crate writes it.
+    pub fn code_page(&self) -> u16 {
+        self.code_page
     }
 
     pub fn limits(&self) -> &ImportLimits {

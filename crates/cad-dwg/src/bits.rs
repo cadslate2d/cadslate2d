@@ -393,6 +393,13 @@ impl<'a> BitReader<'a> {
         Ok(out)
     }
 
+    /// T read as the characters it stands for: bytes in Windows-1252, the
+    /// code page AutoCAD writes and the only one with a table here (#399).
+    /// A drawing in another code page is reported where it is read.
+    pub fn code_page_text(&mut self, limits: &ImportLimits) -> Result<String, DwgError> {
+        Ok(cad_dxf::from_code_page(&self.text(limits)?))
+    }
+
     /// TU: a Unicode text of the R2007 kind, a bit short count of UTF-16
     /// units.
     pub fn text_unicode(&mut self, limits: &ImportLimits) -> Result<String, DwgError> {
@@ -648,6 +655,13 @@ mod tests {
         assert_eq!(BitReader::new(&data).text(&limits).unwrap(), b"abc");
         let data = bytes(&then("01 00000100", b"ab\0\0"));
         assert_eq!(BitReader::new(&data).text(&limits).unwrap(), b"ab");
+        // In the code page, Windows-1252, every byte is its character
+        // (#399): not U+FFFD where it is not UTF-8.
+        let data = bytes(&then("01 00000101", &[b'E', 0xe9, 0xd8, 0xb0, 0x80]));
+        assert_eq!(
+            BitReader::new(&data).code_page_text(&limits).unwrap(),
+            "EéØ°€"
+        );
         let data = bytes(&then("01 00000010", &[0x61, 0x00, 0xe9, 0x00]));
         assert_eq!(BitReader::new(&data).text_unicode(&limits).unwrap(), "aé");
         let small = ImportLimits {
