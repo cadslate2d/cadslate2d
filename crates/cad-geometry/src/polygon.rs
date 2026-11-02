@@ -301,6 +301,184 @@ fn ear_clip(mut ring: Vec<Point2>) -> Vec<[Point2; 3]> {
     triangles
 }
 
+/// Whether any two edges of `rings` meet, but the two of one ring that
+/// share a vertex (#414): rings that cross each other, or a ring that
+/// crosses itself. Rings that do not are each inside or outside every
+/// other whole, and [`tessellate`] fills them as outer rings with their
+/// holes; ones that do take [`even_odd_fill`]. Edges that only touch are
+/// taken as meeting.
+pub fn rings_cross(rings: &[Vec<Point2>]) -> bool {
+    // A sweep upwards: an edge is compared with those that reach its
+    // height alone, so a ring of many vertices costs little more than its
+    // sorting — this runs for every solid hatch drawn.
+    let rings: Vec<Vec<Point2>> = rings.iter().map(|ring| without_repeats(ring)).collect();
+    let mut edges = ring_edges(&rings);
+    edges.sort_by(|p, q| p.0.y.min(p.1.y).total_cmp(&q.0.y.min(q.1.y)));
+    let mut active: Vec<usize> = Vec::new();
+    for (i, &(a, b, ring, index)) in edges.iter().enumerate() {
+        let bottom = a.y.min(b.y);
+        active.retain(|&j| edges[j].0.y.max(edges[j].1.y) >= bottom);
+        for &j in &active {
+            let (c, d, other, other_index) = edges[j];
+            let adjacent = ring == other && {
+                let count = rings[ring].len();
+                let (low, high) = (index.min(other_index), index.max(other_index));
+                high == low + 1 || (low == 0 && high + 1 == count)
+            };
+            if !adjacent && segments_meet(a, b, c, d) {
+                return true;
+            }
+        }
+        active.push(i);
+    }
+    false
+}
+
+/// The triangles filling the region `rings` bound by the even-odd rule —
+/// a point is in it when it is inside an odd number of them, as
+/// [`contains`] and a PDF's `f*` take it — however they cross (#414). The
+/// region is cut into horizontal slabs at every vertex and every crossing,
+/// so no two edges cross within one; across each, its edges are paired
+/// left to right, and each pair bounds a trapezoid of the region, two
+/// triangles counter-clockwise.
+// Exact on purpose: an edge is level when its ends are at one height, and
+// a slab at an edge's end has that end exactly, so slabs meet without gaps.
+#[allow(clippy::float_cmp)]
+pub fn even_odd_fill(rings: &[Vec<Point2>]) -> Vec<[Point2; 3]> {
+    // Each edge running upwards, sorted by where it starts. Both passes
+    // below sweep up through them, an edge meeting only the edges whose
+    // heights overlap its own — loops that merely touch come this way
+    // too, so their cost is the drawing's, not every pair of edges'.
+    let mut edges: Vec<(Point2, Point2)> = ring_edges(rings)
+        .into_iter()
+        .filter(|(a, b, ..)| a.y != b.y)
+        .map(|(a, b, ..)| if a.y < b.y { (a, b) } else { (b, a) })
+        .collect();
+    edges.sort_by(|p, q| p.0.y.total_cmp(&q.0.y));
+    let mut levels: Vec<f64> = edges.iter().flat_map(|(a, b)| [a.y, b.y]).collect();
+    let mut active: Vec<usize> = Vec::new();
+    for (i, &(a, b)) in edges.iter().enumerate() {
+        active.retain(|&j| edges[j].1.y >= a.y);
+        for &j in &active {
+            let (c, d) = edges[j];
+            if let Some(y) = crossing_height(a, b, c, d) {
+                levels.push(y);
+            }
+        }
+        active.push(i);
+    }
+    levels.sort_by(f64::total_cmp);
+    levels.dedup();
+    let x_at = |(a, b): (Point2, Point2), y: f64| {
+        if y == a.y {
+            a.x
+        } else if y == b.y {
+            b.x
+        } else {
+            a.x + (y - a.y) / (b.y - a.y) * (b.x - a.x)
+        }
+    };
+    let mut triangles = Vec::new();
+    let (mut spanning, mut next) = (Vec::<usize>::new(), 0);
+    for slab in levels.windows(2) {
+        let (low, high) = (slab[0], slab[1]);
+        // The edges across the slab: begun by its bottom, not ended there.
+        // Every edge ends at a level, so one past `low` reaches `high`.
+        while next < edges.len() && edges[next].0.y <= low {
+            spanning.push(next);
+            next += 1;
+        }
+        spanning.retain(|&j| edges[j].1.y > low);
+        let mut across: Vec<(f64, f64)> = spanning
+            .iter()
+            .map(|&j| (x_at(edges[j], low), x_at(edges[j], high)))
+            .collect();
+        across.sort_by(|p, q| (p.0 + p.1).total_cmp(&(q.0 + q.1)));
+        for &[left, right] in across.as_chunks::<2>().0 {
+            let corners = [
+                Point2::new(left.0, low),
+                Point2::new(right.0, low),
+                Point2::new(right.1, high),
+                Point2::new(left.1, high),
+            ];
+            for triangle in [
+                [corners[0], corners[1], corners[2]],
+                [corners[0], corners[2], corners[3]],
+            ] {
+                if cross(triangle[0], triangle[1], triangle[2]) > 0.0 {
+                    triangles.push(triangle);
+                }
+            }
+        }
+    }
+    triangles
+}
+
+/// `ring` without a point repeated after itself, the last before the
+/// first included: a ring closed by its first point again has the edges a
+/// ring has, each meeting only its neighbours.
+fn without_repeats(ring: &[Point2]) -> Vec<Point2> {
+    let mut out: Vec<Point2> = Vec::with_capacity(ring.len());
+    for &point in ring {
+        if out.last() != Some(&point) {
+            out.push(point);
+        }
+    }
+    while out.len() > 1 && out.first() == out.last() {
+        out.pop();
+    }
+    out
+}
+
+/// Every edge of every ring of three points or more, with its ring and
+/// its place in it; an edge of no length is none.
+fn ring_edges(rings: &[Vec<Point2>]) -> Vec<(Point2, Point2, usize, usize)> {
+    rings
+        .iter()
+        .enumerate()
+        .filter(|(_, ring)| ring.len() >= 3)
+        .flat_map(|(ring_index, ring)| {
+            (0..ring.len()).filter_map(move |i| {
+                let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+                (a != b).then_some((a, b, ring_index, i))
+            })
+        })
+        .collect()
+}
+
+/// Whether the segments `ab` and `cd` have a point in common.
+fn segments_meet(a: Point2, b: Point2, c: Point2, d: Point2) -> bool {
+    let (d1, d2) = (cross(c, d, a), cross(c, d, b));
+    let (d3, d4) = (cross(a, b, c), cross(a, b, d));
+    if ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
+        && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
+    {
+        return true;
+    }
+    let within = |p: Point2, q: Point2, r: Point2| {
+        r.x >= p.x.min(q.x) && r.x <= p.x.max(q.x) && r.y >= p.y.min(q.y) && r.y <= p.y.max(q.y)
+    };
+    (d1 == 0.0 && within(c, d, a))
+        || (d2 == 0.0 && within(c, d, b))
+        || (d3 == 0.0 && within(a, b, c))
+        || (d4 == 0.0 && within(a, b, d))
+}
+
+/// The height at which `ab` and `cd`, each running upwards, cross inside
+/// both; none when they do not, or run alongside.
+fn crossing_height(a: Point2, b: Point2, c: Point2, d: Point2) -> Option<f64> {
+    let r = b - a;
+    let s = d - c;
+    let denominator = r.x * s.y - r.y * s.x;
+    if denominator == 0.0 {
+        return None;
+    }
+    let offset = c - a;
+    let t = (offset.x * s.y - offset.y * s.x) / denominator;
+    let u = (offset.x * r.y - offset.y * r.x) / denominator;
+    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then_some(a.y + t * r.y)
+}
+
 #[cfg(test)]
 mod tests {
     use std::f64::consts::TAU;
@@ -550,6 +728,111 @@ mod tests {
                 center + cad_core::Vec2::from_polar(radius, angle)
             })
             .collect()
+    }
+
+    /// #414: two squares crossing, neither inside the other, fill what is
+    /// inside one of them alone, as `contains` and a PDF's `f*` take it:
+    /// 150, not their 200 nor their union's 175.
+    #[test]
+    fn crossing_rings_fill_their_even_odd_region() {
+        let rings = vec![square(0.0, 0.0, 10.0), square(5.0, 5.0, 10.0)];
+        assert!(rings_cross(&rings));
+        let triangles = even_odd_fill(&rings);
+        assert!(
+            (area_of(&triangles) - 150.0).abs() < 1e-9,
+            "{}",
+            area_of(&triangles)
+        );
+        let covered = |point: Point2| {
+            triangles.iter().any(|&[a, b, c]| {
+                cross(a, b, point) > 0.0 && cross(b, c, point) > 0.0 && cross(c, a, point) > 0.0
+            })
+        };
+        assert!(!covered(p(7.5, 7.5)), "the overlap is empty");
+        assert!(covered(p(2.0, 2.0)) && covered(p(12.0, 12.0)));
+        // A ring crossing itself, a bow tie: its two halves.
+        let bow = vec![vec![p(0.0, 0.0), p(10.0, 10.0), p(10.0, 0.0), p(0.0, 10.0)]];
+        assert!(rings_cross(&bow));
+        assert!((area_of(&even_odd_fill(&bow)) - 50.0).abs() < 1e-9);
+        // A ring closed by its first point again, or with a point twice,
+        // crosses nothing for that.
+        let mut closed = square(0.0, 0.0, 10.0);
+        closed.push(p(0.0, 0.0));
+        closed.insert(2, closed[1]);
+        assert!(!rings_cross(&[closed]));
+        // An island touching its boundary at a vertex takes the even-odd
+        // fill too, and comes to the ring less the island: a flattened
+        // circle of 2,000 chords, swept rather than paired (#414).
+        let ring: Vec<Point2> = (0..2000)
+            .map(|i| {
+                let angle = f64::from(i) / 2000.0 * TAU;
+                p(100.0 * angle.cos(), 100.0 * angle.sin())
+            })
+            .collect();
+        let island = vec![ring[0], p(50.0, 10.0), p(50.0, -10.0)];
+        let both = vec![ring.clone(), island.clone()];
+        assert!(rings_cross(&both), "touching is taken as meeting");
+        let expected = signed_area(&ring).abs() - signed_area(&island).abs();
+        let filled = area_of(&even_odd_fill(&both));
+        assert!(
+            (filled - expected).abs() < 1e-6 * expected,
+            "{filled} vs {expected}"
+        );
+        // Nested, apart, or one ring: none cross.
+        assert!(!rings_cross(&[
+            square(0.0, 0.0, 10.0),
+            square(2.0, 2.0, 2.0)
+        ]));
+        assert!(!rings_cross(&[
+            square(0.0, 0.0, 10.0),
+            square(20.0, 0.0, 5.0)
+        ]));
+        assert!(!rings_cross(&[square(0.0, 0.0, 10.0)]));
+    }
+
+    proptest! {
+        // A fine grid per case: fewer cases than the default.
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        /// The even-odd fill of rings crossing anyhow covers exactly the
+        /// points an odd number of them contain, and agrees with the
+        /// nested fill where they do not cross.
+        #[test]
+        fn the_even_odd_fill_covers_what_an_odd_number_of_rings_contain(
+            centres in prop::collection::vec((-30.0f64..30.0, -30.0f64..30.0), 1..4),
+            count in 3usize..9,
+            radii in prop::collection::vec(5.0f64..40.0, 1..5),
+        ) {
+            let rings: Vec<Vec<Point2>> = centres
+                .iter()
+                .map(|&(x, y)| star(p(x, y), count, &radii))
+                .collect();
+            let triangles = even_odd_fill(&rings);
+            // A sliver where edges cross a hair from a vertex has no middle
+            // to place at this precision; the area below accounts for it.
+            for triangle in triangles.iter().filter(|t| cross(t[0], t[1], t[2]) > 1e-6) {
+                let middle = centroid(triangle);
+                let around = rings.iter().filter(|ring| contains(ring, middle)).count();
+                prop_assert!(around % 2 == 1, "{triangle:?} in {around} rings");
+            }
+            // The area agrees with the fraction of a grid an odd number of
+            // rings hold, to the grid's coarseness.
+            let (step, mut odd) = (0.5, 0usize);
+            for i in 0..280 {
+                for j in 0..280 {
+                    let point = p(-70.0 + (f64::from(i) + 0.5) * step, -70.0 + (f64::from(j) + 0.5) * step);
+                    if rings.iter().filter(|ring| contains(ring, point)).count() % 2 == 1 {
+                        odd += 1;
+                    }
+                }
+            }
+            let sampled = odd as f64 * step * step;
+            let filled = area_of(&triangles);
+            prop_assert!((filled - sampled).abs() <= 0.03 * sampled.max(100.0), "{filled} vs {sampled}");
+            if !rings_cross(&rings) && rings.len() == 1 {
+                prop_assert!((filled - signed_area(&rings[0]).abs()).abs() < 1e-6 * filled.max(1.0));
+            }
+        }
     }
 
     proptest! {
