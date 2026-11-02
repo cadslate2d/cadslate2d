@@ -477,7 +477,11 @@ export class CadApp {
   async #keepNow(exported: boolean): Promise<void> {
     if (this.#failed) return;
     const state = this.engine.uiState();
-    if (!exported && !state.unsavedChanges) return;
+    // Whether a file holds what is kept is read now, with the drawing it
+    // keeps: a keep that waited may find the drawing changed since the
+    // file was written (#407).
+    const held = exported && !state.unsavedChanges;
+    if (!held && !state.unsavedChanges) return;
     this.#keptRevision = state.revision;
     // The drawing changed while the snapshot was being written: what the
     // next pause keeps will have the change too.
@@ -497,7 +501,7 @@ export class CadApp {
         handle: storable ? handle : undefined,
         bytes,
         savedAt,
-        exported,
+        exported: held,
       });
       this.#keptAt = savedAt;
     } catch {
