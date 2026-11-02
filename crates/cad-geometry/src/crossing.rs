@@ -11,6 +11,26 @@ use crate::{Arc, Circle, Segment};
 impl Segment {
     /// True when any point of the segment lies in `bounds` (edges included).
     pub fn intersects_aabb(&self, bounds: &Aabb) -> bool {
+        self.span_in(bounds).is_some()
+    }
+
+    /// The part of the segment in `bounds` (edges included), if any: the
+    /// same line, from where it enters to where it leaves (#402). An end
+    /// inside is kept exactly.
+    pub fn clipped_to(&self, bounds: &Aabb) -> Option<Segment> {
+        let (enter, leave) = self.span_in(bounds)?;
+        let delta = self.end - self.start;
+        let at = |t: f64| match t {
+            0.0 => self.start,
+            1.0 => self.end,
+            t => self.start + delta * t,
+        };
+        Some(Segment::new(at(enter), at(leave)))
+    }
+
+    /// The parameters in `[0, 1]` between which the segment is in
+    /// `bounds`.
+    fn span_in(&self, bounds: &Aabb) -> Option<(f64, f64)> {
         // Liang–Barsky: clip the parameter range [0, 1] against each side.
         let delta = self.end - self.start;
         let (mut enter, mut leave) = (0.0_f64, 1.0_f64);
@@ -24,7 +44,7 @@ impl Segment {
             if direction == 0.0 {
                 // Parallel to this side: outside it means outside the box.
                 if distance < 0.0 {
-                    return false;
+                    return None;
                 }
             } else {
                 let t = distance / direction;
@@ -35,7 +55,7 @@ impl Segment {
                 }
             }
         }
-        enter <= leave
+        (enter <= leave).then_some((enter, leave))
     }
 
     /// Parameters in `[0, 1]` where the segment meets `circle`.
@@ -118,6 +138,27 @@ mod tests {
 
     fn seg(x0: f64, y0: f64, x1: f64, y1: f64) -> Segment {
         Segment::new(p(x0, y0), p(x1, y1))
+    }
+
+    /// The part of a segment in a box (#402): from where it enters to
+    /// where it leaves, an end inside kept exactly; nothing when it misses.
+    #[test]
+    fn a_segment_is_clipped_to_the_part_in_a_box() {
+        let b = boxed(0.0, 0.0, 10.0, 10.0);
+        assert_eq!(
+            seg(2.0, 2.0, 8.0, 8.0).clipped_to(&b),
+            Some(seg(2.0, 2.0, 8.0, 8.0))
+        );
+        assert_eq!(
+            seg(-5.0, 5.0, 15.0, 5.0).clipped_to(&b),
+            Some(seg(0.0, 5.0, 10.0, 5.0))
+        );
+        assert_eq!(
+            seg(5.0, 5.0, 5.0, 20.0).clipped_to(&b),
+            Some(seg(5.0, 5.0, 5.0, 10.0))
+        );
+        assert_eq!(seg(-5.0, -5.0, -1.0, 20.0).clipped_to(&b), None);
+        assert_eq!(seg(12.0, 0.0, 20.0, 10.0).clipped_to(&b), None);
     }
 
     #[test]
@@ -239,6 +280,29 @@ mod tests {
             // And a segment whose bounding box misses the box cannot intersect it.
             if !segment.bounds().intersects(&b) {
                 prop_assert!(!segment.intersects_aabb(&b));
+            }
+        }
+
+        /// The clipped piece lies on the segment and in the box, and holds
+        /// every sampled point of the segment that is in the box.
+        #[test]
+        fn a_clipped_segment_is_the_part_in_the_box(
+            x0 in coordinate(), y0 in coordinate(), x1 in coordinate(), y1 in coordinate(), b in any_box()
+        ) {
+            let segment = seg(x0, y0, x1, y1);
+            let piece = segment.clipped_to(&b);
+            prop_assert_eq!(piece.is_some(), segment.intersects_aabb(&b));
+            if let Some(piece) = piece {
+                let room = b.expanded(1e-9);
+                prop_assert!(room.contains_point(piece.start) && room.contains_point(piece.end));
+                prop_assert!(segment.distance_to_point(piece.start) < 1e-9);
+                prop_assert!(segment.distance_to_point(piece.end) < 1e-9);
+                for i in 0..=64 {
+                    let sample = segment.point_at(f64::from(i) / 64.0);
+                    if b.contains_point(sample) {
+                        prop_assert!(piece.distance_to_point(sample) < 1e-9);
+                    }
+                }
             }
         }
 
