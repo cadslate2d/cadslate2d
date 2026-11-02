@@ -1269,18 +1269,18 @@ impl<'a> Reader<'a> {
                 None => self.report.count_unsupported(INVALID),
             },
             (_, "TEXT") if entities => {
-                let (text, dropped) = body.text(record.line)?;
+                let (text, anchor, dropped) = body.text(record.line)?;
                 let mut pending = body.pending();
                 pending.dropped |= dropped;
-                let (insertion, rotation) = (text.insertion, text.rotation);
-                let text = self.text_in_world(Entity::Text(text), insertion, rotation, body);
+                let rotation = text.rotation;
+                let text = self.text_in_world(Entity::Text(text), anchor, rotation, body);
                 self.push(text, pending)?;
             }
             // An attribute definition (#183): a text with a tag (2), a
             // prompt (3), and flags (70); its words are the default.
             (_, "ATTDEF") if entities => {
-                let (text, dropped) = body.text(record.line)?;
-                let (insertion, rotation) = (text.insertion, text.rotation);
+                let (text, anchor, dropped) = body.text(record.line)?;
+                let rotation = text.rotation;
                 let mut pending = body.pending();
                 pending.dropped |= dropped;
                 let mut definition = AttributeDefinitionEntity::new(
@@ -1291,7 +1291,7 @@ impl<'a> Reader<'a> {
                 definition.invisible = body.flags & 1 != 0;
                 let definition = self.text_in_world(
                     Entity::AttributeDefinition(definition),
-                    insertion,
+                    anchor,
                     rotation,
                     body,
                 );
@@ -2028,9 +2028,12 @@ impl<'a> Reader<'a> {
     }
 
     /// A TEXT or an ATTDEF where AutoCAD draws it (#398): mirrored by its
-    /// generation flag — backwards (71, 2) about the line up through its
-    /// insertion, upside down (4) about its baseline — and by a normal
-    /// facing down (#391) across the Y axis. An even number of mirrors is
+    /// generation flag about its anchor — the point its justification
+    /// places, the alignment point when it has one — backwards (71, 2)
+    /// about the line up through it, upside down (4) about the line along
+    /// the text through it, as MIRROR with MIRRTEXT on leaves the
+    /// alignment point and sets the flag; and by a normal facing down
+    /// (#391) across the Y axis. An even number of mirrors is
     /// a turn or a move, which a text holds exactly: the backwards flag
     /// and a normal facing down cancel, and backwards and upside down is
     /// a half turn. An odd number leaves it a mirror image, which a text
@@ -2040,7 +2043,7 @@ impl<'a> Reader<'a> {
     fn text_in_world(
         &mut self,
         entity: Entity,
-        insertion: Point2,
+        anchor: Point2,
         rotation: f64,
         body: &RecordBody,
     ) -> Entity {
@@ -2059,13 +2062,10 @@ impl<'a> Reader<'a> {
         let up = cad_core::Vec2::new(-along.y, along.x);
         let mut mirrors = Vec::new();
         if generation & 2 != 0 {
-            mirrors.extend(cad_document::Transform::mirror(insertion, insertion + up));
+            mirrors.extend(cad_document::Transform::mirror(anchor, anchor + up));
         }
         if generation & 4 != 0 {
-            mirrors.extend(cad_document::Transform::mirror(
-                insertion,
-                insertion + along,
-            ));
+            mirrors.extend(cad_document::Transform::mirror(anchor, anchor + along));
         }
         if facing == Facing::Down {
             mirrors.extend(cad_document::Transform::mirror(
@@ -2078,11 +2078,11 @@ impl<'a> Reader<'a> {
         }
         if mirrors.len() % 2 == 0 {
             let image = |p: Point2| mirrors.iter().fold(p, |p, mirror| mirror.apply(p));
-            let ahead = insertion + along;
+            let ahead = anchor + along;
             return match cad_document::Transform::aligning(
-                insertion,
+                anchor,
                 ahead,
-                image(insertion),
+                image(anchor),
                 image(ahead),
                 false,
             ) {
@@ -3249,7 +3249,7 @@ impl RecordBody {
     /// words land where they were; aligned and fit text — stretched to a
     /// second point — is read as left text at its first point, and the
     /// stretch is dropped. Whether anything was dropped is the second value.
-    fn text(&self, at: usize) -> Result<(TextEntity, bool), DxfError> {
+    fn text(&self, at: usize) -> Result<(TextEntity, Point2, bool), DxfError> {
         let need = |value, group| required(value, at, "TEXT", group);
         let first = Point2::new(need(self.x0, 10)?, need(self.y0, 20)?);
         let height = need(self.radius, 40)?;
@@ -3305,7 +3305,11 @@ impl RecordBody {
                 dropped = true;
             }
         }
-        Ok((text, dropped || !height.is_finite() || height <= 0.0))
+        Ok((
+            text,
+            anchor,
+            dropped || !height.is_finite() || height <= 0.0,
+        ))
     }
 
     /// An MTEXT: its words, in pieces, with the formatting taken out; its
@@ -4386,6 +4390,44 @@ mod tests {
 
         // Three times: a mirror image again.
         assert_eq!(read(text("TEXT", "6", "-1")).0, (1, 0, 1));
+
+        // Justified, the mirrors are about the anchor — the alignment
+        // point — not the baseline: top-justified at (0, 10), upside down
+        // hangs up from it, its baseline on y = 10; turned half round, the
+        // baseline is a height above it. Middle alike, half a height.
+        let justified = |flags: &'static str, halign: &'static str, valign: &'static str| {
+            vec![
+                (0, "TEXT"),
+                (10, "0"),
+                (20, "0"),
+                (11, "0"),
+                (21, "10"),
+                (40, "1"),
+                (1, "AB"),
+                (72, halign),
+                (73, valign),
+                (71, flags),
+            ]
+        };
+        let (keys, hanging) = read(justified("4", "0", "3"));
+        assert_eq!(keys, (0, 1, 1));
+        assert!(close(hanging.start(), p(0.0, 10.0)), "{hanging:?}");
+        let (keys, turned) = read(justified("6", "0", "3"));
+        assert_eq!(keys, (0, 0, 0));
+        assert!(
+            close(turned.insertion, p(0.0, 11.0)) && turn(turned.rotation, std::f64::consts::PI),
+            "{turned:?}"
+        );
+        let (keys, middle) = read(justified("6", "4", "0"));
+        assert_eq!(keys, (0, 0, 0));
+        assert!(
+            close(middle.insertion, p(0.0, 10.5)) && turn(middle.rotation, std::f64::consts::PI),
+            "{middle:?}"
+        );
+        // Upside down about its middle, it fills the box it filled.
+        let (keys, middle) = read(justified("4", "4", "0"));
+        assert_eq!(keys, (0, 1, 1));
+        assert!(close(middle.insertion, p(0.0, 9.5)), "{middle:?}");
     }
 
     #[test]
