@@ -599,7 +599,11 @@ export class CadApp {
       return;
     const file = await this.#host.files.open(DRAWING_ACCEPT);
     if (!file) return;
-    this.loop.invalidate(this.engine.loadDrawing(file.bytes, file.name));
+    const dirty = this.engine.loadDrawing(file.bytes, file.name);
+    this.loop.invalidate(dirty);
+    // A file that cannot be read leaves the drawing as it was (#406): it
+    // is not the drawing's file, and what was kept of the drawing stays.
+    if ((dirty & Dirty.Scene) === 0) return;
     this.#target = file.target;
     // The opened file holds the drawing: whatever was kept before is replaced.
     this.#cancelAutosave?.();
