@@ -79,12 +79,10 @@ pub struct Drawing {
     history: History,
     revision: Revision,
     shown_revision: Revision,
-    /// What each change to what is shown touched, newest last: the shown
-    /// revision before it, the one after, and the entities — or `None`
-    /// when everything did, as when a layer is switched off. Derived state
-    /// such as the render scene asks [`Drawing::shown_changes_since`] what
-    /// to redo instead of redoing all of it (ADR-0022).
-    journal: VecDeque<(Revision, Revision, Option<Vec<EntityId>>)>,
+    /// What each change to what is shown touched, newest last. Derived
+    /// state such as the render scene asks [`Drawing::shown_changes_since`]
+    /// what to redo instead of redoing all of it (ADR-0022).
+    journal: VecDeque<Journaled>,
     /// The spaces: the model first, then the layouts (#191).
     layouts: LayoutTable,
     /// Named sets of objects picked together (#214).
@@ -100,6 +98,18 @@ pub struct Drawing {
     /// Why transactions were not applied since the session last asked
     /// (ADR-0038): the edits the constraints refused.
     refusals: Vec<String>,
+}
+
+/// One change to what is shown, as the journal remembers it.
+#[derive(Clone, Debug)]
+struct Journaled {
+    /// The shown revision before it.
+    before: Revision,
+    /// The entities it touched, or `None` when everything was, as when a
+    /// layer is switched off.
+    changed: Option<Vec<EntityId>>,
+    /// Of those, the ones it moved to another space (#404).
+    moved: Vec<EntityId>,
 }
 
 /// How many changes the journal remembers; a scene further behind than
@@ -150,6 +160,8 @@ pub struct ApplyReport {
     pub removed: Vec<EntityId>,
     /// Entities whose geometry or properties changed.
     pub replaced: Vec<EntityId>,
+    /// Of the replaced, those moved to another space (#404).
+    pub moved: Vec<EntityId>,
     /// Whether a row of any table changed: a layer made, renamed, removed.
     pub tables_changed: bool,
     /// Why the transaction was not applied: it could not be settled with
@@ -1119,16 +1131,34 @@ impl Drawing {
     /// drawing this journal does not know, or more changes than it
     /// remembers (ADR-0022).
     pub fn shown_changes_since(&self, since: Revision) -> Option<Vec<EntityId>> {
+        self.journaled_since(since, |entry| entry.changed.clone())
+    }
+
+    /// Of [`shown_changes_since`](Self::shown_changes_since), the entities
+    /// moved between spaces since `since` (#404): each was where it is now
+    /// and somewhere else, so what was made of it where it was is stale
+    /// too. `None` when the journal does not reach back that far.
+    pub fn moved_since(&self, since: Revision) -> Option<Vec<EntityId>> {
+        self.journaled_since(since, |entry| Some(entry.moved.clone()))
+    }
+
+    /// What `take` reads from each journal entry since `since`, newest
+    /// first; `None` when the journal does not reach back that far or
+    /// `take` gives `None` for an entry.
+    fn journaled_since(
+        &self,
+        since: Revision,
+        take: impl Fn(&Journaled) -> Option<Vec<EntityId>>,
+    ) -> Option<Vec<EntityId>> {
         if since == self.shown_revision {
             return Some(Vec::new());
         }
         let mut ids = Vec::new();
-        for (before, after, changed) in self.journal.iter().rev() {
-            ids.extend(changed.as_ref()?.iter().copied());
-            if *before == since {
+        for entry in self.journal.iter().rev() {
+            ids.extend(take(entry)?);
+            if entry.before == since {
                 return Some(ids);
             }
-            let _ = after;
         }
         None
     }
@@ -1724,6 +1754,9 @@ impl Drawing {
                     self.note_radius(*id);
                     self.note_order(before.order, false);
                     self.note_order(after.order, true);
+                    if before.space != after.space {
+                        report.moved.push(*id);
+                    }
                     report.replaced.push(*id);
                 }
                 Change::Layer(change) => {
@@ -1846,8 +1879,11 @@ impl Drawing {
                 ids.extend(&report.replaced);
                 ids
             });
-            self.journal
-                .push_back((before, self.shown_revision, changed));
+            self.journal.push_back(Journaled {
+                before,
+                changed,
+                moved: report.moved.clone(),
+            });
             if self.journal.len() > JOURNAL_LENGTH {
                 self.journal.pop_front();
             }
@@ -7515,6 +7551,36 @@ mod tests {
             Some(sheet),
             "one change, redone as one"
         );
+    }
+
+    /// #404: a move between spaces is said as one — in the report, and to
+    /// whatever asks what moved since a revision — whether made, undone,
+    /// or redone; a change in place is not one.
+    #[test]
+    fn a_move_between_spaces_is_reported_and_journaled() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+        let id = tx.insert(line(0.0, 0.0, 10.0, 0.0)).unwrap();
+        let other = tx.insert(line(0.0, 5.0, 10.0, 5.0)).unwrap();
+        tx.commit();
+        let shown = drawing.shown_revision();
+        let mut tx = drawing.transaction();
+        tx.set_space(id, sheet).unwrap();
+        tx.replace(other, line(0.0, 6.0, 10.0, 6.0)).unwrap();
+        let report = tx.commit();
+        assert_eq!(report.moved, vec![id]);
+        assert_eq!(drawing.moved_since(shown), Some(vec![id]));
+        let mut changed = drawing.shown_changes_since(shown).unwrap();
+        changed.sort();
+        assert_eq!(changed, vec![id, other], "a move is a change too");
+
+        let moved = drawing.shown_revision();
+        assert_eq!(drawing.undo().map(|report| report.moved), Some(vec![id]));
+        assert_eq!(drawing.moved_since(moved), Some(vec![id]));
+        assert_eq!(drawing.redo().map(|report| report.moved), Some(vec![id]));
+        assert_eq!(drawing.moved_since(shown), Some(vec![id, id, id]));
+        assert_eq!(drawing.moved_since(drawing.shown_revision()), Some(vec![]));
     }
 
     #[test]

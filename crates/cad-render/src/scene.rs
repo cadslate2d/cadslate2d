@@ -860,12 +860,18 @@ impl SceneCache {
             match (self.scene.as_mut(), changed) {
                 (Some(scene), Some(ids)) => {
                     // A changed entity's chunk in the part of its space;
-                    // one that is gone could have been in either.
+                    // one that is gone could have been in either, and one
+                    // moved between the model and the layout (#404) left
+                    // the other.
                     let model_chunks = scene.model_chunks.max(needed);
+                    let moved = drawing.moved_since(scene.revision).unwrap_or_default();
                     let mut chunks: BTreeSet<usize> = BTreeSet::new();
                     for id in &ids {
                         let id_chunk = (id.raw() / CHUNK_IDS) as usize;
-                        let on_paper = drawing.space_of(*id).map(|at| at == space);
+                        let on_paper = drawing
+                            .space_of(*id)
+                            .filter(|_| !moved.contains(id))
+                            .map(|at| at == space);
                         if on_paper != Some(true) || space == LayoutId::MODEL {
                             chunks.insert(id_chunk);
                         }
@@ -1446,6 +1452,88 @@ mod tests {
             "out of reach: the chunk's own centre"
         );
         assert!((regions[0].origin.y - 5e6).abs() < 1.0);
+    }
+
+    /// #404: an entity moved between the model and a layout leaves the
+    /// chunk it was in as well as entering the other: the layout's scene,
+    /// repacked, is the scene built afresh, both ways.
+    #[test]
+    fn an_entity_moved_between_spaces_leaves_its_old_chunk() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+        let model_line = tx
+            .insert(LineEntity::new(
+                Point2::new(0.0, 0.0),
+                Point2::new(100.0, 0.0),
+            ))
+            .unwrap();
+        tx.insert_in(
+            sheet,
+            ViewportEntity::new(
+                Point2::new(100.0, 50.0),
+                200.0,
+                100.0,
+                Point2::new(50.0, 0.0),
+                0.5,
+            ),
+        )
+        .unwrap();
+        let paper_line = tx
+            .insert_in(
+                sheet,
+                LineEntity::new(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0)),
+            )
+            .unwrap();
+        tx.commit();
+        let mut cache = SceneCache::new();
+        cache.scene_in(&drawing, sheet);
+        // What each region draws, in drawing units: a repacked chunk may
+        // keep the origin it had, so the instances, not the offsets, are
+        // compared.
+        let drawn = |scene: &RenderScene| -> Vec<(bool, Vec<[f64; 4]>)> {
+            let segments = scene.frame().segments();
+            scene
+                .regions()
+                .iter()
+                .map(|region| {
+                    let first = region.first[0] as usize;
+                    let lines = (first..first + region.count[0] as usize)
+                        .map(|i| {
+                            let s = &segments[i * 4..i * 4 + 4];
+                            let (x, y) = (region.origin.x, region.origin.y);
+                            [
+                                x + f64::from(s[0]),
+                                y + f64::from(s[1]),
+                                x + f64::from(s[2]),
+                                y + f64::from(s[3]),
+                            ]
+                        })
+                        .collect();
+                    (region.paper, lines)
+                })
+                .collect()
+        };
+        let fresh = |drawing: &Drawing| drawn(SceneCache::new().scene_in(drawing, sheet));
+        for (moved, to) in [(paper_line, LayoutId::MODEL), (model_line, sheet)] {
+            let mut tx = drawing.transaction();
+            tx.set_space(moved, to).unwrap();
+            tx.commit();
+            let repacked = drawn(cache.scene_in(&drawing, sheet));
+            assert_eq!(repacked, fresh(&drawing), "{moved:?} to {to:?}");
+        }
+        assert_eq!(cache.partial_build_count(), 2, "repacked, not rebuilt");
+        let regions = cache.scene_in(&drawing, sheet).regions();
+        assert_eq!(
+            regions[0].count,
+            [1, 0, 0],
+            "the paper's line, now the model's"
+        );
+        assert_eq!(
+            regions[1].count,
+            [5, 0, 0],
+            "the frame, and the model's line"
+        );
     }
 
     /// #193: a layout's scene is the model's chunks, then the layout's own,
