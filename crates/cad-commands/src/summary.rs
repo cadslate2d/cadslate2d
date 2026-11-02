@@ -194,9 +194,14 @@ impl Common {
     }
 }
 
-/// Four decimals, like the status bar's readout.
+/// Four decimals, like the status bar's readout. A value that rounds to
+/// zero is `0.0000`, never `-0.0000` (#377).
 pub(crate) fn number(value: f64) -> String {
-    format!("{value:.4}")
+    let text = format!("{value:.4}");
+    match text.strip_prefix('-') {
+        Some(rest) if rest.bytes().all(|b| b == b'0' || b == b'.') => rest.to_owned(),
+        _ => text,
+    }
 }
 
 pub(crate) fn point(point: Point2) -> String {
@@ -205,6 +210,17 @@ pub(crate) fn point(point: Point2) -> String {
 
 pub(crate) fn degrees(radians: f64) -> String {
     format!("{}°", number(radians.to_degrees()))
+}
+
+/// A direction, in [0°, 360°) as shown: wrapped, rounded, and a direction
+/// a hair below +X — which rounds to 360 — shown as the 0 it is (#377).
+pub(crate) fn direction(radians: f64) -> String {
+    let text = number(radians.to_degrees().rem_euclid(360.0));
+    if text == number(360.0) {
+        format!("{}°", number(0.0))
+    } else {
+        format!("{text}°")
+    }
 }
 
 /// What defines one entity, as the panel lists it.
@@ -217,7 +233,7 @@ pub(crate) fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, St
                 row("Start", point(line.start)),
                 row("End", point(line.end)),
                 row("Length", number(delta.length())),
-                row("Angle", degrees(delta.y.atan2(delta.x).rem_euclid(TAU))),
+                row("Angle", direction(delta.y.atan2(delta.x))),
             ]
         }
         Entity::Circle(circle) => vec![
@@ -246,7 +262,7 @@ pub(crate) fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, St
                 row("Ratio", number(entity.ratio)),
                 row(
                     "Rotation",
-                    degrees(ellipse.major.y.atan2(ellipse.major.x).rem_euclid(TAU)),
+                    direction(ellipse.major.y.atan2(ellipse.major.x)),
                 ),
             ];
             if !ellipse.is_full() {
@@ -338,17 +354,11 @@ pub(crate) fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, St
         ],
         Entity::XLine(line) => vec![
             row("Base point", point(line.base)),
-            row(
-                "Angle",
-                degrees(line.direction.y.atan2(line.direction.x).rem_euclid(TAU)),
-            ),
+            row("Angle", direction(line.direction.y.atan2(line.direction.x))),
         ],
         Entity::Ray(ray) => vec![
             row("Start", point(ray.start)),
-            row(
-                "Angle",
-                degrees(ray.direction.y.atan2(ray.direction.x).rem_euclid(TAU)),
-            ),
+            row("Angle", direction(ray.direction.y.atan2(ray.direction.x))),
         ],
         Entity::MLeader(mleader) => {
             let style = drawing.tables().mleader_style(mleader.style);
@@ -462,6 +472,34 @@ mod tests {
 
     fn p(x: f64, y: f64) -> Point2 {
         Point2::new(x, y)
+    }
+
+    /// #377: a direction a hair below +X is 0°, not 360°, and a
+    /// coordinate a hair below zero is 0.0000, not -0.0000.
+    #[test]
+    fn a_hair_below_zero_reads_as_zero() {
+        assert_eq!(number(-1e-10), "0.0000");
+        assert_eq!(number(-0.0), "0.0000");
+        assert_eq!(
+            number(-0.00005),
+            "-0.0001",
+            "what rounds to a digit keeps its sign"
+        );
+        assert_eq!(direction(-1e-10), "0.0000°");
+        assert_eq!(direction((359.99996f64).to_radians()), "0.0000°");
+        assert_eq!(direction((359.9999f64).to_radians()), "359.9999°");
+        assert_eq!(direction(-std::f64::consts::FRAC_PI_2), "270.0000°");
+        let drawing = Drawing::new();
+        let line = Entity::Line(LineEntity::new(p(0.0, 0.0), p(100.0, -1e-10)));
+        assert_eq!(
+            geometry_of(&line, &drawing),
+            vec![
+                ("Start".to_owned(), "0.0000, 0.0000".to_owned()),
+                ("End".to_owned(), "100.0000, 0.0000".to_owned()),
+                ("Length".to_owned(), "100.0000".to_owned()),
+                ("Angle".to_owned(), "0.0000°".to_owned()),
+            ]
+        );
     }
 
     fn drawing() -> (Drawing, Vec<cad_core::EntityId>) {

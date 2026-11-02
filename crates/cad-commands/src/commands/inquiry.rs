@@ -13,7 +13,7 @@ use cad_document::{Entity, LayoutId};
 use cad_input::{ExpectedInput, InputKind, Keyword};
 
 use super::modify::{NOTHING_SELECTED, SELECT_OBJECTS, selection_expected};
-use crate::summary::{degrees, geometry_of, kind_index, kind_names, number};
+use crate::summary::{direction, geometry_of, kind_index, kind_names, number};
 use crate::{Command, CommandContext, CommandInput, OverlayItem, Prompt, Step};
 
 /// A length with the drawing's unit after it, when it has one.
@@ -71,7 +71,7 @@ impl Command for DistCommand {
                     length(ctx, delta.length()),
                     length(ctx, delta.x),
                     length(ctx, delta.y),
-                    degrees(delta.y.atan2(delta.x).rem_euclid(TAU)),
+                    direction(delta.y.atan2(delta.x)),
                 ));
                 Step::Finished
             }
