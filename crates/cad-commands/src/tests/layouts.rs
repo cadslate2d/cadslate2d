@@ -386,3 +386,68 @@ fn mspace_then_pspace_with_no_change_commits_nothing() {
             .any(|(_, e)| matches!(e, Entity::Viewport(_)))
     );
 }
+
+/// #376: LAYOUT Set or MODEL from the model worked through a viewport
+/// leaves each space's view as it was left: the paper's as it was before
+/// MSPACE, the model's own — not the viewport's.
+#[test]
+fn leaving_a_viewport_for_another_space_keeps_each_spaces_view() {
+    let view_of = |h: &Harness| (h.session.view().center(), h.session.view().scale());
+    let mut h = Harness::new();
+    h.enter_all(&["REC", "0,0", "1000,500"]);
+    let model = view_of(&h);
+    h.enter_all(&["LAYOUT", "N", "Sheet"]);
+    let sheet = h.session.space();
+    h.enter_all(&["MVIEW", "10,10", "210,110"]);
+    h.enter_all(&["ZOOM", "C", "110,60", "50"]);
+    let paper = view_of(&h);
+    h.enter("MSPACE");
+    assert_ne!(view_of(&h), paper, "the viewport's view");
+
+    // The same layout: back on its paper as it was.
+    h.enter_all(&["LAYOUT", "S", "Sheet"]);
+    assert_eq!(h.session.space(), sheet);
+    assert!(h.session.viewport_through().is_none());
+    assert_eq!(view_of(&h), paper);
+    h.enter("MODEL");
+    assert_eq!(
+        view_of(&h),
+        model,
+        "the model's own view, not the viewport's"
+    );
+
+    // MODEL straight from MSPACE stays in the model, the viewport having
+    // taken the view; the paper keeps its own.
+    h.enter_all(&["LAYOUT", "S", "Sheet"]);
+    h.enter("MSPACE");
+    let through = view_of(&h);
+    h.enter("MODEL");
+    assert_eq!(h.session.space(), LayoutId::MODEL);
+    assert!(h.session.viewport_through().is_none());
+    assert_eq!(view_of(&h), through);
+    h.enter_all(&["LAYOUT", "S", "Sheet"]);
+    assert_eq!(view_of(&h), paper);
+
+    // Another layout from MSPACE: Sheet keeps its paper's view, the model
+    // its own, and the other layout opens at its sheet.
+    h.enter_all(&["LAYOUT", "N", "Sheet2"]);
+    let sheet2 = h.session.space();
+    let fresh = view_of(&h);
+    h.enter("MODEL");
+    h.enter_all(&["ZOOM", "C", "0,0", "300"]);
+    let model_now = view_of(&h);
+    assert_ne!(
+        model_now, through,
+        "a view of the model's own, not the viewport's"
+    );
+    h.enter_all(&["LAYOUT", "S", "Sheet"]);
+    h.enter("MSPACE");
+    h.enter_all(&["LAYOUT", "S", "Sheet2"]);
+    assert_eq!(h.session.space(), sheet2);
+    assert!(h.session.viewport_through().is_none());
+    assert_eq!(view_of(&h), fresh);
+    h.enter_all(&["LAYOUT", "S", "Sheet"]);
+    assert_eq!(view_of(&h), paper);
+    h.enter("MODEL");
+    assert_eq!(view_of(&h), model_now);
+}
