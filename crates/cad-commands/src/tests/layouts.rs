@@ -258,9 +258,6 @@ fn undo_that_takes_away_the_space_leaves_for_one_that_is_there() {
     assert_eq!(last(&h), "The layout is gone: in the model.");
     h.enter_all(&["L", "0,0", "100,0", ""]);
     assert_eq!(h.session.drawing().len(), 1);
-    // REDO brings the layout back; the session stays where it is.
-    h.redo();
-    assert_eq!(h.session.space(), LayoutId::MODEL);
 
     // The viewport worked through, undone: back on its paper.
     let mut h = Harness::new();
@@ -279,4 +276,40 @@ fn undo_that_takes_away_the_space_leaves_for_one_that_is_there() {
     h.enter_all(&["L", "0,0", "100,0", ""]);
     let line = *h.ids().last().unwrap();
     assert_eq!(h.session.drawing().space_of(line), Some(sheet));
+}
+
+/// #373: REDO that deletes a layout again while the session is on it, or
+/// works the model through one of its viewports, leaves for the model.
+#[test]
+fn redo_that_takes_away_the_space_leaves_for_the_model() {
+    let mut h = Harness::new();
+    h.enter_all(&["LAYOUT", "N", "Sheet"]);
+    let sheet = h.session.space();
+    h.enter_all(&["LAYOUT", "D", "Sheet"]);
+    assert_eq!(h.session.space(), LayoutId::MODEL);
+    h.undo();
+    assert!(h.session.drawing().layouts().contains(sheet));
+    h.enter_all(&["LAYOUT", "S", "Sheet"]);
+    assert_eq!(h.session.space(), sheet);
+    h.redo();
+    assert!(!h.session.drawing().layouts().contains(sheet), "redone");
+    assert_eq!(h.session.space(), LayoutId::MODEL);
+    assert_eq!(last(&h), "The layout is gone: in the model.");
+
+    // And while the session works the model through one of its viewports.
+    let mut h = Harness::new();
+    h.enter_all(&["REC", "0,0", "1000,500"]);
+    h.enter_all(&["LAYOUT", "N", "Sheet"]);
+    let sheet = h.session.space();
+    h.enter_all(&["MVIEW", "10,10", "210,110"]);
+    h.enter_all(&["LAYOUT", "D", "Sheet"]);
+    h.undo();
+    h.enter_all(&["LAYOUT", "S", "Sheet"]);
+    h.enter("MSPACE");
+    assert!(h.session.viewport_through().is_some());
+    h.redo();
+    assert!(!h.session.drawing().layouts().contains(sheet), "redone");
+    assert_eq!(h.session.space(), LayoutId::MODEL);
+    assert!(h.session.viewport_through().is_none());
+    assert_eq!(last(&h), "The layout worked through is gone: in the model.");
 }
