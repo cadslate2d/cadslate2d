@@ -884,11 +884,12 @@ impl CadSession {
         Uint32Array::from(words.as_slice())
     }
 
-    /// The viewports of the layout shown (#193), each as its frame in
-    /// clip space — `x0, y0, x1, y1` — then one clip transform per
-    /// region of `scene_regions` for the model seen through it. Empty on
-    /// the model, and for a viewport that is off. Changes with the view
-    /// and the drawing; a copy.
+    /// The viewports of the layout shown (#193): empty on the model; on a
+    /// layout a leading 1 — the paper, whether or not any viewport shows
+    /// the model through it (#401) — then each viewport that is on, as its
+    /// frame in clip space — `x0, y0, x1, y1` — and one clip transform per
+    /// region of `scene_regions` for the model seen through it. Changes
+    /// with the view and the drawing; a copy.
     pub fn scene_viewports(&mut self) -> Vec<f32> {
         let space = self.session.space();
         if space == LayoutId::MODEL {
@@ -912,7 +913,7 @@ impl CadSession {
                 (point.y as f32) * clip.scale[1] + clip.translate[1],
             ]
         };
-        let mut out = Vec::new();
+        let mut out = vec![1.0];
         for window in windows {
             let frame = window.frame();
             let [x0, y0] = to_clip(frame.min());

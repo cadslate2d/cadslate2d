@@ -6,11 +6,10 @@ import {
   FLOATS_PER_ARC_DISTANCE,
   FLOATS_PER_SEGMENT,
   FLOATS_PER_TRIANGLE,
-  FLOATS_PER_TRANSFORM,
-  FLOATS_PER_VIEWPORT_FRAME,
   StyleRole,
   WORDS_PER_REGION,
   dirtyRanges,
+  scenePlan,
   type ClipTransform,
   type FrameBuffers,
   type SceneViewports,
@@ -364,24 +363,19 @@ export class WebGlRenderer implements FrameSink {
       // viewport of the layout shown, scissored to its frame — or plainly,
       // on the model, where no viewport is listed — then the layout's own
       // regions under the paper's transform, over them.
-      const regionCount = regions.length / WORDS_PER_REGION;
-      const stride = FLOATS_PER_VIEWPORT_FRAME + FLOATS_PER_TRANSFORM * regionCount;
-      const onPaper = viewports.length > 0;
+      // On paper with no viewport on, nothing of the model is drawn, and
+      // the paper's own regions are (#401).
+      const plan = scenePlan(viewports, regions.length / WORDS_PER_REGION);
+      const onPaper = plan.onPaper;
       const stroke = this.#palette.strokes[StyleRole.Entity];
       gl.enable(gl.DEPTH_TEST);
       if (onPaper) {
         gl.enable(gl.SCISSOR_TEST);
-        for (let at = 0; at + stride <= viewports.length; at += stride) {
-          this.#scissorClip(
-            viewports[at] ?? 0,
-            viewports[at + 1] ?? 0,
-            viewports[at + 2] ?? 0,
-            viewports[at + 3] ?? 0,
-          );
+        for (const { frame, transforms } of plan.viewports) {
+          this.#scissorClip(...frame);
           // Each viewport's model in its own order, over what is beneath.
           gl.depthMask(true);
           gl.clear(gl.DEPTH_BUFFER_BIT);
-          const transforms = viewports.subarray(at + FLOATS_PER_VIEWPORT_FRAME, at + stride);
           for (const [pipeline, layer, kind] of kinds) {
             gl.depthMask(kind === DirtyKind.Triangles);
             this.#usePipeline(pipeline);
