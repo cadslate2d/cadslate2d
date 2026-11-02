@@ -55,9 +55,6 @@ pub(crate) struct PeditCommand {
     id: Option<EntityId>,
     /// The polyline as it stands, for the preview, which has no drawing.
     polyline: Option<PolylineEntity>,
-    /// The polyline as it was before each change this command made, for
-    /// `Undo` within the command.
-    history: Vec<PolylineEntity>,
 }
 
 impl PeditCommand {
@@ -66,7 +63,6 @@ impl PeditCommand {
             state: State::Pick,
             id: None,
             polyline: None,
-            history: Vec::new(),
         }
     }
 
@@ -79,15 +75,15 @@ impl PeditCommand {
         polyline
     }
 
-    /// Replaces the polyline with `changed`, remembering what it was.
+    /// Replaces the polyline with `changed`, in a transaction of its own
+    /// that `Undo` can take back.
     fn change(&mut self, ctx: &mut CommandContext<'_>, changed: PolylineEntity) {
-        let (Some(id), Some(was)) = (self.id, self.current(ctx)) else {
+        let Some(id) = self.id else {
             return;
         };
         let mut tx = ctx.transaction();
         if tx.replace(id, changed.clone()).is_ok() {
             tx.commit();
-            self.history.push(was);
             self.polyline = Some(changed);
         }
     }
@@ -140,7 +136,6 @@ impl PeditCommand {
         let Entity::Polyline(polyline) = joined.entity else {
             return;
         };
-        let was = self.current(ctx);
         let added = joined.members.len() - 1;
         let mut tx = ctx.transaction();
         let mut ok = tx.replace(id, polyline).is_ok();
@@ -151,9 +146,6 @@ impl PeditCommand {
         }
         if ok {
             tx.commit();
-            if let Some(was) = was {
-                self.history.push(was);
-            }
             self.current(ctx);
             ctx.message(format!(
                 "{} added to the polyline.",
@@ -295,14 +287,14 @@ impl Command for PeditCommand {
                                 .with_width(polyline.width());
                         self.change(ctx, straight);
                     }
-                    _ => match (self.id, self.history.pop()) {
-                        (Some(id), Some(was)) => {
-                            let mut tx = ctx.transaction();
-                            tx.replace(id, was.clone()).expect("the polyline is live");
-                            tx.commit();
-                            self.polyline = Some(was);
+                    // The last change this command made, taken back whole —
+                    // a join's removed objects with the polyline (#384) —
+                    // as LINE's Undo takes back a segment.
+                    _ => match ctx.drawing.rollback_last_in_group() {
+                        Some(_) => {
+                            self.current(ctx);
                         }
-                        _ => ctx.message("Nothing to undo."),
+                        None => ctx.message("Nothing to undo."),
                     },
                 }
             }
