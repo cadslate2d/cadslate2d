@@ -647,6 +647,11 @@ export class CadEngine {
     return this.#session.load_drawing(bytes, name);
   }
 
+  /** A line for the command log from the host (#410): what the browser refused. */
+  notify(message: string): number {
+    return this.#session.notify(message);
+  }
+
   /** File › New (#245): an empty, untitled drawing in place of this one. */
   newDrawing(): number {
     return this.#session.new_drawing();

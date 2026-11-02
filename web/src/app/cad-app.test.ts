@@ -93,6 +93,8 @@ class FakeFiles implements FileAccess {
   /** What was written back to a target. */
   written: { name: string; text: string; bytes?: Uint8Array }[] = [];
   writeAnswer = true;
+  /** What the browser throws when it is asked to write: a full disk, say (#410). */
+  refusal: Error | undefined;
 
   open(): Promise<PickedFile | undefined> {
     this.picks += 1;
@@ -105,6 +107,7 @@ class FakeFiles implements FileAccess {
     mimeType: string,
     format?: string,
   ): Promise<FileTarget | undefined> {
+    if (this.refusal) return Promise.reject(this.refusal);
     const text = textOf(content);
     const bytes = typeof content === "string" ? undefined : content;
     this.saved.push({ name, text, bytes, mimeType, format });
@@ -112,6 +115,7 @@ class FakeFiles implements FileAccess {
   }
 
   write(target: FileTarget, content: FileContent): Promise<boolean> {
+    if (this.refusal) return Promise.reject(this.refusal);
     if (!this.writeAnswer) return Promise.resolve(false);
     const text = textOf(content);
     const bytes = typeof content === "string" ? undefined : content;
@@ -443,6 +447,48 @@ describe("saving to a file", () => {
     await tick();
     expect(host.files.written.map((write) => write.name)).not.toContain("bad.dxf");
     expect(host.files.saved.map((save) => save.name)).toEqual(["drawing.dxf"]);
+  });
+
+  test("a file the browser refuses to write is said in the log, and the drawing stays unsaved (#410)", async () => {
+    const { app, host, tick, enter } = harness();
+    host.files.writesBack = true;
+    host.files.fileToPick = {
+      name: "plan.dxf",
+      bytes: encode(cleanFile),
+      target: { name: "plan.dxf" },
+    };
+    enter("OPEN");
+    await tick();
+    enter("L", "0,0", "10,0", "");
+    await tick();
+    const log = () => app.ui.getSnapshot().log;
+
+    host.files.refusal = new DOMException("disk full", "QuotaExceededError");
+    const traced = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    for (const command of ["DXFOUT", "SAVE"]) {
+      enter(command);
+      await tick();
+      await tick();
+      expect(log().at(-1), command).toBe("The drawing was not saved: disk full.");
+      expect(app.ui.getSnapshot().unsavedChanges, command).toBe(true);
+    }
+    expect(host.files.written).toHaveLength(0);
+
+    host.files.refusal = new DOMException("The request is not allowed.", "NotAllowedError");
+    enter("PLOT", "A3", "E", "1:2", "Y", "M");
+    await tick();
+    await tick();
+    expect(log().at(-1)).toBe("The plot was not saved: The request is not allowed.");
+    // Each refusal also keeps its trace in the console.
+    expect(traced).toHaveBeenCalledTimes(3);
+    traced.mockRestore();
+
+    // The browser writes again: so does SAVE.
+    host.files.refusal = undefined;
+    enter("SAVE");
+    await tick();
+    expect(host.files.written.map((write) => write.name)).toEqual(["plan.dxf"]);
+    expect(app.ui.getSnapshot().unsavedChanges).toBe(false);
   });
 
   test("with write-back: OPEN keeps the file, SAVE writes to it, SAVEAS asks and switches", async () => {
