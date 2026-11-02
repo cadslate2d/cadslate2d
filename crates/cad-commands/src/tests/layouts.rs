@@ -218,3 +218,98 @@ fn mspace_needs_a_layout_with_a_viewport_and_picks_among_several() {
     assert!(h.session.viewport_through().is_none());
     assert_eq!(last(&h), "The viewport shows the model as you left it.");
 }
+
+/// #373: deleting the layout the model is worked through leaves the
+/// session in the model, not in a layout that is gone; PSPACE has nothing
+/// to go back to, and what is drawn next is drawn in the model.
+#[test]
+fn deleting_the_layout_worked_through_leaves_the_session_in_the_model() {
+    let mut h = Harness::new();
+    h.enter_all(&["REC", "0,0", "1000,500"]);
+    h.enter_all(&["LAYOUT", "N", "Sheet"]);
+    h.enter_all(&["MVIEW", "10,10", "210,110"]);
+    h.enter("MSPACE");
+    assert!(h.session.viewport_through().is_some());
+    h.enter_all(&["LAYOUT", "D", "Sheet"]);
+    assert_eq!(h.session.space(), LayoutId::MODEL);
+    assert!(h.session.viewport_through().is_none());
+    assert!(!h.session.ui_state().through);
+    assert!(!h.session.ui_state().paper);
+    h.enter("PSPACE");
+    assert_eq!(last(&h), "Not in a viewport: PSPACE needs MSPACE first.");
+    assert_eq!(h.session.space(), LayoutId::MODEL);
+    h.enter_all(&["L", "0,0", "100,0", ""]);
+    let line = *h.ids().last().unwrap();
+    assert_eq!(h.session.drawing().space_of(line), Some(LayoutId::MODEL));
+}
+
+/// #373: U that takes away the layout the session is on, or the viewport
+/// it works the model through, leaves the session where the drawing still
+/// is: the model, or the viewport's paper.
+#[test]
+fn undo_that_takes_away_the_space_leaves_for_one_that_is_there() {
+    let mut h = Harness::new();
+    h.enter_all(&["LAYOUT", "N", "Sheet"]);
+    let sheet = h.session.space();
+    assert_ne!(sheet, LayoutId::MODEL);
+    h.undo();
+    assert!(!h.session.drawing().layouts().contains(sheet));
+    assert_eq!(h.session.space(), LayoutId::MODEL);
+    assert_eq!(last(&h), "The layout is gone: in the model.");
+    h.enter_all(&["L", "0,0", "100,0", ""]);
+    assert_eq!(h.session.drawing().len(), 1);
+
+    // The viewport worked through, undone: back on its paper.
+    let mut h = Harness::new();
+    h.enter_all(&["REC", "0,0", "1000,500"]);
+    h.enter_all(&["LAYOUT", "N", "Sheet"]);
+    let sheet = h.session.space();
+    h.enter_all(&["MVIEW", "10,10", "210,110"]);
+    h.enter("MSPACE");
+    h.undo();
+    assert!(h.session.viewport_through().is_none());
+    assert_eq!(h.session.space(), sheet);
+    assert_eq!(
+        last(&h),
+        "The viewport worked through is gone: back on the paper."
+    );
+    h.enter_all(&["L", "0,0", "100,0", ""]);
+    let line = *h.ids().last().unwrap();
+    assert_eq!(h.session.drawing().space_of(line), Some(sheet));
+}
+
+/// #373: REDO that deletes a layout again while the session is on it, or
+/// works the model through one of its viewports, leaves for the model.
+#[test]
+fn redo_that_takes_away_the_space_leaves_for_the_model() {
+    let mut h = Harness::new();
+    h.enter_all(&["LAYOUT", "N", "Sheet"]);
+    let sheet = h.session.space();
+    h.enter_all(&["LAYOUT", "D", "Sheet"]);
+    assert_eq!(h.session.space(), LayoutId::MODEL);
+    h.undo();
+    assert!(h.session.drawing().layouts().contains(sheet));
+    h.enter_all(&["LAYOUT", "S", "Sheet"]);
+    assert_eq!(h.session.space(), sheet);
+    h.redo();
+    assert!(!h.session.drawing().layouts().contains(sheet), "redone");
+    assert_eq!(h.session.space(), LayoutId::MODEL);
+    assert_eq!(last(&h), "The layout is gone: in the model.");
+
+    // And while the session works the model through one of its viewports.
+    let mut h = Harness::new();
+    h.enter_all(&["REC", "0,0", "1000,500"]);
+    h.enter_all(&["LAYOUT", "N", "Sheet"]);
+    let sheet = h.session.space();
+    h.enter_all(&["MVIEW", "10,10", "210,110"]);
+    h.enter_all(&["LAYOUT", "D", "Sheet"]);
+    h.undo();
+    h.enter_all(&["LAYOUT", "S", "Sheet"]);
+    h.enter("MSPACE");
+    assert!(h.session.viewport_through().is_some());
+    h.redo();
+    assert!(!h.session.drawing().layouts().contains(sheet), "redone");
+    assert_eq!(h.session.space(), LayoutId::MODEL);
+    assert!(h.session.viewport_through().is_none());
+    assert_eq!(last(&h), "The layout worked through is gone: in the model.");
+}

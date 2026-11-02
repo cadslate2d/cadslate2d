@@ -2100,7 +2100,51 @@ impl Session {
         if self.host_request.is_some() {
             dirty |= Dirty::HOST;
         }
-        dirty | self.apply_space_request()
+        dirty |= self.apply_space_request();
+        dirty | self.settle_space()
+    }
+
+    /// Keeps the session in a space the drawing has (#373): a command —
+    /// LAYOUT Delete, U, REDO — may take away the layout the session is
+    /// on or works the model through, or the viewport it works through.
+    /// The model worked through a layout that is gone stays the model; a
+    /// viewport that is gone leaves the model for its paper; a layout that
+    /// is gone leaves for the model.
+    fn settle_space(&mut self) -> Dirty {
+        let mut dirty = Dirty::NONE;
+        if let Some(through) = &self.through {
+            let layout = through.layout;
+            let viewport = through.viewport;
+            if !self.drawing.layouts().contains(layout) {
+                self.through = None;
+                self.views.remove(&layout);
+                self.log
+                    .push("The layout worked through is gone: in the model.".to_owned());
+                dirty |= Dirty::OVERLAY | Dirty::UI;
+            } else if !(matches!(self.drawing.entity(viewport), Some(Entity::Viewport(_)))
+                && self.drawing.space_of(viewport) == Some(layout))
+            {
+                let through = self.through.take().expect("checked");
+                self.view = through.paper_view;
+                self.space = layout;
+                self.space_epoch += 1;
+                self.previous_views.clear();
+                self.selection.clear();
+                self.log
+                    .push("The viewport worked through is gone: back on the paper.".to_owned());
+                dirty |= Dirty::SCENE | Dirty::OVERLAY | Dirty::VIEW | Dirty::UI;
+            }
+        }
+        let space = self.space;
+        if space != LayoutId::MODEL && !self.drawing.layouts().contains(space) {
+            dirty |= self.set_space(LayoutId::MODEL);
+            // Its view is of nothing now; a layout made again may take
+            // its ID.
+            self.views.remove(&space);
+            self.log
+                .push("The layout is gone: in the model.".to_owned());
+        }
+        dirty
     }
 }
 
