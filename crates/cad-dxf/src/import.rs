@@ -108,9 +108,13 @@ const INSERT_NON_UNIFORM: &str = "(INSERT with a non-uniform scale)";
 /// plane (#391): its normal (210, 220, 230) is neither up nor down. It is
 /// kept as read, in its own coordinates.
 const EXTRUSION_TILTED: &str = "(extrusion out of the plane)";
-/// A text whose normal points down (#391): AutoCAD draws it backwards. It
-/// is placed where it stands, and read the right way round.
-const TEXT_BACKWARDS: &str = "(text drawn backwards by its extrusion)";
+/// A text AutoCAD draws backwards — by its generation flag (71, 2), or by
+/// a normal pointing down (#391), but not both, which cancel (#398). It is
+/// placed where it stands, and read the right way round.
+const TEXT_BACKWARDS: &str = "(text drawn backwards)";
+/// A text AutoCAD draws upside down, by its generation flag (71, 4): read
+/// the right way up (#398).
+const TEXT_UPSIDE_DOWN: &str = "(text drawn upside down)";
 const INSERT_ARRAY: &str = "(INSERT array)";
 /// Report key for an INSERT of a block the file never defines: not imported.
 const INSERT_UNDEFINED: &str = "(INSERT of an undefined block)";
@@ -1265,16 +1269,18 @@ impl<'a> Reader<'a> {
                 None => self.report.count_unsupported(INVALID),
             },
             (_, "TEXT") if entities => {
-                let (text, dropped) = body.text(record.line)?;
+                let (text, anchor, dropped) = body.text(record.line)?;
                 let mut pending = body.pending();
                 pending.dropped |= dropped;
-                let text = self.in_world(Entity::Text(text), body.facing());
+                let rotation = text.rotation;
+                let text = self.text_in_world(Entity::Text(text), anchor, rotation, body);
                 self.push(text, pending)?;
             }
             // An attribute definition (#183): a text with a tag (2), a
             // prompt (3), and flags (70); its words are the default.
             (_, "ATTDEF") if entities => {
-                let (text, dropped) = body.text(record.line)?;
+                let (text, anchor, dropped) = body.text(record.line)?;
+                let rotation = text.rotation;
                 let mut pending = body.pending();
                 pending.dropped |= dropped;
                 let mut definition = AttributeDefinitionEntity::new(
@@ -1283,8 +1289,12 @@ impl<'a> Reader<'a> {
                     text,
                 );
                 definition.invisible = body.flags & 1 != 0;
-                let definition =
-                    self.in_world(Entity::AttributeDefinition(definition), body.facing());
+                let definition = self.text_in_world(
+                    Entity::AttributeDefinition(definition),
+                    anchor,
+                    rotation,
+                    body,
+                );
                 self.push(definition, pending)?;
             }
             // An attribute (#183): the value (1) its tag (2) has on the
@@ -2009,15 +2019,86 @@ impl<'a> Reader<'a> {
                 entity
             }
             Facing::Down => {
-                if matches!(entity, Entity::Text(_) | Entity::AttributeDefinition(_)) {
-                    self.report.count_unsupported(TEXT_BACKWARDS);
-                }
                 let across_y =
                     cad_document::Transform::mirror(Point2::ORIGIN, Point2::new(0.0, 1.0))
                         .expect("the Y axis is a line");
                 entity.transformed(&across_y)
             }
         }
+    }
+
+    /// A TEXT or an ATTDEF where AutoCAD draws it (#398): mirrored by its
+    /// generation flag about its anchor — the point its justification
+    /// places, the alignment point when it has one — backwards (71, 2)
+    /// about the line up through it, upside down (4) about the line along
+    /// the text through it, as MIRROR with MIRRTEXT on leaves the
+    /// alignment point and sets the flag; and by a normal facing down
+    /// (#391) across the Y axis. An even number of mirrors is
+    /// a turn or a move, which a text holds exactly: the backwards flag
+    /// and a normal facing down cancel, and backwards and upside down is
+    /// a half turn. An odd number leaves it a mirror image, which a text
+    /// cannot be: it is placed where AutoCAD shows it, read the right way
+    /// round, and reported — as upside down when that flag is the only
+    /// mirror, and as backwards otherwise.
+    fn text_in_world(
+        &mut self,
+        entity: Entity,
+        anchor: Point2,
+        rotation: f64,
+        body: &RecordBody,
+    ) -> Entity {
+        let facing = body.facing();
+        let generation = body.attachment.unwrap_or(0);
+        if facing == Facing::Tilted {
+            if generation & 2 != 0 {
+                self.report.count_unsupported(TEXT_BACKWARDS);
+            }
+            if generation & 4 != 0 {
+                self.report.count_unsupported(TEXT_UPSIDE_DOWN);
+            }
+            return self.in_world(entity, facing);
+        }
+        let along = cad_core::Vec2::new(rotation.cos(), rotation.sin());
+        let up = cad_core::Vec2::new(-along.y, along.x);
+        let mut mirrors = Vec::new();
+        if generation & 2 != 0 {
+            mirrors.extend(cad_document::Transform::mirror(anchor, anchor + up));
+        }
+        if generation & 4 != 0 {
+            mirrors.extend(cad_document::Transform::mirror(anchor, anchor + along));
+        }
+        if facing == Facing::Down {
+            mirrors.extend(cad_document::Transform::mirror(
+                Point2::ORIGIN,
+                Point2::new(0.0, 1.0),
+            ));
+        }
+        if mirrors.is_empty() {
+            return entity;
+        }
+        if mirrors.len() % 2 == 0 {
+            let image = |p: Point2| mirrors.iter().fold(p, |p, mirror| mirror.apply(p));
+            let ahead = anchor + along;
+            return match cad_document::Transform::aligning(
+                anchor,
+                ahead,
+                image(anchor),
+                image(ahead),
+                false,
+            ) {
+                Some(rigid) => entity.transformed(&rigid),
+                None => entity,
+            };
+        }
+        let upside_down = mirrors.len() == 1 && generation & 4 != 0;
+        self.report.count_unsupported(if upside_down {
+            TEXT_UPSIDE_DOWN
+        } else {
+            TEXT_BACKWARDS
+        });
+        mirrors
+            .iter()
+            .fold(entity, |entity, mirror| entity.transformed(mirror))
     }
 
     /// An ellipse whose normal faces some way (#391). Its centre and axis
@@ -3111,9 +3192,13 @@ impl RecordBody {
             // no scale at all.
             #[allow(clippy::float_cmp)]
             48 => self.has_dropped_properties |= real(group)? != 1.0,
-            // Thickness, and elevation: a 2D drawing keeps neither. Zero is
-            // the default and loses nothing.
-            30 | 31 | 39 => self.has_dropped_properties |= real(group)? != 0.0,
+            // Thickness, and elevation — a lightweight polyline's too (38,
+            // #398): a 2D drawing keeps neither. Zero is the default and
+            // loses nothing.
+            30 | 31 | 38 | 39 => self.has_dropped_properties |= real(group)? != 0.0,
+            // Invisible (60, #398): the drawing shows what it holds, so an
+            // invisible object comes in visible, and the file is lossy.
+            60 => self.has_dropped_properties |= group.value.trim() != "0",
             _ => {}
         }
         Ok(())
@@ -3164,7 +3249,7 @@ impl RecordBody {
     /// words land where they were; aligned and fit text — stretched to a
     /// second point — is read as left text at its first point, and the
     /// stretch is dropped. Whether anything was dropped is the second value.
-    fn text(&self, at: usize) -> Result<(TextEntity, bool), DxfError> {
+    fn text(&self, at: usize) -> Result<(TextEntity, Point2, bool), DxfError> {
         let need = |value, group| required(value, at, "TEXT", group);
         let first = Point2::new(need(self.x0, 10)?, need(self.y0, 20)?);
         let height = need(self.radius, 40)?;
@@ -3220,7 +3305,11 @@ impl RecordBody {
                 dropped = true;
             }
         }
-        Ok((text, dropped || !height.is_finite() || height <= 0.0))
+        Ok((
+            text,
+            anchor,
+            dropped || !height.is_finite() || height <= 0.0,
+        ))
     }
 
     /// An MTEXT: its words, in pieces, with the formatting taken out; its
@@ -4165,6 +4254,180 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    /// What a drawing cannot hold is counted, never dropped in silence
+    /// (#398): an invisible object (60) comes in visible and a lightweight
+    /// polyline's elevation (38) flat, each a property dropped. Each
+    /// default — 0 — loses nothing.
+    #[test]
+    fn invisibility_and_elevation_are_reported() {
+        let line = |sixty: &'static str| {
+            vec![
+                (0, "LINE"),
+                (60, sixty),
+                (10, "0"),
+                (20, "0"),
+                (11, "1"),
+                (21, "1"),
+            ]
+        };
+        let polyline = |elevation: &'static str| {
+            vec![
+                (0, "LWPOLYLINE"),
+                (90, "2"),
+                (70, "0"),
+                (38, elevation),
+                (10, "0"),
+                (20, "0"),
+                (10, "1"),
+                (20, "0"),
+            ]
+        };
+        let count = |records: &[Vec<(i32, &str)>]| {
+            let body: Vec<(i32, &str)> = records.concat();
+            let import = import(entities(&body).as_bytes()).unwrap();
+            assert!(import.report.unsupported.is_empty(), "{:?}", import.report);
+            import.report.with_dropped_properties
+        };
+        assert_eq!(count(&[line("1")]), 1);
+        assert_eq!(count(&[polyline("5.0")]), 1);
+        assert_eq!(
+            count(&[line("0"), polyline("0.0")]),
+            0,
+            "the defaults lose nothing"
+        );
+    }
+
+    /// A text AutoCAD draws mirrored — by its generation flag (71:
+    /// backwards 2, upside down 4) or by a normal facing down (#391) — is
+    /// read where AutoCAD shows it (#398). Mirrored twice it is turned or
+    /// moved, which a text holds exactly, and nothing is said: backwards
+    /// and facing down cancel, backwards and upside down is a half turn.
+    /// Mirrored once or three times it is a mirror image, read the right
+    /// way round and said under one key whichever way the file put it.
+    /// An attribute definition alike.
+    #[test]
+    fn a_mirrored_text_is_read_as_autocad_shows_it() {
+        let text = |kind: &'static str, flags: &'static str, normal: &'static str| {
+            vec![
+                (0, kind),
+                (10, "1"),
+                (20, "0"),
+                (40, "1"),
+                (1, "AB"),
+                (2, "TAG"),
+                (71, flags),
+                (230, normal),
+            ]
+        };
+        let read = |records: Vec<(i32, &str)>| {
+            let import = import(entities(&records).as_bytes()).unwrap();
+            assert_eq!(import.report.with_dropped_properties, 0);
+            let found = |key| import.report.unsupported.get(key).copied().unwrap_or(0);
+            let keys = (
+                found(TEXT_BACKWARDS),
+                found(TEXT_UPSIDE_DOWN),
+                import.report.unsupported.len(),
+            );
+            let placed = import
+                .drawing
+                .entities()
+                .find_map(|(_, entity)| match entity {
+                    Entity::Text(text) => Some(text.clone()),
+                    Entity::AttributeDefinition(definition) => Some(definition.text.clone()),
+                    _ => None,
+                })
+                .unwrap();
+            (keys, placed)
+        };
+        let width = TextEntity::new(p(0.0, 0.0), 1.0, 0.0, "AB").width();
+        let close = |a: Point2, b: Point2| a.distance_to(b) < 1e-9;
+        let turn = |a: f64, b: f64| {
+            (a - b)
+                .rem_euclid(std::f64::consts::TAU)
+                .min((b - a).rem_euclid(std::f64::consts::TAU))
+                < 1e-9
+        };
+
+        // As it reads.
+        let (keys, plain) = read(text("TEXT", "0", "1"));
+        assert_eq!(keys, (0, 0, 0));
+        assert!(close(plain.insertion, p(1.0, 0.0)) && turn(plain.rotation, 0.0));
+
+        // Mirrored once: said, and placed over the mirror image.
+        let (keys, backwards) = read(text("TEXT", "2", "1"));
+        assert_eq!(keys, (1, 0, 1));
+        assert!(
+            close(backwards.start(), p(1.0 - width, 0.0)),
+            "{backwards:?}"
+        );
+        assert_eq!(read(text("TEXT", "0", "-1")).0, (1, 0, 1));
+        assert_eq!(read(text("ATTDEF", "2", "1")).0, (1, 0, 1));
+        assert_eq!(read(text("TEXT", "4", "1")).0, (0, 1, 1));
+
+        // Mirrored twice: held exactly, nothing said. Backwards and facing
+        // down: AutoCAD reads it forwards from where its normal puts it.
+        let (keys, twice) = read(text("TEXT", "2", "-1"));
+        assert_eq!(keys, (0, 0, 0));
+        assert!(
+            close(twice.insertion, p(-1.0, 0.0)) && turn(twice.rotation, 0.0),
+            "{twice:?}"
+        );
+        // Backwards and upside down: a half turn about the insertion.
+        let (keys, half) = read(text("TEXT", "6", "1"));
+        assert_eq!(keys, (0, 0, 0));
+        assert!(
+            close(half.insertion, p(1.0, 0.0)) && turn(half.rotation, std::f64::consts::PI),
+            "{half:?}"
+        );
+        let (keys, half) = read(text("ATTDEF", "4", "-1"));
+        assert_eq!(keys, (0, 0, 0));
+        assert!(
+            close(half.insertion, p(-1.0, 0.0)) && turn(half.rotation, std::f64::consts::PI),
+            "{half:?}"
+        );
+
+        // Three times: a mirror image again.
+        assert_eq!(read(text("TEXT", "6", "-1")).0, (1, 0, 1));
+
+        // Justified, the mirrors are about the anchor — the alignment
+        // point — not the baseline: top-justified at (0, 10), upside down
+        // hangs up from it, its baseline on y = 10; turned half round, the
+        // baseline is a height above it. Middle alike, half a height.
+        let justified = |flags: &'static str, halign: &'static str, valign: &'static str| {
+            vec![
+                (0, "TEXT"),
+                (10, "0"),
+                (20, "0"),
+                (11, "0"),
+                (21, "10"),
+                (40, "1"),
+                (1, "AB"),
+                (72, halign),
+                (73, valign),
+                (71, flags),
+            ]
+        };
+        let (keys, hanging) = read(justified("4", "0", "3"));
+        assert_eq!(keys, (0, 1, 1));
+        assert!(close(hanging.start(), p(0.0, 10.0)), "{hanging:?}");
+        let (keys, turned) = read(justified("6", "0", "3"));
+        assert_eq!(keys, (0, 0, 0));
+        assert!(
+            close(turned.insertion, p(0.0, 11.0)) && turn(turned.rotation, std::f64::consts::PI),
+            "{turned:?}"
+        );
+        let (keys, middle) = read(justified("6", "4", "0"));
+        assert_eq!(keys, (0, 0, 0));
+        assert!(
+            close(middle.insertion, p(0.0, 10.5)) && turn(middle.rotation, std::f64::consts::PI),
+            "{middle:?}"
+        );
+        // Upside down about its middle, it fills the box it filled.
+        let (keys, middle) = read(justified("4", "4", "0"));
+        assert_eq!(keys, (0, 1, 1));
+        assert!(close(middle.insertion, p(0.0, 9.5)), "{middle:?}");
     }
 
     #[test]
