@@ -5,7 +5,7 @@
 use cad_core::Point2;
 use cad_document::{
     Block, BlockReferenceEntity, CircleEntity, Color, Drawing, Entity, EntityRecord, Layer,
-    LineEntity, Properties,
+    LineEntity, Properties, XLineEntity,
 };
 
 use crate::HostRequest;
@@ -114,6 +114,29 @@ fn insert_takes_a_file_as_a_block_with_its_rows_and_places_it() {
     // No file picked: the command gives up.
     h.enter_all(&["INSERT", "~", ""]);
     assert_eq!(h.prompt(), "Command:");
+}
+
+#[test]
+fn insert_leaves_a_files_construction_lines_out_of_its_block() {
+    // A block cannot hold an xline (#415): the file's line comes, its
+    // construction line does not.
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    tx.insert(LineEntity::new(p(0.0, 0.0), p(10.0, 0.0)))
+        .unwrap();
+    tx.insert(XLineEntity::through(p(0.0, 5.0), p(1.0, 5.0)).unwrap())
+        .unwrap();
+    tx.commit();
+    let mut h = Harness::new();
+    h.enter_all(&["INSERT", "~"]);
+    h.session.insert_drawing(drawing, "Guide.dxf", vec![]);
+    assert!(said(
+        &h,
+        "Block \"Guide\" made from Guide.dxf: 1 object. 1 construction line left out: a block cannot hold them."
+    ));
+    let drawing = h.session.drawing();
+    let guide = drawing.blocks().find("Guide").expect("a block");
+    assert_eq!(drawing.blocks().get(guide).unwrap().entities.len(), 1);
 }
 
 #[test]

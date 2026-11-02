@@ -116,6 +116,9 @@ const TEXT_BACKWARDS: &str = "(text drawn backwards)";
 /// the right way up (#398).
 const TEXT_UPSIDE_DOWN: &str = "(text drawn upside down)";
 const INSERT_ARRAY: &str = "(INSERT array)";
+/// Report key for an XLINE or a RAY in a block's definition: a block
+/// cannot hold one, so it is left out (#415).
+const CONSTRUCTION_IN_BLOCK: &str = "(XLINE or RAY in a block)";
 /// Report key for an INSERT of a block the file never defines: not imported.
 const INSERT_UNDEFINED: &str = "(INSERT of an undefined block)";
 /// Report key for the text and shapes of a complex linetype: the dashes
@@ -1341,6 +1344,11 @@ impl<'a> Reader<'a> {
                     RayEntity::new(base, direction).map(Entity::Ray)
                 };
                 match entity {
+                    // A block is placed as geometry with bounds, which a
+                    // construction line has not (#415).
+                    Some(_) if matches!(self.open_block, Some(OpenBlock::User(_))) => {
+                        self.report.count_unsupported(CONSTRUCTION_IN_BLOCK);
+                    }
                     Some(entity) => self.import(entity, body)?,
                     None => self.report.count_unsupported(INVALID),
                 }
@@ -5619,6 +5627,65 @@ mod tests {
         assert_eq!((deep.report.blocks, deep.report.block_references), (40, 1));
         assert_eq!(deep.report.unsupported.get(NESTING_TOO_DEEP), Some(&1));
         assert!(deep.report.has_unsupported_content());
+    }
+
+    #[test]
+    fn construction_lines_in_a_block_are_left_out_and_reported() {
+        // A block cannot hold an xline or a ray (#415): the block keeps its
+        // line, the reference's extents are the line's, and the drawing's
+        // own construction line stays.
+        let text = dxf(&[
+            (0, "SECTION"),
+            (2, "BLOCKS"),
+            (0, "BLOCK"),
+            (2, "GUIDE"),
+            (10, "0"),
+            (20, "0"),
+            (0, "LINE"),
+            (10, "0"),
+            (20, "0"),
+            (11, "10"),
+            (21, "10"),
+            (0, "XLINE"),
+            (10, "0"),
+            (20, "5"),
+            (11, "1"),
+            (21, "0"),
+            (0, "RAY"),
+            (10, "0"),
+            (20, "5"),
+            (11, "0"),
+            (21, "1"),
+            (0, "ENDBLK"),
+            (0, "ENDSEC"),
+            (0, "SECTION"),
+            (2, "ENTITIES"),
+            (0, "INSERT"),
+            (2, "GUIDE"),
+            (10, "0"),
+            (20, "0"),
+            (0, "XLINE"),
+            (10, "0"),
+            (20, "5"),
+            (11, "1"),
+            (21, "0"),
+            (0, "ENDSEC"),
+            (0, "EOF"),
+        ]);
+        let imported = import(text.as_bytes()).unwrap();
+        assert_eq!(
+            imported.report.unsupported.get(CONSTRUCTION_IN_BLOCK),
+            Some(&2)
+        );
+        assert_eq!(imported.report.construction_lines, 1);
+        let drawing = &imported.drawing;
+        let guide = drawing.blocks().find("GUIDE").unwrap();
+        assert_eq!(drawing.blocks().get(guide).unwrap().entities.len(), 1);
+        let extents = drawing.extents().unwrap();
+        assert_eq!(
+            (extents.min(), extents.max()),
+            (Point2::ORIGIN, Point2::new(10.0, 10.0))
+        );
     }
 
     #[test]
