@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use cad_core::Point2;
-use cad_document::Drawing;
+use cad_document::{Drawing, Entity, Table, TableId, TableRef};
 use cad_geometry::Transform;
 use cad_intent::Intent;
 
@@ -78,10 +78,33 @@ fn objects(drawing: &Drawing) -> BTreeMap<(String, String, String), usize> {
             .and_then(|p| drawing.layers().get(p.layer))
             .map_or_else(String::new, |layer| layer.name.clone());
         let local = entity.transformed(&Transform::translation(Point2::ORIGIN - origin));
-        *out.entry((view, layer, rounded(&format!("{local:?}"))))
+        *out.entry((view, layer, rounded(&by_name(drawing, local))))
             .or_insert(0) += 1;
     }
     out
+}
+
+/// An object's geometry as text, its table rows by name: an id is the
+/// order a row was made in, and a run that makes rows in another order —
+/// a view's dimension style, derived for each scaled view in view order —
+/// gives the same object another id (#370).
+fn by_name(drawing: &Drawing, mut entity: Entity) -> String {
+    fn named<Row>(table: &Table<Row>, id: &mut TableId<Row>, of: impl Fn(&Row) -> &str) -> String {
+        let name = table.get(*id).map_or("", of).to_owned();
+        *id = TableId::FIRST;
+        name
+    }
+    let rows: Vec<String> = entity
+        .table_refs_mut()
+        .into_iter()
+        .map(|row| match row {
+            TableRef::TextStyle(id) => named(drawing.text_styles(), id, |r| &r.name),
+            TableRef::DimStyle(id) => named(drawing.dim_styles(), id, |r| &r.name),
+            TableRef::MLeaderStyle(id) => named(drawing.mleader_styles(), id, |r| &r.name),
+            TableRef::Block(id) => named(drawing.blocks(), id, |r| &r.name),
+        })
+        .collect();
+    format!("{entity:?} {rows:?}")
 }
 
 /// Every number with a fraction in `text` to the thousandth: two runs of
@@ -261,6 +284,132 @@ mod tests {
         let left = undeclared(&changes, &["BB/STAIR".into()]);
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].key(), "AA/ROOF");
+    }
+
+    /// #370: a view at its own scale added ahead of another gives the
+    /// other's dimension another derived style id; the dimension is the
+    /// same, and only the new view is told.
+    #[test]
+    fn a_scaled_view_added_ahead_leaves_another_scaled_views_dimension_unchanged() {
+        let document = |inserted: &str| {
+            cad_intent::parse(&format!(
+                r#"{{"version": {}, "operations": [
+                   {{"op": "title_block", "paper": "A1", "scale": 50, "title": "X", "at": [0, 0]}},
+                   {{"op": "view", "id": "AA", "placed": "principal", "operations": [
+                       {{"op": "rectangle", "corner": [0, 0], "opposite": [7000, 6000]}}]}}{inserted},
+                   {{"op": "view", "id": "BB", "placed": "free", "scale": "1:20", "operations": [
+                       {{"op": "layer", "name": "DET", "current": true}},
+                       {{"op": "rectangle", "corner": [0, 0], "opposite": [800, 400]}},
+                       {{"op": "dim_linear", "from": [0, 0], "to": [800, 0], "at": [400, -150]}}]}}]}}"#,
+                cad_intent::VERSION
+            ))
+            .unwrap()
+        };
+        let before = document("");
+        let after = document(
+            r#",
+                   {"op": "view", "id": "CC", "placed": "free", "scale": "1:10", "operations": [
+                       {"op": "rectangle", "corner": [0, 0], "opposite": [300, 200]},
+                       {"op": "dim_linear", "from": [0, 0], "to": [300, 0], "at": [150, -80]}]}"#,
+        );
+        let changes = compare(&before, &after, Some("mm")).unwrap();
+        assert_eq!(
+            described(&changes),
+            vec!["CC · 0: 2 added", "CC · VIEW-TITLES: 1 added"]
+        );
+        assert!(undeclared(&changes, &["CC".into()]).is_empty());
+    }
+
+    /// #370: every row an object refers to — each kind of reference — is
+    /// compared by its name: the same object naming a row made in another
+    /// order reads the same, and one naming another row does not.
+    #[test]
+    fn every_row_an_object_refers_to_is_compared_by_name_not_by_id() {
+        use cad_document::{
+            AttributeDefinitionEntity, Block, BlockReferenceEntity, DimStyle, DimensionEntity,
+            EntityRecord, LeaderEntity, LineEntity, MLeaderContent, MLeaderEntity, MLeaderStyle,
+            MTextEntity, Measure, Properties, TextEntity, TextStyle,
+        };
+        let p = Point2::new;
+        // One row of each table named "S"; with `padded`, a row named
+        // "Other" made first in each, so every "S" has another id.
+        let made = |padded: bool| {
+            let mut drawing = Drawing::new();
+            let mut tx = drawing.transaction();
+            let block = |name: &str| {
+                Block::new(
+                    name,
+                    Point2::ORIGIN,
+                    vec![EntityRecord::new(
+                        Entity::Line(LineEntity::new(p(0.0, 0.0), p(1.0, 1.0))),
+                        Properties::default(),
+                    )],
+                )
+            };
+            if padded {
+                tx.add_text_style(TextStyle::named("Other")).unwrap();
+                tx.add_dim_style(DimStyle::named("Other")).unwrap();
+                tx.add_mleader_style(MLeaderStyle::named("Other")).unwrap();
+                tx.define_block(block("Other")).unwrap();
+            }
+            let text_style = tx.add_text_style(TextStyle::named("S")).unwrap();
+            let dim_style = tx.add_dim_style(DimStyle::named("S")).unwrap();
+            let mleader_style = tx.add_mleader_style(MLeaderStyle::named("S")).unwrap();
+            let defined = tx.define_block(block("S")).unwrap();
+            tx.commit();
+            let mut text = TextEntity::new(p(0.0, 0.0), 2.5, 0.0, "A");
+            text.style = text_style;
+            let mut mtext = MTextEntity::new(p(0.0, 0.0), 20.0, 2.5, 0.0, "A");
+            mtext.style = text_style;
+            let mut dimension = DimensionEntity::new(
+                Measure::Aligned {
+                    a: p(0.0, 0.0),
+                    b: p(10.0, 0.0),
+                },
+                p(5.0, 5.0),
+            );
+            dimension.style = dim_style;
+            let mut leader = LeaderEntity::new(vec![p(0.0, 0.0), p(5.0, 5.0)]);
+            leader.style = dim_style;
+            let mut styled = MLeaderEntity::new(p(0.0, 0.0), p(5.0, 5.0), MLeaderContent::None);
+            styled.style = mleader_style;
+            let mut holding = MLeaderEntity::new(
+                p(0.0, 0.0),
+                p(5.0, 5.0),
+                MLeaderContent::Block {
+                    block: defined,
+                    scale: 1.0,
+                },
+            );
+            holding.style = mleader_style;
+            let entities: Vec<Entity> = vec![
+                text.clone().into(),
+                mtext.into(),
+                AttributeDefinitionEntity::new("T", "Tag?", text).into(),
+                dimension.into(),
+                leader.into(),
+                styled.into(),
+                holding.into(),
+                BlockReferenceEntity::new(defined, p(0.0, 0.0), 1.0, 0.0).into(),
+            ];
+            (drawing, entities)
+        };
+        let (first, plain) = made(false);
+        let (second, padded) = made(true);
+        for (a, b) in plain.iter().zip(&padded) {
+            assert_ne!(a, b, "the rows have other ids");
+            assert_eq!(
+                by_name(&first, a.clone()),
+                by_name(&second, b.clone()),
+                "the same rows by name"
+            );
+        }
+        // The first drawing's ids name the "Other" rows in the second:
+        // another row is another object.
+        for (a, b) in padded.iter().zip(&plain) {
+            let other = by_name(&second, b.clone());
+            assert_ne!(by_name(&second, a.clone()), other, "{a:?}");
+        }
     }
 
     #[test]
