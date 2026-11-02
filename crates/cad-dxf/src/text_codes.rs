@@ -1,7 +1,8 @@
 //! The codes DXF text carries inside its words (DESIGN §24.2; #145).
 //!
 //! A TEXT's `%%d`, `%%p`, and `%%c` are the degree, plus-minus, and
-//! diameter signs; `%%u` and `%%o` switch underlining and overlining. An
+//! diameter signs; `%%u` and `%%o` switch underlining and overlining;
+//! `%%` and three digits is a character by its code (#397). An
 //! MTEXT's words are an inline language: `\P` breaks a paragraph, `\~` is
 //! a space that does not break, braces group, and a dozen backslash codes
 //! change the font, height, colour, stacking, and more. The drawing holds
@@ -16,6 +17,25 @@ pub(crate) fn plain_text(text: &str) -> (String, bool) {
     let mut rest = text;
     while let Some(at) = rest.find("%%") {
         out.push_str(&rest[..at]);
+        // `%%065` is `A`: a character of the code page by its number,
+        // as AutoCAD reads it (#397). One that is not printable is not
+        // words, and is dropped.
+        let digits = rest[at + 2..]
+            .get(..3)
+            .filter(|d| d.bytes().all(|b| b.is_ascii_digit()));
+        if let Some(digits) = digits {
+            let character = digits
+                .parse::<u8>()
+                .ok()
+                .map(crate::import::windows_1252)
+                .filter(|c| !c.is_control());
+            match character {
+                Some(c) => out.push(c),
+                None => dropped = true,
+            }
+            rest = &rest[at + 5..];
+            continue;
+        }
         let code = rest[at + 2..].chars().next();
         rest = &rest[at + 2 + code.map_or(0, char::len_utf8)..];
         match code.map(|c| c.to_ascii_lowercase()) {
@@ -99,6 +119,23 @@ mod tests {
         assert_eq!(plain_text("%%zodd"), ("odd".to_owned(), true));
         assert_eq!(plain_text("plain"), ("plain".to_owned(), false));
         assert_eq!(plain_text("ends %%"), ("ends ".to_owned(), true));
+    }
+
+    /// `%%` and three digits is a character by its number in the code
+    /// page (#397); one that is not printable, or past 255, is dropped.
+    /// Fewer digits are not a code of this kind.
+    #[test]
+    fn a_percent_code_with_three_digits_is_a_character() {
+        assert_eq!(plain_text("%%065BC"), ("ABC".to_owned(), false));
+        assert_eq!(
+            plain_text("%%0372 %%176 %%128"),
+            ("%2 ° €".to_owned(), false)
+        );
+        // A line feed is not words: dropped, not a line split.
+        assert_eq!(plain_text("1%%0102"), ("12".to_owned(), true));
+        assert_eq!(plain_text("a%%999b"), ("ab".to_owned(), true));
+        assert_eq!(plain_text("%%06"), ("6".to_owned(), true));
+        assert_eq!(plain_mtext("x %%065;"), ("x A;".to_owned(), false));
     }
 
     #[test]

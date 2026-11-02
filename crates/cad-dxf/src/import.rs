@@ -315,7 +315,7 @@ fn decoded(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
 /// A Windows-1252 byte as its character: ASCII and Latin-1 as they are,
 /// and the twenty-seven printable characters of 0x80 to 0x9F where that
 /// code page puts them (the five it leaves undefined as Latin-1's).
-fn windows_1252(byte: u8) -> char {
+pub(crate) fn windows_1252(byte: u8) -> char {
     const HIGH: [char; 32] = [
         '\u{20AC}', '\u{81}', '\u{201A}', '\u{192}', '\u{201E}', '\u{2026}', '\u{2020}',
         '\u{2021}', '\u{2C6}', '\u{2030}', '\u{160}', '\u{2039}', '\u{152}', '\u{8D}', '\u{17D}',

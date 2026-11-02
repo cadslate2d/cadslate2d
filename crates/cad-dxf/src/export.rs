@@ -3833,6 +3833,43 @@ mod tests {
         assert_eq!(export(&back.drawing), text);
     }
 
+    /// `%%065` in a file's TEXT is `A`, as AutoCAD reads it (#397); and
+    /// words of ours that read `%%065` are written so that they come back
+    /// as written, each `%` of the run escaped.
+    #[test]
+    fn a_character_code_reads_as_its_character_and_words_like_one_survive() {
+        let file = "  0\nSECTION\n  2\nENTITIES\n  0\nTEXT\n  8\n0\n 10\n0.0\n 20\n0.0\n 40\n1.0\n  1\n%%065BC\n  0\nENDSEC\n  0\nEOF\n";
+        let read = crate::import(file.as_bytes()).unwrap();
+        let contents = |drawing: &Drawing| -> Vec<String> {
+            drawing
+                .entities()
+                .map(|(_, entity)| match entity {
+                    Entity::Text(text) => text.content.clone(),
+                    other => panic!("{other:?}"),
+                })
+                .collect()
+        };
+        assert_eq!(contents(&read.drawing), ["ABC"]);
+        assert_eq!(read.report.formatting_dropped, 0);
+
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.insert(TextEntity::new(
+            Point2::ORIGIN,
+            2.5,
+            0.0,
+            "code %%065, 5%065",
+        ))
+        .unwrap();
+        tx.commit();
+        let text = export(&drawing);
+        assert!(text.contains("\ncode %%%%%%065, 5%065\n"));
+        let back = crate::import(text.as_bytes()).unwrap();
+        assert_eq!(contents(&back.drawing), ["code %%065, 5%065"]);
+        assert_eq!(back.report.formatting_dropped, 0);
+        assert_eq!(export(&back.drawing), text);
+    }
+
     /// #181: an ellipse and an arc of one are written as DXF holds them and
     /// read back the same, byte for byte on the second pass.
     #[test]
