@@ -251,6 +251,77 @@ fn previous_is_also_what_a_command_collected_itself() {
     assert_eq!(selected(&h), vec![line]);
 }
 
+/// #372: Previous brings back only what is still there to be picked —
+/// not an object since erased, nor one on a layer since switched off, nor
+/// one of another space — and ERASE on what it brings does not panic.
+#[test]
+fn previous_brings_back_only_what_is_there_to_be_picked() {
+    // Erased: nothing found, and ERASE has nothing to do.
+    let mut h = Harness::new();
+    h.enter_all(&["L", "0,0", "100,0", ""]);
+    h.click_world(p(50.0, 0.0));
+    h.enter("E");
+    assert!(h.ids().is_empty());
+    h.enter_all(&["E", "P"]);
+    assert_eq!(last(&h), "0 found, 0 total");
+    h.enter("");
+    assert!(h.ids().is_empty());
+
+    // On a layer switched off since: not found, and not moved.
+    let mut h = Harness::new();
+    h.enter_all(&["LA", "N", "doors", "S", "doors", ""]);
+    h.enter_all(&["L", "0,0", "100,0", ""]);
+    h.enter_all(&["LA", "S", "0", "OFF", "doors", ""]);
+    let door = h.ids()[0];
+    h.enter_all(&["LA", "ON", "doors", ""]);
+    h.click_world(p(50.0, 0.0));
+    h.enter_all(&["M", "0,0", "0,10"]);
+    h.enter_all(&["LA", "OFF", "doors", ""]);
+    let before = h.session.drawing().entity(door).cloned();
+    h.enter_all(&["M", "P"]);
+    assert_eq!(last(&h), "0 found, 0 total");
+    h.escape();
+    assert_eq!(h.session.drawing().entity(door).cloned(), before);
+
+    // Of the model, from a layout: not found, and not erased.
+    let mut h = Harness::new();
+    h.enter_all(&["L", "0,0", "100,0", ""]);
+    let line = h.ids()[0];
+    h.click_world(p(50.0, 0.0));
+    h.enter_all(&["M", "0,0", "0,10"]);
+    h.enter_all(&["LAYOUT", "N", "Sheet"]);
+    h.enter_all(&["E", "P"]);
+    assert_eq!(last(&h), "0 found, 0 total");
+    h.enter("");
+    assert!(h.session.drawing().entity(line).is_some());
+}
+
+/// #372: the previous selection is the drawing's: NEW leaves none.
+#[test]
+fn a_new_drawing_has_no_previous_selection() {
+    let mut h = Harness::new();
+    h.enter_all(&["L", "0,0", "100,0", ""]);
+    h.click_world(p(50.0, 0.0));
+    h.enter_all(&["M", "0,0", "0,10"]);
+    h.session.new_drawing();
+    h.enter_all(&["E", "P"]);
+    assert_eq!(last(&h), "There is no previous selection.");
+}
+
+/// #372: an intent's selection by ID is held to the same rule.
+#[test]
+fn select_only_selects_only_what_is_shown_here() {
+    let mut h = Harness::new();
+    h.enter_all(&["LA", "N", "doors", "S", "doors", ""]);
+    h.enter_all(&["L", "0,0", "100,0", ""]);
+    let line = h.ids()[0];
+    h.session.select_only(&[line, EntityId::from_raw(99)]);
+    assert_eq!(selected(&h), vec![line], "a missing id is not selected");
+    h.enter_all(&["LA", "S", "0", "OFF", "doors", ""]);
+    h.session.select_only(&[line]);
+    assert!(selected(&h).is_empty(), "nor one on a layer switched off");
+}
+
 #[test]
 fn without_a_previous_selection_the_keyword_says_so() {
     let (mut h, ..) = scene();
