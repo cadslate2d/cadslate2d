@@ -536,10 +536,6 @@ mod tests {
 
     use super::*;
 
-    /// #197: the area of a closed path is exact through its arcs — a square
-    /// is its side squared, a circle of two half-turn bulges is πr², a
-    /// square with one side bowed out gains the half-disc, bowed in loses
-    /// it — and the sign follows the direction.
     /// #379: far from the origin, BREAK on a polyline judges two points a
     /// few spacings apart, one at an end, as BREAK on a line does: the
     /// same point at the end, so nothing to split off.
@@ -566,6 +562,10 @@ mod tests {
         assert_eq!(broken.map(|pieces| pieces.len()), None);
     }
 
+    /// #197: the area of a closed path is exact through its arcs — a square
+    /// is its side squared, a circle of two half-turn bulges is πr², a
+    /// square with one side bowed out gains the half-disc, bowed in loses
+    /// it — and the sign follows the direction.
     #[test]
     fn the_area_of_a_path_counts_its_arcs_exactly_and_signs_by_direction() {
         let square = Path {
