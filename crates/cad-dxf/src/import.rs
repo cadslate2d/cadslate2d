@@ -91,6 +91,13 @@ const NESTING_TOO_DEEP: &str = "(blocks nested too deep)";
 /// Report keys for what an INSERT carries that a reference cannot hold:
 /// the reference is imported as far as the model holds, the rest said.
 const INSERT_NON_UNIFORM: &str = "(INSERT with a non-uniform scale)";
+/// An object stored in a coordinate system tilted out of the drawing's
+/// plane (#391): its normal (210, 220, 230) is neither up nor down. It is
+/// kept as read, in its own coordinates.
+const EXTRUSION_TILTED: &str = "(extrusion out of the plane)";
+/// A text whose normal points down (#391): AutoCAD draws it backwards. It
+/// is placed where it stands, and read the right way round.
+const TEXT_BACKWARDS: &str = "(text drawn backwards by its extrusion)";
 const INSERT_ARRAY: &str = "(INSERT array)";
 /// Report key for an INSERT of a block the file never defines: not imported.
 const INSERT_UNDEFINED: &str = "(INSERT of an undefined block)";
@@ -844,6 +851,22 @@ fn polyline_width(constant: Option<f64>, starts: &[f64], ends: &[f64]) -> (f64, 
     (first, false)
 }
 
+/// Which way an object's coordinate system faces (#391), from its normal
+/// (210, 220, 230). AutoCAD writes a mirrored arc, circle, text, polyline,
+/// or reference with its normal pointing down, its X axis then running the
+/// other way: the object is the reflection, across the Y axis, of what its
+/// coordinates say.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Facing {
+    /// Up, (0, 0, 1), or not given: the coordinates are the world's.
+    #[default]
+    Up,
+    /// Down, (0, 0, -1): the world's X is the negative of the object's.
+    Down,
+    /// Out of the plane: no reflection or turn in the plane makes it.
+    Tilted,
+}
+
 /// Collects a polyline that may span several records.
 #[derive(Debug, Default)]
 struct PolylineBuilder {
@@ -861,6 +884,8 @@ struct PolylineBuilder {
     /// Not a 2D polyline at all (mesh, 3D polyline): already reported; its
     /// vertices are swallowed.
     unsupported: bool,
+    /// Which way the polyline's coordinate system faces (#391).
+    facing: Facing,
     properties: Pending,
 }
 
@@ -1192,22 +1217,32 @@ impl<'a> Reader<'a> {
                 self.import(Entity::Point(point), body)?;
             }
             (_, "CIRCLE") if entities => match body.circle(record.line)? {
-                Some(circle) => self.import(Entity::Circle(circle), body)?,
+                Some(circle) => {
+                    let circle = self.in_world(Entity::Circle(circle), body.facing());
+                    self.import(circle, body)?;
+                }
                 None => self.report.count_unsupported(INVALID),
             },
             (_, "ARC") if entities => match body.arc(record.line)? {
-                Some(arc) => self.import(Entity::Arc(arc), body)?,
+                Some(arc) => {
+                    let arc = self.in_world(Entity::Arc(arc), body.facing());
+                    self.import(arc, body)?;
+                }
                 None => self.report.count_unsupported(INVALID),
             },
             (_, "ELLIPSE") if entities => match body.ellipse(record.line)? {
-                Some(ellipse) => self.import(Entity::Ellipse(ellipse), body)?,
+                Some(ellipse) => {
+                    let ellipse = self.ellipse_in_world(ellipse, body.facing());
+                    self.import(Entity::Ellipse(ellipse), body)?;
+                }
                 None => self.report.count_unsupported(INVALID),
             },
             (_, "TEXT") if entities => {
                 let (text, dropped) = body.text(record.line)?;
                 let mut pending = body.pending();
                 pending.dropped |= dropped;
-                self.push(Entity::Text(text), pending)?;
+                let text = self.in_world(Entity::Text(text), body.facing());
+                self.push(text, pending)?;
             }
             // An attribute definition (#183): a text with a tag (2), a
             // prompt (3), and flags (70); its words are the default.
@@ -1221,7 +1256,9 @@ impl<'a> Reader<'a> {
                     text,
                 );
                 definition.invisible = body.flags & 1 != 0;
-                self.push(Entity::AttributeDefinition(definition), pending)?;
+                let definition =
+                    self.in_world(Entity::AttributeDefinition(definition), body.facing());
+                self.push(definition, pending)?;
             }
             // An attribute (#183): the value (1) its tag (2) has on the
             // INSERT just read, which it follows until SEQEND.
@@ -1232,6 +1269,14 @@ impl<'a> Reader<'a> {
             }
             (_, "MTEXT") if entities => {
                 let (text, formatting) = body.mtext(record.line)?;
+                // Its insertion and any direction (11, 21) are the world's;
+                // a rotation alone is turned in `mtext` (#391). Facing down,
+                // AutoCAD draws it backwards.
+                match body.facing() {
+                    Facing::Up => {}
+                    Facing::Down => self.report.count_unsupported(TEXT_BACKWARDS),
+                    Facing::Tilted => self.report.count_unsupported(EXTRUSION_TILTED),
+                }
                 if formatting {
                     self.report.formatting_dropped += 1;
                 }
@@ -1292,6 +1337,7 @@ impl<'a> Reader<'a> {
                     constant_width: body.constant_width,
                     start_widths: body.start_widths.clone(),
                     end_widths: body.end_widths.clone(),
+                    facing: body.facing(),
                 };
                 self.finish_polyline(builder)?;
             }
@@ -1305,6 +1351,7 @@ impl<'a> Reader<'a> {
                 self.open_polyline = Some(PolylineBuilder {
                     closed: body.flags & POLYLINE_CLOSED != 0,
                     unsupported,
+                    facing: body.facing(),
                     properties: body.pending(),
                     constant_width: match (body.radius, body.width) {
                         (Some(start), Some(end)) if (start - end).abs() < f64::EPSILON => {
@@ -1462,7 +1509,8 @@ impl<'a> Reader<'a> {
         };
         let mut pending = body.pending();
         pending.block = Some(name);
-        self.push(Entity::BlockRef(reference), pending)
+        let reference = self.in_world(Entity::BlockRef(reference), body.facing());
+        self.push(reference, pending)
     }
 
     /// A row of the LAYER table. Its name must be one a layer can have; the
@@ -1673,6 +1721,11 @@ impl<'a> Reader<'a> {
             self.report.count_unsupported(key);
         }
         let hatch = HatchEntity::solid(read.loops).styled(read.style.unwrap_or(HatchStyle::Solid));
+        // Its boundary is in its coordinate system (#391); its pattern's
+        // angle and origin turn with it.
+        let Entity::Hatch(hatch) = self.in_world(Entity::Hatch(hatch), body.facing()) else {
+            unreachable!("a hatch stays a hatch")
+        };
         match hatch.check() {
             Ok(()) => self.push(Entity::Hatch(hatch), body.pending()),
             // A pattern too fine to draw is filled solid instead.
@@ -1910,6 +1963,60 @@ impl<'a> Reader<'a> {
         Ok(styles)
     }
 
+    /// An entity read in its object's coordinate system, in the world's
+    /// (#391): as it is when the system faces up, reflected across the Y
+    /// axis when it faces down — a mirrored arc's ends trade places, a
+    /// reference is mirrored — and kept as read, reported, when it is
+    /// tilted out of the plane. A text facing down is drawn backwards by
+    /// AutoCAD; it is placed so and read the right way round, reported.
+    fn in_world(&mut self, entity: Entity, facing: Facing) -> Entity {
+        match facing {
+            Facing::Up => entity,
+            Facing::Tilted => {
+                self.report.count_unsupported(EXTRUSION_TILTED);
+                entity
+            }
+            Facing::Down => {
+                if matches!(entity, Entity::Text(_) | Entity::AttributeDefinition(_)) {
+                    self.report.count_unsupported(TEXT_BACKWARDS);
+                }
+                let across_y =
+                    cad_document::Transform::mirror(Point2::ORIGIN, Point2::new(0.0, 1.0))
+                        .expect("the Y axis is a line");
+                entity.transformed(&across_y)
+            }
+        }
+    }
+
+    /// An ellipse whose normal faces some way (#391). Its centre and axis
+    /// are the world's whatever the normal, but its parameters run
+    /// counter-clockwise about the normal: facing down, the arc from `s` to
+    /// `e` is, seen from above, the arc from `-e` to `-s`. Tilted, it is
+    /// kept as read and reported.
+    fn ellipse_in_world(&mut self, ellipse: EllipseEntity, facing: Facing) -> EllipseEntity {
+        match facing {
+            Facing::Up => ellipse,
+            Facing::Tilted => {
+                self.report.count_unsupported(EXTRUSION_TILTED);
+                ellipse
+            }
+            Facing::Down => {
+                let whole = (ellipse.end_parameter - ellipse.start_parameter)
+                    .rem_euclid(std::f64::consts::TAU)
+                    == 0.0;
+                if whole {
+                    return ellipse;
+                }
+                let turn = |parameter: f64| (-parameter).rem_euclid(std::f64::consts::TAU);
+                EllipseEntity {
+                    start_parameter: turn(ellipse.end_parameter),
+                    end_parameter: turn(ellipse.start_parameter),
+                    ..ellipse
+                }
+            }
+        }
+    }
+
     fn import(&mut self, entity: Entity, body: &RecordBody) -> Result<(), DxfError> {
         self.push(entity, body.pending())
     }
@@ -2010,6 +2117,7 @@ impl<'a> Reader<'a> {
                 PolylineEntity::with_bulges(polyline.vertices, polyline.bulges, polyline.closed)
                     .with_width(width),
             );
+            let entity = self.in_world(entity, polyline.facing);
             self.push(entity, properties)?;
         }
         Ok(())
@@ -2742,6 +2850,9 @@ struct RecordBody {
     ys: Vec<f64>,
     /// Group 70: entity or table-row flags.
     flags: i64,
+    /// Groups 210, 220, 230: the normal of the object's coordinate system
+    /// (#391), when the file gives one.
+    normal: [Option<f64>; 3],
     /// Group 42 of each vertex, in step with `xs`: the bulge of the polyline
     /// segment that starts there. Zero where the vertex has none.
     bulges: Vec<f64>,
@@ -2829,6 +2940,29 @@ struct RecordBody {
 }
 
 impl RecordBody {
+    /// Which way the object's coordinate system faces (#391): up when its
+    /// normal is not given, or has no length to point any way.
+    fn facing(&self) -> Facing {
+        let [x, y, z] = self.normal.map(|value| value.unwrap_or(0.0));
+        let z = if self.normal.iter().all(Option::is_none) {
+            1.0
+        } else {
+            z
+        };
+        let length = (x * x + y * y + z * z).sqrt();
+        if !length.is_finite() || length == 0.0 {
+            return Facing::Up;
+        }
+        // In the plane's own terms: a normal whose slope out of the vertical
+        // is within the angular tolerance is vertical.
+        let tilted = !cad_core::tolerance::AngularTolerance::DEFAULT.is_zero(x.hypot(y) / length);
+        match (tilted, z > 0.0) {
+            (true, _) => Facing::Tilted,
+            (false, true) => Facing::Up,
+            (false, false) => Facing::Down,
+        }
+    }
+
     /// A VIEWPORT (#192): its frame — centre (10, 20), width (40), height
     /// (41) — the model point at its centre (12, 22), the height of its
     /// view (45), and whether it is on (68, positive). `None` for a frame
@@ -2881,6 +3015,9 @@ impl RecordBody {
             271 => self.dim_decimals = group.value.parse().ok(),
             66 => self.follow = group.value.trim() != "0",
             70 => self.flags = group.value.parse().unwrap_or(0),
+            210 => self.normal[0] = Some(real(group)?),
+            220 => self.normal[1] = Some(real(group)?),
+            230 => self.normal[2] = Some(real(group)?),
             11 => self.x1 = Some(real(group)?),
             21 => self.y1 = Some(real(group)?),
             13 => self.x13 = Some(real(group)?),
@@ -3066,6 +3203,11 @@ impl RecordBody {
         let (content, dropped) = plain_mtext(&raw);
         // The direction may be given as a vector (11, 21) instead of an angle.
         let rotation = match (self.start_degrees, self.x1, self.y1) {
+            // A rotation is about the object's own X axis, which runs the
+            // other way when its system faces down (#391).
+            (Some(degrees), ..) if self.facing() == Facing::Down => {
+                std::f64::consts::PI - degrees.to_radians()
+            }
             (Some(degrees), ..) => degrees.to_radians(),
             (None, Some(x), Some(y)) if x != 0.0 || y != 0.0 => y.atan2(x),
             _ => 0.0,
@@ -3606,6 +3748,240 @@ mod tests {
         ];
         let claimed = import(entities(&body).as_bytes()).unwrap();
         assert_eq!(claimed.report.hatches, 1);
+    }
+
+    /// #391: an object whose coordinate system faces down — AutoCAD's
+    /// mirrored arc, circle, polyline, text, reference — comes in where it
+    /// stands in the world: reflected across the Y axis. One tilted out of
+    /// the plane is kept as read and reported; a normal facing up changes
+    /// nothing.
+    #[test]
+    fn an_object_facing_down_is_read_where_it_stands() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        let down: [(i32, &str); 3] = [(210, "0.0"), (220, "0.0"), (230, "-1.0")];
+        let with = |groups: &[(i32, &str)], normal: &[(i32, &str)]| -> Vec<(i32, String)> {
+            groups
+                .iter()
+                .chain(normal)
+                .map(|(code, value)| (*code, (*value).to_owned()))
+                .collect()
+        };
+        let mut body: Vec<(i32, String)> = Vec::new();
+        body.extend(with(
+            &[
+                (0, "ARC"),
+                (8, "0"),
+                (10, "10.0"),
+                (20, "5.0"),
+                (40, "2.0"),
+                (50, "0.0"),
+                (51, "90.0"),
+            ],
+            &down,
+        ));
+        body.extend(with(
+            &[
+                (0, "CIRCLE"),
+                (8, "0"),
+                (10, "3.0"),
+                (20, "4.0"),
+                (40, "1.0"),
+            ],
+            &down,
+        ));
+        body.extend(with(
+            &[
+                (0, "LWPOLYLINE"),
+                (8, "0"),
+                (90, "2"),
+                (70, "0"),
+                (10, "0.0"),
+                (20, "0.0"),
+                (42, "0.5"),
+                (10, "10.0"),
+                (20, "0.0"),
+            ],
+            &down,
+        ));
+        body.extend(with(
+            &[
+                (0, "TEXT"),
+                (8, "0"),
+                (10, "7.0"),
+                (20, "1.0"),
+                (40, "2.5"),
+                (1, "Ab"),
+            ],
+            &down,
+        ));
+        // A half ellipse, upper as its parameters run about a normal facing
+        // down: the lower half seen from above.
+        body.extend(with(
+            &[
+                (0, "ELLIPSE"),
+                (8, "0"),
+                (10, "0.0"),
+                (20, "0.0"),
+                (11, "4.0"),
+                (21, "0.0"),
+                (40, "0.5"),
+                (41, "0.0"),
+                (42, "3.141592653589793"),
+            ],
+            &down,
+        ));
+        // A paragraph turned by a rotation alone, about its own X axis.
+        body.extend(with(
+            &[
+                (0, "MTEXT"),
+                (8, "0"),
+                (10, "0.0"),
+                (20, "20.0"),
+                (40, "2.5"),
+                (50, "30.0"),
+                (1, "Ab"),
+            ],
+            &down,
+        ));
+        // Facing up, said or not: as read.
+        body.extend(with(
+            &[
+                (0, "CIRCLE"),
+                (8, "0"),
+                (10, "3.0"),
+                (20, "4.0"),
+                (40, "1.0"),
+            ],
+            &[(210, "0.0"), (220, "0.0"), (230, "1.0")],
+        ));
+        // Tilted: as read, reported.
+        body.extend(with(
+            &[
+                (0, "CIRCLE"),
+                (8, "0"),
+                (10, "3.0"),
+                (20, "4.0"),
+                (40, "1.0"),
+            ],
+            &[(210, "1.0"), (220, "0.0"), (230, "0.0")],
+        ));
+        let borrowed: Vec<(i32, &str)> = body.iter().map(|(c, v)| (*c, v.as_str())).collect();
+        let import = import(entities(&borrowed).as_bytes()).unwrap();
+        let read = entities_of(&import);
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+
+        let Entity::Arc(arc) = &read[0] else {
+            panic!("{:?}", read[0])
+        };
+        assert!(
+            close(arc.center.x, -10.0) && close(arc.center.y, 5.0),
+            "{arc:?}"
+        );
+        assert!(
+            close(arc.start_angle, FRAC_PI_2) && close(arc.end_angle, PI),
+            "from 90° to 180°: {arc:?}"
+        );
+        let Entity::Circle(circle) = &read[1] else {
+            panic!("{:?}", read[1])
+        };
+        assert_eq!(circle.center, Point2::new(-3.0, 4.0));
+        let Entity::Polyline(polyline) = &read[2] else {
+            panic!("{:?}", read[2])
+        };
+        assert_eq!(
+            polyline.vertices,
+            vec![Point2::new(0.0, 0.0), Point2::new(-10.0, 0.0)]
+        );
+        assert!(close(polyline.bulge(0), -0.5), "its arc bows the other way");
+        let Entity::Text(text) = &read[3] else {
+            panic!("{:?}", read[3])
+        };
+        assert!(text.insertion.x < 0.0, "placed where it stands: {text:?}");
+        let Entity::Ellipse(ellipse) = &read[4] else {
+            panic!("{:?}", read[4])
+        };
+        let curve = ellipse.ellipse();
+        let middle = curve.point_at(curve.start + curve.sweep / 2.0);
+        assert!(close(curve.sweep, PI), "still a half: {ellipse:?}");
+        assert!(
+            middle.y < 0.0,
+            "the lower half, seen from above: {middle:?}"
+        );
+        let Entity::MText(mtext) = &read[5] else {
+            panic!("{:?}", read[5])
+        };
+        assert!(
+            close(mtext.rotation, 150f64.to_radians()),
+            "π − 30°: {mtext:?}"
+        );
+        let Entity::Circle(up) = &read[6] else {
+            panic!("{:?}", read[6])
+        };
+        assert_eq!(up.center, Point2::new(3.0, 4.0));
+        let Entity::Circle(tilted) = &read[7] else {
+            panic!("{:?}", read[7])
+        };
+        assert_eq!(tilted.center, Point2::new(3.0, 4.0));
+        assert_eq!(import.report.unsupported.get(EXTRUSION_TILTED), Some(&1));
+        assert_eq!(
+            import.report.unsupported.get(TEXT_BACKWARDS),
+            Some(&2),
+            "the text and the paragraph"
+        );
+        assert_eq!(
+            import.report.unsupported.len(),
+            2,
+            "{:?}",
+            import.report.unsupported
+        );
+    }
+
+    /// #391: a reference facing down is mirrored, turned to π − its
+    /// rotation, and placed with its X negated.
+    #[test]
+    fn a_reference_facing_down_is_mirrored_where_it_stands() {
+        let groups = [
+            (0, "SECTION"),
+            (2, "BLOCKS"),
+            (0, "BLOCK"),
+            (8, "0"),
+            (2, "B"),
+            (70, "0"),
+            (10, "0.0"),
+            (20, "0.0"),
+            (0, "LINE"),
+            (8, "0"),
+            (10, "0.0"),
+            (20, "0.0"),
+            (11, "1.0"),
+            (21, "0.0"),
+            (0, "ENDBLK"),
+            (0, "ENDSEC"),
+            (0, "SECTION"),
+            (2, "ENTITIES"),
+            (0, "INSERT"),
+            (8, "0"),
+            (2, "B"),
+            (10, "5.0"),
+            (20, "2.0"),
+            (50, "30.0"),
+            (210, "0.0"),
+            (220, "0.0"),
+            (230, "-1.0"),
+            (0, "ENDSEC"),
+            (0, "EOF"),
+        ];
+        let import = import(dxf(&groups).as_bytes()).unwrap();
+        let read = entities_of(&import);
+        let Some(Entity::BlockRef(reference)) = read.first() else {
+            panic!("{read:?}")
+        };
+        assert_eq!(reference.insertion, Point2::new(-5.0, 2.0));
+        assert!(
+            (reference.rotation - 150f64.to_radians()).abs() < 1e-9,
+            "{reference:?}"
+        );
+        assert!(reference.mirrored);
     }
 
     #[test]
