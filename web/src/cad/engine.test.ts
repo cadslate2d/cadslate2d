@@ -13,6 +13,7 @@ import {
   StyleRole,
   wasmMemory,
   type FrameBuffers,
+  scenePlan,
   WORDS_PER_REGION,
 } from "./engine";
 import { loadEngineForTests } from "./test-support";
@@ -554,16 +555,41 @@ describe("paper space", () => {
     expect(regions.slice(7, 9)).toEqual([4, 9]);
     expect(cad.sceneTransform()).toHaveLength(4 * regionCount);
     const viewports = cad.sceneViewports();
-    expect(viewports).toHaveLength(2 * (4 + 4 * regionCount));
+    expect(viewports).toHaveLength(1 + 2 * (4 + 4 * regionCount));
+    const plan = scenePlan(viewports, regionCount);
+    expect(plan.onPaper).toBe(true);
+    expect(plan.viewports).toHaveLength(2);
     // The first viewport's frame, in clip space, is inside the canvas.
-    for (const value of viewports.slice(0, 4)) {
-      expect(Math.abs(value)).toBeLessThanOrEqual(1);
+    const [x0, y0, x1, y1] = plan.viewports[0]?.frame ?? [];
+    for (const value of [x0, y0, x1, y1]) {
+      expect(Math.abs(value ?? 2)).toBeLessThanOrEqual(1);
     }
-    expect(viewports[0]).toBeLessThan(viewports[2] ?? 0);
-    expect(viewports[1]).toBeLessThan(viewports[3] ?? 0);
+    expect(x0).toBeLessThan(x1 ?? 0);
+    expect(y0).toBeLessThan(y1 ?? 0);
+    expect(plan.viewports[0]?.transforms).toHaveLength(4 * regionCount);
     enter(cad, "MODEL");
     expect(cad.sceneViewports()).toHaveLength(0);
+    expect(scenePlan(cad.sceneViewports(), 1)).toEqual({ onPaper: false, viewports: [] });
     expect(cad.readScene((frame) => (frame.regions ?? []).length / WORDS_PER_REGION)).toBe(1);
+  });
+
+  // #401: a layout with no viewport on is still paper: the model is drawn
+  // through no viewport, and the paper's own objects are drawn.
+  test("a layout with no viewport is paper, with nothing of the model on it", () => {
+    const cad = engine();
+    enter(cad, "L", "0,0", "100,0", "");
+    enter(cad, "LAYOUT", "N", "Sheet");
+    enter(cad, "L", "20,250", "350,250", "");
+    const regions = cad.readScene((frame) => Array.from(frame.regions ?? []));
+    const regionCount = regions.length / WORDS_PER_REGION;
+    expect(scenePlan(cad.sceneViewports(), regionCount)).toEqual({ onPaper: true, viewports: [] });
+    // The paper's line is in a region flagged paper, which is what is drawn.
+    expect(regions[WORDS_PER_REGION * (regionCount - 1) + 6]).toBe(1);
+    // A viewport made and erased: paper again, with none.
+    enter(cad, "MVIEW", "20,20", "220,220");
+    expect(scenePlan(cad.sceneViewports(), regionCount).viewports).toHaveLength(1);
+    enter(cad, "U");
+    expect(scenePlan(cad.sceneViewports(), regionCount)).toEqual({ onPaper: true, viewports: [] });
   });
 });
 

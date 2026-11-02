@@ -359,13 +359,54 @@ export interface FrameBuffers {
 export const WORDS_PER_REGION = 7;
 
 /**
- * The viewports of the layout shown (#193): per viewport, its frame in clip
- * space — `x0, y0, x1, y1` — then one clip transform per scene region for
- * the model seen through it. Empty on the model.
+ * The viewports of the layout shown (#193): empty on the model; on a layout
+ * a leading 1 — the paper, with or without a viewport (#401) — then for each
+ * viewport that is on its frame in clip space — `x0, y0, x1, y1` — and one
+ * clip transform per scene region for the model seen through it. Read it
+ * with `scenePlan`.
  */
 export type SceneViewports = Float32Array;
 /** Floats per viewport before its transforms: the frame. */
 export const FLOATS_PER_VIEWPORT_FRAME = 4;
+
+/** One viewport of the layout shown: where it is, and the model's transforms through it. */
+export interface SceneViewport {
+  /** Its frame in clip space: `x0, y0, x1, y1`. */
+  readonly frame: readonly [number, number, number, number];
+  /** One clip transform per scene region, for the model seen through it. */
+  readonly transforms: Float32Array;
+}
+
+/**
+ * How the committed scene is drawn: on the model, its regions plainly; on a
+ * layout's paper, the model only through the viewports — none, when the
+ * layout has none on — and the paper's own regions over them (#401).
+ */
+export interface ScenePlan {
+  readonly onPaper: boolean;
+  readonly viewports: readonly SceneViewport[];
+}
+
+/** Reads `SceneViewports` for a scene of `regionCount` regions. */
+export function scenePlan(viewports: SceneViewports, regionCount: number): ScenePlan {
+  if (viewports.length === 0) {
+    return { onPaper: false, viewports: [] };
+  }
+  const stride = FLOATS_PER_VIEWPORT_FRAME + FLOATS_PER_TRANSFORM * regionCount;
+  const out: SceneViewport[] = [];
+  for (let at = 1; at + stride <= viewports.length; at += stride) {
+    out.push({
+      frame: [
+        viewports[at] ?? 0,
+        viewports[at + 1] ?? 0,
+        viewports[at + 2] ?? 0,
+        viewports[at + 3] ?? 0,
+      ],
+      transforms: viewports.subarray(at + FLOATS_PER_VIEWPORT_FRAME, at + stride),
+    });
+  }
+  return { onPaper: true, viewports: out };
+}
 
 /** What `snapshotStep` answers. */
 export const SnapshotStatus = {
