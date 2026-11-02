@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { classifyKey, classifyMenuKey, menuShortcut, type KeyLike } from "./key-routing";
+import {
+  classifyKey,
+  classifyMenuKey,
+  keyBelongsToTarget,
+  menuShortcut,
+  type KeyLike,
+} from "./key-routing";
 
 const key = (name: string, modifiers: Partial<Omit<KeyLike, "key">> = {}): KeyLike => ({
   key: name,
@@ -11,6 +17,38 @@ const key = (name: string, modifiers: Partial<Omit<KeyLike, "key">> = {}): KeyLi
 });
 
 const kind = (event: KeyLike, spaceAccepts = true) => classifyKey(event, spaceAccepts).kind;
+
+// #411: keys typed in a dialog's field, or on its buttons, are the dialog's.
+describe("keyBelongsToTarget", () => {
+  const nowhere = { commandLine: false, field: false, inDialog: false };
+  test("a field takes every key typed in it but Escape", () => {
+    const field = { ...nowhere, field: true };
+    for (const name of ["5", "a", " ", "Enter", "ArrowUp", "Backspace", "z"]) {
+      expect(keyBelongsToTarget(name, field), name).toBe(true);
+    }
+    expect(keyBelongsToTarget("Escape", field)).toBe(false);
+    expect(keyBelongsToTarget("5", { ...field, inDialog: true })).toBe(true);
+  });
+
+  test("a dialog's buttons and choices take the keys that press and move", () => {
+    const button = { ...nowhere, inDialog: true };
+    for (const name of [" ", "Enter", "ArrowDown", "ArrowLeft", "Home"]) {
+      expect(keyBelongsToTarget(name, button), name).toBe(true);
+    }
+    for (const name of ["l", "5", "Escape", "F7"]) {
+      expect(keyBelongsToTarget(name, button), name).toBe(false);
+    }
+  });
+
+  test("the command line, the drawing, and a toolbar button leave every key to the command line", () => {
+    for (const name of ["5", "Enter", " ", "ArrowUp", "Escape"]) {
+      expect(keyBelongsToTarget(name, nowhere), name).toBe(false);
+      expect(keyBelongsToTarget(name, { ...nowhere, commandLine: true, field: true }), name).toBe(
+        false,
+      );
+    }
+  });
+});
 
 describe("classifyKey", () => {
   test("Enter submits", () => {
