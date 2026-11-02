@@ -292,7 +292,18 @@ impl Command for PeditCommand {
                     // as LINE's Undo takes back a segment.
                     _ => match ctx.drawing.rollback_last_in_group() {
                         Some(_) => {
-                            self.current(ctx);
+                            // Taking back the conversion of a line or an
+                            // arc leaves no polyline to edit: back to the
+                            // pick, saying so.
+                            if self.current(ctx).is_none() {
+                                let kind = self
+                                    .id
+                                    .and_then(|id| ctx.drawing.entity(id))
+                                    .map_or("object", Entity::kind_name);
+                                ctx.message(format!("The {kind} is as it was."));
+                                self.id = None;
+                                self.state = State::Pick;
+                            }
                         }
                         None => ctx.message("Nothing to undo."),
                     },
