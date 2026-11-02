@@ -1121,12 +1121,37 @@ impl Session {
     /// view is the space's as it was left — a layout's first view is its
     /// sheet — and the scene is the space's. Nothing in the drawing
     /// changes. The model worked through a viewport is left as `MODEL`
-    /// leaves it: the viewport takes the view.
+    /// leaves it: the viewport takes the view; for a layout, by way of the
+    /// viewport's paper, whose view that layout keeps (#376).
     pub fn set_space(&mut self, space: LayoutId) -> Dirty {
         if !self.drawing.layouts().contains(space) {
             return self.notify("That layout does not exist.");
         }
-        let mut dirty = self.leave_viewport();
+        // From the model worked through a viewport to a layout, back onto
+        // the viewport's paper first, as PSPACE goes (#376): what is on
+        // screen is the viewport's view, not the model's own, which stays
+        // as it was kept; the paper's view is the layout's to keep. To the
+        // model, the viewport takes the view and the session stays.
+        let mut dirty = Dirty::NONE;
+        if space == LayoutId::MODEL {
+            if let Some(through) = self.through.as_ref() {
+                self.views
+                    .insert(through.layout, through.paper_view.clone());
+            }
+            dirty |= self.leave_viewport();
+        } else if let Some(through) = self.through.as_ref() {
+            let (layout, mut paper_view) = (through.layout, through.paper_view.clone());
+            dirty |= self.leave_viewport();
+            paper_view.resize(self.view.width(), self.view.height());
+            self.view = paper_view;
+            self.space = layout;
+            self.space_epoch += 1;
+            self.previous_views.clear();
+            self.selection.clear();
+            self.selection_box = None;
+            self.selection_shape = None;
+            dirty |= Dirty::SCENE | Dirty::OVERLAY | Dirty::VIEW | Dirty::UI;
+        }
         if space == self.space {
             return dirty;
         }
