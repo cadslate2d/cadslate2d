@@ -405,6 +405,30 @@ fn a_dashed_linetype_becomes_a_dash_array_scaled_to_the_page_and_runs_on_through
     .unwrap();
     let ops = parse(content_of(&plot_pdf(&text, &settings())));
     assert_eq!(ops.dashes, vec![Vec::<f64>::new()]);
+    // And an attribute definition's tag, which is text too (#405).
+    let definition = cad_document::AttributeDefinitionEntity::new(
+        "TAG",
+        "Tag?",
+        TextEntity::new(p(0.0, 0.0), 10.0, 0.0, "Dash"),
+    );
+    let tagged = Drawing::from_parts(
+        [],
+        [LinetypeDef::built_in_named("DASHED").unwrap()],
+        [(
+            Entity::AttributeDefinition(definition),
+            Properties {
+                linetype: Linetype::Named(cad_document::LinetypeId::from_raw(1)),
+                ..Properties::default()
+            },
+        )],
+    )
+    .unwrap();
+    let ops = parse(content_of(&plot_pdf(&tagged, &settings())));
+    assert_eq!(
+        ops.dashes,
+        vec![Vec::<f64>::new()],
+        "the tag is plotted dashed"
+    );
 }
 
 #[test]
