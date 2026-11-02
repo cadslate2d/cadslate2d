@@ -1016,7 +1016,9 @@ impl Drawing {
     /// Every entity whose geometry a change to `row` changes: those that
     /// refer to it, and the references that place, directly or through
     /// other blocks, a definition holding one — a block's dimension is laid
-    /// out by its style as a dimension of its own is (#388).
+    /// out by its style as a dimension of its own is (#388). For a block
+    /// row, that is every reference that places it or a block that does.
+    /// Each table change that redraws its dependents asks here.
     fn dependents_of(&self, row: TableRow) -> Vec<EntityId> {
         let holding: Vec<BlockId> = self
             .blocks
@@ -1776,18 +1778,9 @@ impl Drawing {
                     // reference that places it, directly or through other
                     // blocks, is recomputed here (§19.6).
                     if let TableChange::Replace { id, .. } = change {
-                        let dependents: Vec<EntityId> = self
-                            .entities
-                            .iter()
-                            .filter_map(|(entity_id, entity)| {
-                                // A reference, or a multileader's block
-                                // note (#241).
-                                let placed = entity.placed_block()?;
-                                (placed == *id || self.blocks.reaches(placed, *id))
-                                    .then_some(entity_id)
-                            })
-                            .collect();
-                        for entity_id in dependents {
+                        // A reference, or a multileader's block note
+                        // (#241), placing it or a block that does.
+                        for entity_id in self.dependents_of(TableRow::Block(*id)) {
                             if let Some(entity) = self.entities.get(entity_id) {
                                 self.index.update(entity_id, entity.bounds(self.tables()));
                             }
