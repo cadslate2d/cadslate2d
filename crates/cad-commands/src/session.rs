@@ -1128,7 +1128,7 @@ impl Session {
             return self.notify("That layout does not exist.");
         }
         // From the model worked through a viewport to a layout, back onto
-        // the viewport's paper first, as PSPACE goes (#376): what is on
+        // the viewport's paper first — PSPACE (#376): what is on
         // screen is the viewport's view, not the model's own, which stays
         // as it was kept; the paper's view is the layout's to keep. To the
         // model, the viewport takes the view and the session stays.
@@ -1139,18 +1139,8 @@ impl Session {
                     .insert(through.layout, through.paper_view.clone());
             }
             dirty |= self.leave_viewport();
-        } else if let Some(through) = self.through.as_ref() {
-            let (layout, mut paper_view) = (through.layout, through.paper_view.clone());
-            dirty |= self.leave_viewport();
-            paper_view.resize(self.view.width(), self.view.height());
-            self.view = paper_view;
-            self.space = layout;
-            self.space_epoch += 1;
-            self.previous_views.clear();
-            self.selection.clear();
-            self.selection_box = None;
-            self.selection_shape = None;
-            dirty |= Dirty::SCENE | Dirty::OVERLAY | Dirty::VIEW | Dirty::UI;
+        } else if self.through.is_some() {
+            dirty |= self.back_to_paper();
         }
         if space == self.space {
             return dirty;
@@ -1291,6 +1281,8 @@ impl Session {
         self.space_epoch += 1;
         self.previous_views.clear();
         self.selection.clear();
+        self.selection_box = None;
+        self.selection_shape = None;
         dirty | Dirty::SCENE | Dirty::OVERLAY | Dirty::VIEW | Dirty::UI
     }
 

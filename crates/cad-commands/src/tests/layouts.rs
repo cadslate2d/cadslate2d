@@ -427,4 +427,27 @@ fn leaving_a_viewport_for_another_space_keeps_each_spaces_view() {
     assert_eq!(view_of(&h), through);
     h.enter_all(&["LAYOUT", "S", "Sheet"]);
     assert_eq!(view_of(&h), paper);
+
+    // Another layout from MSPACE: Sheet keeps its paper's view, the model
+    // its own, and the other layout opens at its sheet.
+    h.enter_all(&["LAYOUT", "N", "Sheet2"]);
+    let sheet2 = h.session.space();
+    let fresh = view_of(&h);
+    h.enter("MODEL");
+    h.enter_all(&["ZOOM", "C", "0,0", "300"]);
+    let model_now = view_of(&h);
+    assert_ne!(
+        model_now, through,
+        "a view of the model's own, not the viewport's"
+    );
+    h.enter_all(&["LAYOUT", "S", "Sheet"]);
+    h.enter("MSPACE");
+    h.enter_all(&["LAYOUT", "S", "Sheet2"]);
+    assert_eq!(h.session.space(), sheet2);
+    assert!(h.session.viewport_through().is_none());
+    assert_eq!(view_of(&h), fresh);
+    h.enter_all(&["LAYOUT", "S", "Sheet"]);
+    assert_eq!(view_of(&h), paper);
+    h.enter("MODEL");
+    assert_eq!(view_of(&h), model_now);
 }
