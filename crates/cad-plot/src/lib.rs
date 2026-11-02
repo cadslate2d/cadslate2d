@@ -24,7 +24,7 @@ use cad_document::{
     Properties, ViewportEntity, Weight, WipeoutEntity, draw_order,
 };
 use cad_geometry::{Arc, Primitive};
-use cad_render::{GeometrySink, drawn_continuous, walk_entity};
+use cad_render::{GeometrySink, drawn_continuous, viewports_shown, walk_entity};
 
 /// PDF points per millimetre: a point is 1/72 of an inch.
 pub const POINTS_PER_MM: f64 = 72.0 / 25.4;
@@ -356,9 +356,10 @@ fn look_of(
 /// The content stream: every shown entity of the space, in the drawing
 /// order (ADR-0032),
 /// each part with its look, inside a clip to the plotted area. On a
-/// layout, the paper's entities at the page's placement — a viewport
-/// itself draws nothing — then, for each viewport that is on, the model's
-/// entities through it, inside a clip to its frame.
+/// layout, for each viewport that is on, the model's entities through it,
+/// inside a clip to its frame; then the paper's entities at the page's
+/// placement over them all, as the screen draws them (#413) — a viewport
+/// itself draws nothing.
 fn content(drawing: &Drawing, space: LayoutId, settings: &PlotSettings, page: &Page) -> String {
     let mut out = String::new();
     // Round caps and joins meet at vertices as they do on screen.
@@ -370,14 +371,12 @@ fn content(drawing: &Drawing, space: LayoutId, settings: &PlotSettings, page: &P
         current: None,
     };
     let ids = painted(drawing, drawing.shown_in(space).map(|(id, _)| id));
-    painter.space(&mut out, &ids, page.placement(), page.area);
-    let viewports: Vec<ViewportEntity> = ids
-        .iter()
-        .filter_map(|id| match drawing.entity(*id) {
-            Some(Entity::Viewport(viewport)) if viewport.on => Some(*viewport),
-            _ => None,
-        })
-        .collect();
+    // The windows the screen draws the model through, by its one rule.
+    let viewports: Vec<ViewportEntity> = if space == LayoutId::MODEL {
+        Vec::new()
+    } else {
+        viewports_shown(drawing, space).collect()
+    };
     if !viewports.is_empty() {
         let model = painted(drawing, drawing.shown().map(|(id, _)| id));
         for viewport in viewports {
@@ -398,6 +397,8 @@ fn content(drawing: &Drawing, space: LayoutId, settings: &PlotSettings, page: &P
             painter.current = None;
         }
     }
+    // The paper's own objects lie over every viewport.
+    painter.space(&mut out, &ids, page.placement(), page.area);
     out.push_str("Q\n");
     out
 }

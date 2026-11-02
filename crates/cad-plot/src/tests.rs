@@ -729,6 +729,39 @@ fn a_layout_plots_its_paper_at_one_to_one_and_the_model_through_each_viewport_at
     assert_eq!(parse(&model.paper).points.len(), 2);
 }
 
+/// #413: on a layout the paper's own objects lie over every viewport, as on
+/// screen: a wipeout on the paper masks the model seen through the
+/// viewport beneath it, so the viewport is painted first.
+#[test]
+fn a_layouts_paper_is_painted_over_its_viewports() {
+    let full = ViewportEntity::new(p(100.0, 150.0), 150.0, 100.0, p(50.0, 0.0), 1.0);
+    let (mut drawing, sheet) = layout_drawing(None, &[full]);
+    let mut tx = drawing.transaction();
+    tx.insert_in(
+        sheet,
+        cad_document::WipeoutEntity::new(vec![p(80.0, 120.0), p(140.0, 120.0), p(140.0, 180.0)])
+            .unwrap(),
+    )
+    .unwrap();
+    tx.commit();
+    let content = content_of(&plot_pdf_in(&drawing, sheet, &settings())).to_owned();
+    let mask = content
+        .find("q 1 1 1 rg\n")
+        .expect("the wipeout's white mask");
+    // The page's clip is the first; the viewport's frame the second.
+    let viewport = content
+        .match_indices(" re W n\n")
+        .nth(1)
+        .map(|(at, _)| at)
+        .expect("the viewport's clip");
+    let model_line = content[viewport..].find("S\n").map(|at| viewport + at);
+    assert!(
+        model_line.is_some_and(|at| at < mask),
+        "the model is painted over the mask"
+    );
+    assert!(viewport < mask);
+}
+
 /// #194, #208: the page is the sheet the layout's row says — set here,
 /// or A3 landscape for one made here — whatever paper the settings name;
 /// a layout made here plots its whole sheet at one to one, printed within
