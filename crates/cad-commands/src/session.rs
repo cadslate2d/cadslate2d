@@ -436,7 +436,19 @@ impl Session {
             return None;
         }
         // Nothing is offered on an object a click would not take.
-        self.pick(cursor).filter(|id| !self.drawing.is_locked(*id))
+        self.pick(cursor).filter(|id| self.would_take(*id))
+    }
+
+    /// Whether a click would give the active command `entity`: nothing
+    /// acts on an object on a locked layer, but a command may change the
+    /// layer itself (#213). The hover highlight and the click both ask
+    /// here, so they agree (#378).
+    fn would_take(&self, entity: EntityId) -> bool {
+        !self.drawing.is_locked(entity)
+            || self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.command.picks_locked_objects())
     }
 
     /// The grip being dragged, if a grip edit is in progress.
@@ -953,13 +965,7 @@ impl Session {
                     // A command acts on what it picks, and nothing acts on
                     // an object on a locked layer — but a command may
                     // change the layer itself (#213).
-                    Some(entity)
-                        if self.drawing.is_locked(entity)
-                            && !self
-                                .active
-                                .as_ref()
-                                .is_some_and(|active| active.command.picks_locked_objects()) =>
-                    {
+                    Some(entity) if !self.would_take(entity) => {
                         self.log.push(self.locked_message(entity));
                         Dirty::UI
                     }
