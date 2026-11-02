@@ -313,3 +313,38 @@ fn redo_that_takes_away_the_space_leaves_for_the_model() {
     assert!(h.session.viewport_through().is_none());
     assert_eq!(last(&h), "The layout worked through is gone: in the model.");
 }
+
+/// #374: the canvas resized while the model is worked through a viewport
+/// leaves the viewport showing what it showed — nothing committed — and
+/// PSPACE comes back to the paper at the canvas's size.
+#[test]
+fn a_resize_in_mspace_leaves_the_viewport_and_the_paper_at_the_canvas_size() {
+    let mut h = Harness::new();
+    h.enter_all(&["REC", "0,0", "1000,500"]);
+    h.enter_all(&["LAYOUT", "N", "Sheet"]);
+    let sheet = h.session.space();
+    h.enter_all(&["MVIEW", "10,10", "210,110"]);
+    let before = viewport(&h, sheet);
+    h.enter("MSPACE");
+    let revision = h.session.drawing().revision();
+    h.session.resize(1200.0, 900.0);
+    h.enter("PSPACE");
+    assert_eq!(h.session.space(), sheet);
+    let after = viewport(&h, sheet);
+    assert!(
+        (after.view_center - before.view_center).length() < 1e-9,
+        "{:?} moved to {:?}",
+        before.view_center,
+        after.view_center
+    );
+    assert!((after.scale - before.scale).abs() < 1e-12);
+    assert_eq!(
+        h.session.drawing().revision(),
+        revision,
+        "nothing to commit"
+    );
+    assert_eq!(
+        (h.session.view().width(), h.session.view().height()),
+        (1200.0, 900.0)
+    );
+}
