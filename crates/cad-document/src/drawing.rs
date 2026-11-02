@@ -1020,15 +1020,18 @@ impl Drawing {
     /// row, that is every reference that places it or a block that does.
     /// Each table change that redraws its dependents asks here.
     fn dependents_of(&self, row: TableRow) -> Vec<EntityId> {
+        self.dependents_where(|entity| entity.refers_to(row))
+    }
+
+    /// Every entity that `holds`, and every reference that places,
+    /// directly or through other blocks, a definition holding one: what a
+    /// change to what such entities are drawn by — a table row, a setting
+    /// (#389) — changes the geometry of.
+    fn dependents_where(&self, holds: impl Fn(&Entity) -> bool) -> Vec<EntityId> {
         let holding: Vec<BlockId> = self
             .blocks
             .iter()
-            .filter(|(_, block)| {
-                block
-                    .entities
-                    .iter()
-                    .any(|record| record.entity.refers_to(row))
-            })
+            .filter(|(_, block)| block.entities.iter().any(|record| holds(&record.entity)))
             .map(|(id, _)| id)
             .collect();
         self.entities
@@ -1039,7 +1042,7 @@ impl Drawing {
                         .iter()
                         .any(|held| *held == placed || self.blocks.reaches(placed, *held))
                 });
-                (entity.refers_to(row) || nested).then_some(entity_id)
+                (holds(entity) || nested).then_some(entity_id)
             })
             .collect()
     }
@@ -1789,7 +1792,23 @@ impl Drawing {
                         }
                     }
                 }
-                Change::Settings(change) => self.settings = change.after,
+                Change::Settings(change) => {
+                    self.settings = change.after;
+                    // A point is drawn, and bounded, by the point style:
+                    // every point and every reference holding one is laid
+                    // out afresh, its index entry with it (#389).
+                    if change.before.point_style != change.after.point_style {
+                        let points =
+                            self.dependents_where(|entity| matches!(entity, Entity::Point(_)));
+                        for entity_id in points {
+                            if let Some(entity) = self.entities.get(entity_id) {
+                                self.index.update(entity_id, entity.bounds(self.tables()));
+                            }
+                            self.note_radius(entity_id);
+                            report.replaced.push(entity_id);
+                        }
+                    }
+                }
             }
         }
         self.revision = Revision::next();
@@ -9004,5 +9023,59 @@ mod tests {
             .unwrap();
         let report = tx.commit();
         assert_eq!(report.replaced, vec![with_leader]);
+    }
+
+    /// #389: a point style change re-indexes every point, and every block
+    /// reference holding one, so a query finds them where they now reach;
+    /// undo brings the old reach back.
+    #[test]
+    fn a_point_style_change_reindexes_points_and_references_holding_them() {
+        let p = Point2::new;
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let point = tx.insert(crate::PointEntity::new(p(0.0, 0.0))).unwrap();
+        let block = tx
+            .define_block(crate::Block::new(
+                "marked",
+                p(0.0, 0.0),
+                vec![EntityRecord::new(
+                    Entity::Point(crate::PointEntity::new(p(0.0, 0.0))),
+                    Properties::default(),
+                )],
+            ))
+            .unwrap();
+        let reference = tx
+            .insert(crate::BlockReferenceEntity::new(
+                block,
+                p(0.0, 500.0),
+                1.0,
+                0.0,
+            ))
+            .unwrap();
+        let plain = tx
+            .insert(LineEntity::new(p(0.0, -900.0), p(1.0, -900.0)))
+            .unwrap();
+        tx.set_point_style(crate::PointStyle::new(crate::PointStyle::CROSS, 1.0))
+            .unwrap();
+        tx.commit();
+        // Where the crosses' arms reach at size 100, and not at size 1.
+        let far = Aabb::from_points(p(40.0, -1.0), p(60.0, 1.0));
+        let far_up = Aabb::from_points(p(40.0, 499.0), p(60.0, 501.0));
+        assert!(drawing.query(&far).is_empty());
+
+        let mut tx = drawing.transaction();
+        tx.set_point_style(crate::PointStyle::new(crate::PointStyle::CROSS, 100.0))
+            .unwrap();
+        let report = tx.commit();
+        assert_eq!(drawing.query(&far), vec![point]);
+        assert_eq!(drawing.query(&far_up), vec![reference]);
+        let mut replaced = report.replaced.clone();
+        replaced.sort();
+        assert_eq!(replaced, vec![point, reference]);
+        assert!(!report.replaced.contains(&plain));
+
+        drawing.undo();
+        assert!(drawing.query(&far).is_empty(), "undone: the old reach");
+        assert!(drawing.query(&far_up).is_empty());
     }
 }
