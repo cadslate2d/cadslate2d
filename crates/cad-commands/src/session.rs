@@ -1619,8 +1619,12 @@ impl Session {
 
     // ── internals ──
 
+    /// Where the cursor is in the drawing; nowhere when that is not a
+    /// finite point (#403), however the view came to map it so.
     fn cursor_world(&self) -> Option<Point2> {
-        self.cursor.map(|cursor| self.view.screen_to_world(cursor))
+        self.cursor
+            .map(|cursor| self.view.screen_to_world(cursor))
+            .filter(|point| point.is_finite())
     }
 
     /// The active command, if a pointer click would reach it as a point: it

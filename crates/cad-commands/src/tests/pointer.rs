@@ -79,3 +79,40 @@ fn the_view_does_not_follow_a_pointer_that_is_not_on_the_screen() {
         assert_eq!(h.session.double_click(nowhere), Dirty::NONE);
     }
 }
+
+/// A view given a size that is not finite keeps the size it had, and a
+/// cursor no view could map to a finite point is nowhere: an ordinary click
+/// never places a point that is not one (#403).
+#[test]
+fn a_size_that_is_not_finite_leaves_the_view_as_it_was() {
+    for (width, height) in [
+        (f64::INFINITY, 600.0),
+        (800.0, f64::NAN),
+        (f64::NEG_INFINITY, f64::INFINITY),
+    ] {
+        let mut h = Harness::new();
+        let view = h.session.view().clone();
+        h.session.resize(width, height);
+        assert_eq!(h.session.view(), &view, "{width} × {height}");
+        h.enter("L");
+        for x in [400.0, 500.0] {
+            let at = ScreenPoint::new(x, 300.0);
+            h.session
+                .pointer_down(at, PointerButton::Primary, Modifiers::NONE);
+            h.session
+                .pointer_up(at, PointerButton::Primary, Modifiers::NONE);
+        }
+        h.enter("");
+        let ends: Vec<Point2> = h
+            .session
+            .drawing()
+            .entities()
+            .flat_map(|(_, entity)| match entity {
+                Entity::Line(line) => vec![line.start, line.end],
+                _ => Vec::new(),
+            })
+            .collect();
+        assert_eq!(ends.len(), 2, "one line");
+        assert!(ends.iter().all(|point| point.is_finite()), "{ends:?}");
+    }
+}
