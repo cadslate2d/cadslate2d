@@ -672,10 +672,11 @@ struct Writer {
 }
 
 /// Every dimension, with its properties, in the order their DIMENSION
-/// records are written: those inside block definitions first, in table
-/// order, then each layout's in ID order, then the model's in ID order —
-/// the order their records are written — so that the n-th DIMENSION
-/// written owns the n-th anonymous block.
+/// records are written, so that the n-th DIMENSION written owns the n-th
+/// anonymous block: each layout's, in its paper block, in table order;
+/// then those inside block definitions, in table order; then the model's,
+/// in ENTITIES (#392). [`Writer::blocks`] and the entities' phase are
+/// that order.
 fn dimensions_in_write_order(drawing: &Drawing) -> Vec<(DimensionEntity, Properties)> {
     let mut out = Vec::new();
     let mut take = |record: &EntityRecord| {
@@ -683,24 +684,22 @@ fn dimensions_in_write_order(drawing: &Drawing) -> Vec<(DimensionEntity, Propert
             out.push((dimension.clone(), record.properties));
         }
     };
+    let in_space = |space| {
+        records_in(drawing, space)
+            .into_iter()
+            .filter_map(|id| drawing.record(id))
+    };
+    for (id, _) in drawing.layouts().iter() {
+        if id != LayoutId::MODEL {
+            in_space(id).for_each(&mut take);
+        }
+    }
     for (id, block) in drawing.blocks().iter() {
         if id != BlockId::FIRST {
             block.entities.iter().for_each(&mut take);
         }
     }
-    let spaces = drawing
-        .layouts()
-        .iter()
-        .map(|(id, _)| id)
-        .filter(|id| *id != LayoutId::MODEL)
-        .chain(std::iter::once(LayoutId::MODEL));
-    for space in spaces {
-        for id in records_in(drawing, space) {
-            if let Some(record) = drawing.record(id) {
-                take(record);
-            }
-        }
-    }
+    in_space(LayoutId::MODEL).for_each(&mut take);
     out
 }
 
@@ -2994,6 +2993,71 @@ mod tests {
             })
             .unwrap();
         assert_eq!(read.value(), 300.0);
+    }
+
+    /// Each DIMENSION names the anonymous block holding its own geometry
+    /// when blocks and layouts both hold dimensions (#392): the layouts'
+    /// paper blocks are written before the user's blocks, and the
+    /// dimensions are counted in that order.
+    #[test]
+    fn each_dimension_names_the_block_of_its_own_geometry() {
+        use cad_document::{Block, Layout};
+        let dimension = |length: f64| {
+            DimensionEntity::new(
+                Measure::Linear {
+                    a: Point2::ORIGIN,
+                    b: Point2::new(length, 0.0),
+                    rotation: 0.0,
+                },
+                Point2::new(length / 2.0, 10.0),
+            )
+        };
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.define_block(Block::new(
+            "B",
+            Point2::ORIGIN,
+            vec![EntityRecord::new(dimension(100.0), Properties::default())],
+        ))
+        .unwrap();
+        let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+        tx.insert_in(sheet, dimension(7.0)).unwrap();
+        tx.insert(dimension(30.0)).unwrap();
+        tx.commit();
+        let text = export(&drawing);
+
+        // What each anonymous block's text says, by the block's name.
+        let mut shown: HashMap<&str, String> = HashMap::new();
+        let mut block = None;
+        let mut kind = "";
+        for (code, value) in groups(&text) {
+            match (code, value) {
+                (0, "ENDBLK") => block = None,
+                (0, k) => kind = k,
+                (2, name) if kind == "BLOCK" && name.starts_with("*D") => block = Some(name),
+                (1, words) if matches!(kind, "TEXT" | "MTEXT") => {
+                    if let Some(name) = block {
+                        shown.entry(name).or_default().push_str(words);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let named: Vec<(&str, f64)> = records(&text, "DIMENSION")
+            .iter()
+            .map(|record| {
+                let length = value(record, 42).unwrap().parse().unwrap();
+                (value(record, 2).unwrap(), length)
+            })
+            .collect();
+        assert_eq!(named.len(), 3);
+        for (name, length) in named {
+            let words = shown.get(name).map_or("", String::as_str);
+            assert!(
+                words.contains(&format!("{length:.2}")),
+                "{name} measures {length} but its block shows {words:?}"
+            );
+        }
     }
 
     #[test]
