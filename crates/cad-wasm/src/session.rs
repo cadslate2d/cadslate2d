@@ -1157,6 +1157,7 @@ SE",
     /// screen, and what is saved opens again.
     #[test]
     fn a_pointer_event_that_is_not_on_the_screen_places_nothing() {
+        use cad_document::Entity;
         let mut cad = CadSession::new();
         cad.resize(800.0, 600.0);
         cad.submit_text("L");
