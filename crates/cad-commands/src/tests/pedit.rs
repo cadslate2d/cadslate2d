@@ -133,6 +133,28 @@ fn pedit_undo_of_the_conversion_goes_back_to_the_pick() {
     assert_eq!(polyline(&h, 0).width(), 2.0);
 }
 
+/// #382: a closed flag on two vertices in a line closes nothing, so PEDIT
+/// treats the polyline as open — it can be joined to — yet Open clears
+/// the flag the Properties panel shows, and Close still asks for three
+/// vertices.
+#[test]
+fn pedit_open_clears_a_flag_that_closes_nothing() {
+    let mut h = Harness::with_entities([PolylineEntity::with_bulges(
+        vec![p(0.0, 0.0), p(100.0, 0.0)],
+        vec![0.0, 0.0],
+        true,
+    )
+    .into()]);
+    h.enter_all(&["ZOOM", "E", "PEDIT"]);
+    h.click_world(p(50.0, 0.0));
+    h.enter("C");
+    assert_eq!(last(&h), "A polyline needs three vertices to close.");
+    h.enter("O");
+    assert!(!polyline(&h, 0).closed, "the flag cleared");
+    h.enter("O");
+    assert_eq!(last(&h), "The polyline is already open.");
+}
+
 #[test]
 fn pedit_joins_what_meets_the_polylines_ends_and_keeps_its_width() {
     let mut h = Harness::with_entities([

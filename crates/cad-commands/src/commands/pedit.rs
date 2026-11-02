@@ -266,7 +266,10 @@ impl Command for PeditCommand {
                         }
                     }
                     OPEN => {
-                        if !polyline.closes() {
+                        // The flag, not closes(): a flag set on two
+                        // vertices in a line closes nothing, but the panel
+                        // shows it, and Open clears it (#382).
+                        if !polyline.closed {
                             ctx.message("The polyline is already open.");
                         } else {
                             self.change(ctx, polyline.with_closed(false));
