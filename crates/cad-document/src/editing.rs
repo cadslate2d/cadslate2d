@@ -2992,4 +2992,76 @@ mod tests {
             }
         }
     }
+
+    /// #379: far from the origin a cutting edge through the trimmed
+    /// object's own end divides nothing, in every direction — the cut is
+    /// a few spacings of the numbers off the end, not on it — and with a
+    /// real cut too, exactly the picked stretch goes. Lines, arcs with a
+    /// radial cutter, and polylines.
+    #[test]
+    fn far_from_the_origin_a_cutter_through_an_end_divides_nothing() {
+        let origin = p(-9.5e6, 8.7e6);
+        let turn = |v: Vec2, by: f64| {
+            Vec2::new(
+                v.x * by.cos() - v.y * by.sin(),
+                v.x * by.sin() + v.y * by.cos(),
+            )
+        };
+        let through = |end: Point2, across: Vec2| -> Entity {
+            LineEntity::new(end - across * 500.0, end + across * 700.0).into()
+        };
+        let mut wrong: Vec<String> = Vec::new();
+        for i in 0..4000 {
+            let angle = f64::from(i) / 4000.0 * std::f64::consts::TAU;
+            let u = Vec2::new(angle.cos(), angle.sin());
+            let across = turn(u, 1.2);
+
+            // A line, cut through its end b, picked near a.
+            let (a, b) = (origin, origin + u * 37.3);
+            let line: Entity = LineEntity::new(a, b).into();
+            let end_cut = through(b, across);
+            match line.trimmed(&end_cut, a + u * 10.0) {
+                Err(TrimError::NoIntersection) => {}
+                other => wrong.push(format!("line {i}: {other:?}")),
+            }
+            // With a real cut at 20 too, picked at 30: the stretch from 20
+            // to b goes, and the head stays whole.
+            let mid_cut = through(a + u * 20.0, across);
+            let cuts: Vec<Point2> = line
+                .intersections(&end_cut, Tables::none())
+                .into_iter()
+                .chain(line.intersections(&mid_cut, Tables::none()))
+                .collect();
+            match line.trim_parts_at(&cuts, a + u * 30.0) {
+                Ok(parts) if parts.kept.len() == 1 => {}
+                other => wrong.push(format!("line and middle {i}: {other:?}")),
+            }
+
+            // An arc, cut radially through its end, picked near its start.
+            let arc: Entity = ArcEntity::new(origin, 37.3, angle, angle + 1.0).into();
+            let end_point = origin + turn(u, 1.0) * 37.3;
+            match arc.trimmed(
+                &through(end_point, turn(u, 1.0)),
+                origin + turn(u, 0.2) * 37.3,
+            ) {
+                Err(TrimError::NoIntersection) => {}
+                other => wrong.push(format!("arc {i}: {other:?}")),
+            }
+
+            // An open polyline, cut through its last vertex, picked on its
+            // first segment.
+            let c = b + across * 25.0;
+            let polyline: Entity = PolylineEntity::new(vec![a, b, c], false).into();
+            match polyline.trimmed(&through(c, u), a + u * 10.0) {
+                Err(TrimError::NoIntersection) => {}
+                other => wrong.push(format!("polyline {i}: {other:?}")),
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} wrong, first: {:?}",
+            wrong.len(),
+            wrong.first()
+        );
+    }
 }

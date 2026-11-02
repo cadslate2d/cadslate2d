@@ -353,10 +353,11 @@ impl Path {
             });
         }
 
-        // An open path: its own ends divide nothing.
+        // An open path: its own ends divide nothing — judged at the ends'
+        // own magnitude (ADR-0012, #379).
+        let at_ends = tolerance.around(&[start.point, end.point]);
         located.retain(|cut| {
-            !tolerance.coincident(cut.point, start.point)
-                && !tolerance.coincident(cut.point, end.point)
+            !at_ends.coincident(cut.point, start.point) && !at_ends.coincident(cut.point, end.point)
         });
         let before = located.iter().rev().find(|cut| cut.along() < at.along());
         let after = located.iter().find(|cut| cut.along() >= at.along());
@@ -399,7 +400,11 @@ impl Path {
             ..location
         };
         let (a, b) = (on_path(a), on_path(b));
-        let same = tolerance.coincident(a.point, b.point);
+        // Whether the two points are one, and whether one is an end, at the
+        // ends' own magnitude — as BREAK on a line or arc judges it
+        // (ADR-0012, #379).
+        let at_ends = tolerance.around(&[start.point, end.point]);
+        let same = at_ends.coincident(a.point, b.point);
         if self.closed {
             return (!same).then(|| vec![self.between(b, a, tolerance)]);
         }
@@ -408,10 +413,10 @@ impl Path {
         } else {
             (b, a)
         };
-        let head = (!tolerance.coincident(from.point, start.point))
+        let head = (!at_ends.coincident(from.point, start.point))
             .then(|| self.between(start, from, tolerance));
         let tail =
-            (!tolerance.coincident(to.point, end.point)).then(|| self.between(to, end, tolerance));
+            (!at_ends.coincident(to.point, end.point)).then(|| self.between(to, end, tolerance));
         match (head, tail) {
             (None, None) => None,
             (None, Some(_)) | (Some(_), None) if same => None,
@@ -530,6 +535,32 @@ mod tests {
     use std::f64::consts::{PI, SQRT_2};
 
     use super::*;
+
+    /// #379: far from the origin, BREAK on a polyline judges two points a
+    /// few spacings apart, one at an end, as BREAK on a line does: the
+    /// same point at the end, so nothing to split off.
+    #[test]
+    fn a_break_far_from_the_origin_agrees_with_the_same_line() {
+        let (start, end) = (
+            Point2::new(-9.5e6, 8.7e6),
+            Point2::new(-9.5e6 + 37.3, 8.7e6),
+        );
+        let near_end = Point2::new(end.x - 4e-9, end.y);
+        let tolerance = LinearTolerance::DEFAULT;
+        assert!(
+            !tolerance.coincident(end, near_end),
+            "apart by the absolute tolerance"
+        );
+        let line = crate::break_segment(&Segment::new(start, end), end, near_end, tolerance);
+        let path = Path {
+            vertices: vec![start, end],
+            bulges: vec![],
+            closed: false,
+        };
+        let broken = path.broken(end, near_end, tolerance);
+        assert_eq!(line.map(|pieces| pieces.len()), None);
+        assert_eq!(broken.map(|pieces| pieces.len()), None);
+    }
 
     /// #197: the area of a closed path is exact through its arcs — a square
     /// is its side squared, a circle of two half-turn bulges is πr², a
