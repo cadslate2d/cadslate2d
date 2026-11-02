@@ -75,6 +75,64 @@ fn pedit_closes_opens_widens_decurves_and_undoes_within_the_command_as_one_undo(
     assert_eq!(h.entities()[0], bulged(), "one undo for the whole command");
 }
 
+/// #384: PEDIT's Undo takes a Join back whole: the polyline as it was,
+/// and the line and arc it swallowed back in the drawing; then the change
+/// before it, and then nothing.
+#[test]
+fn pedit_undo_takes_a_join_back_with_what_it_swallowed() {
+    let mut h = Harness::with_entities([
+        PolylineEntity::new(vec![p(0.0, 0.0), p(40.0, 0.0)], false).into(),
+        LineEntity::new(p(40.0, 0.0), p(40.0, 30.0)).into(),
+        ArcEntity::new(
+            p(60.0, 30.0),
+            20.0,
+            std::f64::consts::PI,
+            3.0 * std::f64::consts::FRAC_PI_2,
+        )
+        .into(),
+    ]);
+    h.enter_all(&["ZOOM", "E", "PE"]);
+    h.click_world(p(20.0, 0.0));
+    h.enter_all(&["W", "2"]);
+    h.enter("J");
+    h.select_box(p(-10.0, -10.0), p(130.0, 110.0));
+    h.enter("");
+    assert_eq!(last(&h), "2 objects added to the polyline.");
+    assert_eq!(h.session.drawing().shown().count(), 1);
+    h.enter("U");
+    assert_eq!(
+        h.session.drawing().shown().count(),
+        3,
+        "the joined line and arc are back too"
+    );
+    assert_eq!(polyline(&h, 0).vertices, vec![p(0.0, 0.0), p(40.0, 0.0)]);
+    assert_eq!(polyline(&h, 0).width(), 2.0, "as it was after the width");
+    h.enter("U");
+    assert_eq!(polyline(&h, 0).width(), 0.0);
+    h.enter("U");
+    assert_eq!(last(&h), "Nothing to undo.");
+}
+
+/// #384: Undo that takes back PEDIT's own conversion of a line leaves no
+/// polyline to edit: PEDIT says so and asks for one again, rather than
+/// offering polyline options on a line.
+#[test]
+fn pedit_undo_of_the_conversion_goes_back_to_the_pick() {
+    let mut h = Harness::with_entities([LineEntity::new(p(0.0, 0.0), p(40.0, 0.0)).into()]);
+    h.enter_all(&["ZOOM", "E", "PE"]);
+    h.click_world(p(20.0, 0.0));
+    h.enter("");
+    assert!(matches!(h.entities()[0], Entity::Polyline(_)), "converted");
+    h.enter("U");
+    assert!(matches!(h.entities()[0], Entity::Line(_)), "as it was");
+    assert_eq!(last(&h), "The line is as it was.");
+    assert_eq!(h.prompt(), "Select polyline:");
+    // And on again: the line is converted afresh and edited.
+    h.click_world(p(20.0, 0.0));
+    h.enter_all(&["", "W", "2"]);
+    assert_eq!(polyline(&h, 0).width(), 2.0);
+}
+
 #[test]
 fn pedit_joins_what_meets_the_polylines_ends_and_keeps_its_width() {
     let mut h = Harness::with_entities([
