@@ -26,8 +26,9 @@ const ENTER_NAME: &str = "Enter block name";
 const BAD_SCALE_FACTOR: &str = "The scale factor must be greater than zero.";
 
 /// The block called `name`, if there is one.
+/// The block of that name a reference may place: never the model's own.
 fn find(ctx: &CommandContext<'_>, name: &str) -> Option<BlockId> {
-    ctx.drawing.blocks().find(name)
+    ctx.drawing.blocks().placeable(name)
 }
 
 /// Why the block table refused a change, in the user's terms.
@@ -366,10 +367,16 @@ impl InsertCommand {
 
     fn commit(ctx: &mut CommandContext<'_>, reference: BlockReferenceEntity) -> Step {
         let mut transaction = ctx.transaction();
-        transaction
-            .insert(reference)
-            .expect("the block was found and the scale checked");
-        transaction.commit();
+        match transaction.insert(reference) {
+            Ok(_) => {
+                transaction.commit();
+            }
+            // Refused, said, never a panic (#383).
+            Err(error) => {
+                drop(transaction);
+                ctx.message(format!("The block cannot be placed: {error}."));
+            }
+        }
         Step::Finished
     }
 }
