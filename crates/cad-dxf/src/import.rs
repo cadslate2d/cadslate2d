@@ -5074,6 +5074,10 @@ mod tests {
         // Not an escape, or one for a control character: left as written.
         assert_eq!(decoded(b"\\U+12 \\U+000A"), "\\U+12 \\U+000A");
         assert_eq!(decoded("plain ²".as_bytes()), "plain ²");
+        // A backslash written as an escape is read once, not again with
+        // the words after it (#394).
+        assert_eq!(decoded(b"\\U+005CU+0041"), "\\U+0041");
+        assert_eq!(decoded(b"\\\\U+005CU+0041"), "\\\\U+0041");
     }
 
     /// A character beyond the first 65,536 — an emoji, a mathematical

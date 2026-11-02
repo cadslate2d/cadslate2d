@@ -703,18 +703,23 @@ fn dimensions_in_write_order(drawing: &Drawing) -> Vec<(DimensionEntity, Propert
     out
 }
 
-/// The name of the n-th dimension's anonymous block, counting from one.
 /// A value as an AC1015 file holds it: ASCII as it is, every other
 /// character as AutoCAD writes it, `\U+XXXX` — one per UTF-16 unit — since
 /// the file declares the Windows-1252 code page and a reader decodes it so
-/// (#358). Read back by the import as the characters they were.
+/// (#358). A backslash that would start such an escape is itself one,
+/// `\U+005C`, so words that happen to read `\U+0041` are not taken for
+/// the character (#394). Read back by the import as the characters they
+/// were.
 fn escaped(value: &str) -> std::borrow::Cow<'_, str> {
-    if value.is_ascii() {
+    const ESCAPE: &str = "\\U+";
+    if value.is_ascii() && !value.contains(ESCAPE) {
         return std::borrow::Cow::Borrowed(value);
     }
     let mut out = String::with_capacity(value.len() + 8);
-    for c in value.chars() {
-        if c.is_ascii() {
+    for (at, c) in value.char_indices() {
+        if c == '\\' && value[at..].starts_with(ESCAPE) {
+            out.push_str("\\U+005C");
+        } else if c.is_ascii() {
             out.push(c);
         } else {
             let mut units = [0u16; 2];
@@ -726,6 +731,7 @@ fn escaped(value: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
+/// The name of the n-th dimension's anonymous block, counting from one.
 fn dimension_block_name(n: usize) -> String {
     format!("*D{n}")
 }
@@ -3771,6 +3777,59 @@ mod tests {
         contents.sort();
         assert_eq!(contents, vec!["smile 😀 x", "𝑥 = 𠀋\n😀"]);
         assert!(!back.report.has_unsupported_content());
+        assert_eq!(export(&back.drawing), text);
+    }
+
+    /// Words that read like an escape — `\U+0041` in a note about escapes
+    /// — are written so that they are not taken for the character: the
+    /// backslash as `\U+005C`. They come back as written, in a TEXT and in
+    /// an MTEXT, where the next words up to a semicolon used to vanish as
+    /// an alignment code (#394).
+    #[test]
+    fn words_that_read_like_an_escape_survive() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.insert(TextEntity::new(
+            Point2::ORIGIN,
+            2.5,
+            0.0,
+            "see \\U+0041 here, \\U+D83D\\U+DE00, \\U+",
+        ))
+        .unwrap();
+        tx.insert(MTextEntity::new(
+            Point2::new(0.0, 10.0),
+            60.0,
+            2.5,
+            0.0,
+            "see \\U+0041; here".to_owned(),
+        ))
+        .unwrap();
+        tx.commit();
+        let text = export(&drawing);
+        assert!(
+            text.contains("\nsee \\U+005CU+0041 here, \\U+005CU+D83D\\U+005CU+DE00, \\U+005CU+\n")
+        );
+        assert!(text.contains("\nsee \\\\U+005CU+0041; here\n"));
+        let back = crate::import(text.as_bytes()).unwrap();
+        let mut contents: Vec<String> = back
+            .drawing
+            .entities()
+            .map(|(_, entity)| match entity {
+                Entity::Text(text) => text.content.clone(),
+                Entity::MText(text) => text.content.clone(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        contents.sort();
+        assert_eq!(
+            contents,
+            vec![
+                "see \\U+0041 here, \\U+D83D\\U+DE00, \\U+",
+                "see \\U+0041; here"
+            ]
+        );
+        assert!(!back.report.has_unsupported_content());
+        assert_eq!(back.report.formatting_dropped, 0);
         assert_eq!(export(&back.drawing), text);
     }
 
