@@ -3064,4 +3064,103 @@ mod tests {
             wrong.first()
         );
     }
+
+    /// #380: far from the origin EXTEND reaches a boundary straight ahead
+    /// in every direction, and a boundary through the tip does not stop
+    /// it: the extension goes to the one ahead, not 2e-9 to the tip — for
+    /// a line and for an arc.
+    #[test]
+    fn far_from_the_origin_extend_reaches_the_boundary_ahead() {
+        let origin = p(-9.5e6, 8.7e6);
+        let turn = |v: Vec2, by: f64| {
+            Vec2::new(
+                v.x * by.cos() - v.y * by.sin(),
+                v.x * by.sin() + v.y * by.cos(),
+            )
+        };
+        let across = |at: Point2, direction: Vec2| -> Entity {
+            LineEntity::new(at - direction * 900.0, at + direction * 1100.0).into()
+        };
+        let mut wrong: Vec<String> = Vec::new();
+        for i in 0..4000 {
+            let angle = f64::from(i) / 4000.0 * std::f64::consts::TAU;
+            let u = Vec2::new(angle.cos(), angle.sin());
+            let tip = origin + u * 37.3;
+            let line: Entity = LineEntity::new(origin, tip).into();
+            let ahead = tip + u * 21.1;
+            let target = across(ahead, turn(u, 1.2));
+            let reaches = |result: Result<Entity, ExtendError>| match result {
+                Ok(Entity::Line(longer)) => {
+                    longer.start == origin && longer.end.distance_to(ahead) < 1e-6
+                }
+                _ => false,
+            };
+            let alone = line.extended(&target, tip);
+            if !reaches(alone.clone()) {
+                wrong.push(format!("alone {i}: {alone:?}"));
+            }
+            let at_tip = across(tip, turn(u, 0.7));
+            let boundary: Vec<_> = at_tip
+                .own_primitives()
+                .into_iter()
+                .chain(target.own_primitives())
+                .collect();
+            let both = line.extended_to(&boundary, tip);
+            if !reaches(both.clone()) {
+                wrong.push(format!("with one through the tip {i}: {both:?}"));
+            }
+
+            // An arc from its end, with one boundary through that end and
+            // one 0.3 rad on round its circle: it reaches the one on.
+            let arc: Entity = ArcEntity::new(origin, 37.3, angle, angle + 1.0).into();
+            let radial = |by: f64| turn(u, by);
+            let end = origin + radial(1.0) * 37.3;
+            let on = origin + radial(1.3) * 37.3;
+            let short = |at: Point2, direction: Vec2| -> Entity {
+                LineEntity::new(at - direction * 5.0, at + direction * 5.0).into()
+            };
+            let boundary: Vec<_> = short(end, radial(1.0))
+                .own_primitives()
+                .into_iter()
+                .chain(short(on, radial(1.3)).own_primitives())
+                .collect();
+            let grown = arc.extended_to(&boundary, end);
+            let reached = match &grown {
+                Ok(Entity::Arc(longer)) => longer.arc().end_point().distance_to(on) < 1e-6,
+                _ => false,
+            };
+            if !reached {
+                wrong.push(format!("arc {i}: {grown:?}"));
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} wrong, first: {:?}",
+            wrong.len(),
+            wrong.first()
+        );
+
+        // The issue's own line and boundary.
+        let line: Entity = LineEntity::new(
+            p(-9500000.0, 8700000.0),
+            p(-9499962.718405299, 8700001.171621313),
+        )
+        .into();
+        let boundary: Entity = LineEntity::new(
+            p(-9500860.380032491, 8699177.282113576),
+            p(-9499206.627844382, 8700661.476208134),
+        )
+        .into();
+        match line.extended(&boundary, p(-9499962.718405299, 8700001.171621313)) {
+            Ok(Entity::Line(longer)) => {
+                assert!(
+                    longer
+                        .end
+                        .distance_to(p(-9499941.628816877, 8700001.83438833))
+                        < 1e-6
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
 }

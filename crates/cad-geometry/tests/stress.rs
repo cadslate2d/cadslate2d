@@ -469,7 +469,14 @@ proptest! {
         ));
         let slack = frame.slack(2e4);
 
-        if let Some(extended) = extend_segment(&line, true, &[boundary], TOLERANCE) {
+        let result = extend_segment(&line, true, &[boundary], TOLERANCE);
+        // A boundary crossing at a real angle is reached, however far from
+        // the origin (#380); only a crossing a hair from parallel may be
+        // refused.
+        if slant.sin().abs() > 0.04 {
+            prop_assert!(result.is_some(), "a boundary straight ahead is reached");
+        }
+        if let Some(extended) = result {
             prop_assert_eq!(extended.start, line.start, "the other end is untouched");
             prop_assert!(extended.end.is_finite());
             prop_assert!(extended.distance_to_point(line.end) <= slack, "it still passes through its old end");
