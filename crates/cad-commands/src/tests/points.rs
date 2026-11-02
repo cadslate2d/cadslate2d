@@ -156,6 +156,29 @@ fn divide_counts_along_a_curve_and_refuses_what_is_not_one_or_not_a_count() {
     }
 }
 
+/// #382: a polyline flagged closed with two vertices and a straight line
+/// between them is one open segment: DIVIDE leaves its ends alone, and
+/// MEASURE steps from the end nearest the pick.
+#[test]
+fn a_closed_flag_on_one_straight_segment_is_divided_and_measured_as_open() {
+    let mut h = Harness::with_entities([cad_document::PolylineEntity::with_bulges(
+        vec![p(0.0, 0.0), p(100.0, 0.0)],
+        vec![0.0, 0.0],
+        true,
+    )
+    .into()]);
+    h.enter_all(&["ZOOM", "E", "DIVIDE"]);
+    h.click_world(p(50.0, 0.0));
+    h.enter("4");
+    assert_eq!(last(&h), "Divided into 4 segments: 3 points placed.");
+    assert_eq!(points(&h), vec![p(25.0, 0.0), p(50.0, 0.0), p(75.0, 0.0)]);
+    h.undo();
+    h.enter("MEASURE");
+    h.click_world(p(90.0, 0.0));
+    h.enter("30");
+    assert_eq!(points(&h), vec![p(70.0, 0.0), p(40.0, 0.0), p(10.0, 0.0)]);
+}
+
 #[test]
 fn measure_steps_from_the_end_nearest_the_pick_and_takes_the_curves_layer() {
     let mut h = Harness::new();

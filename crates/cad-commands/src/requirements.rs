@@ -185,7 +185,7 @@ fn check_one(drawing: &Drawing, requirement: &Requirement, factor: f64) -> Outco
             let found = ids
                 .iter()
                 .filter_map(|id| match drawing.entity(*id)? {
-                    entity @ Entity::Polyline(p) if p.closed => Some(entity.bounds(tables)),
+                    entity @ Entity::Polyline(p) if p.closes() => Some(entity.bounds(tables)),
                     // A hole is an outline as much as a block is.
                     entity @ Entity::Circle(_) => Some(entity.bounds(tables)),
                     _ => None,

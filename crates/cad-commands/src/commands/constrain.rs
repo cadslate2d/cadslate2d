@@ -189,7 +189,7 @@ pub(super) fn edge_at(entity: &Entity, id: EntityId, at: Point2) -> Option<Refer
         }
         Entity::Polyline(polyline) => {
             let count = polyline.vertices.len();
-            let segments = if polyline.closed {
+            let segments = if polyline.closes() {
                 count
             } else {
                 count.saturating_sub(1)

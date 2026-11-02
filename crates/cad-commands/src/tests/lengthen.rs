@@ -157,3 +157,24 @@ fn a_pick_is_previewed_as_it_would_leave_the_object_and_dynamic_follows_the_poin
     h.undo();
     assert_eq!(h.lines()[0], LineEntity::new(p(0.0, 0.0), p(100.0, 0.0)));
 }
+
+/// #382: a polyline flagged closed with two vertices and a straight line
+/// between them is one open segment: LENGTHEN by dragging takes it, as a
+/// delta does.
+#[test]
+fn a_closed_flag_on_one_straight_segment_is_lengthened_by_dragging() {
+    let mut h = Harness::with_entities([PolylineEntity::with_bulges(
+        vec![p(0.0, 0.0), p(100.0, 0.0)],
+        vec![0.0, 0.0],
+        true,
+    )
+    .into()]);
+    h.enter_all(&["ZOOM", "E", "LEN", "DY"]);
+    h.click_world(p(95.0, 0.0));
+    assert_eq!(h.prompt(), "Specify new end point:", "{:?}", h.log());
+    h.enter("140,0");
+    let Entity::Polyline(longer) = &h.entities()[0] else {
+        panic!("a polyline");
+    };
+    assert_eq!(longer.vertices, vec![p(0.0, 0.0), p(140.0, 0.0)]);
+}

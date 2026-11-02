@@ -35,6 +35,8 @@ pub struct Path {
     pub vertices: Vec<Point2>,
     /// One per vertex. See `crate::polyline` for the convention.
     pub bulges: Vec<f64>,
+    /// The closed flag as given. Whether the path goes round is
+    /// [`Self::closes`] (#382).
     pub closed: bool,
 }
 
@@ -73,8 +75,8 @@ impl Path {
     /// Whether the path has a closing span back to its first vertex. A
     /// path flagged closed with two vertices and no arc between them — as
     /// a file may hold — is one straight span, open: its ends are ends
-    /// (#382). Everything that goes round a closed path asks here, as
-    /// `spans` does.
+    /// (#382). Whatever goes round a closed path asks here, as `spans`
+    /// does — in this crate and in the commands that walk a path.
     pub fn closes(&self) -> bool {
         polyline_closes(self.vertices.len(), self.closed, |index| self.bulge(index))
     }
