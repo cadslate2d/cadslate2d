@@ -1406,3 +1406,63 @@ fn constraint_bars_and_dimensions_are_overlay_content() {
     assert_eq!(scenes.scene(h.session.drawing()).revision(), revision);
     assert_eq!(scenes.build_count(), 1, "the scene was built once");
 }
+
+/// #390: zoomed far in on an angular dimension's arc, or on a point's
+/// circle marker, the overlay draws the visible span, as it does a circle's:
+/// the adapter drops the committed arc for its size, and nothing else
+/// would draw it.
+#[test]
+fn far_in_on_a_dimension_arc_or_a_point_circle_the_overlay_draws_it() {
+    use cad_core::Point2;
+    use cad_document::{DimensionEntity, Drawing, Measure, PointEntity, PointStyle};
+    let p = Point2::new;
+    // The arc and the circle both pass through (70.71, 70.71), radius 100
+    // about the origin.
+    let dimension = || {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.insert(DimensionEntity::new(
+            Measure::Angular {
+                vertex: p(0.0, 0.0),
+                a: p(200.0, 0.0),
+                b: p(0.0, 200.0),
+            },
+            p(70.710_678, 70.710_678),
+        ))
+        .unwrap();
+        tx.commit();
+        drawing
+    };
+    let point = || {
+        let mut drawing = Drawing::new();
+        // The style first, then the point: a style changed after is #389's.
+        let mut tx = drawing.transaction();
+        tx.set_point_style(PointStyle::new(PointStyle::CIRCLE, 200.0))
+            .unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.insert(PointEntity::new(p(0.0, 0.0))).unwrap();
+        tx.commit();
+        drawing
+    };
+    // Segments in the overlay with the object, and without it.
+    let far_in = |drawing: Drawing| -> u32 {
+        let mut h = Harness::with_drawing(drawing);
+        h.enter_all(&["ZOOM", "C", "70.710678,70.710678", "0.06"]);
+        assert!(h.session.view().scale() * 100.0 > cad_render::FAR_CURVE_RADIUS_PIXELS);
+        let overlay = overlay_of(&h);
+        assert_frame_is_consistent(overlay.frame(), "far curve overlay");
+        overlay.frame().segment_count()
+    };
+    let empty = far_in(Drawing::new());
+    let with_dimension = far_in(dimension());
+    let with_point = far_in(point());
+    assert!(
+        with_dimension > empty,
+        "the dimension's arc is drawn: {with_dimension} over {empty}"
+    );
+    assert!(
+        with_point > empty,
+        "the point's circle is drawn: {with_point} over {empty}"
+    );
+}
