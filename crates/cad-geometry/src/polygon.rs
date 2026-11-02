@@ -345,18 +345,27 @@ pub fn rings_cross(rings: &[Vec<Point2>]) -> bool {
 // a slab at an edge's end has that end exactly, so slabs meet without gaps.
 #[allow(clippy::float_cmp)]
 pub fn even_odd_fill(rings: &[Vec<Point2>]) -> Vec<[Point2; 3]> {
-    let edges: Vec<(Point2, Point2)> = ring_edges(rings)
+    // Each edge running upwards, sorted by where it starts. Both passes
+    // below sweep up through them, an edge meeting only the edges whose
+    // heights overlap its own — loops that merely touch come this way
+    // too, so their cost is the drawing's, not every pair of edges'.
+    let mut edges: Vec<(Point2, Point2)> = ring_edges(rings)
         .into_iter()
         .filter(|(a, b, ..)| a.y != b.y)
         .map(|(a, b, ..)| if a.y < b.y { (a, b) } else { (b, a) })
         .collect();
+    edges.sort_by(|p, q| p.0.y.total_cmp(&q.0.y));
     let mut levels: Vec<f64> = edges.iter().flat_map(|(a, b)| [a.y, b.y]).collect();
+    let mut active: Vec<usize> = Vec::new();
     for (i, &(a, b)) in edges.iter().enumerate() {
-        for &(c, d) in &edges[i + 1..] {
+        active.retain(|&j| edges[j].1.y >= a.y);
+        for &j in &active {
+            let (c, d) = edges[j];
             if let Some(y) = crossing_height(a, b, c, d) {
                 levels.push(y);
             }
         }
+        active.push(i);
     }
     levels.sort_by(f64::total_cmp);
     levels.dedup();
@@ -370,12 +379,19 @@ pub fn even_odd_fill(rings: &[Vec<Point2>]) -> Vec<[Point2; 3]> {
         }
     };
     let mut triangles = Vec::new();
+    let (mut spanning, mut next) = (Vec::<usize>::new(), 0);
     for slab in levels.windows(2) {
         let (low, high) = (slab[0], slab[1]);
-        let mut across: Vec<(f64, f64)> = edges
+        // The edges across the slab: begun by its bottom, not ended there.
+        // Every edge ends at a level, so one past `low` reaches `high`.
+        while next < edges.len() && edges[next].0.y <= low {
+            spanning.push(next);
+            next += 1;
+        }
+        spanning.retain(|&j| edges[j].1.y > low);
+        let mut across: Vec<(f64, f64)> = spanning
             .iter()
-            .filter(|(a, b)| a.y <= low && b.y >= high)
-            .map(|&edge| (x_at(edge, low), x_at(edge, high)))
+            .map(|&j| (x_at(edges[j], low), x_at(edges[j], high)))
             .collect();
         across.sort_by(|p, q| (p.0 + p.1).total_cmp(&(q.0 + q.1)));
         for &[left, right] in across.as_chunks::<2>().0 {
@@ -744,6 +760,24 @@ mod tests {
         closed.push(p(0.0, 0.0));
         closed.insert(2, closed[1]);
         assert!(!rings_cross(&[closed]));
+        // An island touching its boundary at a vertex takes the even-odd
+        // fill too, and comes to the ring less the island: a flattened
+        // circle of 2,000 chords, swept rather than paired (#414).
+        let ring: Vec<Point2> = (0..2000)
+            .map(|i| {
+                let angle = f64::from(i) / 2000.0 * TAU;
+                p(100.0 * angle.cos(), 100.0 * angle.sin())
+            })
+            .collect();
+        let island = vec![ring[0], p(50.0, 10.0), p(50.0, -10.0)];
+        let both = vec![ring.clone(), island.clone()];
+        assert!(rings_cross(&both), "touching is taken as meeting");
+        let expected = signed_area(&ring).abs() - signed_area(&island).abs();
+        let filled = area_of(&even_odd_fill(&both));
+        assert!(
+            (filled - expected).abs() < 1e-6 * expected,
+            "{filled} vs {expected}"
+        );
         // Nested, apart, or one ring: none cross.
         assert!(!rings_cross(&[
             square(0.0, 0.0, 10.0),
