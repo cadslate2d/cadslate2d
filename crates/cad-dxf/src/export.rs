@@ -1834,7 +1834,7 @@ impl Writer {
         self.int(71, 5);
         self.real(42, layout.value);
         if let Some(text) = &dimension.text_override {
-            self.group(1, text);
+            self.group(1, &mtext_codes(text));
         }
         if let Some(angle) = dimension.text_angle {
             let on_its_own = dimension
