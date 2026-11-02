@@ -3111,9 +3111,13 @@ impl RecordBody {
             // no scale at all.
             #[allow(clippy::float_cmp)]
             48 => self.has_dropped_properties |= real(group)? != 1.0,
-            // Thickness, and elevation: a 2D drawing keeps neither. Zero is
-            // the default and loses nothing.
-            30 | 31 | 39 => self.has_dropped_properties |= real(group)? != 0.0,
+            // Thickness, and elevation — a lightweight polyline's too (38,
+            // #398): a 2D drawing keeps neither. Zero is the default and
+            // loses nothing.
+            30 | 31 | 38 | 39 => self.has_dropped_properties |= real(group)? != 0.0,
+            // Invisible (60, #398): the drawing shows what it holds, so an
+            // invisible object comes in visible, and the file is lossy.
+            60 => self.has_dropped_properties |= group.value.trim() != "0",
             _ => {}
         }
         Ok(())
@@ -3169,6 +3173,9 @@ impl RecordBody {
         let first = Point2::new(need(self.x0, 10)?, need(self.y0, 20)?);
         let height = need(self.radius, 40)?;
         let (content, mut dropped) = plain_text(self.text.as_deref().unwrap_or(""));
+        // Drawn backwards (71, 2) or upside down (4) — a mirror of itself
+        // a text cannot be: it reads the right way round (#398).
+        dropped |= self.attachment.is_some_and(|flags| flags & (2 | 4) != 0);
         let rotation = self.start_degrees.unwrap_or(0.0).to_radians();
         let (halign, valign) = (self.halign.unwrap_or(0), self.valign.unwrap_or(0));
         let alignment = match (self.x1, self.y1) {
@@ -4164,6 +4171,63 @@ mod tests {
                     false
                 ),
             ]
+        );
+    }
+
+    /// What a drawing cannot hold is counted, never dropped in silence
+    /// (#398): an invisible object (60) comes in visible, a lightweight
+    /// polyline's elevation (38) flat, and a text drawn backwards or
+    /// upside down (71, 2 and 4) the right way round. Each default — 0 —
+    /// loses nothing.
+    #[test]
+    fn invisibility_elevation_and_mirrored_text_are_reported() {
+        let line = |sixty: &'static str| {
+            vec![
+                (0, "LINE"),
+                (60, sixty),
+                (10, "0"),
+                (20, "0"),
+                (11, "1"),
+                (21, "1"),
+            ]
+        };
+        let polyline = |elevation: &'static str| {
+            vec![
+                (0, "LWPOLYLINE"),
+                (90, "2"),
+                (70, "0"),
+                (38, elevation),
+                (10, "0"),
+                (20, "0"),
+                (10, "1"),
+                (20, "0"),
+            ]
+        };
+        let text = |flags: &'static str| {
+            vec![
+                (0, "TEXT"),
+                (10, "0"),
+                (20, "0"),
+                (40, "1"),
+                (1, "AB"),
+                (71, flags),
+            ]
+        };
+        let count = |records: &[Vec<(i32, &str)>]| {
+            let body: Vec<(i32, &str)> = records.concat();
+            let import = import(entities(&body).as_bytes()).unwrap();
+            assert!(import.report.unsupported.is_empty(), "{:?}", import.report);
+            import.report.with_dropped_properties
+        };
+        assert_eq!(count(&[line("1")]), 1);
+        assert_eq!(count(&[polyline("5.0")]), 1);
+        assert_eq!(count(&[text("2")]), 1);
+        assert_eq!(count(&[text("4")]), 1);
+        assert_eq!(count(&[text("6")]), 1);
+        assert_eq!(
+            count(&[line("0"), polyline("0.0"), text("0")]),
+            0,
+            "the defaults lose nothing"
         );
     }
 
