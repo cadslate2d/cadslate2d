@@ -36,6 +36,9 @@ use crate::{DxfError, ImportReport};
 
 /// Start of every binary DXF file.
 const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF";
+/// The UTF-8 byte order mark some writers put before the first line —
+/// ezdxf's `utf-8-sig`, Notepad — which says nothing a reader needs.
+const BYTE_ORDER_MARK: &[u8] = b"\xEF\xBB\xBF";
 /// Records that belong to the entity before them (POLYLINE vertices, INSERT
 /// attributes) and are not counted on their own.
 /// Records that follow another and are read with it: none, now that
@@ -255,6 +258,8 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
     if bytes.starts_with(BINARY_SENTINEL) {
         return Err(DxfError::BinaryDxf);
     }
+    // A byte order mark is not part of the first group code (#396).
+    let bytes = bytes.strip_prefix(BYTE_ORDER_MARK).unwrap_or(bytes);
     let text = decoded(bytes);
 
     let mut reader = Reader::new(Groups::new(&text, limits.max_value_bytes), limits);
@@ -5134,6 +5139,35 @@ mod tests {
             import(entities(&[(0, long.as_str()), (0, "we\u{202e}ird name")]).as_bytes()).unwrap();
         let kinds: Vec<&String> = import.report.unsupported.keys().collect();
         assert_eq!(kinds, vec!["WEIRDNAME", &"X".repeat(MAX_KIND_LENGTH)]);
+    }
+
+    /// A file that starts with a UTF-8 byte order mark opens, the mark
+    /// passed over and the lines counted as before (#396).
+    #[test]
+    fn a_byte_order_mark_is_passed_over() {
+        let mut bytes = BYTE_ORDER_MARK.to_vec();
+        bytes.extend_from_slice(entities(&LINE_0_0_TO_10_5).as_bytes());
+        let opened = import(&bytes).unwrap();
+        assert_eq!(opened.report.lines, 1);
+        assert!(!opened.report.has_unsupported_content());
+        // Only at the start: elsewhere it is a character of the words.
+        let mut late = b"999\n".to_vec();
+        late.extend_from_slice(BYTE_ORDER_MARK);
+        late.extend_from_slice(b"note\n");
+        late.extend_from_slice(entities(&LINE_0_0_TO_10_5).as_bytes());
+        assert_eq!(import(&late).unwrap().report.lines, 1);
+        // A mark with no file after it is an empty file, as without it.
+        assert_eq!(
+            import(BYTE_ORDER_MARK).map(|i| i.report.lines).ok(),
+            import(b"").map(|i| i.report.lines).ok()
+        );
+        // The line of an error is the file's own line.
+        let mut broken = BYTE_ORDER_MARK.to_vec();
+        broken.extend_from_slice(b"  0\nSECTION\nnot a code\n");
+        assert_eq!(
+            import(&broken).map(|_| ()),
+            import(b"  0\nSECTION\nnot a code\n").map(|_| ())
+        );
     }
 
     #[test]
