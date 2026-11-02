@@ -168,6 +168,7 @@ fn the_matrix_names_only_tests_and_fixtures_that_exist() {
         "src/export.rs",
         "src/report.rs",
         "src/wipeout.rs",
+        "src/text_codes.rs",
         "tests/fixtures.rs",
         // The drawing order's tiers, which the reader and the writer share.
         "../cad-document/src/draw_order.rs",
