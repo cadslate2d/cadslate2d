@@ -321,6 +321,13 @@ fn decoded(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
+/// Bytes in Windows-1252 — the code page of a file before 2007, and of a
+/// DWG's strings before R2007 (#399) — as the characters they are: the
+/// inverse of [`code_page`](crate::code_page) for every byte.
+pub fn from_code_page(bytes: &[u8]) -> String {
+    bytes.iter().map(|&b| windows_1252(b)).collect()
+}
+
 /// A Windows-1252 byte as its character: ASCII and Latin-1 as they are,
 /// and the twenty-seven printable characters of 0x80 to 0x9F where that
 /// code page puts them (the five it leaves undefined as Latin-1's).

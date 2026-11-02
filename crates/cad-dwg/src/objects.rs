@@ -123,7 +123,7 @@ impl<'a> Streams<'a> {
     pub fn text(&mut self, limits: &ImportLimits) -> Result<String, DwgError> {
         match self.strings.as_mut() {
             Some(strings) => strings.text_unicode(limits),
-            None => Ok(String::from_utf8_lossy(&self.data.text(limits)?).into_owned()),
+            None => self.data.code_page_text(limits),
         }
     }
 }

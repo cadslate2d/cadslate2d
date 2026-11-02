@@ -423,7 +423,7 @@ fn text_field(
 ) -> Result<String, DwgError> {
     match strings {
         Some(s) => s.text_unicode(limits),
-        None => Ok(String::from_utf8_lossy(&d.text(limits)?).into_owned()),
+        None => d.code_page_text(limits),
     }
 }
 
@@ -1458,7 +1458,7 @@ fn mleader(
     if has_text {
         let text = match strings.as_mut() {
             Some(s) => s.text_unicode(limits)?,
-            None => String::from_utf8_lossy(&d.text(limits)?).into_owned(),
+            None => d.code_page_text(limits)?,
         };
         text_fields.push(text.clone());
         groups.text(304, &text);
@@ -1620,7 +1620,7 @@ fn mleader(
         let attdef = handles.handle()?.resolve(own);
         let label = match strings.as_mut() {
             Some(s) => s.text_unicode(limits)?,
-            None => String::from_utf8_lossy(&d.text(limits)?).into_owned(),
+            None => d.code_page_text(limits)?,
         };
         let ui_index = d.bs()?;
         let width = d.bd()?;

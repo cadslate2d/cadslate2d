@@ -21,6 +21,13 @@ pub type Import = cad_dxf::Import;
 /// Report keys for what a DWG carries that no record can say.
 const UNREADABLE: &str = "(unreadable-dwg-object)";
 const MISSING: &str = "(dwg-object-missing-from-file)";
+/// A drawing before R2007 whose strings are in a code page this reader has
+/// no table for, holding characters beyond ASCII: read as Windows-1252,
+/// they may not be the characters written (#399).
+pub(crate) const CODE_PAGE: &str = "(dwg-code-page)";
+/// The code pages read as Windows-1252 exactly: US ASCII (1), ISO 8859-1
+/// (2), which differs only in control characters, and ANSI 1252 (30).
+const WINDOWS_1252: [u16; 3] = [1, 2, 30];
 
 /// Imports a DWG file with the default limits.
 pub fn import(bytes: &[u8]) -> Result<Import, DwgError> {
@@ -462,6 +469,20 @@ pub fn records(file: &File<'_>) -> Result<Vec<Record>, DwgError> {
             kind: MISSING.to_owned(),
             groups: Vec::new(),
         });
+    }
+    let in_code_page = file.version() != crate::Version::R2007;
+    if in_code_page && !WINDOWS_1252.contains(&file.code_page()) {
+        let beyond_ascii = out
+            .iter()
+            .flat_map(|record| &record.groups)
+            .any(|(_, value)| !value.is_ascii());
+        if beyond_ascii {
+            out.push(Record {
+                section: Section::Entities,
+                kind: CODE_PAGE.to_owned(),
+                groups: Vec::new(),
+            });
+        }
     }
     Ok(out)
 }
