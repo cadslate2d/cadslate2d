@@ -154,8 +154,14 @@ impl Command for PolygonCommand {
                 };
             }
             (State::Radius { center, .. }, CommandInput::Distance(radius)) => {
-                // A typed radius: the first corner (or side) straight to the
-                // right of the centre.
+                // A typed radius is a size: a negative one is refused, not
+                // turned into a corner to the left (#387).
+                if !(radius.is_finite() && radius > 0.0) {
+                    ctx.message("The radius must be a positive number.");
+                    return Step::Continue;
+                }
+                // The first corner (or side) straight to the right of the
+                // centre.
                 let point = *center + cad_core::Vec2::new(radius, 0.0);
                 return match self.corners(point) {
                     Some(corners) => self.finish(ctx, corners),
