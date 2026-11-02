@@ -400,7 +400,11 @@ impl Path {
             ..location
         };
         let (a, b) = (on_path(a), on_path(b));
-        let same = tolerance.coincident(a.point, b.point);
+        // Whether the two points are one, and whether one is an end, at the
+        // ends' own magnitude — as BREAK on a line or arc judges it
+        // (ADR-0012, #379).
+        let at_ends = tolerance.around(&[start.point, end.point]);
+        let same = at_ends.coincident(a.point, b.point);
         if self.closed {
             return (!same).then(|| vec![self.between(b, a, tolerance)]);
         }
@@ -409,8 +413,6 @@ impl Path {
         } else {
             (b, a)
         };
-        // At the ends' own magnitude, as for a trim (ADR-0012, #379).
-        let at_ends = tolerance.around(&[start.point, end.point]);
         let head = (!at_ends.coincident(from.point, start.point))
             .then(|| self.between(start, from, tolerance));
         let tail =
@@ -538,6 +540,32 @@ mod tests {
     /// is its side squared, a circle of two half-turn bulges is πr², a
     /// square with one side bowed out gains the half-disc, bowed in loses
     /// it — and the sign follows the direction.
+    /// #379: far from the origin, BREAK on a polyline judges two points a
+    /// few spacings apart, one at an end, as BREAK on a line does: the
+    /// same point at the end, so nothing to split off.
+    #[test]
+    fn a_break_far_from_the_origin_agrees_with_the_same_line() {
+        let (start, end) = (
+            Point2::new(-9.5e6, 8.7e6),
+            Point2::new(-9.5e6 + 37.3, 8.7e6),
+        );
+        let near_end = Point2::new(end.x - 4e-9, end.y);
+        let tolerance = LinearTolerance::DEFAULT;
+        assert!(
+            !tolerance.coincident(end, near_end),
+            "apart by the absolute tolerance"
+        );
+        let line = crate::break_segment(&Segment::new(start, end), end, near_end, tolerance);
+        let path = Path {
+            vertices: vec![start, end],
+            bulges: vec![],
+            closed: false,
+        };
+        let broken = path.broken(end, near_end, tolerance);
+        assert_eq!(line.map(|pieces| pieces.len()), None);
+        assert_eq!(broken.map(|pieces| pieces.len()), None);
+    }
+
     #[test]
     fn the_area_of_a_path_counts_its_arcs_exactly_and_signs_by_direction() {
         let square = Path {
