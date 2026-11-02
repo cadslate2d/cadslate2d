@@ -119,6 +119,13 @@ fn a_block_note_is_placed_at_the_dogleg_and_an_unknown_block_is_refused() {
     h.enter_all(&["B", "NOPE"]);
     assert_eq!(h.log().last().unwrap(), "There is no block \"NOPE\".");
     assert_eq!(h.prompt(), "Enter block name:", "asked again");
+    // The model's own row is no block a note can place (#383).
+    h.enter("*Model_Space");
+    assert_eq!(
+        h.log().last().unwrap(),
+        "There is no block \"*Model_Space\"."
+    );
+    assert_eq!(h.prompt(), "Enter block name:", "asked again");
     h.enter_all(&["tag", "0,0"]);
     h.move_to_world(p(20.0, 10.0));
     let previewed = h.session.overlay().into_iter().any(|item| {

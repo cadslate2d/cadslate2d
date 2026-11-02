@@ -217,6 +217,21 @@ fn an_existing_name_asks_before_redefining_and_every_reference_follows() {
     );
 }
 
+/// #383: the model's own row is no block INSERT can place: it says so
+/// and asks again, as `INSERT ?` leaves it out of the list; nothing is
+/// inserted and nothing panics.
+#[test]
+fn insert_refuses_the_models_own_block() {
+    let mut h = Harness::new();
+    h.enter_all(&["INSERT", "*Model_Space"]);
+    assert_eq!(
+        h.log().last().map(String::as_str),
+        Some("There is no block \"*Model_Space\".")
+    );
+    h.enter_all(&["*model_space", "50,50", "", ""]);
+    assert_eq!(h.session.drawing().len(), 0);
+}
+
 #[test]
 fn a_block_cannot_contain_itself() {
     let mut h = with_chair();

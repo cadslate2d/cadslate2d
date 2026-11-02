@@ -406,7 +406,7 @@ impl Command for MLeaderStyleCommand {
                         style.block = None;
                         format!("\"{}\": new notes are words.", style.name)
                     });
-                } else if let Some(id) = ctx.drawing.blocks().find(name) {
+                } else if let Some(id) = ctx.drawing.blocks().placeable(name) {
                     // The block's own name, as the table spells it.
                     let name = ctx
                         .drawing
