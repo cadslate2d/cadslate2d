@@ -24,7 +24,7 @@ use cad_document::{
     Properties, ViewportEntity, Weight, WipeoutEntity, draw_order,
 };
 use cad_geometry::{Arc, Primitive};
-use cad_render::{GeometrySink, walk_entity};
+use cad_render::{GeometrySink, drawn_continuous, walk_entity};
 
 /// PDF points per millimetre: a point is 1/72 of an inch.
 pub const POINTS_PER_MM: f64 = 72.0 / 25.4;
@@ -462,18 +462,9 @@ impl Painter<'_> {
                 if matches!(part, Entity::Viewport(_)) {
                     continue;
                 }
-                // As on screen: a text, a dimension, and a hatch are drawn
-                // continuous, whatever their linetype says.
-                if matches!(
-                    part,
-                    Entity::Text(_)
-                        | Entity::MText(_)
-                        | Entity::Dimension(_)
-                        | Entity::Hatch(_)
-                        | Entity::Point(_)
-                        | Entity::Leader(_)
-                        | Entity::MLeader(_)
-                ) {
+                // As on screen: what is not a curve is drawn continuous,
+                // whatever its linetype says.
+                if drawn_continuous(&part) {
                     properties.linetype = Linetype::CONTINUOUS;
                 }
                 let look = look_of(drawing, &placement, self.settings, properties);

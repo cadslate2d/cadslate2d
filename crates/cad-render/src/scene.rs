@@ -699,20 +699,8 @@ impl RenderScene {
         mut properties: Properties,
         order: i16,
     ) {
-        // A linetype is for curves: a text is drawn continuous, or its
-        // glyphs would fall apart into dashes. Nor a dimension's text, nor
-        // a hatch, whose pattern carries its own dashes.
-        if matches!(
-            entity,
-            Entity::Text(_)
-                | Entity::MText(_)
-                | Entity::Dimension(_)
-                | Entity::Hatch(_)
-                | Entity::Viewport(_)
-                | Entity::Point(_)
-                | Entity::Leader(_)
-                | Entity::MLeader(_)
-        ) {
+        // A linetype is for curves: what is not one is drawn continuous.
+        if crate::drawn_continuous(entity) {
             properties.linetype = Linetype::CONTINUOUS;
         }
         let style = style_word(self.style_of(Look::Drawn(properties)), order);
@@ -1765,6 +1753,46 @@ mod tests {
         assert!(
             scene.frame().segment_distances().iter().all(|d| *d == 0.0),
             "no path runs through a text"
+        );
+    }
+
+    /// #405: an attribute definition's tag is text too, drawn continuous
+    /// on a dashed layer, as a text is.
+    #[test]
+    fn an_attribute_definitions_tag_is_drawn_continuous_whatever_its_layer_says() {
+        use cad_document::{AttributeDefinitionEntity, Linetype, LinetypeDef, TextEntity};
+
+        let dashed = Layer {
+            linetype: Linetype::Named(cad_document::LinetypeId::from_raw(1)),
+            ..Layer::named("dashed")
+        };
+        let tag = TextEntity::new(Point2::new(0.0, 0.0), 10.0, 0.0, "TAG");
+        let definition = AttributeDefinitionEntity::new("TAG", "Tag?", tag);
+        let drawing = Drawing::from_parts(
+            [dashed],
+            [LinetypeDef::built_in_named("Dashed").unwrap()],
+            [
+                (Entity::AttributeDefinition(definition), on(1)),
+                (Entity::Line(line(0.0, 20.0, 50.0, 20.0)), on(1)),
+            ],
+        )
+        .unwrap();
+        let mut cache = SceneCache::new();
+        let scene = cache.scene(&drawing);
+        let patterns = patterns_of(scene);
+        let styles = scene.segment_styles();
+        let (line_style, tag_styles) = styles.split_last().unwrap();
+        assert!(!tag_styles.is_empty());
+        for style in tag_styles {
+            assert_eq!(
+                patterns[*style as usize],
+                RenderScene::PATTERN_CONTINUOUS,
+                "an attribute definition's tag is drawn dashed"
+            );
+        }
+        assert_ne!(
+            patterns[*line_style as usize],
+            RenderScene::PATTERN_CONTINUOUS
         );
     }
 }

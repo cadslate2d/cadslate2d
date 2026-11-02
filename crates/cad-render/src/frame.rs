@@ -484,6 +484,27 @@ impl GeometrySink for Styled<'_> {
     }
 }
 
+/// Whether `entity` is drawn continuous whatever its linetype, on screen
+/// and on paper alike: a linetype is for curves. Text — a text, a
+/// paragraph, an attribute definition's tag (#405), a dimension's or a
+/// leader's words — would fall apart into dashes; a hatch's pattern
+/// carries its own; a point's marker and a viewport's frame are no
+/// curve of the drawing.
+pub fn drawn_continuous(entity: &Entity) -> bool {
+    matches!(
+        entity,
+        Entity::Text(_)
+            | Entity::MText(_)
+            | Entity::AttributeDefinition(_)
+            | Entity::Dimension(_)
+            | Entity::Hatch(_)
+            | Entity::Viewport(_)
+            | Entity::Point(_)
+            | Entity::Leader(_)
+            | Entity::MLeader(_)
+    )
+}
+
 /// The geometry of one entity, handed to `sink`. The single place that
 /// knows how each entity kind becomes segments, arcs, and triangles,
 /// shared by scene, overlay, and plot. A block reference is its
