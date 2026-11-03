@@ -288,13 +288,16 @@ impl Session {
             .iter()
             .any(|step| matches!(step, Step::Select(_) | Step::SelectView(_) | Step::Pick(_)));
         let result = self.run_steps(compiled, scale, views, place);
+        let log_lines = self.log_since(log_from);
         // The command's own words for what it refused: the last line it
         // wrote that is a sentence, not the echo of a prompt and answer.
-        let reason = self
-            .log_since(log_from)
-            .into_iter()
+        // While it is still asking, a sentence (ending in a period) is the
+        // one way to tell a refusal from a plain echo.
+        let reason = log_lines
+            .iter()
             .rev()
-            .find(|line| line.ends_with('.') && !line.starts_with("Command:"));
+            .find(|line| line.ends_with('.') && !line.starts_with("Command:"))
+            .cloned();
         let changed = self.drawing().revision() != revision;
         if self.command_active() {
             let prompt = self.prompt();
@@ -315,6 +318,15 @@ impl Session {
         result?;
         // A command that goes on after a refusal — OFFSET, TRIM, EXTEND ask
         // for the next object — ends having changed nothing, and said why.
+        // Once it is no longer asking, nothing is echoed after that last
+        // line, so it is the reason even without a period: a
+        // `TransactionError`'s `Display` has none (#369).
+        let reason = reason.or_else(|| {
+            log_lines
+                .last()
+                .filter(|line| !line.starts_with("Command:"))
+                .cloned()
+        });
         if let (false, Some(reason)) = (changed, reason) {
             return Err(RunError::Refused {
                 operation,
