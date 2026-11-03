@@ -1670,7 +1670,10 @@ impl<'a> Reader<'a> {
     /// (4) from the centre (10) and the point on the circle (15); the
     /// angle at a vertex (5) from the vertex (15), the points (13, 14), and
     /// the arc's (10). Where the text is (11) places a radius or diameter.
-    /// The text (1) is the drafter's unless empty or `<>`; the text's angle
+    /// The text (1) is the drafter's unless empty or `<>`, its codes
+    /// decoded as an MTEXT's and its lines — `\X` puts some under the
+    /// dimension line — run into one, `<>` in it standing for the value
+    /// (#418); the text's angle
     /// (53) is a turn away from where it would read on its own. The style
     /// is named (3) and made if the file did not define it; the anonymous
     /// block is not read, the layout engine drawing the dimension afresh
@@ -1740,9 +1743,21 @@ impl<'a> Reader<'a> {
             self.report.count_unsupported(INVALID);
             return Ok(());
         };
-        match body.text.as_deref().map(str::trim) {
-            None | Some("") | Some("<>") => {}
-            Some(words) => dimension.text_override = Some(words.to_owned()),
+        let (words, dropped) = plain_mtext(body.text.as_deref().unwrap_or(""));
+        let lines: Vec<&str> = words
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        // Words under the dimension line, or on a line of their own, are
+        // run into the one line: a layout the drawing does not hold.
+        let split = lines.len() > 1;
+        let words = lines.join(" ");
+        if dropped || split {
+            self.report.formatting_dropped += 1;
+        }
+        if !words.is_empty() && words != "<>" {
+            dimension.text_override = Some(words);
         }
         if let Some(turn) = body.text_rotation
             && turn != 0.0
@@ -3641,6 +3656,46 @@ mod tests {
         groups.extend_from_slice(body);
         groups.extend_from_slice(&[(0, "ENDSEC"), (0, "EOF")]);
         dxf(&groups)
+    }
+
+    /// #418: a drafter's dimension text is decoded — `<>` the measured
+    /// value as the style shows it, `%%c` the diameter sign, `\X` the
+    /// break under the dimension line run into one line — and written
+    /// back as it was read.
+    #[test]
+    fn a_dimension_text_override_is_decoded_and_its_value_stands_in_for_angle_brackets() {
+        let shown = |words: &str| {
+            let text = entities(&[
+                (0, "DIMENSION"),
+                (8, "0"),
+                (10, "0"),
+                (20, "10"),
+                (70, "0"),
+                (1, words),
+                (13, "0"),
+                (23, "0"),
+                (14, "100"),
+                (24, "0"),
+                (50, "0"),
+            ]);
+            let imported = import(text.as_bytes()).unwrap();
+            let drawing = &imported.drawing;
+            let (_, entity) = drawing.entities().next().expect("a dimension");
+            let Entity::Dimension(dimension) = entity else {
+                panic!("{entity:?}");
+            };
+            let style = drawing.dim_styles().get(dimension.style).unwrap();
+            let again = import(export(drawing).as_bytes()).unwrap();
+            let (_, back) = again.drawing.entities().next().unwrap();
+            assert_eq!(back, entity, "{words} is written back as read");
+            (dimension.content(style), imported.report.formatting_dropped)
+        };
+        assert_eq!(shown("2X <> TYP"), ("2X 100.00 TYP".to_owned(), 0));
+        assert_eq!(shown("%%c<>"), ("Ø100.00".to_owned(), 0));
+        assert_eq!(shown("<>\\XTYP"), ("100.00 TYP".to_owned(), 1));
+        assert_eq!(shown("{\\H2;BIG} <>"), ("BIG 100.00".to_owned(), 1));
+        assert_eq!(shown("a \\\\ b"), ("a \\ b".to_owned(), 0));
+        assert_eq!(shown("<>"), ("100.00".to_owned(), 0));
     }
 
     const LINE_0_0_TO_10_5: [(i32, &str); 6] = [

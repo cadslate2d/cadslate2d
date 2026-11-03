@@ -24,6 +24,8 @@ use crate::dim_style::{DimStyle, DimStyleId};
 use crate::text::{Justification, TextEntity};
 
 const TOLERANCE: LinearTolerance = LinearTolerance::DEFAULT;
+/// What stands for the measured value in a drafter's text, as in AutoCAD.
+const VALUE: &str = "<>";
 
 /// What a dimension measures.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -231,7 +233,8 @@ pub struct DimensionEntity {
     /// diameter).
     pub line_point: Point2,
     pub style: DimStyleId,
-    /// Text in place of the measured value, when the drafter wrote some.
+    /// Text in place of the measured value, when the drafter wrote some;
+    /// `<>` in it stands for the value (#418).
     pub text_override: Option<String>,
     /// The text's angle, radians from +X, when the drafter set one; else
     /// the text reads along the dimension line, the right way up.
@@ -563,9 +566,17 @@ impl DimensionEntity {
     /// shows it — degrees with their sign, `R` before a radius, `Ø` before
     /// a diameter.
     pub fn content(&self, style: &DimStyle) -> String {
-        if let Some(text) = &self.text_override {
-            return text.clone();
+        match &self.text_override {
+            Some(text) if text.contains(VALUE) => {
+                text.replacen(VALUE, &self.measured_content(style), 1)
+            }
+            Some(text) => text.clone(),
+            None => self.measured_content(style),
         }
+    }
+
+    /// The text of the measured value, as the style formats it.
+    fn measured_content(&self, style: &DimStyle) -> String {
         // A length reads through the style's linear factor; an angle does not.
         let shown = match self.measure {
             Measure::Angular { .. } => self.value(),
@@ -1462,6 +1473,19 @@ mod tests {
         assert_eq!(worded.content(&style), "TYP");
         assert_eq!(worded.layout(&style).text.content, "TYP");
         assert_eq!(worded.saying(None).content(&style), "12.3 mm");
+        // `<>` in the drafter's words is the value, as the style shows it,
+        // prefix and all (#418).
+        let around = dim.clone().saying(Some("2X <> TYP".to_owned()));
+        assert_eq!(around.content(&style), "2X 12.3 mm TYP");
+        let diameter = DimensionEntity::new(
+            Measure::Diameter {
+                center: p(0.0, 0.0),
+                radius: 5.0,
+            },
+            p(10.0, 0.0),
+        )
+        .saying(Some("2× <>".to_owned()));
+        assert_eq!(diameter.content(&style), "2× Ø10.0 mm");
         assert_eq!(
             dim.clone().in_style(DimStyleId::from_raw(3)).style,
             DimStyleId::from_raw(3)
