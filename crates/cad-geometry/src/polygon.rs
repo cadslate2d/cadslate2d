@@ -816,7 +816,11 @@ mod tests {
                 prop_assert!(around % 2 == 1, "{triangle:?} in {around} rings");
             }
             // The area agrees with the fraction of a grid an odd number of
-            // rings hold, to the grid's coarseness.
+            // rings hold, to the grid's coarseness: a cell is counted wrong
+            // only where an edge crosses it, and an edge of length l crosses
+            // at most √2·l/step + 2 cells. A fixed share of the area was too
+            // tight for a small ring turned to the grid: a square of radius
+            // 7.15 at 45°, filled to its exact 2r², sampled 4% short.
             let (step, mut odd) = (0.5, 0usize);
             for i in 0..280 {
                 for j in 0..280 {
@@ -828,7 +832,13 @@ mod tests {
             }
             let sampled = odd as f64 * step * step;
             let filled = area_of(&triangles);
-            prop_assert!((filled - sampled).abs() <= 0.03 * sampled.max(100.0), "{filled} vs {sampled}");
+            let crossed: f64 = rings
+                .iter()
+                .flat_map(|ring| (0..ring.len()).map(move |i| (ring[i], ring[(i + 1) % ring.len()])))
+                .map(|(a, b)| std::f64::consts::SQRT_2 * (b - a).length() / step + 2.0)
+                .sum();
+            let coarseness = crossed * step * step;
+            prop_assert!((filled - sampled).abs() <= coarseness, "{filled} vs {sampled}, within {coarseness}");
             if !rings_cross(&rings) && rings.len() == 1 {
                 prop_assert!((filled - signed_area(&rings[0]).abs()).abs() < 1e-6 * filled.max(1.0));
             }
