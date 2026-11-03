@@ -19,6 +19,15 @@ updates:
     cooldown:
       default-days: 14
     open-pull-requests-limit: 5
+    # React refuses to run with react and react-dom at different versions
+    # (#491 bumped react alone): they move together, with their types.
+    groups:
+      react:
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
   - package-ecosystem: github-actions
     directory: /
     schedule:
