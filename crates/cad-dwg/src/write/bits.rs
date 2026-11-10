@@ -268,10 +268,12 @@ impl BitWriter {
     }
 
     /// T: a text of the R2000 and R2004 kind — a bit short length and the
-    /// bytes. The drawing's code page is not applied: the bytes are what
-    /// the DXF of this release carries, UTF-8.
+    /// bytes, in the drawing's code page, Windows-1252. `value` is a
+    /// record's, ASCII with `\U+XXXX` escapes: each character the code
+    /// page has is its byte, and the others stay escapes, as AutoCAD
+    /// writes them (#428).
     pub fn text(&mut self, value: &str) {
-        let bytes = value.as_bytes();
+        let bytes = cad_dxf::code_page(value);
         let n = bytes.len().min(i16::MAX as usize);
         self.bs(n as i16);
         for b in &bytes[..n] {
@@ -280,9 +282,10 @@ impl BitWriter {
     }
 
     /// TU: a Unicode text of the R2007 kind — a bit short count of UTF-16
-    /// units, then the units.
+    /// units, then the units. `value` is a record's, its escapes written as
+    /// the characters they stand for (#428).
     pub fn text_unicode(&mut self, value: &str) {
-        let units: Vec<u16> = value.encode_utf16().collect();
+        let units: Vec<u16> = cad_dxf::unicode(value).encode_utf16().collect();
         let n = units.len().min(i16::MAX as usize);
         self.bs(n as i16);
         for unit in &units[..n] {
