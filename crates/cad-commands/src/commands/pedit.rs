@@ -76,13 +76,31 @@ impl PeditCommand {
     }
 
     /// Replaces the polyline with `changed`, in a transaction of its own
-    /// that `Undo` can take back.
+    /// that `Undo` can take back. Its vertices keep their numbers, so a
+    /// constraint on one follows it where it moves.
     fn change(&mut self, ctx: &mut CommandContext<'_>, changed: PolylineEntity) {
+        self.commit(ctx, changed, false);
+    }
+
+    /// The same, for a change that numbers the vertices afresh — one
+    /// inserted: a constraint on a vertex or a segment goes to the one
+    /// where it was (#422).
+    fn renumber(&mut self, ctx: &mut CommandContext<'_>, changed: PolylineEntity) {
+        self.commit(ctx, changed, true);
+    }
+
+    fn commit(&mut self, ctx: &mut CommandContext<'_>, changed: PolylineEntity, renumbered: bool) {
         let Some(id) = self.id else {
             return;
         };
         let mut tx = ctx.transaction();
-        if tx.replace(id, changed.clone()).is_ok() {
+        let done = if renumbered {
+            tx.reshape(id, changed.clone().into(), Vec::new(), &[])
+                .map(|_| ())
+        } else {
+            tx.replace(id, changed.clone())
+        };
+        if done.is_ok() {
             tx.commit();
             self.polyline = Some(changed);
         }
@@ -137,13 +155,18 @@ impl PeditCommand {
             return;
         };
         let added = joined.members.len() - 1;
+        // As JOIN: a constraint on a point still an end, or on a segment,
+        // goes where that is in the joined polyline (#422).
+        let absorbed: Vec<EntityId> = joined
+            .members
+            .iter()
+            .filter(|member| **member != 0)
+            .map(|member| ids[*member])
+            .collect();
         let mut tx = ctx.transaction();
-        let mut ok = tx.replace(id, polyline).is_ok();
-        for member in &joined.members {
-            if *member != 0 {
-                ok &= tx.remove(ids[*member]).is_ok();
-            }
-        }
+        let ok = tx
+            .reshape(id, polyline.into(), Vec::new(), &absorbed)
+            .is_ok();
         if ok {
             tx.commit();
             self.current(ctx);
@@ -373,7 +396,7 @@ impl Command for PeditCommand {
             (State::VertexInsert { index }, CommandInput::Point(to)) => {
                 let index = *index;
                 if let Some(polyline) = self.current(ctx) {
-                    self.change(ctx, Self::with_vertex(&polyline, index, to, true));
+                    self.renumber(ctx, Self::with_vertex(&polyline, index, to, true));
                 }
                 self.state = State::Vertex { index: index + 1 };
             }
