@@ -1000,6 +1000,132 @@ mod tests {
     }
 
     #[test]
+    fn a_reshaped_polyline_carries_its_vertex_and_segment_constraints_by_place() {
+        // #421: a polyline cut in two numbers its vertices and segments
+        // afresh; what was on its last vertex and its last segment is the
+        // second piece's, at the same places, and nothing moves.
+        let mut drawing = Drawing::new();
+        let p = Point2::new;
+        let mut tx = drawing.transaction();
+        let path = tx
+            .insert(PolylineEntity::new(
+                vec![p(0.0, 0.0), p(10.0, 0.0), p(20.0, 0.0), p(30.0, 0.0)],
+                false,
+            ))
+            .unwrap();
+        let point = tx.insert(crate::PointEntity::new(p(30.0, 0.0))).unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        for constraint in [
+            Constraint::geometric(
+                Kind::Coincident,
+                vec![at(path, Part::Vertex(3)), at(point, Part::Point)],
+            ),
+            Constraint::geometric(Kind::Horizontal, vec![at(path, Part::Segment(2))]),
+            Constraint::geometric(Kind::Horizontal, vec![at(path, Part::Segment(0))]),
+        ] {
+            tx.add_constraint(constraint).unwrap();
+        }
+        assert_eq!(tx.commit().refused, None);
+
+        let mut tx = drawing.transaction();
+        let pieces = tx
+            .reshape(
+                path,
+                PolylineEntity::new(vec![p(0.0, 0.0), p(10.0, 0.0), p(12.0, 0.0)], false).into(),
+                vec![
+                    PolylineEntity::new(vec![p(18.0, 0.0), p(20.0, 0.0), p(30.0, 0.0)], false)
+                        .into(),
+                ],
+                &[],
+            )
+            .unwrap();
+        assert_eq!(tx.commit().refused, None);
+        let far = pieces[0];
+        let references: Vec<Vec<Reference>> = drawing
+            .constraints()
+            .iter()
+            .map(|(_, c)| c.references.clone())
+            .collect();
+        assert_eq!(
+            references,
+            vec![
+                vec![at(far, Part::Vertex(2)), at(point, Part::Point)],
+                vec![at(far, Part::Segment(1))],
+                vec![at(path, Part::Segment(0))],
+            ]
+        );
+        assert_eq!(
+            drawing.entity(point),
+            Some(&crate::PointEntity::new(p(30.0, 0.0)).into())
+        );
+        assert!(drawing.unsatisfied_constraints().is_empty());
+    }
+
+    #[test]
+    fn a_signed_angle_on_a_member_joined_the_other_way_round_goes() {
+        // #422: run the other way, the line's angle to another is turned
+        // half round; its level holds either way and is carried.
+        let mut drawing = Drawing::new();
+        let p = Point2::new;
+        let mut tx = drawing.transaction();
+        let path = tx
+            .insert(PolylineEntity::new(
+                vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 50.0)],
+                false,
+            ))
+            .unwrap();
+        let member = tx
+            .insert(LineEntity::new(p(0.0, 0.0), p(-50.0, 0.0)))
+            .unwrap();
+        let other = tx
+            .insert(LineEntity::new(p(-50.0, 0.0), p(-50.0, 30.0)))
+            .unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.add_constraint(Constraint::geometric(
+            Kind::Horizontal,
+            vec![at(member, Part::Edge)],
+        ))
+        .unwrap();
+        tx.add_constraint(Constraint::dimensional(
+            "a1",
+            Kind::Angle {
+                value: -std::f64::consts::FRAC_PI_2,
+            },
+            vec![at(member, Part::Edge), at(other, Part::Edge)],
+        ))
+        .unwrap();
+        tx.hold(member);
+        assert_eq!(tx.commit().refused, None);
+        let before = drawing.entity(other).cloned();
+
+        let mut tx = drawing.transaction();
+        tx.reshape(
+            path,
+            PolylineEntity::new(
+                vec![p(-50.0, 0.0), p(0.0, 0.0), p(100.0, 0.0), p(100.0, 50.0)],
+                false,
+            )
+            .into(),
+            Vec::new(),
+            &[member],
+        )
+        .unwrap();
+        assert_eq!(tx.commit().refused, None);
+        let rows: Vec<(Kind, Vec<Reference>)> = drawing
+            .constraints()
+            .iter()
+            .map(|(_, c)| (c.kind.clone(), c.references.clone()))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![(Kind::Horizontal, vec![at(path, Part::Segment(0))])]
+        );
+        assert_eq!(drawing.entity(other).cloned(), before, "nothing moved");
+    }
+
+    #[test]
     fn an_entity_replaced_whole_is_held_whole() {
         // #420: a line d1 = 100 long scaled by 2 about its start. Its start
         // keeps its bits; replaced in part, it is free and slides to keep
