@@ -2577,6 +2577,7 @@ impl TransactionBuilder<'_> {
             tolerance.is_zero(w.x + v.x) && tolerance.is_zero(w.y + v.y)
         };
         let (flips_x, flips_y) = (reversed(Vec2::new(1.0, 0.0)), reversed(Vec2::new(0.0, 1.0)));
+        let ids: BTreeSet<EntityId> = ids.iter().copied().collect();
         for (constraint_id, before) in self.constraints_now() {
             if !before.references.iter().all(|r| ids.contains(&r.entity)) {
                 continue;
@@ -2613,7 +2614,23 @@ impl TransactionBuilder<'_> {
                         after.references.swap(0, 1);
                     }
                 }
-                _ => {}
+                // What a reflection leaves as it was: a coincidence, a
+                // direction, a length, a radius. A level or a plumb is kept
+                // by an axis-parallel mirror and broken by a slanted one,
+                // and a fix by any: settling says which. Every kind is
+                // named, so a new one with a handedness is decided here.
+                Kind::Coincident
+                | Kind::Collinear
+                | Kind::Concentric
+                | Kind::Parallel
+                | Kind::Perpendicular
+                | Kind::Horizontal
+                | Kind::Vertical
+                | Kind::Symmetric
+                | Kind::Equal
+                | Kind::Fix { .. }
+                | Kind::Radius { .. }
+                | Kind::Diameter { .. } => {}
             }
             after.place = after.place.map(|place| transform.apply(place));
             if after != before {

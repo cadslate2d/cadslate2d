@@ -713,3 +713,52 @@ fn a_mirror_keeps_what_constraints_among_the_mirrored_say() {
     assert!((angle(&h) + before).abs() < 1e-12, "{} {before}", angle(&h));
     holds(&h);
 }
+
+#[test]
+fn a_constraint_across_the_mirror_is_left_to_settling() {
+    // #425: only the line is mirrored, so its tangency to the circle is
+    // not restated; settling keeps it by bringing the circle along, or,
+    // the circle fixed, refuses the mirror.
+    let tangent = |fixed: bool| {
+        let mut h = Harness::with_entities([
+            LineEntity::new(p(-50.0, -10.0), p(50.0, -10.0)).into(),
+            cad_document::CircleEntity::new(p(0.0, 0.0), 10.0).into(),
+        ]);
+        h.enter("GCTANGENT");
+        h.click_world(p(30.0, -10.0));
+        h.click_world(p(0.0, 10.0));
+        if fixed {
+            h.enter_all(&["GCFIX", "0,0"]);
+        }
+        h
+    };
+    let mut h = tangent(false);
+    h.enter("MIRROR");
+    h.click_world(p(30.0, -10.0));
+    h.enter_all(&["", "0,100", "100,100", "Y"]);
+    assert!(!refused(&h), "{:?}", h.log());
+    assert_eq!(line(&h, 1).start, p(-50.0, 210.0));
+    let Some(Entity::Circle(circle)) = h.session.drawing().entity(id(2)) else {
+        panic!("a circle");
+    };
+    assert!((circle.radius - 10.0).abs() < 1e-7, "{circle:?}");
+    assert!((circle.center.y - 220.0).abs() < 1e-7, "{circle:?}");
+    holds(&h);
+
+    // Fixed, the circle cannot follow: the nearest settling would turn it
+    // inside out to keep the tangency, so the mirror is refused (#424).
+    let mut h = tangent(true);
+    let revision = h.session.drawing().revision();
+    h.enter("MIRROR");
+    h.click_world(p(30.0, -10.0));
+    h.enter_all(&["", "0,100", "100,100", "Y"]);
+    assert!(
+        h.log()
+            .last()
+            .is_some_and(|said| said.starts_with("The edit would")),
+        "{:?}",
+        h.log()
+    );
+    assert_eq!(h.session.drawing().revision(), revision);
+    assert_eq!(line(&h, 1).start, p(-50.0, -10.0));
+}
