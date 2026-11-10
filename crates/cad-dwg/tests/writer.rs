@@ -280,7 +280,7 @@ fn a_spline_through_points_keeps_them_and_one_with_control_data_of_its_own_is_re
     }
 }
 
-/// #431: the current multileader style is not held by a DWG, so one but
+/// #431: the writer carries no current multileader style, so one but
 /// Standard is named before the save, and the file opens with Standard.
 #[test]
 fn a_current_multileader_style_a_dwg_cannot_hold_is_named_before_the_save() {

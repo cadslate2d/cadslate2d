@@ -133,7 +133,7 @@ pub fn export(drawing: &Drawing, version: Version) -> Result<Vec<u8>, WriteError
 /// holds the drawing whole. A spline is by its control points or by its
 /// fit points (§20.4.40): one given by control data of its own and fit
 /// points too keeps the control data, which is its geometry. A current
-/// multileader style but Standard is not held at all (#431).
+/// multileader style but Standard is not carried (#431).
 pub fn export_losses(drawing: &Drawing, _version: Version) -> Vec<String> {
     let splines = drawing
         .entities()
@@ -155,15 +155,18 @@ pub fn export_losses(drawing: &Drawing, _version: Version) -> Vec<String> {
         })
         .count();
     let mut losses = Vec::new();
-    // No DWG header of AC1015 to AC1021 holds the current multileader
-    // style (§9; nor does acadrust's): one but Standard opens as Standard
-    // (#431).
+    // No header variable of AC1015 to AC1021 holds the current
+    // multileader style, and this writer carries it nowhere else, so one
+    // but Standard opens as Standard (#431). LibreDWG's
+    // `header_variables.spec` lists `CMLEADERSTYLE` as computed "via NOD
+    // ACAD_MLEADERSTYLE" — AutoCAD may convey it through the named object
+    // dictionary, which neither this writer nor its reader does yet.
     let current = drawing.settings().current_mleader_style;
     if current != cad_document::MLeaderStyleId::FIRST
         && let Some(style) = drawing.mleader_styles().get(current)
     {
         losses.push(format!(
-            "The current multileader style \"{}\" is not kept: a DWG does not hold it, and the drawing opens with Standard current",
+            "The current multileader style \"{}\" is not kept: this DWG writer does not carry it, and the drawing opens with Standard current",
             style.name
         ));
     }
