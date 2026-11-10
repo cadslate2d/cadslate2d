@@ -235,6 +235,7 @@ Removing a constraint can break nothing, so it triggers nothing.
 
 - Moving every entity of a part together (MOVE, ROTATE) holds everything and breaks nothing but a `Fix`.
 - Scaling breaks dimensions, as in AutoCAD.
+- **Mirroring** keeps every constraint whose parts all go through it, once each is restated in the same transaction by `TransactionBuilder::reflect_constraints`, which `TransientEdit::commit` calls (#425). An arc's ends trade places, so its `Start` and `End` swap. A line–circle tangency touches the line's other side. An angle turns the other way. A horizontal or vertical distance that an axis-parallel mirror reverses is measured from its other point. A dimension's place is mirrored with it. A distance along an axis that a slanted mirror does not keep, like a constraint across the mirror, is left to settling, which keeps it or refuses the edit.
 - An edit that only changes properties settles nothing.
 
 An unconstrained drawing pays one lookup per touched entity.

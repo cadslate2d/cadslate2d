@@ -374,19 +374,32 @@ fn moving_along_one_axis_holds_the_other() {
 }
 
 #[test]
-fn mirror_reverses_a_signed_distance_and_is_refused() {
+fn mirror_says_a_signed_distance_from_its_other_point() {
     // Reflected about its own end, a line measured d1 = 100 to the right
-    // would measure -100: refused, not slid back into place.
+    // runs to the left: d1 is measured from its other end (#425), and the
+    // line is the mirror image, not slid back into place (#420).
     let mut h = Harness::new();
     h.enter_all(&["LINE", "0,0", "100,0", ""]);
     h.enter_all(&["DCHORIZONTAL", "0,0", "100,0", "50,-15", ""]);
-    let revision = h.session.drawing().revision();
     h.enter_all(&["MIRROR", "ALL", "", "100,0", "100,10", "Y"]);
-    assert!(refused(&h), "{:?}", h.log());
-    assert!(h.log().last().unwrap().contains("d1"), "{:?}", h.log());
-    assert_eq!(h.session.drawing().revision(), revision);
-    assert_eq!(line(&h, 1).start, p(0.0, 0.0));
+    assert!(!refused(&h), "{:?}", h.log());
+    assert_eq!(line(&h, 1).start, p(200.0, 0.0));
     assert_eq!(line(&h, 1).end, p(100.0, 0.0));
+    let constraints = h.session.drawing().constraints();
+    let (_, d1) = constraints.iter().next().unwrap();
+    assert_eq!(
+        d1.references,
+        vec![
+            cad_document::Reference::new(id(1), cad_document::Part::End),
+            cad_document::Reference::new(id(1), cad_document::Part::Start),
+        ]
+    );
+    assert_eq!(
+        d1.place,
+        Some(p(150.0, -15.0)),
+        "its dimension mirrored too"
+    );
+    holds(&h);
 }
 
 #[test]
@@ -620,4 +633,132 @@ fn a_real_conflict_beside_a_circle_is_still_refused_and_says_which() {
     let said = h.log().last().unwrap().clone();
     assert!(said.starts_with("The edit would break"), "{:?}", h.log());
     assert_eq!(h.session.drawing().revision(), revision);
+}
+
+#[test]
+fn a_mirror_keeps_what_constraints_among_the_mirrored_say() {
+    // #425: a pure reflection keeps every constraint whose parts all go
+    // through it, once each is said again.
+    use cad_document::{ArcEntity, CircleEntity, Kind, Part, Touch};
+
+    // An arc's ends trade places: line 1's end, coincident with the arc's
+    // start, is coincident with its end after the mirror.
+    let mut h = Harness::with_entities([
+        LineEntity::new(p(-50.0, 0.0), p(10.0, 0.0)).into(),
+        ArcEntity::new(p(0.0, 0.0), 10.0, 0.0, std::f64::consts::FRAC_PI_2).into(),
+    ]);
+    h.enter_all(&["GCCOINCIDENT", "10,0", "10,0"]);
+    assert_eq!(h.session.drawing().constraints().len(), 1, "{:?}", h.log());
+    h.enter_all(&["MIRROR", "ALL", "", "0,100", "100,100", "Y"]);
+    assert!(!refused(&h), "{:?}", h.log());
+    assert_eq!(line(&h, 1).end, p(10.0, 200.0));
+    let constraints = h.session.drawing().constraints();
+    let (_, coincident) = constraints.iter().next().unwrap();
+    assert!(
+        coincident
+            .references
+            .contains(&cad_document::Reference::new(id(2), Part::End))
+    );
+    holds(&h);
+
+    // A tangent touches the line's other side: the circle keeps its radius.
+    let mut h = Harness::with_entities([
+        LineEntity::new(p(-50.0, -10.0), p(50.0, -10.0)).into(),
+        CircleEntity::new(p(0.0, 0.0), 10.0).into(),
+    ]);
+    h.enter("GCTANGENT");
+    h.click_world(p(30.0, -10.0));
+    h.click_world(p(0.0, 10.0));
+    let touch = |h: &Harness| match h.session.drawing().constraints().iter().next() {
+        Some((_, c)) => c.kind.clone(),
+        None => panic!("{:?}", h.log()),
+    };
+    let before = touch(&h);
+    h.enter_all(&["MIRROR", "ALL", "", "0,100", "100,100", "Y"]);
+    assert!(!refused(&h), "{:?}", h.log());
+    let Some(Entity::Circle(circle)) = h.session.drawing().entity(id(2)) else {
+        panic!("a circle");
+    };
+    assert_eq!(*circle, CircleEntity::new(p(0.0, 200.0), 10.0));
+    let flipped = |kind: &Kind| match kind {
+        Kind::Tangent { touch: Touch::Left } => Kind::Tangent {
+            touch: Touch::Right,
+        },
+        Kind::Tangent {
+            touch: Touch::Right,
+        } => Kind::Tangent { touch: Touch::Left },
+        other => other.clone(),
+    };
+    assert_eq!(touch(&h), flipped(&before));
+    holds(&h);
+
+    // An angle turns the other way, about a slanted mirror too.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["LINE", "0,0", "50,50", ""]);
+    h.enter("DCANGULAR");
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(25.0, 25.0));
+    h.enter_all(&["30,10", ""]);
+    let angle = |h: &Harness| match h.session.drawing().constraints().iter().next() {
+        Some((_, c)) => match c.kind {
+            Kind::Angle { value } => value,
+            ref other => panic!("{other:?}"),
+        },
+        None => panic!("{:?}", h.log()),
+    };
+    let before = angle(&h);
+    h.enter_all(&["MIRROR", "ALL", "", "0,-20", "30,40", "Y"]);
+    assert!(!refused(&h), "{:?}", h.log());
+    assert!((angle(&h) + before).abs() < 1e-12, "{} {before}", angle(&h));
+    holds(&h);
+}
+
+#[test]
+fn a_constraint_across_the_mirror_is_left_to_settling() {
+    // #425: only the line is mirrored, so its tangency to the circle is
+    // not restated; settling keeps it by bringing the circle along, or,
+    // the circle fixed, refuses the mirror.
+    let tangent = |fixed: bool| {
+        let mut h = Harness::with_entities([
+            LineEntity::new(p(-50.0, -10.0), p(50.0, -10.0)).into(),
+            cad_document::CircleEntity::new(p(0.0, 0.0), 10.0).into(),
+        ]);
+        h.enter("GCTANGENT");
+        h.click_world(p(30.0, -10.0));
+        h.click_world(p(0.0, 10.0));
+        if fixed {
+            h.enter_all(&["GCFIX", "0,0"]);
+        }
+        h
+    };
+    let mut h = tangent(false);
+    h.enter("MIRROR");
+    h.click_world(p(30.0, -10.0));
+    h.enter_all(&["", "0,100", "100,100", "Y"]);
+    assert!(!refused(&h), "{:?}", h.log());
+    assert_eq!(line(&h, 1).start, p(-50.0, 210.0));
+    let Some(Entity::Circle(circle)) = h.session.drawing().entity(id(2)) else {
+        panic!("a circle");
+    };
+    assert!((circle.radius - 10.0).abs() < 1e-7, "{circle:?}");
+    assert!((circle.center.y - 220.0).abs() < 1e-7, "{circle:?}");
+    holds(&h);
+
+    // Fixed, the circle cannot follow: the nearest settling would turn it
+    // inside out to keep the tangency, so the mirror is refused (#424).
+    let mut h = tangent(true);
+    let revision = h.session.drawing().revision();
+    h.enter("MIRROR");
+    h.click_world(p(30.0, -10.0));
+    h.enter_all(&["", "0,100", "100,100", "Y"]);
+    assert!(
+        h.log()
+            .last()
+            .is_some_and(|said| said.starts_with("The edit would")),
+        "{:?}",
+        h.log()
+    );
+    assert_eq!(h.session.drawing().revision(), revision);
+    assert_eq!(line(&h, 1).start, p(-50.0, -10.0));
 }
