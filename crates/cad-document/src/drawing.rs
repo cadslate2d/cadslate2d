@@ -2498,7 +2498,10 @@ impl TransactionBuilder<'_> {
     }
 
     /// Replaces an existing entity's geometry, keeping its ID and its
-    /// properties.
+    /// properties. As constraints settle, the unknowns whose values it
+    /// changed are held and the rest are free to follow (ADR-0038 §5): a
+    /// grip's point stays where it was put. An edit that set the whole of
+    /// the entity uses [`Self::replace_whole`].
     pub fn replace(
         &mut self,
         id: EntityId,
@@ -2533,6 +2536,21 @@ impl TransactionBuilder<'_> {
             }
         }
         self.push(EntityChange::Replace { id, before, after });
+        Ok(())
+    }
+
+    /// Replaces an existing entity's geometry as a whole — a move, a turn,
+    /// a scale, a reflection of it — and holds every unknown of it as
+    /// constraints settle (ADR-0038 §5), not only those whose values
+    /// changed: the point a transform leaves where it was is set too, and
+    /// never slides to keep a constraint (#420).
+    pub fn replace_whole(
+        &mut self,
+        id: EntityId,
+        entity: impl Into<Entity>,
+    ) -> Result<(), TransactionError> {
+        self.replace(id, entity)?;
+        self.hold(id);
         Ok(())
     }
 
