@@ -415,13 +415,15 @@ impl Command for LayIsoCommand {
 
 /// `LAYUNISO`: the layers the last `LAYISO` switched off or locked, put
 /// back as it found them — those still as it left them; a layer changed
-/// since keeps its change.
+/// since keeps its change. The record stays until the next `LAYISO`: U
+/// after a restore isolates the layers again, and they can be restored
+/// again (#435); restored, they are no longer as `LAYISO` left them.
 #[derive(Debug)]
 pub(crate) struct LayUnisoCommand;
 
 impl Command for LayUnisoCommand {
     fn start(&mut self, ctx: &mut CommandContext<'_>) -> Step {
-        let Some(isolation) = ctx.isolation.take() else {
+        let Some(isolation) = ctx.isolation.clone() else {
             ctx.message("LAYISO has isolated no layers to restore.");
             return Step::Finished;
         };
