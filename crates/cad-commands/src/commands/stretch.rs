@@ -99,22 +99,30 @@ impl StretchCommand {
             return;
         }
         let mut refused = 0;
-        let mut changes: Vec<(EntityId, Entity)> = self
+        // What the window holds whole is moved whole; what it crosses is
+        // reshaped, its other points free to follow (ADR-0038 §5).
+        let moved: Vec<(EntityId, Entity)> = self
             .held
             .whole
             .sources()
             .iter()
             .filter_map(|id| Some((*id, ctx.drawing.entity(*id)?.translated(offset))))
             .collect();
-        for (id, reshaped) in self.held.reshaped(offset) {
-            match reshaped {
-                Some(entity) => changes.push((id, entity)),
+        let mut reshaped: Vec<(EntityId, Entity)> = Vec::new();
+        for (id, entity) in self.held.reshaped(offset) {
+            match entity {
+                Some(entity) => reshaped.push((id, entity)),
                 None => refused += 1,
             }
         }
-        if !changes.is_empty() {
+        if !moved.is_empty() || !reshaped.is_empty() {
             let mut transaction = ctx.transaction();
-            for (id, entity) in changes {
+            for (id, entity) in moved {
+                transaction
+                    .replace_whole(id, entity)
+                    .expect("held entities are live and appear once");
+            }
+            for (id, entity) in reshaped {
                 transaction
                     .replace(id, entity)
                     .expect("held entities are live and appear once");

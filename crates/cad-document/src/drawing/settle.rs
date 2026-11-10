@@ -4,10 +4,10 @@
 //! the drawing as it will be: the entities it changed, the constraints it
 //! added or gave new values, and everything joined to those by a
 //! constraint. Unknowns the transaction set are held — the end a grip put
-//! somewhere, the object a new constraint is drawn to — and the rest of
-//! each constrained part follows, in the same transaction, so one edit is
-//! one undo. An edit that cannot be settled is not applied, and says which
-//! constraint it would break.
+//! somewhere, all of an entity replaced whole, the object a new constraint
+//! is drawn to — and the rest of each constrained part follows, in the
+//! same transaction, so one edit is one undo. An edit that cannot be
+//! settled is not applied, and says which constraint it would break.
 //!
 //! The mapping between entities and the solver's unknowns is here too: a
 //! line is its two ends, a circle its centre and radius, an arc its centre,
@@ -25,6 +25,10 @@ use super::{Drawing, TransactionBuilder};
 use crate::constraint::{Axis, Constraint, ConstraintId, Kind, Part, Touch};
 use crate::transaction::{Change, EntityChange};
 use crate::{ArcEntity, CircleEntity, Entity, LineEntity, PointEntity, PolylineEntity};
+
+/// The least a settled radius may be, at the circle's magnitude: a circle
+/// no larger is none (#424).
+const RADIUS: cad_core::tolerance::LinearTolerance = cad_core::tolerance::LinearTolerance::DEFAULT;
 
 /// An entity's unknowns.
 #[derive(Clone, Debug)]
@@ -80,6 +84,14 @@ fn vars_of(system: &mut System, entity: &Entity) -> Option<Vars> {
 }
 
 impl Vars {
+    /// A circle's or an arc's centre and radius, whatever its part.
+    fn round(&self) -> Option<CircleVar> {
+        match self {
+            Self::Circle(c) | Self::Arc { circle: c, .. } => Some(*c),
+            _ => None,
+        }
+    }
+
     /// Every unknown, in a fixed order.
     fn params(&self) -> Vec<usize> {
         let p = |v: &PointVar| [v.x, v.y];
@@ -468,9 +480,14 @@ impl<'a> Prospect<'a> {
             return Ok(Vec::new());
         }
         let mut part = self.part(reach);
+        // What is on a locked layer is not changed: held, so an edit that
+        // would have to move it is refused (#423).
+        let mut locked: Vec<usize> = Vec::new();
         for (id, v) in &part.vars {
             let params = v.params();
-            if held.contains(id) {
+            if self.drawing.is_locked(*id) {
+                locked.extend(&params);
+            } else if held.contains(id) {
                 for &p in &params {
                     part.system.hold(p);
                 }
@@ -494,8 +511,66 @@ impl<'a> Prospect<'a> {
                 }
             }
         }
-        let solution = cad_geometry::constraint::solve(&part.system, Tolerances::default());
+        let unlocked = (!locked.is_empty()).then(|| part.system.clone());
+        for &p in &locked {
+            part.system.hold(p);
+        }
+        let mut solution = cad_geometry::constraint::solve(&part.system, Tolerances::default());
+        // The nearest solution may push a radius through zero, turning a
+        // circle inside out to keep a tangency, or fail on the way there,
+        // as an arc's does (#424). Held where they were, the radii stay
+        // and the rest of the part moves instead; where it cannot, an edit
+        // that only settled inside out is refused, and one that did not
+        // settle at all says why as before.
+        // Only what this solve flattened: a circle the drawing already has
+        // that small is not the edit's doing. The floor is the linear
+        // tolerance at the circle's own magnitude.
+        let before = &part.system.values;
+        let flat = |values: &[f64]| -> Vec<usize> {
+            part.vars
+                .values()
+                .filter_map(Vars::round)
+                .filter(|c| {
+                    let floor = |values: &[f64]| {
+                        RADIUS
+                            .around(&[Point2::new(values[c.center.x], values[c.center.y])])
+                            .value()
+                    };
+                    let r = values[c.radius];
+                    r.is_nan() || (r <= floor(values) && before[c.radius] > floor(before))
+                })
+                .map(|c| c.radius)
+                .collect()
+        };
+        let radii: Vec<usize> = if solution.is_solved() {
+            flat(&solution.values)
+        } else {
+            part.vars
+                .values()
+                .filter_map(Vars::round)
+                .map(|c| c.radius)
+                .collect()
+        };
+        if !radii.is_empty() {
+            let mut kept = part.system.clone();
+            for &r in &radii {
+                kept.hold(r);
+            }
+            let again = cad_geometry::constraint::solve(&kept, Tolerances::default());
+            if again.is_solved() && flat(&again.values).is_empty() {
+                solution = again;
+            } else if solution.is_solved() {
+                return Err("The edit would leave a circle or an arc with no radius.".to_owned());
+            }
+        }
         if !solution.is_solved() {
+            // Settled were the locked free to move: it is the lock that
+            // refuses the edit, not a constraint.
+            if unlocked.is_some_and(|system| {
+                cad_geometry::constraint::solve(&system, Tolerances::default()).is_solved()
+            }) {
+                return Err("The edit would move an object on a locked layer.".to_owned());
+            }
             // The constraints most broken at the solver's best compromise,
             // up to three.
             let mut blamed: Vec<ConstraintId> = Vec::new();
@@ -537,10 +612,12 @@ impl Drawing {
     /// What the rest of the constrained parts would become were `replaced`
     /// put in place (ADR-0038 §5): the other entities that would move, with
     /// their geometry — what a grip's preview draws as it is dragged — or
-    /// why the edit would be refused.
+    /// why the edit would be refused. Those of them in `whole` are held
+    /// whole, as `TransactionBuilder::replace_whole` holds them.
     pub fn settled_with(
         &self,
         replaced: &[(EntityId, Entity)],
+        whole: &[EntityId],
     ) -> Result<Vec<(EntityId, Entity)>, String> {
         if self.constraints.is_empty() {
             return Ok(Vec::new());
@@ -550,7 +627,8 @@ impl Drawing {
             .map(|(id, entity)| (*id, Some(entity.clone())))
             .collect();
         let ids: BTreeSet<EntityId> = replaced.iter().map(|(id, _)| *id).collect();
-        Prospect::of(self, entities).settle(ids.clone(), &ids, &BTreeSet::new())
+        let held = whole.iter().copied().collect();
+        Prospect::of(self, entities).settle(ids.clone(), &ids, &held)
     }
 
     /// The constraints that do not hold as the drawing is, in ID order:
@@ -693,6 +771,67 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
+    /// Moves each dimensional constraint's place by as much as what it
+    /// measures moved, so its dimension stays beside its geometry (#426):
+    /// after a grip, a STRETCH, or settling. One this transaction
+    /// restated with a transform (`restate_constraints` says so) or whose
+    /// place it set is left.
+    pub(super) fn follow_dimensions(&mut self) {
+        if self.drawing.constraints.is_empty() {
+            return;
+        }
+        // The centre of what a row measures, its references read against
+        // the geometry of the same moment: the stored row against the
+        // drawing as it was, the row as it will be against the drawing as
+        // it will be — a part renamed in between (a vertex inserted
+        // before it) is still the same point.
+        let centre = |references: &[crate::constraint::Reference],
+                      entity: &dyn Fn(EntityId) -> Option<Entity>|
+         -> Option<Point2> {
+            let mut sum = cad_core::Vec2::new(0.0, 0.0);
+            for reference in references {
+                sum = sum + (anchor(reference.part, &entity(reference.entity)?)? - Point2::ORIGIN);
+            }
+            (!references.is_empty()).then(|| Point2::ORIGIN + sum * (1.0 / references.len() as f64))
+        };
+        for (id, now) in self.constraints_now() {
+            let Some(place) = now.place else {
+                continue;
+            };
+            let Some(was) = self.drawing.constraints.get(id) else {
+                continue;
+            };
+            if self.restated.contains(&id)
+                || was.place != now.place
+                || !now
+                    .references
+                    .iter()
+                    .any(|r| self.touched.contains(&r.entity))
+            {
+                continue;
+            }
+            let before = centre(&was.references, &|e| self.drawing.entity(e).cloned());
+            let after = centre(&now.references, &|e| {
+                self.record_now(e).map(|record| (*record.entity).clone())
+            });
+            let (Some(before), Some(after)) = (before, after) else {
+                continue;
+            };
+            let by = after - before;
+            if by.x != 0.0 || by.y != 0.0 {
+                let after = Constraint {
+                    place: Some(place + by),
+                    ..now.clone()
+                };
+                self.push_other(Change::Constraint(crate::table::TableChange::Replace {
+                    id,
+                    before: now,
+                    after,
+                }));
+            }
+        }
+    }
+
     /// Puts `entity` as `id`'s geometry: into this transaction's change of
     /// it, or as a new replacement.
     fn settle_entity(&mut self, id: EntityId, entity: Entity) {
@@ -715,6 +854,29 @@ impl TransactionBuilder<'_> {
             let after = before.with_entity(entity);
             self.push(EntityChange::Replace { id, before, after });
         }
+    }
+}
+
+/// Where a part of `entity` is, for a dimension to follow: a point's
+/// position, a straight edge's middle, a circular edge's centre.
+fn anchor(part: Part, entity: &Entity) -> Option<Point2> {
+    if let Some(at) = part.position_on(entity) {
+        return Some(at);
+    }
+    let middle = |a: Point2, b: Point2| a + (b - a) * 0.5;
+    match (entity, part) {
+        (Entity::Line(line), Part::Edge) => Some(middle(line.start, line.end)),
+        (Entity::Circle(circle), Part::Edge) => Some(circle.center),
+        (Entity::Arc(arc), Part::Edge) => Some(arc.center),
+        (Entity::Polyline(polyline), Part::Segment(n)) => {
+            let count = polyline.vertices.len();
+            let n = n as usize;
+            Some(middle(
+                *polyline.vertices.get(n)?,
+                polyline.vertices[(n + 1) % count],
+            ))
+        }
+        _ => None,
     }
 }
 
@@ -834,6 +996,127 @@ mod tests {
             line_of(&drawing, b).end,
             Point2::new(110.0, 60.0),
             "the other end is free"
+        );
+    }
+
+    #[test]
+    fn an_entity_replaced_whole_is_held_whole() {
+        // #420: a line d1 = 100 long scaled by 2 about its start. Its start
+        // keeps its bits; replaced in part, it is free and slides to keep
+        // d1; replaced whole, it is held and the edit is refused.
+        let measured = || {
+            let mut drawing = Drawing::new();
+            let a = add(
+                &mut drawing,
+                LineEntity::new(Point2::ORIGIN, Point2::new(100.0, 0.0)),
+            );
+            let mut tx = drawing.transaction();
+            tx.add_constraint(Constraint::dimensional(
+                "d1",
+                Kind::Distance {
+                    axis: Axis::Horizontal,
+                    value: 100.0,
+                },
+                vec![at(a, Part::Start), at(a, Part::End)],
+            ))
+            .unwrap();
+            assert_eq!(tx.commit().refused, None);
+            (drawing, a)
+        };
+        let scaled = LineEntity::new(Point2::ORIGIN, Point2::new(200.0, 0.0));
+
+        let (mut drawing, a) = measured();
+        let mut tx = drawing.transaction();
+        tx.replace(a, scaled).unwrap();
+        assert_eq!(tx.commit().refused, None);
+        assert!(near(line_of(&drawing, a).start, Point2::new(100.0, 0.0)));
+        assert_eq!(line_of(&drawing, a).end, Point2::new(200.0, 0.0));
+
+        let (mut drawing, a) = measured();
+        let revision = drawing.revision();
+        let mut tx = drawing.transaction();
+        tx.replace_whole(a, scaled).unwrap();
+        assert!(tx.commit().refused.is_some());
+        assert_eq!(drawing.revision(), revision);
+        assert_eq!(line_of(&drawing, a).start, Point2::ORIGIN);
+    }
+
+    #[test]
+    fn a_circle_already_that_small_does_not_refuse_an_edit_of_its_part() {
+        // #424: only what a solve flattens is held and refused; a circle a
+        // file brought in at radius 5e-10 is not the edit's doing.
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let line = tx
+            .insert(LineEntity::new(Point2::ORIGIN, Point2::new(10.0, 0.0)))
+            .unwrap();
+        let tiny = tx
+            .insert(crate::CircleEntity::new(Point2::ORIGIN, 5e-10))
+            .unwrap();
+        tx.add_constraint(Constraint::geometric(
+            Kind::Coincident,
+            vec![at(line, Part::Start), at(tiny, Part::Center)],
+        ))
+        .unwrap();
+        assert_eq!(tx.commit().refused, None);
+        let mut tx = drawing.transaction();
+        tx.replace(
+            line,
+            LineEntity::new(Point2::ORIGIN, Point2::new(10.0, 5.0)),
+        )
+        .unwrap();
+        assert_eq!(tx.commit().refused, None);
+        assert_eq!(line_of(&drawing, line).end, Point2::new(10.0, 5.0));
+    }
+
+    #[test]
+    fn a_dimension_follows_its_points_through_a_renamed_part() {
+        // #426: a vertex inserted before the one measured renames it
+        // Vertex(2); read as it was against the drawing as it was, the
+        // point did not move, and neither does the dimension.
+        let mut drawing = Drawing::new();
+        let p = Point2::new;
+        let mut tx = drawing.transaction();
+        let path = tx
+            .insert(PolylineEntity::new(
+                vec![p(0.0, 0.0), p(10.0, 0.0), p(20.0, 0.0)],
+                false,
+            ))
+            .unwrap();
+        let point = tx.insert(crate::PointEntity::new(p(10.0, -20.0))).unwrap();
+        let mut d1 = Constraint::dimensional(
+            "d1",
+            Kind::Distance {
+                axis: Axis::Aligned,
+                value: 20.0,
+            },
+            vec![at(path, Part::Vertex(1)), at(point, Part::Point)],
+        );
+        d1.place = Some(p(20.0, -10.0));
+        let id = tx.add_constraint(d1.clone()).unwrap();
+        assert_eq!(tx.commit().refused, None);
+
+        let mut tx = drawing.transaction();
+        tx.replace(
+            path,
+            PolylineEntity::new(
+                vec![p(0.0, 0.0), p(5.0, 5.0), p(10.0, 0.0), p(20.0, 0.0)],
+                false,
+            ),
+        )
+        .unwrap();
+        tx.replace_constraint(
+            id,
+            Constraint {
+                references: vec![at(path, Part::Vertex(2)), at(point, Part::Point)],
+                ..d1
+            },
+        )
+        .unwrap();
+        assert_eq!(tx.commit().refused, None);
+        assert_eq!(
+            drawing.constraints().get(id).unwrap().place,
+            Some(p(20.0, -10.0))
         );
     }
 

@@ -211,7 +211,15 @@ pub fn import_records(
     limits: &ImportLimits,
 ) -> Result<Import, DxfError> {
     let mut reader = Reader::new(Groups::new("", limits.max_value_bytes), limits);
-    for record in records {
+    for mut record in records {
+        // A value carries what a file does: an escape for each character
+        // its code page lacks — a DWG before R2007 writes them, as AutoCAD
+        // does — read as the character, as the file's text is (#428).
+        for (_, value) in &mut record.groups {
+            if let std::borrow::Cow::Owned(decoded) = unescaped(value, |c| !c.is_control()) {
+                *value = decoded;
+            }
+        }
         match record.section {
             Section::Header => {
                 for (code, value) in &record.groups {
@@ -284,8 +292,22 @@ fn decoded(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
         Ok(text) => std::borrow::Cow::Borrowed(text),
         Err(_) => std::borrow::Cow::Owned(bytes.iter().map(|&b| windows_1252(b)).collect()),
     };
+    match text {
+        std::borrow::Cow::Borrowed(text) => unescaped(text, |c| !c.is_control()),
+        std::borrow::Cow::Owned(text) => {
+            std::borrow::Cow::Owned(unescaped(&text, |c| !c.is_control()).into_owned())
+        }
+    }
+}
+
+/// `text` with each `\U+XXXX` escape of a character `decode` takes written
+/// as that character, and the others as they are. A character beyond the
+/// first 65,536 is two escapes, a surrogate pair, as AutoCAD and our
+/// export write it (#393). Shared by the file's text, the records of
+/// another front end (#428), and the DWG writer's Unicode strings.
+pub(crate) fn unescaped(text: &str, decode: impl Fn(char) -> bool) -> std::borrow::Cow<'_, str> {
     if !text.contains("\\U+") {
-        return text;
+        return std::borrow::Cow::Borrowed(text);
     }
     // The UTF-16 unit an escape at the start of `text` names.
     fn unit(text: &str) -> Option<u16> {
@@ -295,11 +317,9 @@ fn decoded(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
             .and_then(|d| u16::from_str_radix(d, 16).ok())
     }
     let mut out = String::with_capacity(text.len());
-    let mut rest: &str = &text;
+    let mut rest: &str = text;
     while let Some(at) = rest.find("\\U+") {
         out.push_str(&rest[..at]);
-        // A character beyond the first 65,536 is two escapes, a surrogate
-        // pair, as AutoCAD and our export write it (#393).
         let first = unit(&rest[at..]);
         let second = rest.get(at + 7..).and_then(unit);
         let (c, length) = match (first, second) {
@@ -309,7 +329,7 @@ fn decoded(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
             ),
             (unit, _) => (unit.and_then(|u| char::from_u32(u32::from(u))), 7),
         };
-        match c.filter(|c| !c.is_control()) {
+        match c.filter(|c| decode(*c)) {
             Some(c) => {
                 out.push(c);
                 rest = &rest[at + length..];
