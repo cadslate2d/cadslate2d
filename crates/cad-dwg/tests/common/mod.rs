@@ -110,6 +110,16 @@ pub fn describe(drawing: &Drawing) -> Vec<String> {
         drawing.current_lineweight(),
         drawing.ltscale()
     ));
+    // The current multileader style, which a DWG does not hold (#431):
+    // compared, so a test that lets it go says so.
+    lines.push(format!(
+        "current multileader style {}",
+        drawing
+            .mleader_styles()
+            .get(drawing.settings().current_mleader_style)
+            .map(|s| s.name.clone())
+            .unwrap_or_default()
+    ));
     let mut layers: Vec<String> = drawing
         .layers()
         .iter()
