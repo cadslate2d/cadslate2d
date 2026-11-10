@@ -51,6 +51,9 @@ impl TransientEdit {
     }
 
     /// Transforms the sources in place, in one transaction. IDs are unchanged.
+    /// Each source is held whole as constraints settle (ADR-0038 §5): the
+    /// transform set all of it, the point it leaves where it was included,
+    /// so what is joined to it follows or the edit is refused (#420).
     pub fn commit(&self, drawing: &mut Drawing, transform: Transform) {
         let changed = self.transformed(drawing, transform);
         let mut transaction = drawing.transaction();
@@ -58,6 +61,7 @@ impl TransientEdit {
             transaction
                 .replace(id, entity)
                 .expect("sources are live and appear once");
+            transaction.hold(id);
         }
         transaction.commit();
     }

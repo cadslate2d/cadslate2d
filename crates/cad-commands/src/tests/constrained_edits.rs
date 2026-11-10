@@ -261,3 +261,56 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn scale_and_rotate_about_a_constrained_point_do_not_slide_the_line() {
+    // #420: the base point keeps its bits, and was left free to slide.
+    let measured = || {
+        let mut h = Harness::new();
+        h.enter_all(&["LINE", "0,0", "100,0", ""]);
+        h.enter_all(&["DCHORIZONTAL", "0,0", "100,0", "50,-15", ""]);
+        assert_eq!(h.session.drawing().constraints().len(), 1, "{:?}", h.log());
+        h
+    };
+    let mut h = measured();
+    let revision = h.session.drawing().revision();
+    h.enter_all(&["SCALE", "ALL", "", "0,0", "2"]);
+    assert!(refused(&h), "{:?}", h.log());
+    assert!(h.log().last().unwrap().contains("d1"), "{:?}", h.log());
+    assert_eq!(h.session.drawing().revision(), revision);
+    assert_eq!(line(&h, 1).start, p(0.0, 0.0));
+    assert_eq!(line(&h, 1).end, p(100.0, 0.0));
+
+    // A half turn reverses a horizontal distance: refused, not moved 200.
+    let mut h = measured();
+    h.enter_all(&["ROTATE", "ALL", "", "0,0", "180"]);
+    assert!(refused(&h), "{:?}", h.log());
+    assert_eq!(line(&h, 1).start, p(0.0, 0.0));
+
+    // An aligned length turns rigidly about its own end.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["DCALIGNED", "0,0", "100,0", "50,-15", ""]);
+    h.enter_all(&["ROTATE", "ALL", "", "0,0", "90"]);
+    holds(&h);
+    assert!(!refused(&h), "{:?}", h.log());
+    let turned = line(&h, 1);
+    assert_eq!(turned.start, p(0.0, 0.0));
+    assert!((turned.end - p(0.0, 100.0)).length() < 1e-9, "{turned:?}");
+
+    // What is joined to a turned line but not turned still follows it.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["LINE", "100,0", "100,50", ""]);
+    h.enter_all(&["GCCOINCIDENT", "100,0", "100,0"]);
+    h.enter("ROTATE");
+    h.click_world(p(50.0, 0.0));
+    h.enter_all(&["", "0,0", "90"]);
+    holds(&h);
+    assert_eq!(line(&h, 1).start, p(0.0, 0.0));
+    assert!(
+        (line(&h, 2).start - p(0.0, 100.0)).length() < 1e-9,
+        "{:?}",
+        line(&h, 2)
+    );
+}
