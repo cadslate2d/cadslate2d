@@ -394,3 +394,78 @@ fn non_ascii_names_and_text_round_trip_in_every_version() {
         );
     }
 }
+
+/// #429: a multileader read from a DWG keeps its colour and lineweight,
+/// stays in its group, and leaves its space's draw order as it was — its
+/// common groups go before its subclass marker, where a file has them.
+#[test]
+fn a_multileader_keeps_its_properties_group_and_space_s_draw_order() {
+    use cad_core::Point2;
+    use cad_document::{
+        Color, Entity, Group, LineEntity, Lineweight, MLeaderContent, MLeaderEntity, Properties,
+        WipeoutEntity,
+    };
+    let p = Point2::new;
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    let line = tx
+        .insert(LineEntity::new(p(0.0, 0.0), p(100.0, 0.0)))
+        .unwrap();
+    let red = Properties {
+        color: Color::Index(1),
+        lineweight: Lineweight::Hundredths(50),
+        ..Properties::default()
+    };
+    let leader = tx
+        .insert_with(
+            Entity::MLeader(MLeaderEntity::new(
+                p(10.0, 0.0),
+                p(30.0, 20.0),
+                MLeaderContent::Text("Note".into()),
+            )),
+            red,
+        )
+        .unwrap();
+    tx.insert_on_top(WipeoutEntity::new(vec![p(40.0, -5.0), p(60.0, -5.0), p(50.0, 5.0)]).unwrap())
+        .unwrap();
+    tx.add_group(Group::named("G", vec![line, leader])).unwrap();
+    tx.commit();
+
+    // Each entity's kind, tier, colour, and lineweight; the group's kinds.
+    let described = |drawing: &Drawing| {
+        let entities: Vec<(String, i16, Color, Lineweight)> = drawing
+            .records()
+            .map(|(_, r)| {
+                (
+                    r.entity.kind_name().to_owned(),
+                    r.order,
+                    r.properties.color,
+                    r.properties.lineweight,
+                )
+            })
+            .collect();
+        let groups: Vec<(String, Vec<String>)> = drawing
+            .groups()
+            .iter()
+            .map(|(_, g)| {
+                let mut kinds: Vec<String> = g
+                    .members
+                    .iter()
+                    .filter_map(|id| drawing.entity(*id))
+                    .map(|e| e.kind_name().to_owned())
+                    .collect();
+                kinds.sort();
+                (g.name.clone(), kinds)
+            })
+            .collect();
+        (entities, groups)
+    };
+    let expected = described(&drawing);
+    assert_eq!(expected.0[1].2, Color::Index(1), "{expected:?}");
+    assert_eq!(expected.0[2].1, 1, "the wipeout on top");
+    for version in VERSIONS {
+        let bytes = cad_dwg::export(&drawing, version).unwrap();
+        let back = cad_dwg::import(&bytes).unwrap().drawing;
+        assert_eq!(described(&back), expected, "{version:?}");
+    }
+}
