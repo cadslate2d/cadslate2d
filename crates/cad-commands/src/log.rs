@@ -44,9 +44,46 @@ impl CommandLog {
     }
 }
 
+/// `text` as a sentence of the log: a capital first, a period last. A
+/// command's refusal must be one, for that is how the intent run tells its
+/// reason from the echo of a prompt and answer (#369); a
+/// `TransactionError`'s `Display` begins small and ends bare.
+pub(crate) fn sentence(text: &str) -> String {
+    let text = text.trim_end();
+    let mut chars = text.chars();
+    let mut out: String = chars
+        .next()
+        .map(char::to_uppercase)
+        .into_iter()
+        .flatten()
+        .collect();
+    out.extend(chars);
+    if !out.is_empty() && !out.ends_with('.') {
+        out.push('.');
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refusal_is_made_a_sentence_once() {
+        let drawing = cad_document::Drawing::new();
+        let taken = cad_document::TransactionError::DuplicateLayerName(drawing.current_layer());
+        assert_eq!(
+            sentence(&taken.to_string()),
+            "Layer 0 already has that name."
+        );
+        // What is already a sentence is left as it is.
+        assert_eq!(
+            sentence("A layer name cannot contain \"*\"."),
+            "A layer name cannot contain \"*\"."
+        );
+        assert_eq!(sentence("élan "), "Élan.");
+        assert_eq!(sentence(""), "");
+    }
 
     fn collect(log: &CommandLog, since: u64) -> Vec<&str> {
         log.since(since).collect()

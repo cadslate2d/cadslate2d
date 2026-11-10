@@ -11,6 +11,7 @@ use cad_document::LayoutId;
 use cad_input::{ExpectedInput, InputKind, Keyword};
 
 use super::ltscale::display;
+use crate::log::sentence;
 use crate::settings::Paper;
 use crate::titleblock::{Fields, GROUP, LAYER, description, entities};
 use crate::views::draw_group;
@@ -112,7 +113,7 @@ impl TitleBlockCommand {
                 },
                 fields.scale
             )),
-            Err(error) => ctx.message(error.to_string()),
+            Err(error) => ctx.message(sentence(&error.to_string())),
         }
         Step::Finished
     }

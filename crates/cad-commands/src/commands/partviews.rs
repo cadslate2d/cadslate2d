@@ -14,6 +14,7 @@ use cad_input::{ExpectedInput, InputKind, Keyword};
 
 use super::ltscale::display;
 use super::modify::selection_expected;
+use crate::log::sentence;
 use crate::partviews::{
     GROUP, LAYERS, Projection, description, entities, ltscale_for, parse, size,
 };
@@ -163,7 +164,7 @@ impl PartViewsCommand {
                     self.projection.name()
                 ));
             }
-            Err(error) => ctx.message(error.to_string()),
+            Err(error) => ctx.message(sentence(&error.to_string())),
         }
         Step::Finished
     }

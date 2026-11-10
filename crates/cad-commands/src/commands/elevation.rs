@@ -11,6 +11,7 @@ use cad_layout::{Roof, Side, elevation};
 
 use crate::elevation::{GROUP, LAYERS, description, entities};
 use crate::floorplan::{DrawnPlan, PLAN_GROUP, drawn_plan, plan_holding};
+use crate::log::sentence;
 use crate::views::draw_group;
 use crate::{Command, CommandContext, CommandInput, OverlayItem, Prompt, Step};
 
@@ -91,7 +92,7 @@ impl ElevationCommand {
                 facade.width,
                 facade.height
             )),
-            Err(error) => ctx.message(error.to_string()),
+            Err(error) => ctx.message(sentence(&error.to_string())),
         }
         Step::Finished
     }
