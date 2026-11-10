@@ -487,7 +487,7 @@ fn a_vertex_inserted_by_pedit_leaves_the_others_constraints_where_they_were() {
     let mut h = bent();
     h.enter("PEDIT");
     h.click_world(p(50.0, 0.0));
-    h.enter_all(&["E", "I", "50,-10", "X", ""]);
+    h.enter_all(&["E", "I", "50,-10", "E", ""]);
     assert_eq!(
         vertices(&h),
         vec![p(0.0, 0.0), p(50.0, -10.0), p(100.0, 0.0), p(100.0, 50.0)],
@@ -505,7 +505,7 @@ fn a_vertex_inserted_by_pedit_leaves_the_others_constraints_where_they_were() {
     let mut h = bent();
     h.enter("PEDIT");
     h.click_world(p(50.0, 0.0));
-    h.enter_all(&["E", "N", "N", "M", "100,70", "X", ""]);
+    h.enter_all(&["E", "N", "N", "M", "100,70", "E", ""]);
     assert_eq!(vertices(&h)[2], p(100.0, 70.0), "{:?}", h.log());
     assert!((line(&h, 2).start - p(100.0, 70.0)).length() < 1e-7);
     holds(&h);
@@ -530,6 +530,83 @@ fn a_pedit_join_carries_the_polylines_constraints_to_where_they_are() {
         parts_on_the_polyline(&h).contains(&cad_document::Part::Vertex(at)),
         "{:?}",
         parts_on_the_polyline(&h)
+    );
+    holds(&h);
+}
+
+#[test]
+fn a_line_made_a_polyline_by_pedit_keeps_its_constraints_on_its_vertices_and_segment() {
+    // #422: the line's ends are vertices 0 and 1, its edge segment 0;
+    // the conversion carried nothing before, and Join then had nothing.
+    use cad_document::Part;
+    let constrained = || {
+        let mut h = Harness::new();
+        h.enter_all(&["LINE", "0,0", "100,0", ""]);
+        h.enter_all(&["LINE", "100,0", "100,50", ""]);
+        h.enter_all(&["GCCOINCIDENT", "100,0", "100,0"]);
+        h.enter("GCHORIZONTAL");
+        h.click_world(p(50.0, 0.0));
+        assert_eq!(h.session.drawing().constraints().len(), 2, "{:?}", h.log());
+        h
+    };
+    let mut h = constrained();
+    h.enter("PEDIT");
+    h.click_world(p(50.0, 0.0));
+    h.enter_all(&["Y", ""]);
+    assert_eq!(
+        vertices(&h),
+        vec![p(0.0, 0.0), p(100.0, 0.0)],
+        "{:?}",
+        h.log()
+    );
+    assert_eq!(
+        parts_on_the_polyline(&h),
+        vec![Part::Vertex(1), Part::Segment(0)]
+    );
+    holds(&h);
+
+    // Made a polyline and joined: the corner is inside it, so the
+    // coincidence goes; the level is still segment 0's.
+    let mut h = constrained();
+    h.enter("PEDIT");
+    h.click_world(p(50.0, 0.0));
+    h.enter_all(&["Y", "J"]);
+    h.click_world(p(100.0, 25.0));
+    h.enter_all(&["", ""]);
+    assert_eq!(
+        vertices(&h),
+        vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 50.0)],
+        "{:?}",
+        h.log()
+    );
+    assert_eq!(parts_on_the_polyline(&h), vec![Part::Segment(0)]);
+    holds(&h);
+}
+
+#[test]
+fn a_vertex_inserted_into_a_constrained_segment_takes_its_constraint_and_undo_restores_it() {
+    // #422: a vertex inserted into the plumb segment makes two segments,
+    // neither between its ends, so the plumb goes; PEDIT's Undo puts back
+    // the vertex and the rows as they were.
+    use cad_document::Part;
+    let mut h = bent();
+    h.enter("PEDIT");
+    h.click_world(p(50.0, 0.0));
+    h.enter_all(&["E", "N", "I", "120,25"]);
+    assert_eq!(vertices(&h).len(), 4, "{:?}", h.log());
+    assert_eq!(parts_on_the_polyline(&h), vec![Part::Vertex(3)]);
+    assert_eq!(line(&h, 2).start, p(100.0, 50.0));
+    holds(&h);
+    h.enter_all(&["E", "U"]);
+    assert_eq!(
+        vertices(&h),
+        vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 50.0)],
+        "{:?}",
+        h.log()
+    );
+    assert_eq!(
+        parts_on_the_polyline(&h),
+        vec![Part::Vertex(2), Part::Segment(1)]
     );
     holds(&h);
 }

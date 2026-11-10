@@ -264,8 +264,10 @@ impl Command for PeditCommand {
             (State::Convert(id), CommandInput::Keyword(_) | CommandInput::Accept) => {
                 let id = *id;
                 if let Some(polyline) = ctx.drawing.entity(id).and_then(Self::as_polyline) {
+                    // A line's ends are the polyline's vertices 0 and 1 now,
+                    // and its edge segment 0: what was on them goes there.
                     let mut tx = ctx.transaction();
-                    if tx.replace(id, polyline).is_ok() {
+                    if tx.reshape(id, polyline.into(), Vec::new(), &[]).is_ok() {
                         tx.commit();
                         self.id = Some(id);
                         ctx.selection.clear();
