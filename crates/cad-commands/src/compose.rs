@@ -98,7 +98,9 @@ pub fn centre(drawing: &mut Drawing, space: LayoutId) -> Result<Option<usize>, S
         .collect();
     let mut transaction = drawing.transaction().in_space(space);
     for (id, entity) in moved {
-        transaction.replace(id, entity).map_err(|e| e.to_string())?;
+        transaction
+            .replace_whole(id, entity)
+            .map_err(|e| e.to_string())?;
     }
     for (id, mut group) in views.iter().cloned() {
         if let Some(mut record) = ViewRecord::read(&group.description) {
@@ -955,7 +957,9 @@ pub fn compose(
             {
                 d.style = *to;
             }
-            transaction.replace(id, entity).map_err(|e| e.to_string())?;
+            transaction
+                .replace_whole(id, entity)
+                .map_err(|e| e.to_string())?;
             members.push(id);
         }
         for entity in &fresh[i] {

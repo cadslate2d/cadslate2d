@@ -159,6 +159,21 @@ fn keeper(name: &str, losses: &[(&str, &str)]) -> impl Fn(&String) -> bool {
     move |line: &String| !patterns.iter().any(|pattern| line.contains(pattern))
 }
 
+/// `drawing` as our DWG of `version`, read by acadrust, written back by it
+/// as a DXF, and read by ours: what an independent reader makes of it.
+fn through_acadrust(drawing: &Drawing, version: Version) -> Result<Drawing, String> {
+    let dwg = cad_dwg::export(drawing, version).map_err(|e| e.to_string())?;
+    let document = acadrust::DwgReader::from_stream(Cursor::new(dwg))
+        .read()
+        .map_err(|e| format!("acadrust refuses it: {e}"))?;
+    let dxf = acadrust::DxfWriter::new(&document)
+        .write_to_vec()
+        .map_err(|e| format!("acadrust cannot write it back: {e}"))?;
+    cad_dxf::import(&dxf)
+        .map(|import| import.drawing)
+        .map_err(|e| format!("acadrust's DXF is refused: {e}"))
+}
+
 /// The independent reader reads every fixture's DWG, and the DXF it
 /// writes of it makes the same drawing: nothing lost.
 #[test]
@@ -166,25 +181,10 @@ fn acadrust_reads_our_output_with_nothing_lost() {
     let mut failures = Vec::new();
     let sources = sources();
     for (version, name, drawing) in cases(&sources) {
-        let dwg = cad_dwg::export(drawing, version).unwrap_or_else(|e| panic!("{name}: {e}"));
-        let document = match acadrust::DwgReader::from_stream(Cursor::new(dwg)).read() {
-            Ok(document) => document,
+        let theirs = match through_acadrust(drawing, version) {
+            Ok(theirs) => theirs,
             Err(e) => {
-                failures.push(format!("{name}: acadrust refuses it: {e}"));
-                continue;
-            }
-        };
-        let dxf = match acadrust::DxfWriter::new(&document).write_to_vec() {
-            Ok(dxf) => dxf,
-            Err(e) => {
-                failures.push(format!("{name}: acadrust cannot write it back: {e}"));
-                continue;
-            }
-        };
-        let theirs = match cad_dxf::import(&dxf) {
-            Ok(import) => import.drawing,
-            Err(e) => {
-                failures.push(format!("{name}: acadrust's DXF is refused: {e}"));
+                failures.push(format!("{name}: {e}"));
                 continue;
             }
         };
@@ -261,5 +261,136 @@ fn a_spline_through_points_keeps_them_and_one_with_control_data_of_its_own_is_re
             }
             other => panic!("{other:?}"),
         }
+    }
+}
+
+/// #428: names and text outside ASCII come back as they were from our own
+/// DWG in every version — a layer, a text style, a block, a layout, and a
+/// text holding a character Windows-1252 has, one it does not, one beyond
+/// the first 65,536, and a literal `\U+` — with nothing reported.
+#[test]
+fn non_ascii_names_and_text_round_trip_in_every_version() {
+    use cad_core::Point2;
+    use cad_document::{
+        Block, BlockReferenceEntity, Entity, EntityRecord, Layer, Layout, LineEntity, Properties,
+        TextEntity, TextStyle,
+    };
+    let p = Point2::new;
+    let content = "Größe ⌀ 5 — 𝄞 \\U+0041";
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    let walls = tx.add_layer(Layer::named("Wände")).unwrap();
+    let style = tx.add_text_style(TextStyle::named("Ação")).unwrap();
+    let door = tx
+        .define_block(Block::new(
+            "Tür",
+            p(0.0, 0.0),
+            vec![EntityRecord::new(
+                Entity::Line(LineEntity::new(p(0.0, 0.0), p(1.0, 0.0))),
+                Properties::default(),
+            )],
+        ))
+        .unwrap();
+    tx.add_layout(Layout::named("Sheet A1 ü")).unwrap();
+    let on_walls = Properties {
+        layer: walls,
+        ..Properties::default()
+    };
+    let mut text = TextEntity::new(p(0.0, 0.0), 2.5, 0.0, content);
+    text.style = style;
+    tx.insert_with(Entity::Text(text), on_walls).unwrap();
+    tx.insert_with(
+        Entity::BlockRef(BlockReferenceEntity::new(door, p(10.0, 0.0), 1.0, 0.0)),
+        on_walls,
+    )
+    .unwrap();
+    tx.commit();
+
+    // What a reader holds: the names in four tables, and the one text.
+    let held = |back: &Drawing, by: &str, content: &str| {
+        let layers: Vec<&str> = back.layers().iter().map(|(_, l)| l.name.as_str()).collect();
+        assert!(layers.contains(&"Wände"), "{by}: {layers:?}");
+        assert!(back.text_styles().find("Ação").is_some(), "{by}");
+        assert!(back.blocks().find("Tür").is_some(), "{by}");
+        assert!(
+            back.layouts().iter().any(|(_, l)| l.name == "Sheet A1 ü"),
+            "{by}"
+        );
+        let texts: Vec<&str> = back
+            .entities()
+            .filter_map(|(_, e)| match e {
+                Entity::Text(t) => Some(t.content.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, [content], "{by}");
+    };
+    for version in VERSIONS {
+        assert_eq!(
+            cad_dwg::export_losses(&drawing, version),
+            Vec::<String>::new(),
+            "{version:?}"
+        );
+        // An independent reader reads the same names and text (#428).
+        let theirs = through_acadrust(&drawing, version).unwrap_or_else(|e| panic!("{e}"));
+        // acadrust's DXF writes a literal `\U+` as it is, which a DXF
+        // reader then decodes: the text is compared up to it.
+        let before_the_literal = content.trim_end_matches("\\U+0041");
+        let theirs_text = theirs
+            .entities()
+            .find_map(|(_, e)| match e {
+                Entity::Text(t) => Some(t.content.clone()),
+                _ => None,
+            })
+            .expect("the text");
+        assert!(
+            theirs_text.starts_with(before_the_literal),
+            "{version:?} through acadrust: {theirs_text:?}"
+        );
+        held(
+            &theirs,
+            &format!("{version:?} through acadrust"),
+            &theirs_text,
+        );
+        let bytes = cad_dwg::export(&drawing, version).unwrap();
+        let import = cad_dwg::import(&bytes).unwrap();
+        let back = &import.drawing;
+        held(back, &format!("{version:?}"), content);
+        let names = |rows: Vec<&str>| rows.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        assert!(
+            names(back.layers().iter().map(|(_, l)| l.name.as_str()).collect())
+                .contains(&"Wände".to_owned()),
+            "{version:?}: {:?}",
+            import.report
+        );
+        assert!(back.text_styles().find("Ação").is_some(), "{version:?}");
+        assert!(back.blocks().find("Tür").is_some(), "{version:?}");
+        assert!(
+            back.layouts().iter().any(|(_, l)| l.name == "Sheet A1 ü"),
+            "{version:?}"
+        );
+        let texts: Vec<&TextEntity> = back
+            .entities()
+            .filter_map(|(_, e)| match e {
+                Entity::Text(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts.len(), 1, "{version:?}");
+        assert_eq!(texts[0].content, content, "{version:?}");
+        assert_eq!(
+            back.entities()
+                .filter(|(_, e)| matches!(e, Entity::BlockRef(_)))
+                .count(),
+            1,
+            "{version:?}: the reference to Tür"
+        );
+        let said = import.report.summary();
+        assert!(
+            !said
+                .iter()
+                .any(|line| line.contains("Not imported") || line.contains("dropped")),
+            "{version:?}: {said:?}"
+        );
     }
 }

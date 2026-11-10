@@ -217,3 +217,34 @@ fn a_wipeout_snaps_at_its_corners_and_the_middles_of_its_edges() {
     let middles = entity_snap_points(&wipeout, SnapMode::Midpoint, tables);
     assert_eq!(middles, [p(20.0, 0.0), p(40.0, 10.0), p(20.0, 10.0)]);
 }
+
+#[test]
+fn explode_keeps_the_pieces_in_the_exploded_objects_tier() {
+    // #427: a polyline sent to the back comes apart into lines that stay
+    // at the back, under the lines crossing it, as a copy keeps its
+    // source's tier.
+    let mut h = Harness::new();
+    h.enter_all(&["PLINE", "0,10", "100,10", "100,40", ""]);
+    h.enter_all(&["L", "20,0", "20,50", ""]);
+    h.enter_all(&["L", "60,0", "60,50", ""]);
+    h.click_world(p(50.0, 10.0));
+    h.enter_all(&["DRAWORDER", "B"]);
+    assert_eq!(orders(&h), [-1, 0, 0], "{:?}", h.log());
+    h.click_world(p(50.0, 10.0));
+    h.enter("EXPLODE");
+    assert!(
+        said(&h, "1 polyline exploded into 2 objects."),
+        "{:?}",
+        h.log()
+    );
+    let pieces: Vec<i16> = h
+        .ids()
+        .into_iter()
+        .filter(|id| id.raw() > 3)
+        .map(|id| order(&h, id))
+        .collect();
+    assert_eq!(pieces, [-1, -1]);
+    assert_eq!(orders(&h), [0, 0, -1, -1]);
+    h.undo();
+    assert_eq!(orders(&h), [-1, 0, 0], "one undo");
+}
