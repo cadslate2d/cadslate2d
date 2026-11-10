@@ -513,3 +513,51 @@ fn a_geometric_constraint_does_not_pick_a_locked_object_by_a_point() {
     assert_eq!(line(&h, 2).start, p(120.0, 30.0));
     assert_eq!(line(&h, 1).end, p(100.0, 0.0));
 }
+
+#[test]
+fn a_tangent_circle_is_never_turned_inside_out() {
+    // #424: the line moved up 40 through the circle's centre. The nearest
+    // solution kept the tangency with a radius of -10; held at its radius,
+    // the circle moves up with the line instead.
+    let mut h = Harness::with_entities([
+        LineEntity::new(p(-50.0, -10.0), p(50.0, -10.0)).into(),
+        cad_document::CircleEntity::new(p(0.0, 0.0), 10.0).into(),
+    ]);
+    h.enter("GCTANGENT");
+    h.click_world(p(30.0, -10.0));
+    h.click_world(p(0.0, 10.0));
+    assert_eq!(h.session.drawing().constraints().len(), 1, "{:?}", h.log());
+    h.enter("MOVE");
+    h.click_world(p(30.0, -10.0));
+    h.enter_all(&["", "0,0", "0,40"]);
+    assert_eq!(line(&h, 1).start, p(-50.0, 30.0), "{:?}", h.log());
+    let Some(Entity::Circle(circle)) = h.session.drawing().entity(id(2)) else {
+        panic!("a circle");
+    };
+    assert!((circle.radius - 10.0).abs() < 1e-7, "{circle:?}");
+    assert!((circle.center.y - 40.0).abs() < 1e-7, "{circle:?}");
+    holds(&h);
+
+    // A radius the edit cannot keep positive is refused: the circle is
+    // fixed at its centre, so it cannot follow the line.
+    let mut h = Harness::with_entities([
+        LineEntity::new(p(-50.0, -10.0), p(50.0, -10.0)).into(),
+        cad_document::CircleEntity::new(p(0.0, 0.0), 10.0).into(),
+    ]);
+    h.enter("GCTANGENT");
+    h.click_world(p(30.0, -10.0));
+    h.click_world(p(0.0, 10.0));
+    h.enter_all(&["GCFIX", "0,0"]);
+    assert_eq!(h.session.drawing().constraints().len(), 2, "{:?}", h.log());
+    let revision = h.session.drawing().revision();
+    h.enter("MOVE");
+    h.click_world(p(30.0, -10.0));
+    h.enter_all(&["", "0,0", "0,40"]);
+    assert_eq!(
+        h.log().last().unwrap(),
+        "The edit would leave a circle or an arc with no radius.",
+        "{:?}",
+        h.log()
+    );
+    assert_eq!(h.session.drawing().revision(), revision);
+}

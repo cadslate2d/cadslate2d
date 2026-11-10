@@ -26,6 +26,9 @@ use crate::constraint::{Axis, Constraint, ConstraintId, Kind, Part, Touch};
 use crate::transaction::{Change, EntityChange};
 use crate::{ArcEntity, CircleEntity, Entity, LineEntity, PointEntity, PolylineEntity};
 
+/// The least a settled radius may be: a circle no larger is none (#424).
+const RADIUS: cad_core::tolerance::LinearTolerance = cad_core::tolerance::LinearTolerance::DEFAULT;
+
 /// An entity's unknowns.
 #[derive(Clone, Debug)]
 enum Vars {
@@ -80,6 +83,14 @@ fn vars_of(system: &mut System, entity: &Entity) -> Option<Vars> {
 }
 
 impl Vars {
+    /// A circle's or an arc's radius.
+    fn radius(&self) -> Option<usize> {
+        match self {
+            Self::Circle(c) | Self::Arc { circle: c, .. } => Some(c.radius),
+            _ => None,
+        }
+    }
+
     /// Every unknown, in a fixed order.
     fn params(&self) -> Vec<usize> {
         let p = |v: &PointVar| [v.x, v.y];
@@ -503,7 +514,33 @@ impl<'a> Prospect<'a> {
         for &p in &locked {
             part.system.hold(p);
         }
-        let solution = cad_geometry::constraint::solve(&part.system, Tolerances::default());
+        let mut solution = cad_geometry::constraint::solve(&part.system, Tolerances::default());
+        // The nearest solution may push a radius through zero, turning a
+        // circle inside out to keep a tangency (#424). Held where they
+        // were, those radii stay, and the rest of the part moves instead;
+        // where it cannot, the edit is refused.
+        let flat = |values: &[f64]| -> Vec<usize> {
+            part.vars
+                .values()
+                .filter_map(Vars::radius)
+                .filter(|&r| values[r].is_nan() || values[r] <= RADIUS.value())
+                .collect()
+        };
+        let flipped = if solution.is_solved() {
+            flat(&solution.values)
+        } else {
+            Vec::new()
+        };
+        if !flipped.is_empty() {
+            let mut kept = part.system.clone();
+            for &r in &flipped {
+                kept.hold(r);
+            }
+            solution = cad_geometry::constraint::solve(&kept, Tolerances::default());
+            if !solution.is_solved() || !flat(&solution.values).is_empty() {
+                return Err("The edit would leave a circle or an arc with no radius.".to_owned());
+            }
+        }
         if !solution.is_solved() {
             // Settled were the locked free to move: it is the lock that
             // refuses the edit, not a constraint.
