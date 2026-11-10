@@ -2592,15 +2592,17 @@ impl TransactionBuilder<'_> {
                 .map(
                     |reference| match sources.iter().find(|(s, _)| *s == reference.entity) {
                         None => Some(*reference),
-                        Some((source, entity)) => {
-                            carried(reference.part, entity, &placed).or_else(|| {
-                                let edge = reference.part == Part::Edge;
-                                (edge
-                                    && *source == id
-                                    && cut_keeps(&constraint.kind, entity, &first))
+                        Some((source, entity)) => carried(
+                            reference.part,
+                            entity,
+                            &placed,
+                            either_way(&constraint.kind),
+                        )
+                        .or_else(|| {
+                            let edge = reference.part == Part::Edge;
+                            (edge && *source == id && cut_keeps(&constraint.kind, entity, &first))
                                 .then_some(*reference)
-                            })
-                        }
+                        }),
                     },
                 )
                 .collect();
@@ -4237,6 +4239,30 @@ impl TransactionBuilder<'_> {
     }
 }
 
+/// Whether what `kind` says of a straight edge holds of it run the other
+/// way: JOIN turns a member round to chain it (#422). A direction, a line
+/// a point is on, a length do; a signed angle and the side a tangent
+/// touches do not. Every kind is named, so a new one is decided here.
+fn either_way(kind: &Kind) -> bool {
+    match kind {
+        Kind::Coincident
+        | Kind::Collinear
+        | Kind::Parallel
+        | Kind::Perpendicular
+        | Kind::Horizontal
+        | Kind::Vertical
+        | Kind::Symmetric
+        | Kind::Equal => true,
+        Kind::Angle { .. } | Kind::Tangent { .. } => false,
+        // Said of points or of circular edges, never of a straight one.
+        Kind::Concentric
+        | Kind::Fix { .. }
+        | Kind::Distance { .. }
+        | Kind::Radius { .. }
+        | Kind::Diameter { .. } => false,
+    }
+}
+
 /// Whether cutting or joining `before` into `after` keeps what `kind` says
 /// of its edge (#421). A line's edge is read as its line and an arc's as
 /// its circle, which a cut keeps; an equal length is the one thing said of
@@ -4274,9 +4300,15 @@ fn cut_keeps(kind: &Kind, before: &Entity, after: &Entity) -> bool {
 
 /// Where `part` of `from` is among `pieces`: the piece with a point where
 /// that point was, or a straight edge — a line's, a polyline's segment —
-/// between the same two points, and its part there (#421, #422). `None`
-/// for a circular edge, or when no piece has it.
-fn carried(part: Part, from: &Entity, pieces: &[(EntityId, Entity)]) -> Option<Reference> {
+/// between the same two points, and its part there (#421, #422); run the
+/// other way too when `either_way`. `None` for a circular edge, or when no
+/// piece has it.
+fn carried(
+    part: Part,
+    from: &Entity,
+    pieces: &[(EntityId, Entity)],
+    either_way: bool,
+) -> Option<Reference> {
     let near = |a: Point2, b: Point2| {
         cad_core::tolerance::LinearTolerance::DEFAULT
             .around(&[a, b])
@@ -4315,7 +4347,9 @@ fn carried(part: Part, from: &Entity, pieces: &[(EntityId, Entity)]) -> Option<R
         candidates
             .into_iter()
             .find(|candidate| {
-                ends(piece, *candidate).is_some_and(|(p, q)| near(p, a) && near(q, b))
+                ends(piece, *candidate).is_some_and(|(p, q)| {
+                    (near(p, a) && near(q, b)) || (either_way && near(p, b) && near(q, a))
+                })
             })
             .map(|candidate| Reference::new(*id, candidate))
     })

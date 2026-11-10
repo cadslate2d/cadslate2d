@@ -610,3 +610,31 @@ fn a_vertex_inserted_into_a_constrained_segment_takes_its_constraint_and_undo_re
     );
     holds(&h);
 }
+
+#[test]
+fn a_member_joined_the_other_way_round_keeps_its_level() {
+    // #422: the line runs 0,0 to -50,0, so the join turns it round; its
+    // level holds whichever way it runs, and goes to segment 0.
+    use cad_document::Part;
+    let mut h = Harness::with_entities([cad_document::PolylineEntity::new(
+        vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 50.0)],
+        false,
+    )
+    .into()]);
+    h.enter_all(&["LINE", "0,0", "-50,0", ""]);
+    h.enter("GCHORIZONTAL");
+    h.click_world(p(-25.0, 0.0));
+    h.enter("PEDIT");
+    h.click_world(p(50.0, 0.0));
+    h.enter("J");
+    h.click_world(p(-25.0, 0.0));
+    h.enter_all(&["", ""]);
+    assert_eq!(
+        vertices(&h),
+        vec![p(-50.0, 0.0), p(0.0, 0.0), p(100.0, 0.0), p(100.0, 50.0)],
+        "{:?}",
+        h.log()
+    );
+    assert_eq!(parts_on_the_polyline(&h), vec![Part::Segment(0)]);
+    holds(&h);
+}
