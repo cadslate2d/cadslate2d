@@ -1957,16 +1957,12 @@ impl TransactionBuilder<'_> {
         source: EntityId,
         entity: impl Into<Entity>,
     ) -> Result<EntityId, TransactionError> {
-        let record = self
+        let properties = self
             .drawing
             .record(source)
-            .ok_or(TransactionError::UnknownEntity(source))?;
-        let (properties, space, order) = (record.properties, record.space, record.order);
-        let entity = entity.into();
-        self.known_rows(&entity)?;
-        viewport_placeable(&entity, space)?;
-        let record = EntityRecord::new(entity, properties).in_space(space);
-        Ok(self.insert_record(record.in_order(order)))
+            .ok_or(TransactionError::UnknownEntity(source))?
+            .properties;
+        self.insert_from(source, entity, properties)
     }
 
     /// Adds a new entity to `space` — the model, or a layout — with the
