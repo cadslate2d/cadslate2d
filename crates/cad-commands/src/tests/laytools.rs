@@ -254,3 +254,20 @@ fn laylck_and_layulk_lock_and_unlock_and_laymcur_makes_a_layer_current() {
     h.undo();
     assert_eq!(current(&h), "0");
 }
+
+#[test]
+fn layuniso_puts_back_a_layer_switched_back_by_hand_as_layiso_left_it() {
+    // #435, decided: the last LAYISO's record lasts until the next one, so
+    // LAYUNISO puts back any layer that is as LAYISO left it again, U or
+    // no U; one switched otherwise keeps its change.
+    let mut h = drawing();
+    h.enter("LAYISO");
+    h.click_world(p(50.0, 20.0));
+    h.enter("");
+    h.enter("LAYUNISO");
+    assert_eq!(on(&h, &["0", "walls", "doors", "notes"]), [true; 4]);
+    h.enter_all(&["LA", "OFF", "doors", ""]);
+    h.enter("LAYUNISO");
+    assert!(said(&h, "1 layer restored."), "{:?}", h.log());
+    assert_eq!(on(&h, &["0", "walls", "doors", "notes"]), [true; 4]);
+}
