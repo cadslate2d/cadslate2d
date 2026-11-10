@@ -790,6 +790,15 @@ fn a_dimensional_constraints_dimension_goes_with_its_geometry() {
     h.enter_all(&["ROTATE", "ALL", "", "0,0", "90"]);
     assert!(near(place(&h), p(15.0, 50.0)), "{:?}", place(&h));
 
+    // Turned about its own place: the transform leaves the place where it
+    // was, and it is not moved a second time.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["DCALIGNED", "0,0", "100,0", "50,-15", ""]);
+    h.enter_all(&["ROTATE", "ALL", "", "50,-15", "90"]);
+    assert!(near(line(&h, 1).start, p(35.0, -65.0)), "{:?}", line(&h, 1));
+    assert_eq!(place(&h), p(50.0, -15.0));
+
     // Dragged by its midpoint grip.
     let mut h = Harness::new();
     h.enter_all(&["LINE", "0,0", "100,0", ""]);

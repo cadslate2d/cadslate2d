@@ -1628,6 +1628,7 @@ impl Drawing {
             others: Vec::new(),
             space: LayoutId::MODEL,
             held: BTreeSet::new(),
+            restated: BTreeSet::new(),
         }
     }
 
@@ -1918,6 +1919,9 @@ pub struct TransactionBuilder<'d> {
     /// Entities whose every unknown is held when the transaction settles
     /// its constraints (ADR-0038).
     held: BTreeSet<EntityId>,
+    /// Constraints this transaction restated with what it transformed:
+    /// their places are set, and not followed again (#426).
+    restated: BTreeSet<ConstraintId>,
 }
 
 impl TransactionBuilder<'_> {
@@ -2580,6 +2584,9 @@ impl TransactionBuilder<'_> {
             if !before.references.iter().all(|r| ids.contains(&r.entity)) {
                 continue;
             }
+            // Said to be restated, whether or not its row changes: a place
+            // the transform leaves where it was is set all the same.
+            self.restated.insert(constraint_id);
             let mut after = before.clone();
             after.place = after.place.map(|place| transform.apply(place));
             if !reflects {

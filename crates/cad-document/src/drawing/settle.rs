@@ -773,30 +773,26 @@ impl TransactionBuilder<'_> {
 
     /// Moves each dimensional constraint's place by as much as what it
     /// measures moved, so its dimension stays beside its geometry (#426):
-    /// after a grip, a STRETCH, or settling. One whose place this
-    /// transaction set already — a transform restated it — is left.
+    /// after a grip, a STRETCH, or settling. One this transaction
+    /// restated with a transform (`restate_constraints` says so) or whose
+    /// place it set is left.
     pub(super) fn follow_dimensions(&mut self) {
         if self.drawing.constraints.is_empty() {
             return;
         }
-        let moved = |this: &Self, constraint: &Constraint| -> Option<cad_core::Vec2> {
-            let mut before = Vec::new();
-            let mut after = Vec::new();
-            for reference in &constraint.references {
-                let was = this.drawing.entity(reference.entity)?;
-                let now = this.record_now(reference.entity)?.entity;
-                before.push(anchor(reference.part, was)?);
-                after.push(anchor(reference.part, &now)?);
+        // The centre of what a row measures, its references read against
+        // the geometry of the same moment: the stored row against the
+        // drawing as it was, the row as it will be against the drawing as
+        // it will be — a part renamed in between (a vertex inserted
+        // before it) is still the same point.
+        let centre = |references: &[crate::constraint::Reference],
+                      entity: &dyn Fn(EntityId) -> Option<Entity>|
+         -> Option<Point2> {
+            let mut sum = cad_core::Vec2::new(0.0, 0.0);
+            for reference in references {
+                sum = sum + (anchor(reference.part, &entity(reference.entity)?)? - Point2::ORIGIN);
             }
-            let centre = |points: &[Point2]| {
-                let n = points.len() as f64;
-                let sum = points.iter().fold(cad_core::Vec2::new(0.0, 0.0), |s, p| {
-                    s + (*p - Point2::ORIGIN)
-                });
-                Point2::ORIGIN + sum * (1.0 / n)
-            };
-            let by = centre(&after) - centre(&before);
-            (by.x != 0.0 || by.y != 0.0).then_some(by)
+            (!references.is_empty()).then(|| Point2::ORIGIN + sum * (1.0 / references.len() as f64))
         };
         for (id, now) in self.constraints_now() {
             let Some(place) = now.place else {
@@ -805,7 +801,8 @@ impl TransactionBuilder<'_> {
             let Some(was) = self.drawing.constraints.get(id) else {
                 continue;
             };
-            if was.place != now.place
+            if self.restated.contains(&id)
+                || was.place != now.place
                 || !now
                     .references
                     .iter()
@@ -813,7 +810,15 @@ impl TransactionBuilder<'_> {
             {
                 continue;
             }
-            if let Some(by) = moved(self, &now) {
+            let before = centre(&was.references, &|e| self.drawing.entity(e).cloned());
+            let after = centre(&now.references, &|e| {
+                self.record_now(e).map(|record| (*record.entity).clone())
+            });
+            let (Some(before), Some(after)) = (before, after) else {
+                continue;
+            };
+            let by = after - before;
+            if by.x != 0.0 || by.y != 0.0 {
                 let after = Constraint {
                     place: Some(place + by),
                     ..now.clone()
@@ -1062,6 +1067,57 @@ mod tests {
         .unwrap();
         assert_eq!(tx.commit().refused, None);
         assert_eq!(line_of(&drawing, line).end, Point2::new(10.0, 5.0));
+    }
+
+    #[test]
+    fn a_dimension_follows_its_points_through_a_renamed_part() {
+        // #426: a vertex inserted before the one measured renames it
+        // Vertex(2); read as it was against the drawing as it was, the
+        // point did not move, and neither does the dimension.
+        let mut drawing = Drawing::new();
+        let p = Point2::new;
+        let mut tx = drawing.transaction();
+        let path = tx
+            .insert(PolylineEntity::new(
+                vec![p(0.0, 0.0), p(10.0, 0.0), p(20.0, 0.0)],
+                false,
+            ))
+            .unwrap();
+        let point = tx.insert(crate::PointEntity::new(p(10.0, -20.0))).unwrap();
+        let mut d1 = Constraint::dimensional(
+            "d1",
+            Kind::Distance {
+                axis: Axis::Aligned,
+                value: 20.0,
+            },
+            vec![at(path, Part::Vertex(1)), at(point, Part::Point)],
+        );
+        d1.place = Some(p(20.0, -10.0));
+        let id = tx.add_constraint(d1.clone()).unwrap();
+        assert_eq!(tx.commit().refused, None);
+
+        let mut tx = drawing.transaction();
+        tx.replace(
+            path,
+            PolylineEntity::new(
+                vec![p(0.0, 0.0), p(5.0, 5.0), p(10.0, 0.0), p(20.0, 0.0)],
+                false,
+            ),
+        )
+        .unwrap();
+        tx.replace_constraint(
+            id,
+            Constraint {
+                references: vec![at(path, Part::Vertex(2)), at(point, Part::Point)],
+                ..d1
+            },
+        )
+        .unwrap();
+        assert_eq!(tx.commit().refused, None);
+        assert_eq!(
+            drawing.constraints().get(id).unwrap().place,
+            Some(p(20.0, -10.0))
+        );
     }
 
     #[test]
