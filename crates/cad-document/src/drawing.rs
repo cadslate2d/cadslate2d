@@ -7,11 +7,11 @@ mod settle;
 use std::fmt;
 use std::sync::Arc;
 
-use cad_core::{Aabb, EntityId, LengthUnit, Vec2};
+use cad_core::{Aabb, EntityId, LengthUnit, Point2, Vec2};
 
 use crate::block::{Block, BlockId, BlockTable, initial_blocks};
 use crate::constraint::{
-    Constraint, ConstraintError, ConstraintId, ConstraintTable, Reference, Shape,
+    Constraint, ConstraintError, ConstraintId, ConstraintTable, Part, Reference, Shape,
     initial_constraints,
 };
 use crate::dim_style::{DimStyle, DimStyleError, DimStyleId, DimStyleTable, initial_dim_styles};
@@ -2536,6 +2536,91 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
+    /// Replaces `id` by `pieces` and removes `absorbed`: what cutting an
+    /// entity (BREAK, TRIM) or joining others into it (JOIN) makes. The
+    /// first piece keeps `id` and its properties; the others are inserted
+    /// like it, and their IDs returned. `pieces` holds at least one.
+    ///
+    /// Unlike [`Self::replace`], an end keeps no meaning by its name: the
+    /// end a cut piece has now is not the end that was cut away. Each
+    /// constraint on a point of `id` or of `absorbed` — an end, a centre, a
+    /// vertex — or on a polyline's straight segment goes to the piece with
+    /// that point or segment where it was, and is removed when no piece has
+    /// it (#421). One on an edge stays with the first piece, as `replace`
+    /// keeps it; one on an edge of `absorbed` goes with it.
+    pub fn reshape(
+        &mut self,
+        id: EntityId,
+        pieces: Vec<Entity>,
+        absorbed: &[EntityId],
+    ) -> Result<Vec<EntityId>, TransactionError> {
+        let mut pieces = pieces.into_iter();
+        let first = pieces.next().ok_or(TransactionError::UnknownEntity(id))?;
+        let mut sources: Vec<(EntityId, Entity)> = Vec::new();
+        for &source in std::iter::once(&id).chain(absorbed) {
+            let entity = (*self.existing(source)?.entity).clone();
+            sources.push((source, entity));
+        }
+        let inserted = pieces
+            .map(|piece| self.insert_like(id, piece))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut placed: Vec<(EntityId, Entity)> = vec![(id, first.clone())];
+        for &piece in &inserted {
+            let entity = self.record_now(piece).expect("just inserted").entity;
+            placed.push((piece, (*entity).clone()));
+        }
+        // The constraints carried to the pieces, or removed, before the
+        // sources change: what `remove` and `replace` then find refers
+        // only to what is there.
+        for (constraint_id, constraint) in self.constraints_now() {
+            if !sources
+                .iter()
+                .any(|(source, _)| constraint.refers_to(*source))
+            {
+                continue;
+            }
+            let references: Option<Vec<Reference>> = constraint
+                .references
+                .iter()
+                .map(
+                    |reference| match sources.iter().find(|(s, _)| *s == reference.entity) {
+                        None => Some(*reference),
+                        Some((source, entity)) => {
+                            carried(reference.part, entity, &placed).or_else(|| {
+                                let edge = Part::position_on(reference.part, entity).is_none()
+                                    && !matches!(reference.part, Part::Segment(_));
+                                (edge && *source == id).then_some(*reference)
+                            })
+                        }
+                    },
+                )
+                .collect();
+            match references {
+                Some(references) if references != constraint.references => {
+                    let after = Constraint {
+                        references,
+                        ..constraint.clone()
+                    };
+                    self.push_other(Change::Constraint(TableChange::Replace {
+                        id: constraint_id,
+                        before: constraint,
+                        after,
+                    }));
+                }
+                Some(_) => {}
+                None => self.push_other(Change::Constraint(TableChange::Remove {
+                    id: constraint_id,
+                    row: constraint,
+                })),
+            }
+        }
+        for &source in absorbed {
+            self.remove(source)?;
+        }
+        self.replace(id, first)?;
+        Ok(inserted)
+    }
+
     /// Changes an existing entity's properties, keeping its ID and sharing
     /// its geometry.
     pub fn set_properties(
@@ -4128,6 +4213,46 @@ impl TransactionBuilder<'_> {
             None => Ok(()),
         }
     }
+}
+
+/// Where `part` of `from` is among `pieces`: the piece with a point where
+/// that point was, or a straight segment between the same two points, and
+/// its part there (#421). `None` for an edge, or when no piece has it.
+fn carried(part: Part, from: &Entity, pieces: &[(EntityId, Entity)]) -> Option<Reference> {
+    let near = |a: Point2, b: Point2| {
+        cad_core::tolerance::LinearTolerance::DEFAULT
+            .around(&[a, b])
+            .coincident(a, b)
+    };
+    if let Some(at) = part.position_on(from) {
+        return pieces.iter().find_map(|(id, piece)| {
+            Part::points_of(piece)
+                .into_iter()
+                .find(|candidate| candidate.position_on(piece).is_some_and(|p| near(p, at)))
+                .map(|candidate| Reference::new(*id, candidate))
+        });
+    }
+    let ends = |entity: &Entity, part: Part| -> Option<(Point2, Point2)> {
+        let (Entity::Polyline(polyline), Part::Segment(n)) = (entity, part) else {
+            return None;
+        };
+        part.shape_on(entity)?;
+        let count = polyline.vertices.len();
+        let n = n as usize;
+        Some((polyline.vertices[n], polyline.vertices[(n + 1) % count]))
+    };
+    let (a, b) = ends(from, part)?;
+    pieces.iter().find_map(|(id, piece)| {
+        let Entity::Polyline(polyline) = piece else {
+            return None;
+        };
+        (0..polyline.vertices.len() as u32)
+            .map(Part::Segment)
+            .find(|candidate| {
+                ends(piece, *candidate).is_some_and(|(p, q)| near(p, a) && near(q, b))
+            })
+            .map(|candidate| Reference::new(*id, candidate))
+    })
 }
 
 #[cfg(test)]

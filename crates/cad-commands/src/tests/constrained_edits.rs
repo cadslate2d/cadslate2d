@@ -261,3 +261,103 @@ proptest! {
         }
     }
 }
+
+/// Line 1 from 0,0 to 100,0, line 2 from 100,0 to 100,50, line 1's end
+/// coincident with line 2's start.
+fn cornered() -> Harness {
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["LINE", "100,0", "100,50", ""]);
+    h.enter_all(&["GCCOINCIDENT", "100,0", "100,0"]);
+    assert_eq!(h.session.drawing().constraints().len(), 1, "{:?}", h.log());
+    h
+}
+
+fn untouched(h: &Harness) {
+    assert_eq!(line(h, 2).start, p(100.0, 0.0), "{:?}", h.log());
+    assert_eq!(line(h, 2).end, p(100.0, 50.0));
+}
+
+#[test]
+fn a_broken_line_hands_its_far_end_constraint_to_the_far_piece() {
+    // #421: the far end is the second piece's now; line 2 stays put.
+    let mut h = cornered();
+    h.enter("BREAK");
+    h.click_world(p(30.0, 0.0));
+    h.enter("60,0");
+    untouched(&h);
+    assert_eq!(line(&h, 1).end, p(30.0, 0.0));
+    let far = h
+        .session
+        .drawing()
+        .entities()
+        .find_map(|(id, entity)| {
+            entity
+                .as_line()
+                .is_some_and(|l| l.end == p(100.0, 0.0))
+                .then_some(id)
+        })
+        .expect("the far piece");
+    let constraints = h.session.drawing().constraints();
+    let (_, coincident) = constraints.iter().next().expect("kept");
+    assert!(coincident.refers_to(far) && !coincident.refers_to(id(1)));
+    holds(&h);
+    // One undo puts the line and the constraint back.
+    h.undo();
+    assert_eq!(line(&h, 1).end, p(100.0, 0.0));
+    let constraints = h.session.drawing().constraints();
+    assert!(constraints.iter().next().unwrap().1.refers_to(id(1)));
+}
+
+#[test]
+fn a_trimmed_end_takes_its_constraint_away() {
+    // #421: the end coincident with line 2 is cut away, so the
+    // coincidence goes with it instead of dragging line 2 to the cut.
+    let mut h = cornered();
+    h.enter_all(&["LINE", "70,-10", "70,10", ""]);
+    h.enter("TRIM");
+    h.click_world(p(70.0, 5.0));
+    h.enter("");
+    h.click_world(p(85.0, 0.0));
+    untouched(&h);
+    assert_eq!(line(&h, 1).end, p(70.0, 0.0));
+    assert!(h.session.drawing().constraints().is_empty());
+    holds(&h);
+}
+
+#[test]
+fn a_joined_line_keeps_its_length_and_its_outer_ends_constraints() {
+    // #421: d1 measured line 1's ends; its end is a joint now, inside the
+    // joined line, so d1 goes and the line keeps all 150.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["LINE", "100,0", "150,0", ""]);
+    h.enter_all(&["DCHORIZONTAL", "0,0", "100,0", "50,-15", ""]);
+    h.enter_all(&["JOIN", "ALL", ""]);
+    assert_eq!(
+        h.log().last().unwrap(),
+        "2 objects joined into 1 line.",
+        "{:?}",
+        h.log()
+    );
+    assert_eq!(line(&h, 1).start, p(0.0, 0.0));
+    assert_eq!(line(&h, 1).end, p(150.0, 0.0));
+    assert!(h.session.drawing().constraints().is_empty());
+
+    // An outer end's constraint is the joined line's now: line 3 stays.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["LINE", "100,0", "150,0", ""]);
+    h.enter_all(&["LINE", "150,0", "150,30", ""]);
+    h.enter_all(&["GCCOINCIDENT", "150,0", "150,0"]);
+    h.enter("JOIN");
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(125.0, 0.0));
+    h.enter("");
+    assert_eq!(line(&h, 1).end, p(150.0, 0.0), "{:?}", h.log());
+    assert_eq!(line(&h, 3).start, p(150.0, 0.0));
+    let constraints = h.session.drawing().constraints();
+    let (_, coincident) = constraints.iter().next().expect("carried");
+    assert!(coincident.refers_to(id(1)) && coincident.refers_to(id(3)));
+    holds(&h);
+}

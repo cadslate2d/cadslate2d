@@ -181,17 +181,24 @@ impl EdgeCommand {
     fn commit(&self, edges: &Edges, target: EntityId, pick: Point2, ctx: &mut CommandContext<'_>) {
         match self.edit(edges, ctx.drawing, target, pick) {
             Ok(edit) => {
-                let mut pieces = edit.replacement.into_iter();
                 let mut transaction = ctx.transaction();
-                if let Some(first) = pieces.next() {
-                    transaction
-                        .replace(target, first)
-                        .expect("the target was just read");
-                }
-                for piece in pieces {
-                    transaction
-                        .insert_like(target, piece)
-                        .expect("the target was just read");
+                match self.operation {
+                    // What is cut away takes its constraints with it; those
+                    // on what is kept go with the piece that has it (#421).
+                    Operation::Trim => {
+                        transaction
+                            .reshape(target, edit.replacement, &[])
+                            .expect("the target was just read");
+                    }
+                    // An extended end is the same end, moved: what is
+                    // joined to it follows, as a grip's does.
+                    Operation::Extend => {
+                        for entity in edit.replacement {
+                            transaction
+                                .replace(target, entity)
+                                .expect("the target was just read");
+                        }
+                    }
                 }
                 transaction.commit();
             }

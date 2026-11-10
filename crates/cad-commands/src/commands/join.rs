@@ -76,18 +76,15 @@ impl JoinCommand {
             format!("{} joined into {made}.", counted(used, "object"))
         };
 
-        // The oldest member becomes the result; the others go.
+        // The oldest member becomes the result; the others go. A constraint
+        // on a point that is still an end of the result goes with it; one
+        // on a joint, now inside it, goes (#421).
         let mut transaction = ctx.transaction();
         for (members, entity) in results {
-            let mut members = members.into_iter().map(|member| ids[member]);
-            if let Some(kept) = members.next() {
+            let members: Vec<EntityId> = members.into_iter().map(|member| ids[member]).collect();
+            if let Some((kept, others)) = members.split_first() {
                 transaction
-                    .replace(kept, entity)
-                    .expect("selected entities are live");
-            }
-            for member in members {
-                transaction
-                    .remove(member)
+                    .reshape(*kept, vec![entity], others)
                     .expect("selected entities are live and appear once");
             }
         }

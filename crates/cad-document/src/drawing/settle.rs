@@ -838,6 +838,70 @@ mod tests {
     }
 
     #[test]
+    fn a_reshaped_polyline_carries_its_vertex_and_segment_constraints_by_place() {
+        // #421: a polyline cut in two numbers its vertices and segments
+        // afresh; what was on its last vertex and its last segment is the
+        // second piece's, at the same places, and nothing moves.
+        let mut drawing = Drawing::new();
+        let p = Point2::new;
+        let mut tx = drawing.transaction();
+        let path = tx
+            .insert(PolylineEntity::new(
+                vec![p(0.0, 0.0), p(10.0, 0.0), p(20.0, 0.0), p(30.0, 0.0)],
+                false,
+            ))
+            .unwrap();
+        let point = tx.insert(crate::PointEntity::new(p(30.0, 0.0))).unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        for constraint in [
+            Constraint::geometric(
+                Kind::Coincident,
+                vec![at(path, Part::Vertex(3)), at(point, Part::Point)],
+            ),
+            Constraint::geometric(Kind::Horizontal, vec![at(path, Part::Segment(2))]),
+            Constraint::geometric(Kind::Horizontal, vec![at(path, Part::Segment(0))]),
+        ] {
+            tx.add_constraint(constraint).unwrap();
+        }
+        assert_eq!(tx.commit().refused, None);
+
+        let mut tx = drawing.transaction();
+        let pieces = tx
+            .reshape(
+                path,
+                vec![
+                    PolylineEntity::new(vec![p(0.0, 0.0), p(10.0, 0.0), p(12.0, 0.0)], false)
+                        .into(),
+                    PolylineEntity::new(vec![p(18.0, 0.0), p(20.0, 0.0), p(30.0, 0.0)], false)
+                        .into(),
+                ],
+                &[],
+            )
+            .unwrap();
+        assert_eq!(tx.commit().refused, None);
+        let far = pieces[0];
+        let references: Vec<Vec<Reference>> = drawing
+            .constraints()
+            .iter()
+            .map(|(_, c)| c.references.clone())
+            .collect();
+        assert_eq!(
+            references,
+            vec![
+                vec![at(far, Part::Vertex(2)), at(point, Part::Point)],
+                vec![at(far, Part::Segment(1))],
+                vec![at(path, Part::Segment(0))],
+            ]
+        );
+        assert_eq!(
+            drawing.entity(point),
+            Some(&crate::PointEntity::new(p(30.0, 0.0)).into())
+        );
+        assert!(drawing.unsatisfied_constraints().is_empty());
+    }
+
+    #[test]
     fn a_dimension_given_a_new_value_moves_what_it_measures() {
         let (mut drawing, a, b) = corner();
         let d1 = drawing.constraints().find("d1").unwrap();

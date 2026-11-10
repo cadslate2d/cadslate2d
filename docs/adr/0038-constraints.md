@@ -232,6 +232,7 @@ Removing a constraint can break nothing, so it triggers nothing.
 - Moving every entity of a part together (MOVE, ROTATE) holds everything and breaks nothing but a `Fix`.
 - Scaling breaks dimensions, as in AutoCAD.
 - An edit that only changes properties settles nothing.
+- **Cutting or joining** (BREAK, TRIM, JOIN) goes through `TransactionBuilder::reshape`, not `replace`. A cut piece's end is not the end that was cut away, so a constraint on a point or a straight segment is carried by where it was, not by its name: it goes to the piece with that point or segment there, and is removed when no piece has it. Line 1's far end, coincident with line 2, is the far piece's after a BREAK. After a TRIM, it is cut away and the coincidence with it. After a JOIN, a joint is inside the result and what was on it goes. A constraint on an edge stays with the piece that keeps the ID (#421). EXTEND moves an end rather than cutting it, so it is a `replace`, and what is joined to the end follows.
 
 An unconstrained drawing pays one lookup per touched entity.
 
