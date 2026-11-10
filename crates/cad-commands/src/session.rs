@@ -250,6 +250,16 @@ impl Default for Session {
     }
 }
 
+/// What a proposal's run read of the session besides the drawing and the
+/// space: see [`Session::run_context`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunContext {
+    view: View,
+    selection: Selection,
+    toggles: Toggles,
+    settings: DraftingSettings,
+}
+
 impl Session {
     /// A session on an empty drawing.
     pub fn new() -> Self {
@@ -339,11 +349,45 @@ impl Session {
     /// run a proposal against (#254).
     pub(crate) fn scratch(&self) -> Session {
         let mut scratch = Session::with_drawing(self.drawing.clone()).with_toggles(self.toggles);
-        scratch.settings = self.settings;
-        scratch.view = self.view.clone();
         scratch.space = self.space;
-        scratch.selection = self.selection.clone();
+        let context = self.run_context();
+        scratch.settings = context.settings;
+        scratch.view = context.view;
+        scratch.selection = context.selection;
         scratch
+    }
+
+    /// What an intent's run reads of the session besides the drawing and
+    /// the space (#433): the view a pick is a click in, the selection an
+    /// operation on "the selection" takes, the aids and settings a point
+    /// goes through. A proposal is computed with it, and Accept runs with
+    /// it again, so what is committed is what was shown.
+    pub(crate) fn run_context(&self) -> RunContext {
+        RunContext {
+            view: self.view.clone(),
+            selection: self.selection.clone(),
+            toggles: self.toggles,
+            settings: self.settings,
+        }
+    }
+
+    /// Runs `run` with `context` in place of the session's own: the view,
+    /// the aids, and the settings given back after it, the selection left
+    /// as `run` leaves it.
+    pub(crate) fn with_run_context<T>(
+        &mut self,
+        context: &RunContext,
+        run: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let view = std::mem::replace(&mut self.view, context.view.clone());
+        let toggles = std::mem::replace(&mut self.toggles, context.toggles);
+        let settings = std::mem::replace(&mut self.settings, context.settings);
+        self.selection = context.selection.clone();
+        let result = run(self);
+        self.view = view;
+        self.toggles = toggles;
+        self.settings = settings;
+        result
     }
 
     pub(crate) fn proposal_ref(&self) -> &Option<Proposal> {
