@@ -810,7 +810,9 @@ fn points_from_another_writer_and_the_point_style_round_trip() {
         "not lossy: the size written back is the default"
     );
     let again = export(&import.drawing);
-    assert!(again.contains("\n$PDMODE\n 70\n3\n") && !again.contains("$PDSIZE"));
+    // The size is written whatever it is: absent, AutoCAD reads 0, a size
+    // relative to the screen (#432).
+    assert!(again.contains("\n$PDMODE\n 70\n3\n") && again.contains("\n$PDSIZE\n 40\n1.0\n"));
     // A relative size with no points is not worth a word.
     let silent = "  0\nSECTION\n  2\nHEADER\n  9\n$PDSIZE\n 40\n0.0\n  0\nENDSEC\n  0\nEOF\n";
     let import = cad_dxf::import(silent.as_bytes()).unwrap();

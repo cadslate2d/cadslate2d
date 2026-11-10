@@ -263,3 +263,30 @@ fn a_spline_through_points_keeps_them_and_one_with_control_data_of_its_own_is_re
         }
     }
 }
+
+/// #432: points with the default style reopen from our DWG without a word
+/// about a size relative to the screen, which the drawing never had: the
+/// size is written whatever it is, and the header does not fall back to
+/// the format's 0.
+#[test]
+fn points_with_the_default_style_reopen_without_a_false_warning() {
+    use cad_core::Point2;
+    use cad_document::{Entity, PointEntity, PointStyle};
+    let drawing = Drawing::from_entities([Entity::Point(PointEntity::new(Point2::new(1.0, 2.0)))]);
+    assert_eq!(drawing.settings().point_style, PointStyle::default());
+    for version in VERSIONS {
+        let import = cad_dwg::import(&cad_dwg::export(&drawing, version).unwrap()).unwrap();
+        let said = import.report.summary();
+        assert!(
+            !said
+                .iter()
+                .any(|line| line.contains("relative to the screen")),
+            "{version:?}: {said:?}"
+        );
+        assert_eq!(
+            import.drawing.settings().point_style,
+            PointStyle::default(),
+            "{version:?}"
+        );
+    }
+}

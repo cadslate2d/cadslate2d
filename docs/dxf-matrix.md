@@ -38,7 +38,7 @@ Everything else in the header is skipped.
 | `$CELWEIGHT` (370) | The lineweight for new objects | Not `ByLayer` | the same |
 | `$LTSCALE` (40) | The linetype scale, if finite and positive | Not 1 | the same |
 | `$PDMODE` (70) | How points are drawn (#198): 0 a dot, 1 nothing, 2 a cross, 3 an X, 4 a tick, with 32 for a circle or 64 for a square round it; any other number is the default | Not 0 | `points_from_another_writer_and_the_point_style_round_trip()` |
-| `$PDSIZE` (40) | The points' size in drawing units, if finite and positive; zero or negative — a size relative to the screen — is not held: the default size stands, and the report says so when the file has points | Not 1 | the same |
+| `$PDSIZE` (40) | The points' size in drawing units, if finite and positive; zero or negative — a size relative to the screen — is not held: the default size stands, and the report says so when the file has points | Always: absent, AutoCAD reads 0, a size relative to the screen, and a DWG's header would be given that 0 (#432) | the same |
 | `$EXTMIN`, `$EXTMAX` | Nothing | The drawing has anything in it | `a_line_is_written_with_its_handle_owner_layer_and_coordinates()` |
 | `$DIMSTYLE` | The current dimension style, by name; `Standard` when the file names none the table defines | When the current style is not `Standard` | `dimension_styles_from_another_writer()` |
 | `$CMLEADERSTYLE` | The current multileader style, by the handle of its `MLEADERSTYLE` (340, #240); `Standard` when it names none read | When the current style is not `Standard` | `multileaders_from_another_writer_round_trip()` |
