@@ -762,3 +762,63 @@ fn a_constraint_across_the_mirror_is_left_to_settling() {
     assert_eq!(h.session.drawing().revision(), revision);
     assert_eq!(line(&h, 1).start, p(-50.0, -10.0));
 }
+
+#[test]
+fn a_dimensional_constraints_dimension_goes_with_its_geometry() {
+    // #426: the dimension stays 15 below the line however it moves.
+    let place = |h: &Harness| {
+        h.session
+            .drawing()
+            .constraints()
+            .iter()
+            .find_map(|(_, c)| c.place)
+            .expect("a placed dimension")
+    };
+    let near = |a: Point2, b: Point2| (a - b).length() < 1e-7;
+
+    // Moved: by the same offset.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["DCHORIZONTAL", "0,0", "100,0", "50,-15", ""]);
+    h.enter_all(&["MOVE", "ALL", "", "0,0", "0,1000"]);
+    assert_eq!(place(&h), p(50.0, 985.0), "{:?}", h.log());
+
+    // Turned: with the line, still beside it.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["DCALIGNED", "0,0", "100,0", "50,-15", ""]);
+    h.enter_all(&["ROTATE", "ALL", "", "0,0", "90"]);
+    assert!(near(place(&h), p(15.0, 50.0)), "{:?}", place(&h));
+
+    // Dragged by its midpoint grip.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["DCHORIZONTAL", "0,0", "100,0", "50,-15", ""]);
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(50.0, 20.0));
+    assert_eq!(place(&h), p(50.0, 5.0), "{:?}", h.log());
+
+    // Moved by settling: line 2 follows line 1's end up 10, its length
+    // kept by d1, and d1's dimension goes up with it.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["LINE", "100,0", "100,50", ""]);
+    h.enter_all(&["GCCOINCIDENT", "100,0", "100,0"]);
+    h.enter_all(&["DCVERTICAL", "100,0", "100,50", "115,25", ""]);
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(100.0, 0.0));
+    h.enter("100,10");
+    assert!(
+        (line(&h, 2).end.y - 60.0).abs() < 1e-7,
+        "{:?} {:?} {:?}",
+        line(&h, 1),
+        line(&h, 2),
+        h.log()
+    );
+    assert!(near(place(&h), p(115.0, 35.0)), "{:?}", place(&h));
+    holds(&h);
+    // One undo puts the dimension back with the geometry.
+    h.undo();
+    assert_eq!(place(&h), p(115.0, 25.0));
+}

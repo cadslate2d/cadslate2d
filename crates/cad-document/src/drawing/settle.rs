@@ -771,6 +771,62 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
+    /// Moves each dimensional constraint's place by as much as what it
+    /// measures moved, so its dimension stays beside its geometry (#426):
+    /// after a grip, a STRETCH, or settling. One whose place this
+    /// transaction set already — a transform restated it — is left.
+    pub(super) fn follow_dimensions(&mut self) {
+        if self.drawing.constraints.is_empty() {
+            return;
+        }
+        let moved = |this: &Self, constraint: &Constraint| -> Option<cad_core::Vec2> {
+            let mut before = Vec::new();
+            let mut after = Vec::new();
+            for reference in &constraint.references {
+                let was = this.drawing.entity(reference.entity)?;
+                let now = this.record_now(reference.entity)?.entity;
+                before.push(anchor(reference.part, was)?);
+                after.push(anchor(reference.part, &now)?);
+            }
+            let centre = |points: &[Point2]| {
+                let n = points.len() as f64;
+                let sum = points.iter().fold(cad_core::Vec2::new(0.0, 0.0), |s, p| {
+                    s + (*p - Point2::ORIGIN)
+                });
+                Point2::ORIGIN + sum * (1.0 / n)
+            };
+            let by = centre(&after) - centre(&before);
+            (by.x != 0.0 || by.y != 0.0).then_some(by)
+        };
+        for (id, now) in self.constraints_now() {
+            let Some(place) = now.place else {
+                continue;
+            };
+            let Some(was) = self.drawing.constraints.get(id) else {
+                continue;
+            };
+            if was.place != now.place
+                || !now
+                    .references
+                    .iter()
+                    .any(|r| self.touched.contains(&r.entity))
+            {
+                continue;
+            }
+            if let Some(by) = moved(self, &now) {
+                let after = Constraint {
+                    place: Some(place + by),
+                    ..now.clone()
+                };
+                self.push_other(Change::Constraint(crate::table::TableChange::Replace {
+                    id,
+                    before: now,
+                    after,
+                }));
+            }
+        }
+    }
+
     /// Puts `entity` as `id`'s geometry: into this transaction's change of
     /// it, or as a new replacement.
     fn settle_entity(&mut self, id: EntityId, entity: Entity) {
@@ -793,6 +849,29 @@ impl TransactionBuilder<'_> {
             let after = before.with_entity(entity);
             self.push(EntityChange::Replace { id, before, after });
         }
+    }
+}
+
+/// Where a part of `entity` is, for a dimension to follow: a point's
+/// position, a straight edge's middle, a circular edge's centre.
+fn anchor(part: Part, entity: &Entity) -> Option<Point2> {
+    if let Some(at) = part.position_on(entity) {
+        return Some(at);
+    }
+    let middle = |a: Point2, b: Point2| a + (b - a) * 0.5;
+    match (entity, part) {
+        (Entity::Line(line), Part::Edge) => Some(middle(line.start, line.end)),
+        (Entity::Circle(circle), Part::Edge) => Some(circle.center),
+        (Entity::Arc(arc), Part::Edge) => Some(arc.center),
+        (Entity::Polyline(polyline), Part::Segment(n)) => {
+            let count = polyline.vertices.len();
+            let n = n as usize;
+            Some(middle(
+                *polyline.vertices.get(n)?,
+                polyline.vertices[(n + 1) % count],
+            ))
+        }
+        _ => None,
     }
 }
 
