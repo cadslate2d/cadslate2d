@@ -1628,6 +1628,7 @@ impl Drawing {
             others: Vec::new(),
             space: LayoutId::MODEL,
             held: BTreeSet::new(),
+            restated: BTreeSet::new(),
         }
     }
 
@@ -1918,6 +1919,9 @@ pub struct TransactionBuilder<'d> {
     /// Entities whose every unknown is held when the transaction settles
     /// its constraints (ADR-0038).
     held: BTreeSet<EntityId>,
+    /// Constraints this transaction restated with what it transformed:
+    /// their places are set, and not followed again (#426).
+    restated: BTreeSet<ConstraintId>,
 }
 
 impl TransactionBuilder<'_> {
@@ -2555,21 +2559,19 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
-    /// Says what a reflection did to the constraints among `ids`, which
-    /// were all just put through `transform` (MIRROR, #425). A constraint
-    /// keeps its meaning only if it is said again: an arc's ends trade
-    /// places, a tangent touches a line's other side, an angle turns the
-    /// other way, and a distance along an axis the mirror reverses is
-    /// measured from its other point; a dimension's place is reflected
-    /// with it. One that names anything outside `ids` is left to settling,
-    /// as is a distance along an axis a slanted mirror does not keep.
-    /// Nothing changes unless `transform` reverses orientation.
-    pub fn reflect_constraints(&mut self, ids: &[EntityId], transform: &cad_geometry::Transform) {
+    /// Says what `transform` did to the constraints among `ids`, which
+    /// were all just put through it. A dimension's place goes with them
+    /// (#426). Under a reflection (MIRROR, #425), a constraint keeps its
+    /// meaning only if it is said again: an arc's ends trade places, a
+    /// tangent touches a line's other side, an angle turns the other way,
+    /// and a distance along an axis the mirror reverses is measured from
+    /// its other point. One that names anything outside `ids` is left to
+    /// settling, as is a distance along an axis a slanted mirror does not
+    /// keep.
+    pub fn restate_constraints(&mut self, ids: &[EntityId], transform: &cad_geometry::Transform) {
         use crate::constraint::{Axis, Kind, Part, Touch};
         use cad_core::Point2;
-        if !transform.reverses_orientation() {
-            return;
-        }
+        let reflects = transform.reverses_orientation();
         let image = |v: Vec2| transform.apply(Point2::ORIGIN + v) - transform.apply(Point2::ORIGIN);
         let reversed = |v: Vec2| {
             let w = image(v);
@@ -2582,7 +2584,21 @@ impl TransactionBuilder<'_> {
             if !before.references.iter().all(|r| ids.contains(&r.entity)) {
                 continue;
             }
+            // Said to be restated, whether or not its row changes: a place
+            // the transform leaves where it was is set all the same.
+            self.restated.insert(constraint_id);
             let mut after = before.clone();
+            after.place = after.place.map(|place| transform.apply(place));
+            if !reflects {
+                if after != before {
+                    self.push_other(Change::Constraint(TableChange::Replace {
+                        id: constraint_id,
+                        before,
+                        after,
+                    }));
+                }
+                continue;
+            }
             for reference in &mut after.references {
                 let arc = self
                     .record_now(reference.entity)
@@ -2632,7 +2648,6 @@ impl TransactionBuilder<'_> {
                 | Kind::Radius { .. }
                 | Kind::Diameter { .. } => {}
             }
-            after.place = after.place.map(|place| transform.apply(place));
             if after != before {
                 self.push_other(Change::Constraint(TableChange::Replace {
                     id: constraint_id,
@@ -3588,6 +3603,7 @@ impl TransactionBuilder<'_> {
                 ..ApplyReport::default()
             };
         }
+        self.follow_dimensions();
         let transaction = Transaction::new(self.changes);
         let report = self.drawing.apply(&transaction);
         self.drawing.history.record(transaction);
