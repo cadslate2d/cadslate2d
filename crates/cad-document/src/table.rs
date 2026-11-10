@@ -95,6 +95,13 @@ pub enum TableChange<Row> {
     },
 }
 
+impl<Row: PartialEq> TableChange<Row> {
+    /// Whether it changes nothing: a row replaced by itself.
+    pub fn is_identity(&self) -> bool {
+        matches!(self, TableChange::Replace { before, after, .. } if before == after)
+    }
+}
+
 impl<Row: Clone> TableChange<Row> {
     pub fn id(&self) -> TableId<Row> {
         match self {

@@ -86,6 +86,27 @@ pub enum Change {
 }
 
 impl Change {
+    /// Whether it changes nothing: a replacement whose after is its
+    /// before. An insertion or a removal always changes something.
+    pub fn is_identity(&self) -> bool {
+        match self {
+            Change::Entity(EntityChange::Replace { before, after, .. }) => before == after,
+            Change::Entity(EntityChange::Insert { .. } | EntityChange::Remove { .. }) => false,
+            Change::Layer(change) => change.is_identity(),
+            Change::Linetype(change) => change.is_identity(),
+            Change::TextStyle(change) => change.is_identity(),
+            Change::DimStyle(change) => change.is_identity(),
+            Change::Block(change) => change.is_identity(),
+            Change::Layout(change) => change.is_identity(),
+            Change::Group(change) => change.is_identity(),
+            Change::Constraint(change) => change.is_identity(),
+            Change::LayerState(change) => change.is_identity(),
+            Change::View(change) => change.is_identity(),
+            Change::MLeaderStyle(change) => change.is_identity(),
+            Change::Settings(change) => change.before == change.after,
+        }
+    }
+
     pub fn inverse(&self) -> Self {
         match self {
             Change::Entity(change) => Change::Entity(change.inverse()),
