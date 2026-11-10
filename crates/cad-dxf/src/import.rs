@@ -6016,7 +6016,11 @@ mod tests {
             let text: String = groups.iter().map(|(code, value)| format!("{code}\n{value}\n")).collect();
             if let Ok(imported) = import(text.as_bytes()) {
                 let drawing = &imported.drawing;
-                prop_assert_eq!(drawing.len(), lines.len() + texts.len());
+                // Every object is imported or counted: a text whose height
+                // comes to zero or less is invalid geometry (#419); the
+                // lines here never are.
+                let invalid = imported.report.unsupported.get(INVALID).copied().unwrap_or(0);
+                prop_assert_eq!(drawing.len() + invalid, lines.len() + texts.len());
                 for (_, entity) in drawing.entities() {
                     let style = match entity {
                         Entity::Text(t) => Some(t.style),

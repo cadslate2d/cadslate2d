@@ -942,11 +942,11 @@ impl Writer {
             self.group(9, "$PDMODE");
             self.int(70, i64::from(settings.point_style.mode));
         }
-        #[allow(clippy::float_cmp)]
-        if settings.point_style.size != defaults.point_style.size {
-            self.group(9, "$PDSIZE");
-            self.real(40, settings.point_style.size);
-        }
+        // The size always: a file without it is AutoCAD's default, 0 — a
+        // size relative to the screen — which ours, 1 in drawing units, is
+        // not; a DWG's header would be given that 0 and read so (#432).
+        self.group(9, "$PDSIZE");
+        self.real(40, settings.point_style.size);
         if let Some(extents) = drawing.extents() {
             self.group(9, "$EXTMIN");
             self.point(10, extents.min());
