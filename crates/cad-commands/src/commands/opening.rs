@@ -153,16 +153,13 @@ impl OpeningCommand {
         };
         let found = ctx.drawing.layers().find(layer_name);
         let mut transaction = ctx.transaction();
+        // A face is cut, as BREAK cuts it: what was on its ends goes with
+        // the piece that has them (#421).
         for (id, pieces) in broken {
             let mut pieces = pieces.into_iter();
             if let Some(first) = pieces.next() {
                 transaction
-                    .replace(id, first)
-                    .expect("the face was just read");
-            }
-            for piece in pieces {
-                transaction
-                    .insert_like(id, piece)
+                    .reshape(id, first, pieces.collect(), &[])
                     .expect("the face was just read");
             }
         }

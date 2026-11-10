@@ -93,18 +93,14 @@ impl Command for BreakCommand {
                 };
                 match entity.broken(*first, second) {
                     Ok(pieces) => {
+                        // A constraint on the far end goes with the piece
+                        // that has it now (#421).
                         let mut pieces = pieces.into_iter();
+                        let first = pieces.next().expect("a break leaves a piece");
                         let mut transaction = ctx.transaction();
-                        if let Some(first) = pieces.next() {
-                            transaction
-                                .replace(*id, first)
-                                .expect("the object was just read");
-                        }
-                        for piece in pieces {
-                            transaction
-                                .insert_like(*id, piece)
-                                .expect("the object was just read");
-                        }
+                        transaction
+                            .reshape(*id, first, pieces.collect(), &[])
+                            .expect("the object was just read");
                         transaction.commit();
                         return Step::Finished;
                     }

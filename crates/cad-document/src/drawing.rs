@@ -7,11 +7,11 @@ mod settle;
 use std::fmt;
 use std::sync::Arc;
 
-use cad_core::{Aabb, EntityId, LengthUnit, Vec2};
+use cad_core::{Aabb, EntityId, LengthUnit, Point2, Vec2};
 
 use crate::block::{Block, BlockId, BlockTable, initial_blocks};
 use crate::constraint::{
-    Constraint, ConstraintError, ConstraintId, ConstraintTable, Reference, Shape,
+    Constraint, ConstraintError, ConstraintId, ConstraintTable, Kind, Part, Reference, Shape,
     initial_constraints,
 };
 use crate::dim_style::{DimStyle, DimStyleError, DimStyleId, DimStyleTable, initial_dim_styles};
@@ -2565,6 +2565,115 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
+    /// Replaces `id` by `first` and inserts `others` beside it, removing
+    /// `absorbed`: what cutting an entity (BREAK, TRIM), joining others
+    /// into it (JOIN), or numbering its parts afresh (PEDIT: a vertex
+    /// inserted, a line made a polyline) makes. `first` keeps `id` and its
+    /// properties; the others are inserted like it, and their IDs returned.
+    ///
+    /// Unlike [`Self::replace`], an end keeps no meaning by its name: the
+    /// end a cut piece has now is not the end that was cut away. Each
+    /// constraint on a point of `id` or of `absorbed` — an end, a centre, a
+    /// vertex — or on a straight edge — a line's, a polyline's segment —
+    /// goes to the piece with that point, or a straight edge between the
+    /// same two points, where it was, and is removed when no piece has it
+    /// (#421, #422). Otherwise, one on an edge of `id` stays with `first` where the cut
+    /// keeps what it says of the edge — its line or its circle: a
+    /// direction, a tangency, a point on it, a radius — and is removed
+    /// where it says a straight edge's length, which the cut changed; one
+    /// on an edge of `absorbed` goes with it. A carried row is checked as
+    /// any row is, and removed when its parts now repeat or do not fit.
+    pub fn reshape(
+        &mut self,
+        id: EntityId,
+        first: Entity,
+        others: Vec<Entity>,
+        absorbed: &[EntityId],
+    ) -> Result<Vec<EntityId>, TransactionError> {
+        let mut sources: Vec<(EntityId, Entity)> = Vec::new();
+        for &source in std::iter::once(&id).chain(absorbed) {
+            let entity = (*self.existing(source)?.entity).clone();
+            sources.push((source, entity));
+        }
+        let inserted = others
+            .into_iter()
+            .map(|piece| self.insert_like(id, piece))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut placed: Vec<(EntityId, Entity)> = vec![(id, first.clone())];
+        for &piece in &inserted {
+            let entity = self.record_now(piece).expect("just inserted").entity;
+            placed.push((piece, (*entity).clone()));
+        }
+        // The constraints carried to the pieces, or removed, before the
+        // sources change: what `remove` and `replace` then find refers
+        // only to what is there.
+        let mut rewritten = Vec::new();
+        for (constraint_id, constraint) in self.constraints_now() {
+            if !sources
+                .iter()
+                .any(|(source, _)| constraint.refers_to(*source))
+            {
+                continue;
+            }
+            let references: Option<Vec<Reference>> = constraint
+                .references
+                .iter()
+                .map(
+                    |reference| match sources.iter().find(|(s, _)| *s == reference.entity) {
+                        None => Some(*reference),
+                        Some((source, entity)) => carried(
+                            reference.part,
+                            entity,
+                            &placed,
+                            either_way(&constraint.kind),
+                        )
+                        .or_else(|| {
+                            let edge = reference.part == Part::Edge;
+                            (edge && *source == id && cut_keeps(&constraint.kind, entity, &first))
+                                .then_some(*reference)
+                        }),
+                    },
+                )
+                .collect();
+            match references {
+                Some(references) if references != constraint.references => {
+                    let after = Constraint {
+                        references,
+                        ..constraint.clone()
+                    };
+                    self.push_other(Change::Constraint(TableChange::Replace {
+                        id: constraint_id,
+                        before: constraint,
+                        after,
+                    }));
+                    rewritten.push(constraint_id);
+                }
+                Some(_) => {}
+                None => self.push_other(Change::Constraint(TableChange::Remove {
+                    id: constraint_id,
+                    row: constraint,
+                })),
+            }
+        }
+        for &source in absorbed {
+            self.remove(source)?;
+        }
+        self.replace(id, first)?;
+        // Checked as any row is, now the pieces are in place: a joint that
+        // closed a loop names one vertex twice, and goes.
+        for constraint_id in rewritten {
+            if let Some(row) = self.constraint_now(constraint_id).cloned()
+                && self.check_constraint(&row, Some(constraint_id)).is_err()
+            {
+                self.push_other(Change::Constraint(TableChange::Remove {
+                    id: constraint_id,
+                    row,
+                }));
+            }
+        }
+        Ok(inserted)
+    }
+
     /// Replaces an existing entity's geometry as a whole — a move, a turn,
     /// a scale, a reflection of it — and holds every unknown of it as
     /// constraints settle (ADR-0038 §5), not only those whose values
@@ -4272,6 +4381,122 @@ impl TransactionBuilder<'_> {
             None => Ok(()),
         }
     }
+}
+
+/// Whether what `kind` says of a straight edge holds of it run the other
+/// way: JOIN turns a member round to chain it (#422). A direction, a line
+/// a point is on, a length do; a signed angle and the side a tangent
+/// touches do not. Every kind is named, so a new one is decided here.
+fn either_way(kind: &Kind) -> bool {
+    match kind {
+        Kind::Coincident
+        | Kind::Collinear
+        | Kind::Parallel
+        | Kind::Perpendicular
+        | Kind::Horizontal
+        | Kind::Vertical
+        | Kind::Symmetric
+        | Kind::Equal => true,
+        Kind::Angle { .. } | Kind::Tangent { .. } => false,
+        // Said of points or of circular edges, never of a straight one.
+        Kind::Concentric
+        | Kind::Fix { .. }
+        | Kind::Distance { .. }
+        | Kind::Radius { .. }
+        | Kind::Diameter { .. } => false,
+    }
+}
+
+/// Whether cutting or joining `before` into `after` keeps what `kind` says
+/// of its edge (#421). A line's edge is read as its line and an arc's as
+/// its circle, which a cut keeps; an equal length is the one thing said of
+/// a straight edge that it changes.
+/// Every kind is named, so a new one is decided here rather than kept
+/// through a cut by default.
+fn cut_keeps(kind: &Kind, before: &Entity, after: &Entity) -> bool {
+    match kind {
+        // Of a straight edge, its length; of a circular one, its radius.
+        Kind::Equal => match (before, after) {
+            (Entity::Line(a), Entity::Line(b)) => cad_core::tolerance::LinearTolerance::DEFAULT
+                .around(&[a.start, a.end, b.start, b.end])
+                .is_zero(a.start.distance_to(a.end) - b.start.distance_to(b.end)),
+            (Entity::Line(_), _) => false,
+            _ => true,
+        },
+        // A direction, the line or circle a point or a tangent is on, a
+        // centre, a radius.
+        Kind::Coincident
+        | Kind::Collinear
+        | Kind::Concentric
+        | Kind::Parallel
+        | Kind::Perpendicular
+        | Kind::Horizontal
+        | Kind::Vertical
+        | Kind::Tangent { .. }
+        | Kind::Symmetric
+        | Kind::Angle { .. }
+        | Kind::Radius { .. }
+        | Kind::Diameter { .. } => true,
+        // Said of points only, never of an edge.
+        Kind::Fix { .. } | Kind::Distance { .. } => true,
+    }
+}
+
+/// Where `part` of `from` is among `pieces`: the piece with a point where
+/// that point was, or a straight edge — a line's, a polyline's segment —
+/// between the same two points, and its part there (#421, #422); run the
+/// other way too when `either_way`. `None` for a circular edge, or when no
+/// piece has it.
+fn carried(
+    part: Part,
+    from: &Entity,
+    pieces: &[(EntityId, Entity)],
+    either_way: bool,
+) -> Option<Reference> {
+    let near = |a: Point2, b: Point2| {
+        cad_core::tolerance::LinearTolerance::DEFAULT
+            .around(&[a, b])
+            .coincident(a, b)
+    };
+    if let Some(at) = part.position_on(from) {
+        return pieces.iter().find_map(|(id, piece)| {
+            Part::points_of(piece)
+                .into_iter()
+                .find(|candidate| candidate.position_on(piece).is_some_and(|p| near(p, at)))
+                .map(|candidate| Reference::new(*id, candidate))
+        });
+    }
+    // A straight edge: a line's, or a polyline's segment, by its two ends.
+    let ends = |entity: &Entity, part: Part| -> Option<(Point2, Point2)> {
+        match (entity, part) {
+            (Entity::Line(line), Part::Edge) => Some((line.start, line.end)),
+            (Entity::Polyline(polyline), Part::Segment(n)) => {
+                part.shape_on(entity)?;
+                let count = polyline.vertices.len();
+                let n = n as usize;
+                Some((polyline.vertices[n], polyline.vertices[(n + 1) % count]))
+            }
+            _ => None,
+        }
+    };
+    let (a, b) = ends(from, part)?;
+    pieces.iter().find_map(|(id, piece)| {
+        let candidates: Vec<Part> = match piece {
+            Entity::Line(_) => vec![Part::Edge],
+            Entity::Polyline(polyline) => (0..polyline.vertices.len() as u32)
+                .map(Part::Segment)
+                .collect(),
+            _ => Vec::new(),
+        };
+        candidates
+            .into_iter()
+            .find(|candidate| {
+                ends(piece, *candidate).is_some_and(|(p, q)| {
+                    (near(p, a) && near(q, b)) || (either_way && near(p, b) && near(q, a))
+                })
+            })
+            .map(|candidate| Reference::new(*id, candidate))
+    })
 }
 
 #[cfg(test)]
