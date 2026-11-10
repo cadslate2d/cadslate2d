@@ -217,7 +217,8 @@ Removing a constraint can break nothing, so it triggers nothing.
 
 **What is held:**
 
-- **Unknowns the transaction set:** of every entity it replaced, the unknowns whose values it changed. A grip's point stays where it was put.
+- **Unknowns the transaction set:** of every entity it replaced, the unknowns whose values it changed. An end grip's point stays where it was put.
+- **Every unknown of an entity replaced whole:** `TransactionBuilder::replace_whole`, which a command uses when it set all of the entity — MOVE, ROTATE, SCALE, MIRROR, and ALIGN of their selection, a grip that moves its entity whole (`Entity::grip_moves_whole`: a line's midpoint, a centre, an insertion point), what STRETCH's window holds whole, ARRAYPATH's first item, the views a sheet moves. A transform leaves the point it is about with the bits it had, and read by the rule above that point would be free to slide: a line scaled about its own end kept its length and moved off it (#420). `replace` is for an edit of part of an entity — a grip that reshapes it, what STRETCH's window crosses — whose other points follow. A grip's preview settles the same way (`Drawing::settled_with` takes what is replaced whole).
 - **The first object of a new geometric constraint:** a command that adds a constraint between two objects asks the builder to hold the first object's unknowns. The second moves to it, as in AutoCAD.
 - **Nothing else.** A changed dimension's value holds nothing beyond the above, and the solver takes the solution reached from the current geometry. With the usual fix or a first constrained corner, that is the far side moving; with nothing fixed, both sides move, as little as they can (§4).
 

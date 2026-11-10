@@ -51,12 +51,14 @@ impl TransientEdit {
     }
 
     /// Transforms the sources in place, in one transaction. IDs are unchanged.
+    /// The transform set the whole of each source, so each is replaced
+    /// whole: what is joined to it follows, or the edit is refused.
     pub fn commit(&self, drawing: &mut Drawing, transform: Transform) {
         let changed = self.transformed(drawing, transform);
         let mut transaction = drawing.transaction();
         for (id, entity) in changed {
             transaction
-                .replace(id, entity)
+                .replace_whole(id, entity)
                 .expect("sources are live and appear once");
         }
         transaction.commit();

@@ -147,7 +147,10 @@ fn a_grip_drags_the_part_with_it_and_its_preview_shows_it() {
     let previews: Vec<Entity> = h
         .session
         .drawing()
-        .settled_with(&[(id(2), LineEntity::new(p(100.0, 0.0), p(100.0, 80.0)).into())])
+        .settled_with(
+            &[(id(2), LineEntity::new(p(100.0, 0.0), p(100.0, 80.0)).into())],
+            &[],
+        )
         .unwrap()
         .into_iter()
         .map(|(_, entity)| entity)
@@ -260,4 +263,166 @@ proptest! {
             h.escape();
         }
     }
+}
+
+#[test]
+fn scale_and_rotate_about_a_constrained_point_do_not_slide_the_line() {
+    // #420: the base point keeps its bits, and was left free to slide.
+    let measured = || {
+        let mut h = Harness::new();
+        h.enter_all(&["LINE", "0,0", "100,0", ""]);
+        h.enter_all(&["DCHORIZONTAL", "0,0", "100,0", "50,-15", ""]);
+        assert_eq!(h.session.drawing().constraints().len(), 1, "{:?}", h.log());
+        h
+    };
+    let mut h = measured();
+    let revision = h.session.drawing().revision();
+    h.enter_all(&["SCALE", "ALL", "", "0,0", "2"]);
+    assert!(refused(&h), "{:?}", h.log());
+    assert!(h.log().last().unwrap().contains("d1"), "{:?}", h.log());
+    assert_eq!(h.session.drawing().revision(), revision);
+    assert_eq!(line(&h, 1).start, p(0.0, 0.0));
+    assert_eq!(line(&h, 1).end, p(100.0, 0.0));
+
+    // A half turn reverses a horizontal distance: refused, not moved 200.
+    let mut h = measured();
+    h.enter_all(&["ROTATE", "ALL", "", "0,0", "180"]);
+    assert!(refused(&h), "{:?}", h.log());
+    assert_eq!(line(&h, 1).start, p(0.0, 0.0));
+
+    // An aligned length turns rigidly about its own end.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["DCALIGNED", "0,0", "100,0", "50,-15", ""]);
+    h.enter_all(&["ROTATE", "ALL", "", "0,0", "90"]);
+    holds(&h);
+    assert!(!refused(&h), "{:?}", h.log());
+    let turned = line(&h, 1);
+    assert_eq!(turned.start, p(0.0, 0.0));
+    assert!((turned.end - p(0.0, 100.0)).length() < 1e-9, "{turned:?}");
+
+    // What is joined to a turned line but not turned still follows it.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["LINE", "100,0", "100,50", ""]);
+    h.enter_all(&["GCCOINCIDENT", "100,0", "100,0"]);
+    h.enter("ROTATE");
+    h.click_world(p(50.0, 0.0));
+    h.enter_all(&["", "0,0", "90"]);
+    holds(&h);
+    assert_eq!(line(&h, 1).start, p(0.0, 0.0));
+    assert!(
+        (line(&h, 2).start - p(0.0, 100.0)).length() < 1e-9,
+        "{:?}",
+        line(&h, 2)
+    );
+}
+
+/// Line 1 from 0,0 to 100,0, its end fixed; line 2 from 200,0 to 300,0,
+/// its start held 100 from that end by an aligned d1.
+fn tied() -> Harness {
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["LINE", "200,0", "300,0", ""]);
+    h.enter_all(&["GCFIX", "100,0"]);
+    h.enter_all(&["DCALIGNED", "100,0", "200,0", "150,-15", ""]);
+    assert_eq!(h.session.drawing().constraints().len(), 2, "{:?}", h.log());
+    holds(&h);
+    h
+}
+
+#[test]
+fn moving_along_one_axis_holds_the_other() {
+    // #420: a MOVE by 0,50 keeps every x's bits, which left them free to
+    // slide in and keep d1; moved whole, the line is refused.
+    let unmoved = |h: &Harness| {
+        assert_eq!(line(h, 2).start, p(200.0, 0.0));
+        assert_eq!(line(h, 2).end, p(300.0, 0.0));
+    };
+    let mut h = tied();
+    h.enter("MOVE");
+    h.click_world(p(250.0, 0.0));
+    h.enter_all(&["", "0,0", "0,50"]);
+    assert!(refused(&h), "{:?}", h.log());
+    assert!(h.log().last().unwrap().contains("d1"), "{:?}", h.log());
+    unmoved(&h);
+
+    // The same through STRETCH, its window holding all of line 2.
+    let mut h = tied();
+    let revision = h.session.drawing().revision();
+    h.enter_all(&["STRETCH", "310,10", "190,-10", "0,0", "0,50"]);
+    assert!(refused(&h), "{:?}", h.log());
+    assert_eq!(h.session.drawing().revision(), revision);
+    unmoved(&h);
+
+    // And through ALIGN by one pair of points.
+    let mut h = tied();
+    h.enter("ALIGN");
+    h.click_world(p(250.0, 0.0));
+    h.enter_all(&["", "200,0", "200,50", ""]);
+    assert!(refused(&h), "{:?}", h.log());
+    unmoved(&h);
+
+    // A move that keeps the distance to the fixed end is accepted.
+    let mut h = tied();
+    h.enter("MOVE");
+    h.click_world(p(250.0, 0.0));
+    h.enter_all(&["", "200,0", "100,100"]);
+    holds(&h);
+    assert!(!refused(&h), "{:?}", h.log());
+    assert_eq!(line(&h, 2).start, p(100.0, 100.0));
+}
+
+#[test]
+fn mirror_reverses_a_signed_distance_and_is_refused() {
+    // Reflected about its own end, a line measured d1 = 100 to the right
+    // would measure -100: refused, not slid back into place.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["DCHORIZONTAL", "0,0", "100,0", "50,-15", ""]);
+    let revision = h.session.drawing().revision();
+    h.enter_all(&["MIRROR", "ALL", "", "100,0", "100,10", "Y"]);
+    assert!(refused(&h), "{:?}", h.log());
+    assert!(h.log().last().unwrap().contains("d1"), "{:?}", h.log());
+    assert_eq!(h.session.drawing().revision(), revision);
+    assert_eq!(line(&h, 1).start, p(0.0, 0.0));
+    assert_eq!(line(&h, 1).end, p(100.0, 0.0));
+}
+
+#[test]
+fn a_midpoint_grip_moves_the_line_whole() {
+    // #420: the midpoint grip translates the line, as MOVE does. Dragged
+    // straight up, its ends' x keep their bits; held whole, the line does
+    // not slide in x to keep d1, and the drag is refused.
+    let mut h = tied();
+    let dragged = LineEntity::new(p(200.0, 50.0), p(300.0, 50.0));
+    let drawing = h.session.drawing();
+    assert!(
+        drawing
+            .settled_with(&[(id(2), dragged.into())], &[id(2)])
+            .is_err(),
+        "the preview, held whole, shows nothing to follow"
+    );
+    assert!(
+        drawing
+            .settled_with(&[(id(2), dragged.into())], &[])
+            .is_ok(),
+        "held in part, it would have slid"
+    );
+    h.click_world(p(250.0, 0.0));
+    h.click_world(p(250.0, 0.0));
+    h.click_world(p(250.0, 50.0));
+    assert!(refused(&h), "{:?}", h.log());
+    assert_eq!(line(&h, 2).start, p(200.0, 0.0));
+
+    // Its end grip still reshapes it: the start stays 100 from the fixed
+    // end, and the line turns about it.
+    h.escape();
+    h.click_world(p(250.0, 0.0));
+    h.click_world(p(300.0, 0.0));
+    h.click_world(p(200.0, 100.0));
+    holds(&h);
+    assert!(!refused(&h), "{:?}", h.log());
+    assert_eq!(line(&h, 2).start, p(200.0, 0.0));
+    assert_eq!(line(&h, 2).end, p(200.0, 100.0));
 }

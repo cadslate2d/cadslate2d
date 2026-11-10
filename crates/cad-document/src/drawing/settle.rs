@@ -4,10 +4,10 @@
 //! the drawing as it will be: the entities it changed, the constraints it
 //! added or gave new values, and everything joined to those by a
 //! constraint. Unknowns the transaction set are held — the end a grip put
-//! somewhere, the object a new constraint is drawn to — and the rest of
-//! each constrained part follows, in the same transaction, so one edit is
-//! one undo. An edit that cannot be settled is not applied, and says which
-//! constraint it would break.
+//! somewhere, all of an entity replaced whole, the object a new constraint
+//! is drawn to — and the rest of each constrained part follows, in the
+//! same transaction, so one edit is one undo. An edit that cannot be
+//! settled is not applied, and says which constraint it would break.
 //!
 //! The mapping between entities and the solver's unknowns is here too: a
 //! line is its two ends, a circle its centre and radius, an arc its centre,
@@ -537,10 +537,12 @@ impl Drawing {
     /// What the rest of the constrained parts would become were `replaced`
     /// put in place (ADR-0038 §5): the other entities that would move, with
     /// their geometry — what a grip's preview draws as it is dragged — or
-    /// why the edit would be refused.
+    /// why the edit would be refused. Those of them in `whole` are held
+    /// whole, as `TransactionBuilder::replace_whole` holds them.
     pub fn settled_with(
         &self,
         replaced: &[(EntityId, Entity)],
+        whole: &[EntityId],
     ) -> Result<Vec<(EntityId, Entity)>, String> {
         if self.constraints.is_empty() {
             return Ok(Vec::new());
@@ -550,7 +552,8 @@ impl Drawing {
             .map(|(id, entity)| (*id, Some(entity.clone())))
             .collect();
         let ids: BTreeSet<EntityId> = replaced.iter().map(|(id, _)| *id).collect();
-        Prospect::of(self, entities).settle(ids.clone(), &ids, &BTreeSet::new())
+        let held = whole.iter().copied().collect();
+        Prospect::of(self, entities).settle(ids.clone(), &ids, &held)
     }
 
     /// The constraints that do not hold as the drawing is, in ID order:
@@ -835,6 +838,48 @@ mod tests {
             Point2::new(110.0, 60.0),
             "the other end is free"
         );
+    }
+
+    #[test]
+    fn an_entity_replaced_whole_is_held_whole() {
+        // #420: a line d1 = 100 long scaled by 2 about its start. Its start
+        // keeps its bits; replaced in part, it is free and slides to keep
+        // d1; replaced whole, it is held and the edit is refused.
+        let measured = || {
+            let mut drawing = Drawing::new();
+            let a = add(
+                &mut drawing,
+                LineEntity::new(Point2::ORIGIN, Point2::new(100.0, 0.0)),
+            );
+            let mut tx = drawing.transaction();
+            tx.add_constraint(Constraint::dimensional(
+                "d1",
+                Kind::Distance {
+                    axis: Axis::Horizontal,
+                    value: 100.0,
+                },
+                vec![at(a, Part::Start), at(a, Part::End)],
+            ))
+            .unwrap();
+            assert_eq!(tx.commit().refused, None);
+            (drawing, a)
+        };
+        let scaled = LineEntity::new(Point2::ORIGIN, Point2::new(200.0, 0.0));
+
+        let (mut drawing, a) = measured();
+        let mut tx = drawing.transaction();
+        tx.replace(a, scaled).unwrap();
+        assert_eq!(tx.commit().refused, None);
+        assert!(near(line_of(&drawing, a).start, Point2::new(100.0, 0.0)));
+        assert_eq!(line_of(&drawing, a).end, Point2::new(200.0, 0.0));
+
+        let (mut drawing, a) = measured();
+        let revision = drawing.revision();
+        let mut tx = drawing.transaction();
+        tx.replace_whole(a, scaled).unwrap();
+        assert!(tx.commit().refused.is_some());
+        assert_eq!(drawing.revision(), revision);
+        assert_eq!(line_of(&drawing, a).start, Point2::ORIGIN);
     }
 
     #[test]
