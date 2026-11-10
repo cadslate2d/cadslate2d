@@ -156,9 +156,10 @@ impl OpeningCommand {
         // A face is cut, as BREAK cuts it: what was on its ends goes with
         // the piece that has them (#421).
         for (id, pieces) in broken {
-            if !pieces.is_empty() {
+            let mut pieces = pieces.into_iter();
+            if let Some(first) = pieces.next() {
                 transaction
-                    .reshape(id, pieces, &[])
+                    .reshape(id, first, pieces.collect(), &[])
                     .expect("the face was just read");
             }
         }

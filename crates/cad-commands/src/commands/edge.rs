@@ -186,18 +186,20 @@ impl EdgeCommand {
                     // What is cut away takes its constraints with it; those
                     // on what is kept go with the piece that has it (#421).
                     Operation::Trim => {
+                        let mut pieces = edit.replacement.into_iter();
+                        let first = pieces.next().expect("a trim keeps a piece");
                         transaction
-                            .reshape(target, edit.replacement, &[])
+                            .reshape(target, first, pieces.collect(), &[])
                             .expect("the target was just read");
                     }
                     // An extended end is the same end, moved: what is
                     // joined to it follows, as a grip's does.
                     Operation::Extend => {
-                        for entity in edit.replacement {
-                            transaction
-                                .replace(target, entity)
-                                .expect("the target was just read");
-                        }
+                        let [longer] = <[Entity; 1]>::try_from(edit.replacement)
+                            .expect("an extend makes one object");
+                        transaction
+                            .replace(target, longer)
+                            .expect("the target was just read");
                     }
                 }
                 transaction.commit();

@@ -84,7 +84,7 @@ impl JoinCommand {
             let members: Vec<EntityId> = members.into_iter().map(|member| ids[member]).collect();
             if let Some((kept, others)) = members.split_first() {
                 transaction
-                    .reshape(*kept, vec![entity], others)
+                    .reshape(*kept, entity, Vec::new(), others)
                     .expect("selected entities are live and appear once");
             }
         }

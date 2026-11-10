@@ -382,3 +382,54 @@ fn a_closed_face_running_the_other_way_loses_only_the_opening() {
         );
     }
 }
+
+#[test]
+fn an_opening_hands_a_cut_faces_constraints_to_the_pieces_that_have_them() {
+    // #421: the face's far end is the far piece's now, so the return
+    // wall coincident with it stays; the face's level stays on its first
+    // piece.
+    let mut h = Harness::with_entities([
+        LineEntity::new(p(0.0, 0.0), p(10.0, 0.0)).into(),
+        LineEntity::new(p(10.0, 0.2), p(0.0, 0.2)).into(),
+        LineEntity::new(p(10.0, 0.0), p(10.0, -5.0)).into(),
+    ]);
+    h.enter_all(&["GCCOINCIDENT", "10,0", "10,0"]);
+    h.enter("GCHORIZONTAL");
+    h.click_world(p(2.0, 0.0));
+    assert_eq!(h.session.drawing().constraints().len(), 2, "{:?}", h.log());
+    h.enter("WINDOW");
+    h.click_world(p(4.0, 0.0));
+    h.enter_all(&["4,0.1", "1.5"]);
+    let drawing = h.session.drawing();
+    let face = |n: u64| {
+        *drawing
+            .entity(cad_core::EntityId::from_raw(n))
+            .unwrap()
+            .as_line()
+            .unwrap()
+    };
+    assert_eq!(
+        face(3),
+        LineEntity::new(p(10.0, 0.0), p(10.0, -5.0)),
+        "{:?}",
+        h.log()
+    );
+    assert!((face(1).end.x - 3.25).abs() < 1e-9, "{:?}", face(1));
+    let far = drawing
+        .entities()
+        .find_map(|(id, e)| {
+            e.as_line()
+                .is_some_and(|l| l.end == p(10.0, 0.0))
+                .then_some(id)
+        })
+        .expect("the far piece of the face");
+    let rows: Vec<_> = drawing
+        .constraints()
+        .iter()
+        .map(|(_, c)| c.clone())
+        .collect();
+    assert_eq!(rows.len(), 2);
+    assert!(rows[0].refers_to(far) && rows[0].refers_to(cad_core::EntityId::from_raw(3)));
+    assert!(rows[1].refers_to(cad_core::EntityId::from_raw(1)));
+    assert!(drawing.unsatisfied_constraints().is_empty());
+}

@@ -11,7 +11,7 @@ use cad_core::{Aabb, EntityId, LengthUnit, Point2, Vec2};
 
 use crate::block::{Block, BlockId, BlockTable, initial_blocks};
 use crate::constraint::{
-    Constraint, ConstraintError, ConstraintId, ConstraintTable, Part, Reference, Shape,
+    Constraint, ConstraintError, ConstraintId, ConstraintTable, Kind, Part, Reference, Shape,
     initial_constraints,
 };
 use crate::dim_style::{DimStyle, DimStyleError, DimStyleId, DimStyleTable, initial_dim_styles};
@@ -2536,32 +2536,36 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
-    /// Replaces `id` by `pieces` and removes `absorbed`: what cutting an
-    /// entity (BREAK, TRIM) or joining others into it (JOIN) makes. The
-    /// first piece keeps `id` and its properties; the others are inserted
-    /// like it, and their IDs returned. `pieces` holds at least one.
+    /// Replaces `id` by `first` and inserts `others` beside it, removing
+    /// `absorbed`: what cutting an entity (BREAK, TRIM) or joining others
+    /// into it (JOIN) makes. `first` keeps `id` and its properties; the
+    /// others are inserted like it, and their IDs returned.
     ///
     /// Unlike [`Self::replace`], an end keeps no meaning by its name: the
     /// end a cut piece has now is not the end that was cut away. Each
     /// constraint on a point of `id` or of `absorbed` — an end, a centre, a
     /// vertex — or on a polyline's straight segment goes to the piece with
     /// that point or segment where it was, and is removed when no piece has
-    /// it (#421). One on an edge stays with the first piece, as `replace`
-    /// keeps it; one on an edge of `absorbed` goes with it.
+    /// it (#421). One on an edge of `id` stays with `first` where the cut
+    /// keeps what it says of the edge — its line or its circle: a
+    /// direction, a tangency, a point on it, a radius — and is removed
+    /// where it says a straight edge's length, which the cut changed; one
+    /// on an edge of `absorbed` goes with it. A carried row is checked as
+    /// any row is, and removed when its parts now repeat or do not fit.
     pub fn reshape(
         &mut self,
         id: EntityId,
-        pieces: Vec<Entity>,
+        first: Entity,
+        others: Vec<Entity>,
         absorbed: &[EntityId],
     ) -> Result<Vec<EntityId>, TransactionError> {
-        let mut pieces = pieces.into_iter();
-        let first = pieces.next().ok_or(TransactionError::UnknownEntity(id))?;
         let mut sources: Vec<(EntityId, Entity)> = Vec::new();
         for &source in std::iter::once(&id).chain(absorbed) {
             let entity = (*self.existing(source)?.entity).clone();
             sources.push((source, entity));
         }
-        let inserted = pieces
+        let inserted = others
+            .into_iter()
             .map(|piece| self.insert_like(id, piece))
             .collect::<Result<Vec<_>, _>>()?;
         let mut placed: Vec<(EntityId, Entity)> = vec![(id, first.clone())];
@@ -2572,6 +2576,7 @@ impl TransactionBuilder<'_> {
         // The constraints carried to the pieces, or removed, before the
         // sources change: what `remove` and `replace` then find refers
         // only to what is there.
+        let mut rewritten = Vec::new();
         for (constraint_id, constraint) in self.constraints_now() {
             if !sources
                 .iter()
@@ -2587,9 +2592,11 @@ impl TransactionBuilder<'_> {
                         None => Some(*reference),
                         Some((source, entity)) => {
                             carried(reference.part, entity, &placed).or_else(|| {
-                                let edge = Part::position_on(reference.part, entity).is_none()
-                                    && !matches!(reference.part, Part::Segment(_));
-                                (edge && *source == id).then_some(*reference)
+                                let edge = reference.part == Part::Edge;
+                                (edge
+                                    && *source == id
+                                    && cut_keeps(&constraint.kind, entity, &first))
+                                .then_some(*reference)
                             })
                         }
                     },
@@ -2606,6 +2613,7 @@ impl TransactionBuilder<'_> {
                         before: constraint,
                         after,
                     }));
+                    rewritten.push(constraint_id);
                 }
                 Some(_) => {}
                 None => self.push_other(Change::Constraint(TableChange::Remove {
@@ -2618,6 +2626,18 @@ impl TransactionBuilder<'_> {
             self.remove(source)?;
         }
         self.replace(id, first)?;
+        // Checked as any row is, now the pieces are in place: a joint that
+        // closed a loop names one vertex twice, and goes.
+        for constraint_id in rewritten {
+            if let Some(row) = self.constraint_now(constraint_id).cloned()
+                && self.check_constraint(&row, Some(constraint_id)).is_err()
+            {
+                self.push_other(Change::Constraint(TableChange::Remove {
+                    id: constraint_id,
+                    row,
+                }));
+            }
+        }
         Ok(inserted)
     }
 
@@ -4212,6 +4232,22 @@ impl TransactionBuilder<'_> {
             Some(id) => Err(TransactionError::DuplicateLayerName(id)),
             None => Ok(()),
         }
+    }
+}
+
+/// Whether cutting or joining `before` into `after` keeps what `kind` says
+/// of its edge (#421). A line's edge is read as its line and an arc's as
+/// its circle, which a cut keeps; an equal length is the one thing said of
+/// a straight edge that it changes.
+fn cut_keeps(kind: &Kind, before: &Entity, after: &Entity) -> bool {
+    match (kind, before, after) {
+        (Kind::Equal, Entity::Line(a), Entity::Line(b)) => {
+            cad_core::tolerance::LinearTolerance::DEFAULT
+                .around(&[a.start, a.end, b.start, b.end])
+                .is_zero(a.start.distance_to(a.end) - b.start.distance_to(b.end))
+        }
+        (Kind::Equal, Entity::Line(_), _) => false,
+        _ => true,
     }
 }
 

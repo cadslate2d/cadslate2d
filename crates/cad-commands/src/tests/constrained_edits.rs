@@ -361,3 +361,86 @@ fn a_joined_line_keeps_its_length_and_its_outer_ends_constraints() {
     assert!(coincident.refers_to(id(1)) && coincident.refers_to(id(3)));
     holds(&h);
 }
+
+#[test]
+fn an_equal_length_goes_with_a_cut_and_an_equal_radius_stays() {
+    // #421: an equal length is said of the whole line, which a cut or a
+    // join changes; kept, it dragged the other line to the piece's length.
+    let equal = |extra: Option<(f64, f64)>| {
+        let mut h = Harness::new();
+        h.enter_all(&["LINE", "0,0", "100,0", ""]);
+        h.enter_all(&["LINE", "0,50", "100,50", ""]);
+        if let Some((from, to)) = extra {
+            h.enter_all(&["LINE", &format!("{from},0"), &format!("{to},0"), ""]);
+        }
+        h.enter("GCEQUAL");
+        h.click_world(p(50.0, 0.0));
+        h.click_world(p(50.0, 50.0));
+        assert_eq!(h.session.drawing().constraints().len(), 1, "{:?}", h.log());
+        h
+    };
+    let kept = |h: &Harness| {
+        assert_eq!(line(h, 2).start, p(0.0, 50.0), "{:?}", h.log());
+        assert_eq!(line(h, 2).end, p(100.0, 50.0));
+        assert!(h.session.drawing().constraints().is_empty());
+    };
+    let mut h = equal(None);
+    h.enter("BREAK");
+    h.click_world(p(30.0, 0.0));
+    h.enter("60,0");
+    assert_eq!(line(&h, 1).end, p(30.0, 0.0));
+    kept(&h);
+
+    let mut h = equal(Some((100.0, 150.0)));
+    h.enter("JOIN");
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(125.0, 0.0));
+    h.enter("");
+    assert_eq!(line(&h, 1).end, p(150.0, 0.0));
+    kept(&h);
+
+    // An arc's edge is its circle, which a cut keeps: its radius stays
+    // equal to the circle's.
+    let mut h = Harness::with_entities([
+        cad_document::ArcEntity::new(p(0.0, 0.0), 10.0, 0.0, std::f64::consts::PI).into(),
+        cad_document::CircleEntity::new(p(200.0, 0.0), 10.0).into(),
+    ]);
+    h.enter("GCEQUAL");
+    h.click_world(p(0.0, 10.0));
+    h.click_world(p(210.0, 0.0));
+    assert_eq!(h.session.drawing().constraints().len(), 1, "{:?}", h.log());
+    let at = |degrees: f64| {
+        let a = f64::to_radians(degrees);
+        p(10.0 * a.cos(), 10.0 * a.sin())
+    };
+    h.enter("BREAK");
+    h.click_world(at(60.0));
+    let second = at(120.0);
+    h.enter(&format!("{},{}", second.x, second.y));
+    assert_eq!(h.session.drawing().len(), 3, "{:?}", h.log());
+    let constraints = h.session.drawing().constraints();
+    let (_, kept) = constraints.iter().next().expect("the equal radius kept");
+    assert!(kept.refers_to(id(1)), "{:?}", h.log());
+    holds(&h);
+}
+
+#[test]
+fn a_join_that_closes_a_loop_drops_the_constraints_on_its_joints() {
+    // #421: each joint's two ends are one vertex of the closed polyline;
+    // carried there, a coincidence would name that vertex twice.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "10,0", ""]);
+    h.enter_all(&["LINE", "10,0", "10,10", ""]);
+    h.enter_all(&["LINE", "10,10", "0,0", ""]);
+    for corner in ["10,0", "10,10", "0,0"] {
+        h.enter_all(&["GCCOINCIDENT", corner, corner]);
+    }
+    assert_eq!(h.session.drawing().constraints().len(), 3, "{:?}", h.log());
+    h.enter_all(&["JOIN", "ALL", ""]);
+    let Some(Entity::Polyline(joined)) = h.session.drawing().entity(id(1)) else {
+        panic!("{:?}", h.log());
+    };
+    assert!(joined.closed, "{:?}", h.log());
+    assert!(h.session.drawing().constraints().is_empty());
+    holds(&h);
+}

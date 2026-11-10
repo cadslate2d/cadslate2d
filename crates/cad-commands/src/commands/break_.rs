@@ -95,9 +95,11 @@ impl Command for BreakCommand {
                     Ok(pieces) => {
                         // A constraint on the far end goes with the piece
                         // that has it now (#421).
+                        let mut pieces = pieces.into_iter();
+                        let first = pieces.next().expect("a break leaves a piece");
                         let mut transaction = ctx.transaction();
                         transaction
-                            .reshape(*id, pieces, &[])
+                            .reshape(*id, first, pieces.collect(), &[])
                             .expect("the object was just read");
                         transaction.commit();
                         return Step::Finished;

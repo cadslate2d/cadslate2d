@@ -870,9 +870,8 @@ mod tests {
         let pieces = tx
             .reshape(
                 path,
+                PolylineEntity::new(vec![p(0.0, 0.0), p(10.0, 0.0), p(12.0, 0.0)], false).into(),
                 vec![
-                    PolylineEntity::new(vec![p(0.0, 0.0), p(10.0, 0.0), p(12.0, 0.0)], false)
-                        .into(),
                     PolylineEntity::new(vec![p(18.0, 0.0), p(20.0, 0.0), p(30.0, 0.0)], false)
                         .into(),
                 ],
