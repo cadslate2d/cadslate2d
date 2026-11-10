@@ -305,3 +305,47 @@ fn rename_renames_a_row_of_any_table_and_refuses_what_the_table_does() {
     assert_eq!(last(&h), "That layout cannot be renamed.");
     h.escape();
 }
+
+/// #434: a command that sets what is already so changes nothing: no undo
+/// step, no new revision, the drawing as saved as it was, and REDO kept.
+#[test]
+fn a_command_that_changes_nothing_leaves_the_history_as_it_was() {
+    // REDO survives LTSCALE set to the scale it has.
+    let mut h = Harness::new();
+    h.enter_all(&["L", "0,0", "100,0", ""]);
+    h.enter("U");
+    assert!(h.session.ui_state().can_redo);
+    let revision = h.session.drawing().revision();
+    h.enter_all(&["LTSCALE", "1"]);
+    assert!(h.session.ui_state().can_redo, "{:?}", h.log());
+    assert_eq!(h.session.drawing().revision(), revision);
+
+    // Saved after LTSCALE 2, LTSCALE 2 again leaves it saved, and U takes
+    // back the change there was, not the one there was not.
+    let mut h = Harness::new();
+    h.enter_all(&["LTSCALE", "2"]);
+    h.session.mark_exported(None, crate::FileFormat::Dxf);
+    h.enter_all(&["LTSCALE", "2"]);
+    assert!(!h.session.ui_state().unsaved_changes, "{:?}", h.log());
+    h.enter("U");
+    assert_eq!(h.session.drawing().ltscale(), 1.0);
+
+    // And the others the issue found: the current layer set current, a
+    // layer switched off that is off, a point style to what it is.
+    let mut h = Harness::new();
+    h.enter_all(&["LA", "New", "walls", "OFF", "walls", ""]);
+    let revision = h.session.drawing().revision();
+    for steps in [
+        &["LA", "Set", "0", ""][..],
+        &["LA", "OFF", "walls", ""],
+        &["PTYPE", "0"],
+    ] {
+        h.enter_all(steps);
+        assert_eq!(
+            h.session.drawing().revision(),
+            revision,
+            "{steps:?}: {:?}",
+            h.log()
+        );
+    }
+}

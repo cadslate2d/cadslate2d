@@ -98,6 +98,9 @@ pub struct Drawing {
     /// Why transactions were not applied since the session last asked
     /// (ADR-0038): the edits the constraints refused.
     refusals: Vec<String>,
+    /// Transactions committed and not refused, those that changed nothing
+    /// included (#434).
+    commits: u64,
 }
 
 /// One change to what is shown, as the journal remembers it.
@@ -146,6 +149,7 @@ impl Clone for Drawing {
             views: self.views.clone(),
             mleader_styles: self.mleader_styles.clone(),
             refusals: self.refusals.clone(),
+            commits: self.commits,
         }
     }
 }
@@ -653,6 +657,7 @@ impl Drawing {
             views: initial_named_views(),
             mleader_styles: initial_mleader_styles(),
             refusals: Vec::new(),
+            commits: 0,
         }
     }
 
@@ -1281,6 +1286,14 @@ impl Drawing {
     /// (ADR-0038). The session writes them to the log.
     pub fn take_refusals(&mut self) -> Vec<String> {
         std::mem::take(&mut self.refusals)
+    }
+
+    /// How many transactions have been committed and not refused, counting
+    /// those that changed nothing and so left no history entry and no new
+    /// revision (#434): what tells a command that set something to what it
+    /// was from one that committed nothing at all.
+    pub fn commits(&self) -> u64 {
+        self.commits
     }
 
     /// The drawing's constraints (ADR-0038), in the order they were made.
@@ -3734,6 +3747,17 @@ impl TransactionBuilder<'_> {
             };
         }
         self.follow_dimensions();
+        self.drawing.commits += 1;
+        // A change whose after is its before changes nothing — a setting
+        // set to what it is, a layer switched off that is off — and a
+        // transaction of nothing else is no transaction: no history entry,
+        // no new revision, the drawing as saved as it was, and REDO kept
+        // (#434). Dropped only now, once settling has written into the
+        // changes it found.
+        self.changes.retain(|change| !change.is_identity());
+        if self.changes.is_empty() {
+            return ApplyReport::default();
+        }
         let transaction = Transaction::new(self.changes);
         let report = self.drawing.apply(&transaction);
         self.drawing.history.record(transaction);
@@ -7666,6 +7690,38 @@ mod tests {
         assert_eq!(
             drawing.layouts().get(sheet).unwrap().sheet_size(),
             Vec2::new(297.0, 210.0)
+        );
+    }
+
+    #[test]
+    fn a_transaction_of_changes_to_what_is_already_so_is_no_transaction() {
+        // #434: no history entry, no new revision, REDO kept; counted all
+        // the same as committed.
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let id = tx.insert(line(0.0, 0.0, 10.0, 0.0)).unwrap();
+        tx.commit();
+        drawing.undo().unwrap();
+        assert!(drawing.can_redo());
+        let (revision, commits) = (drawing.revision(), drawing.commits());
+        let mut tx = drawing.transaction();
+        tx.set_ltscale(1.0).unwrap();
+        tx.commit();
+        assert_eq!(drawing.revision(), revision);
+        assert!(drawing.can_redo(), "REDO kept");
+        assert_eq!(drawing.commits(), commits + 1);
+
+        // Beside a change that is one, it alone is recorded.
+        drawing.redo().unwrap();
+        let mut tx = drawing.transaction();
+        tx.set_ltscale(1.0).unwrap();
+        tx.replace(id, line(0.0, 0.0, 20.0, 0.0)).unwrap();
+        tx.commit();
+        drawing.undo().unwrap();
+        assert_eq!(drawing.ltscale(), 1.0);
+        assert_eq!(
+            drawing.entity(id),
+            Some(&Entity::Line(line(0.0, 0.0, 10.0, 0.0)))
         );
     }
 

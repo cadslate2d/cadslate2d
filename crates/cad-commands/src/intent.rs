@@ -278,6 +278,7 @@ impl Session {
         }
         let log_from = self.log_total();
         let revision = self.drawing().revision();
+        let commits = self.drawing().commits();
         let first_new = self.drawing().next_entity_id();
         // An operation that acts on no objects and makes none — a layer, a
         // setting — leaves the selection as it was, so "the selection"
@@ -314,8 +315,11 @@ impl Session {
         }
         result?;
         // A command that goes on after a refusal — OFFSET, TRIM, EXTEND ask
-        // for the next object — ends having changed nothing, and said why.
-        if let (false, Some(reason)) = (changed, reason) {
+        // for the next object — ends having committed nothing, and said
+        // why. One that committed what was already so — a setting to its
+        // value — changed nothing, and was not refused (#434).
+        let committed = self.drawing().commits() != commits;
+        if let (false, false, Some(reason)) = (changed, committed, reason) {
             return Err(RunError::Refused {
                 operation,
                 command,
