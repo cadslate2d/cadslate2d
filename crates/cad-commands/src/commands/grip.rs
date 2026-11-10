@@ -59,10 +59,16 @@ impl Command for GripEditCommand {
             // Put back where it was: not an edit, and not an undo step.
             Some(edited) if &edited == entity => Step::Finished,
             Some(edited) => {
+                // A grip that moves the entity whole set all of it, as MOVE
+                // does; one that reshapes it set only what it changed.
+                let whole = entity.grip_moves_whole(id.index);
                 let mut transaction = ctx.transaction();
-                transaction
-                    .replace(id.entity, edited)
-                    .expect("the entity was just read");
+                if whole {
+                    transaction.replace_whole(id.entity, edited)
+                } else {
+                    transaction.replace(id.entity, edited)
+                }
+                .expect("the entity was just read");
                 transaction.commit();
                 Step::Finished
             }
