@@ -145,7 +145,7 @@ impl GeomConstraintCommand {
 }
 
 /// The end, centre, or vertex nearest `at` within the pick box, of an
-/// object shown in the current space, other than one already `picked`:
+/// object shown in the current space and not locked, other than one already `picked`:
 /// two ends that meet are told apart by picking the place twice. The
 /// lowest ID among equals.
 pub(super) fn point_near(
@@ -160,7 +160,9 @@ pub(super) fn point_near(
         .drawing
         .query_shown_in(ctx.space, &ctx.view.pick_bounds(screen, POINT_APERTURE));
     ids.sort_unstable();
-    for id in ids {
+    // An object on a locked layer is not changed, so it is not picked
+    // (#423), as the session keeps it from an object pick.
+    for id in ids.into_iter().filter(|id| !ctx.drawing.is_locked(*id)) {
         let Some(entity) = ctx.drawing.entity(id) else {
             continue;
         };

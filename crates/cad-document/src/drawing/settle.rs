@@ -468,9 +468,14 @@ impl<'a> Prospect<'a> {
             return Ok(Vec::new());
         }
         let mut part = self.part(reach);
+        // What is on a locked layer is not changed: held, so an edit that
+        // would have to move it is refused (#423).
+        let mut locked: Vec<usize> = Vec::new();
         for (id, v) in &part.vars {
             let params = v.params();
-            if held.contains(id) {
+            if self.drawing.is_locked(*id) {
+                locked.extend(&params);
+            } else if held.contains(id) {
                 for &p in &params {
                     part.system.hold(p);
                 }
@@ -494,8 +499,19 @@ impl<'a> Prospect<'a> {
                 }
             }
         }
+        let unlocked = (!locked.is_empty()).then(|| part.system.clone());
+        for &p in &locked {
+            part.system.hold(p);
+        }
         let solution = cad_geometry::constraint::solve(&part.system, Tolerances::default());
         if !solution.is_solved() {
+            // Settled were the locked free to move: it is the lock that
+            // refuses the edit, not a constraint.
+            if unlocked.is_some_and(|system| {
+                cad_geometry::constraint::solve(&system, Tolerances::default()).is_solved()
+            }) {
+                return Err("The edit would move an object on a locked layer.".to_owned());
+            }
             // The constraints most broken at the solver's best compromise,
             // up to three.
             let mut blamed: Vec<ConstraintId> = Vec::new();
