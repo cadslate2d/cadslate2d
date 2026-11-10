@@ -4239,15 +4239,34 @@ impl TransactionBuilder<'_> {
 /// of its edge (#421). A line's edge is read as its line and an arc's as
 /// its circle, which a cut keeps; an equal length is the one thing said of
 /// a straight edge that it changes.
+/// Every kind is named, so a new one is decided here rather than kept
+/// through a cut by default.
 fn cut_keeps(kind: &Kind, before: &Entity, after: &Entity) -> bool {
-    match (kind, before, after) {
-        (Kind::Equal, Entity::Line(a), Entity::Line(b)) => {
-            cad_core::tolerance::LinearTolerance::DEFAULT
+    match kind {
+        // Of a straight edge, its length; of a circular one, its radius.
+        Kind::Equal => match (before, after) {
+            (Entity::Line(a), Entity::Line(b)) => cad_core::tolerance::LinearTolerance::DEFAULT
                 .around(&[a.start, a.end, b.start, b.end])
-                .is_zero(a.start.distance_to(a.end) - b.start.distance_to(b.end))
-        }
-        (Kind::Equal, Entity::Line(_), _) => false,
-        _ => true,
+                .is_zero(a.start.distance_to(a.end) - b.start.distance_to(b.end)),
+            (Entity::Line(_), _) => false,
+            _ => true,
+        },
+        // A direction, the line or circle a point or a tangent is on, a
+        // centre, a radius.
+        Kind::Coincident
+        | Kind::Collinear
+        | Kind::Concentric
+        | Kind::Parallel
+        | Kind::Perpendicular
+        | Kind::Horizontal
+        | Kind::Vertical
+        | Kind::Tangent { .. }
+        | Kind::Symmetric
+        | Kind::Angle { .. }
+        | Kind::Radius { .. }
+        | Kind::Diameter { .. } => true,
+        // Said of points only, never of an edge.
+        Kind::Fix { .. } | Kind::Distance { .. } => true,
     }
 }
 
