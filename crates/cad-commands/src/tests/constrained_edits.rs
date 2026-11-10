@@ -463,6 +463,32 @@ fn an_edit_that_would_move_a_locked_object_is_refused() {
     assert_eq!(h.session.drawing().revision(), revision);
     assert_eq!(line(&h, 2).start, p(100.0, 0.0));
     assert_eq!(line(&h, 1).start, p(0.0, 0.0));
+    // A grip's preview settles the same way: nothing to draw following.
+    let moved = LineEntity::new(p(0.0, 10.0), p(100.0, 10.0));
+    assert!(
+        h.session
+            .drawing()
+            .settled_with(&[(id(1), moved.into())], &[])
+            .is_err()
+    );
+
+    // What need not move the locked line is not refused: line 1's free
+    // end dragged by its grip, the joint and line 2 left where they are.
+    let free = LineEntity::new(p(0.0, 20.0), p(100.0, 0.0));
+    assert_eq!(
+        h.session
+            .drawing()
+            .settled_with(&[(id(1), free.into())], &[]),
+        Ok(Vec::new())
+    );
+    h.click_world(p(50.0, 0.0));
+    h.click_world(p(0.0, 0.0));
+    h.click_world(p(0.0, 20.0));
+    assert_eq!(line(&h, 1), free, "{:?}", h.log());
+    assert_eq!(line(&h, 2).start, p(100.0, 0.0));
+    holds(&h);
+    h.escape();
+    h.undo();
 
     // Unlocked, the same move takes line 2's start along.
     h.enter_all(&["LA", "Unlock", "held", ""]);
