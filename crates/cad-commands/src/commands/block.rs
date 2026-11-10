@@ -636,9 +636,10 @@ impl ExplodeCommand {
                     transaction
                         .remove(id)
                         .expect("selected entities are live and appear once");
+                    // Each part in the exploded object's draw-order tier.
                     for (entity, properties) in pieces {
                         transaction
-                            .insert_with(entity, properties)
+                            .insert_from(id, entity, properties)
                             .expect("the parts of a live entity are on tables the drawing has");
                         parts += 1;
                     }
