@@ -731,6 +731,24 @@ fn escaped(value: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
+/// `value` with each control character but a tab written `\\U+XXXX`, so
+/// it stays on its line of the file (#430).
+fn control_escaped(value: &str) -> std::borrow::Cow<'_, str> {
+    let control = |c: char| c.is_control() && c != '\t';
+    if !value.chars().any(control) {
+        return std::borrow::Cow::Borrowed(value);
+    }
+    let mut out = String::with_capacity(value.len() + 8);
+    for c in value.chars() {
+        if control(c) {
+            write!(out, "\\U+{:04X}", u32::from(c)).expect("writing to a String cannot fail");
+        } else {
+            out.push(c);
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// The name of the n-th dimension's anonymous block, counting from one.
 fn dimension_block_name(n: usize) -> String {
     format!("*D{n}")
@@ -807,7 +825,16 @@ impl Writer {
     /// One group: the code right-aligned in three columns, then the value.
     fn group(&mut self, code: i32, value: &str) {
         let value = escaped(value);
-        writeln!(self.out, "{code:>3}\n{value}").expect("writing to a String cannot fail");
+        // A value is one line of the file: a line break or another control
+        // character a DWG's length-counted string may hold (#430) is an
+        // escape there, which the reader leaves as it is. The records a
+        // DWG is written from keep the character itself.
+        let line = control_escaped(&value);
+        debug_assert!(
+            !line.contains(['\n', '\r']),
+            "a group value is one line: {line:?}"
+        );
+        writeln!(self.out, "{code:>3}\n{line}").expect("writing to a String cannot fail");
         if let Some(groups) = &mut self.groups {
             groups.push((code, value.into_owned()));
         }
@@ -3778,6 +3805,61 @@ mod tests {
         assert_eq!(contents, vec!["smile 😀 x", "𝑥 = 𠀋\n😀"]);
         assert!(!back.report.has_unsupported_content());
         assert_eq!(export(&back.drawing), text);
+    }
+
+    /// #430: a line break a DWG's text may hold is an escape in the file,
+    /// which stays readable and keeps it visible; the records a DWG is
+    /// written from keep the break itself.
+    #[test]
+    fn a_line_break_in_single_line_text_does_not_split_its_group() {
+        use cad_document::{DimensionEntity, Measure};
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.insert(TextEntity::new(Point2::ORIGIN, 1.0, 0.0, "first\nsecond\r"))
+            .unwrap();
+        let mut dimension = DimensionEntity::new(
+            Measure::Aligned {
+                a: Point2::new(0.0, 0.0),
+                b: Point2::new(10.0, 0.0),
+            },
+            Point2::new(5.0, 5.0),
+        );
+        dimension.text_override = Some("A\nB".to_owned());
+        tx.insert(dimension).unwrap();
+        tx.commit();
+
+        let text = export(&drawing);
+        assert!(text.contains("\nfirst\\U+000Asecond\\U+000D\n"), "{text}");
+        // An override is MTEXT: its break is `\\P` there, as before.
+        assert!(text.contains("\nA\\PB\n"), "{text}");
+        let back = crate::import(text.as_bytes()).expect("a readable file");
+        let contents: Vec<String> = back
+            .drawing
+            .entities()
+            .filter_map(|(_, entity)| match entity {
+                Entity::Text(text) => Some(text.content.clone()),
+                Entity::Dimension(d) => d.text_override.clone(),
+                _ => None,
+            })
+            .collect();
+        // The override's two lines are run into one, and reported so.
+        assert_eq!(contents, ["first\\U+000Asecond\\U+000D", "A B"]);
+        assert_eq!(back.report.formatting_dropped, 1);
+        // Saved again, the file is what it was read as.
+        let again = crate::import(export(&back.drawing).as_bytes()).unwrap();
+        assert_eq!(
+            again.drawing.entities().count(),
+            back.drawing.entities().count()
+        );
+
+        let records = export_records(&drawing);
+        assert!(
+            records
+                .iter()
+                .flat_map(|r| &r.groups)
+                .any(|(_, value)| value == "first\nsecond\r"),
+            "the records keep the break"
+        );
     }
 
     /// Words that read like an escape — `\U+0041` in a note about escapes

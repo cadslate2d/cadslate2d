@@ -263,3 +263,40 @@ fn a_spline_through_points_keeps_them_and_one_with_control_data_of_its_own_is_re
         }
     }
 }
+
+/// #430: a line break a DWG's length-counted text holds survives our DWG
+/// round trip, and the DXF saved from the drawing it opens is readable.
+#[test]
+fn a_line_break_in_dwg_text_keeps_the_dxf_saved_from_it_readable() {
+    use cad_core::Point2;
+    use cad_document::{Entity, TextEntity};
+    let drawing = Drawing::from_entities([Entity::Text(TextEntity::new(
+        Point2::new(0.0, 0.0),
+        1.0,
+        0.0,
+        "first\nsecond",
+    ))]);
+    let content = |drawing: &Drawing| {
+        drawing
+            .entities()
+            .find_map(|(_, e)| match e {
+                Entity::Text(t) => Some(t.content.clone()),
+                _ => None,
+            })
+            .expect("the text")
+    };
+    for version in VERSIONS {
+        let opened = cad_dwg::import(&cad_dwg::export(&drawing, version).unwrap())
+            .unwrap()
+            .drawing;
+        assert_eq!(content(&opened), "first\nsecond", "{version:?}");
+        let saved = cad_dxf::export_bytes(&opened);
+        let reopened = cad_dxf::import(&saved)
+            .unwrap_or_else(|e| panic!("{version:?}: the DXF saved from it is refused: {e}"));
+        assert_eq!(
+            content(&reopened.drawing),
+            "first\\U+000Asecond",
+            "{version:?}"
+        );
+    }
+}
