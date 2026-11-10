@@ -16,7 +16,7 @@ cad-dxf.workspace = true
 proptest.workspace = true
 # The independent writer of the fixtures and the independent reader of our
 # output (ADR-0036 §3): never shipped. MPL-2.0, allowed in deny.toml for it.
-acadrust = { version = "=0.6.5", default-features = false }
+acadrust = { version = "=0.6.7", default-features = false }
 
 [lints]
 workspace = true
