@@ -5,7 +5,7 @@
 //! then, as transient edits never touch the document.
 
 use cad_core::EntityId;
-use cad_document::Entity;
+use cad_document::{Entity, Revision};
 use cad_intent::Intent;
 
 use crate::intent::{Ran, RunError};
@@ -28,6 +28,10 @@ pub struct Proposal {
     /// What ran, or what stopped it. A run that stopped is still a
     /// proposal: what ran before the stop is what it would do.
     pub outcome: Result<Vec<Ran>, RunError>,
+    /// The drawing's revision it was computed against. Once the drawing
+    /// has changed — an edit, U, REDO — it describes another drawing, and
+    /// is no longer offered (#433).
+    pub revision: Revision,
 }
 
 /// The proposal as the panel shows it.
@@ -186,6 +190,7 @@ impl Session {
                     .map(|(_, e)| e.bounds(before.tables())),
             )
             .reduce(|a, b| a.union(&b));
+        let revision = before.revision();
         self.set_proposal(Some(Proposal {
             intent,
             added,
@@ -193,6 +198,7 @@ impl Session {
             removed,
             layouts,
             outcome,
+            revision,
         }));
         // A proposal is judged by seeing it: one not wholly in view is
         // brought into it, as ZOOM Extents would, the view it left kept
@@ -201,9 +207,12 @@ impl Session {
         Dirty::OVERLAY | Dirty::UI | moved
     }
 
-    /// The proposal, if one is waiting.
+    /// The proposal, if one is waiting for the drawing it was computed
+    /// against: one the drawing has moved on from is not offered (#433).
     pub fn proposal(&self) -> Option<&Proposal> {
-        self.proposal_ref().as_ref()
+        self.proposal_ref()
+            .as_ref()
+            .filter(|proposal| proposal.revision == self.drawing().revision())
     }
 
     /// Applies the proposal to the drawing as one undo step, running its
@@ -213,6 +222,13 @@ impl Session {
         let Some(proposal) = self.take_proposal() else {
             return Dirty::NONE;
         };
+        // Computed against another drawing: what it showed is not what it
+        // would do now, so it is not run (#433).
+        if proposal.revision != self.drawing().revision() {
+            return Dirty::OVERLAY
+                | Dirty::UI
+                | self.notify("The drawing has changed since the proposal: ask again.");
+        }
         // A command still asking is ended first, outside the proposal's
         // group: what it already made is its own undo step, not part of
         // the proposal's (#371).
@@ -223,10 +239,20 @@ impl Session {
         };
         self.begin_undo_group();
         let outcome = self.run_intent(&proposal.intent);
+        // Run again on the same drawing, the intent does what it showed. A
+        // stop it did not show is not committed in part: the group is taken
+        // back whole (#433). One it showed is what was accepted.
+        let unforeseen = outcome.is_err() && proposal.outcome.is_ok();
+        if unforeseen {
+            self.roll_back_undo_group();
+        }
         self.end_undo_group();
         let dirty = Dirty::SCENE | Dirty::OVERLAY | Dirty::UI | cancelled;
         match outcome {
             Ok(_) => dirty | self.notify("Proposal accepted."),
+            Err(error) if unforeseen => {
+                dirty | self.notify(format!("Proposal not applied, nothing changed: {error}."))
+            }
             Err(error) => dirty | self.notify(format!("Proposal stopped: {error}.")),
         }
     }

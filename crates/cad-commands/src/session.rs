@@ -374,6 +374,12 @@ impl Session {
         self.drawing.end_group();
     }
 
+    /// Takes back everything committed in the open undo group, which is
+    /// then empty: nothing of it can be redone.
+    pub(crate) fn roll_back_undo_group(&mut self) {
+        while self.drawing.rollback_last_in_group().is_some() {}
+    }
+
     /// Whether a command is in progress.
     pub(crate) fn command_active(&self) -> bool {
         self.active.is_some()
@@ -766,7 +772,7 @@ impl Session {
             });
         }
         items.extend(self.selection.iter().map(OverlayItem::Highlight));
-        if let Some(proposal) = &self.proposal {
+        if let Some(proposal) = self.proposal() {
             proposal.overlay(&mut items);
         }
         self.constraint_overlay(&mut items);

@@ -389,3 +389,71 @@ fn a_sheets_layout_is_said_in_the_proposal_and_not_drawn_over_the_model() {
     h.session.accept_proposal();
     assert!(h.session.drawing().layouts().find("H-03").is_some());
 }
+
+#[test]
+fn a_proposal_the_drawing_has_moved_on_from_is_not_offered_or_run() {
+    // #433: a circle and a move of line 1, then U takes the line back.
+    let both = || {
+        document(
+            r#"{"op": "circle", "center": [50, 50], "radius": 10},
+               {"op": "move", "targets": [1], "displacement": [0, 20]}"#,
+        )
+    };
+    let mut h = Harness::new();
+    h.enter_all(&["L", "0,0", "100,0", ""]);
+    h.session.propose(both());
+    assert!(h.session.proposal().is_some());
+    h.undo();
+    assert!(h.session.proposal().is_none(), "not offered");
+    assert_eq!(proposal_items(&h), (0, 0), "not drawn");
+    let revision = h.session.drawing().revision();
+    h.session.accept_proposal();
+    assert_eq!(h.session.drawing().revision(), revision, "nothing run");
+    assert_eq!(h.session.drawing().len(), 0);
+    assert_eq!(
+        h.log().last().unwrap(),
+        "The drawing has changed since the proposal: ask again."
+    );
+
+    // Any edit does the same: a line drawn while it waits.
+    let mut h = with_a_line();
+    h.session.propose(both());
+    h.enter_all(&["L", "0,50", "10,50", ""]);
+    assert!(h.session.proposal().is_none());
+    assert_eq!(proposal_items(&h), (0, 0));
+    h.session.accept_proposal();
+    assert_eq!(h.session.drawing().len(), 2, "no circle");
+}
+
+#[test]
+fn a_stop_the_proposal_did_not_show_commits_nothing() {
+    // #433: run again, an operation fails that the preview ran: what ran
+    // before it is taken back, and the drawing is as it was.
+    let mut h = with_a_line();
+    h.session.propose(document(
+        r#"{"op": "circle", "center": [50, 50], "radius": 10},
+           {"op": "move", "targets": [1], "displacement": [0, 20]}"#,
+    ));
+    let mut stored = h.session.proposal().cloned().expect("a proposal");
+    assert!(stored.outcome.is_ok());
+    // The same proposal, its intent now naming an object that is not there.
+    stored.intent = document(
+        r#"{"op": "circle", "center": [50, 50], "radius": 10},
+           {"op": "move", "targets": [99], "displacement": [0, 20]}"#,
+    );
+    h.session.set_proposal(Some(stored));
+    let revision = h.session.drawing().revision();
+    h.session.accept_proposal();
+    assert_eq!(h.session.drawing().len(), 1, "no circle left behind");
+    assert!(
+        h.log()
+            .last()
+            .unwrap()
+            .starts_with("Proposal not applied, nothing changed:"),
+        "{:?}",
+        h.log()
+    );
+    assert!(!h.session.drawing().can_redo());
+    assert!(!h.session.drawing().can_undo(), "no step of nothing");
+    assert_ne!(h.session.drawing().revision(), revision);
+}
