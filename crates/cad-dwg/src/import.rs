@@ -333,13 +333,8 @@ pub fn records(file: &File<'_>) -> Result<Vec<Record>, DwgError> {
             // file writes them, or the reader takes them for its own and
             // the record has no handle, no colour, and no group (#429).
             let own = if decoded.kind == "MULTILEADER" {
-                const COMMON: [i32; 9] = [5, 62, 420, 430, 440, 370, 48, 60, 67];
-                let common = decoded
-                    .groups
-                    .0
-                    .iter()
-                    .take_while(|(code, _)| COMMON.contains(code))
-                    .count();
+                // The decoder says where they end.
+                let common = decoded.common.min(decoded.groups.0.len());
                 groups.0.extend(decoded.groups.0[..common].iter().cloned());
                 groups.text(100, "AcDbMLeader");
                 &decoded.groups.0[common..]
