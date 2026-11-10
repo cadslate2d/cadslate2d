@@ -75,6 +75,121 @@ fn pedit_closes_opens_widens_decurves_and_undoes_within_the_command_as_one_undo(
     assert_eq!(h.entities()[0], bulged(), "one undo for the whole command");
 }
 
+/// #384: PEDIT's Undo takes a Join back whole: the polyline as it was,
+/// and the line and arc it swallowed back in the drawing; then the change
+/// before it, and then nothing.
+#[test]
+fn pedit_undo_takes_a_join_back_with_what_it_swallowed() {
+    let mut h = Harness::with_entities([
+        PolylineEntity::new(vec![p(0.0, 0.0), p(40.0, 0.0)], false).into(),
+        LineEntity::new(p(40.0, 0.0), p(40.0, 30.0)).into(),
+        ArcEntity::new(
+            p(60.0, 30.0),
+            20.0,
+            std::f64::consts::PI,
+            3.0 * std::f64::consts::FRAC_PI_2,
+        )
+        .into(),
+    ]);
+    h.enter_all(&["ZOOM", "E", "PE"]);
+    h.click_world(p(20.0, 0.0));
+    h.enter_all(&["W", "2"]);
+    h.enter("J");
+    h.select_box(p(-10.0, -10.0), p(130.0, 110.0));
+    h.enter("");
+    assert_eq!(last(&h), "2 objects added to the polyline.");
+    assert_eq!(h.session.drawing().shown().count(), 1);
+    h.enter("U");
+    assert_eq!(
+        h.session.drawing().shown().count(),
+        3,
+        "the joined line and arc are back too"
+    );
+    assert_eq!(polyline(&h, 0).vertices, vec![p(0.0, 0.0), p(40.0, 0.0)]);
+    assert_eq!(polyline(&h, 0).width(), 2.0, "as it was after the width");
+    h.enter("U");
+    assert_eq!(polyline(&h, 0).width(), 0.0);
+    h.enter("U");
+    assert_eq!(last(&h), "Nothing to undo.");
+}
+
+/// #384: Undo that takes back PEDIT's own conversion of a line leaves no
+/// polyline to edit: PEDIT says so and asks for one again, rather than
+/// offering polyline options on a line.
+#[test]
+fn pedit_undo_of_the_conversion_goes_back_to_the_pick() {
+    let mut h = Harness::with_entities([LineEntity::new(p(0.0, 0.0), p(40.0, 0.0)).into()]);
+    h.enter_all(&["ZOOM", "E", "PE"]);
+    h.click_world(p(20.0, 0.0));
+    h.enter("");
+    assert!(matches!(h.entities()[0], Entity::Polyline(_)), "converted");
+    h.enter("U");
+    assert!(matches!(h.entities()[0], Entity::Line(_)), "as it was");
+    assert_eq!(last(&h), "The line is as it was.");
+    assert_eq!(h.prompt(), "Select polyline:");
+    // And on again: the line is converted afresh and edited.
+    h.click_world(p(20.0, 0.0));
+    h.enter_all(&["", "W", "2"]);
+    assert_eq!(polyline(&h, 0).width(), 2.0);
+}
+
+/// #382: a closed flag on two vertices in a line closes nothing, so PEDIT
+/// treats the polyline as open — it can be joined to — yet Open clears
+/// the flag the Properties panel shows, and Close still asks for three
+/// vertices.
+#[test]
+fn pedit_open_clears_a_flag_that_closes_nothing() {
+    let mut h = Harness::with_entities([PolylineEntity::with_bulges(
+        vec![p(0.0, 0.0), p(100.0, 0.0)],
+        vec![0.0, 0.0],
+        true,
+    )
+    .into()]);
+    h.enter_all(&["ZOOM", "E", "PEDIT"]);
+    h.click_world(p(50.0, 0.0));
+    h.enter("C");
+    assert_eq!(last(&h), "A polyline needs three vertices to close.");
+    h.enter("O");
+    assert!(!polyline(&h, 0).closed, "the flag cleared");
+    h.enter("O");
+    assert_eq!(last(&h), "The polyline is already open.");
+}
+
+/// #382: a closed flag on two vertices in a line closes nothing, so the
+/// polyline joins as the open segment it is — by PEDIT Join and by JOIN
+/// — down in the geometry as well as above it.
+#[test]
+fn a_flag_that_closes_nothing_does_not_stop_a_join() {
+    let entities = || -> [Entity; 2] {
+        [
+            PolylineEntity::with_bulges(vec![p(0.0, 0.0), p(10.0, 0.0)], vec![0.0, 0.0], true)
+                .into(),
+            LineEntity::new(p(10.0, 0.0), p(10.0, 5.0)).into(),
+        ]
+    };
+    let mut h = Harness::with_entities(entities());
+    h.enter_all(&["ZOOM", "E", "PE"]);
+    h.click_world(p(5.0, 0.0));
+    h.enter("J");
+    h.select_box(p(-1.0, -1.0), p(11.0, 6.0));
+    h.enter("");
+    assert_eq!(last(&h), "1 object added to the polyline.");
+    assert_eq!(
+        polyline(&h, 0).vertices,
+        vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 5.0)]
+    );
+
+    let mut h = Harness::with_entities(entities());
+    h.enter_all(&["ZOOM", "E", "JOIN"]);
+    h.select_box(p(-1.0, -1.0), p(11.0, 6.0));
+    h.enter("");
+    assert_eq!(h.entities().len(), 1, "{:?}", h.log());
+    assert_eq!(
+        polyline(&h, 0).vertices,
+        vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 5.0)]
+    );
+}
+
 #[test]
 fn pedit_joins_what_meets_the_polylines_ends_and_keeps_its_width() {
     let mut h = Harness::with_entities([

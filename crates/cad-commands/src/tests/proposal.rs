@@ -138,6 +138,66 @@ fn accept_is_one_undo_and_makes_what_was_shown() {
     assert_eq!(h.session.drawing().len(), 3);
 }
 
+/// #371: Accept while a command is still asking ends the command first,
+/// outside the proposal's undo step: one U takes back the proposal alone,
+/// and the next the work the command did before.
+#[test]
+fn accept_during_a_command_leaves_its_work_out_of_the_proposals_undo() {
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "10,0"]);
+    assert_eq!(
+        h.session.drawing().len(),
+        1,
+        "one segment, LINE still asking"
+    );
+    h.session.propose(document(
+        r#"{"op": "circle", "center": [50, 50], "radius": 5}"#,
+    ));
+    h.session.accept_proposal();
+    assert_eq!(h.session.drawing().len(), 2);
+    assert_eq!(h.prompt(), "Command:");
+    h.undo();
+    let left: Vec<Entity> = h
+        .session
+        .drawing()
+        .entities()
+        .map(|(_, e)| e.clone())
+        .collect();
+    assert_eq!(
+        left,
+        vec![Entity::Line(LineEntity::new(
+            Point2::new(0.0, 0.0),
+            Point2::new(10.0, 0.0)
+        ))]
+    );
+    h.undo();
+    assert_eq!(h.session.drawing().len(), 0);
+
+    // One Escape would only close a fence being drawn, and leave the
+    // command asking: Accept ends the command itself, whatever it is in
+    // the middle of, before the proposal's group opens.
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "10,0", ""]);
+    h.enter_all(&["ERASE", "F", "20,20"]);
+    assert_eq!(h.prompt(), "Next fence point or [Undo]:");
+    h.session.propose(document(
+        r#"{"op": "circle", "center": [50, 50], "radius": 5}"#,
+    ));
+    h.session.accept_proposal();
+    assert_eq!(h.prompt(), "Command:");
+    assert_eq!(h.session.drawing().len(), 2);
+    h.undo();
+    assert_eq!(h.session.drawing().len(), 1, "the circle alone taken back");
+    assert!(matches!(
+        h.session
+            .drawing()
+            .entities()
+            .next()
+            .map(|(_, e)| e.clone()),
+        Some(Entity::Line(_))
+    ));
+}
+
 #[test]
 fn reject_leaves_no_trace_and_a_new_proposal_replaces_the_old() {
     let mut h = with_a_line();
@@ -328,4 +388,135 @@ fn a_sheets_layout_is_said_in_the_proposal_and_not_drawn_over_the_model() {
     );
     h.session.accept_proposal();
     assert!(h.session.drawing().layouts().find("H-03").is_some());
+}
+
+#[test]
+fn a_proposal_the_drawing_has_moved_on_from_is_not_offered_or_run() {
+    // #433: a circle and a move of line 1, then U takes the line back.
+    let both = || {
+        document(
+            r#"{"op": "circle", "center": [50, 50], "radius": 10},
+               {"op": "move", "targets": [1], "displacement": [0, 20]}"#,
+        )
+    };
+    let mut h = Harness::new();
+    h.enter_all(&["L", "0,0", "100,0", ""]);
+    h.session.propose(both());
+    assert!(h.session.proposal().is_some());
+    h.undo();
+    assert!(h.session.proposal().is_none(), "not offered");
+    assert_eq!(proposal_items(&h), (0, 0), "not drawn");
+    let revision = h.session.drawing().revision();
+    h.session.accept_proposal();
+    assert_eq!(h.session.drawing().revision(), revision, "nothing run");
+    assert_eq!(h.session.drawing().len(), 0);
+    assert_eq!(
+        h.log().last().unwrap(),
+        "The drawing or the space has changed since the proposal: ask again."
+    );
+
+    // Any edit does the same: a line drawn while it waits.
+    let mut h = with_a_line();
+    h.session.propose(both());
+    h.enter_all(&["L", "0,50", "10,50", ""]);
+    assert!(h.session.proposal().is_none());
+    assert_eq!(proposal_items(&h), (0, 0));
+    h.session.accept_proposal();
+    assert_eq!(h.session.drawing().len(), 2, "no circle");
+}
+
+#[test]
+fn a_stop_the_proposal_did_not_show_commits_nothing() {
+    // #433: run again, an operation fails that the preview ran: what ran
+    // before it is taken back, and the drawing is as it was.
+    let mut h = with_a_line();
+    h.session.propose(document(
+        r#"{"op": "circle", "center": [50, 50], "radius": 10},
+           {"op": "move", "targets": [1], "displacement": [0, 20]}"#,
+    ));
+    let mut stored = h.session.proposal().cloned().expect("a proposal");
+    assert!(stored.outcome.is_ok());
+    // The same proposal, its intent now naming an object that is not there.
+    stored.intent = document(
+        r#"{"op": "circle", "center": [50, 50], "radius": 10},
+           {"op": "move", "targets": [99], "displacement": [0, 20]}"#,
+    );
+    h.session.set_proposal(Some(stored));
+    let revision = h.session.drawing().revision();
+    h.session.accept_proposal();
+    assert_eq!(h.session.drawing().len(), 1, "no circle left behind");
+    assert!(
+        h.log()
+            .last()
+            .unwrap()
+            .starts_with("Proposal not applied, nothing changed:"),
+        "{:?}",
+        h.log()
+    );
+    assert!(!h.session.drawing().can_redo());
+    assert!(!h.session.drawing().can_undo(), "no step of nothing");
+    assert_ne!(h.session.drawing().revision(), revision);
+}
+
+#[test]
+fn a_proposal_is_for_the_space_it_was_computed_in() {
+    // #433: a circle proposed in the model is not drawn over a sheet, nor
+    // made on its paper, when the session moves to a layout before Accept.
+    use cad_document::{Drawing, Layout, LayoutId};
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+    tx.commit();
+    let mut h = Harness::with_drawing(drawing);
+    h.session.propose(document(
+        r#"{"op": "circle", "center": [50, 50], "radius": 10}"#,
+    ));
+    assert!(h.session.proposal().is_some());
+    h.session.set_space(sheet);
+    assert!(h.session.proposal().is_none(), "not offered on the sheet");
+    assert_eq!(proposal_items(&h), (0, 0), "not drawn over it");
+    h.session.accept_proposal();
+    assert_eq!(h.session.drawing().len(), 0, "made nowhere");
+    // Back in the model, it is still another session's moment: not offered.
+    h.session.set_space(LayoutId::MODEL);
+    assert!(h.session.proposal().is_none());
+}
+
+#[test]
+fn accept_runs_with_the_selection_and_view_the_proposal_was_shown_with() {
+    // #433: "the selection" is what was selected when it was proposed —
+    // line 1 — though the user selected line 2 and zoomed out since.
+    let mut h = Harness::with_entities([
+        Entity::Line(LineEntity::new(
+            Point2::new(0.0, 0.0),
+            Point2::new(100.0, 0.0),
+        )),
+        Entity::Line(LineEntity::new(
+            Point2::new(0.0, 50.0),
+            Point2::new(100.0, 50.0),
+        )),
+    ]);
+    h.click_world(Point2::new(50.0, 0.0));
+    h.session.propose(document(
+        r#"{"op": "move", "targets": "selection", "displacement": [0, 20]}"#,
+    ));
+    let shown = h.session.proposal().cloned().expect("a proposal");
+    assert_eq!(shown.changed.len(), 1);
+    assert_eq!(shown.changed[0].0, cad_core::EntityId::from_raw(1));
+    h.escape();
+    h.click_world(Point2::new(50.0, 50.0));
+    h.enter_all(&["ZOOM", "S", "0.01"]);
+    let view = h.session.view().clone();
+    assert!(
+        h.session.proposal().is_some(),
+        "selecting and zooming change no drawing"
+    );
+    h.session.accept_proposal();
+    let line = |n: u64| match h.session.drawing().entity(cad_core::EntityId::from_raw(n)) {
+        Some(Entity::Line(line)) => *line,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(line(1).start, Point2::new(0.0, 20.0), "line 1, as shown");
+    assert_eq!(line(2).start, Point2::new(0.0, 50.0), "line 2 left alone");
+    assert_eq!(h.session.view(), &view, "the user's view given back");
 }

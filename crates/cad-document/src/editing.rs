@@ -247,7 +247,7 @@ impl Entity {
                 let arc = arc.arc();
                 Some(arc.radius * arc.sweep)
             }
-            Entity::Polyline(polyline) if !polyline.closed => Some(polyline.path().length()),
+            Entity::Polyline(polyline) if !polyline.closes() => Some(polyline.path().length()),
             _ => None,
         }
     }
@@ -259,7 +259,7 @@ impl Entity {
     pub fn lengthened(&self, pick: Point2, how: Lengthening) -> Result<Entity, LengthenError> {
         let length = match self {
             Entity::Line(_) | Entity::Arc(_) => self.curve_length().expect("a curve"),
-            Entity::Polyline(polyline) if polyline.closed => {
+            Entity::Polyline(polyline) if polyline.closes() => {
                 return Err(LengthenError::Unsupported("closed polyline"));
             }
             Entity::Polyline(polyline) => polyline.path().length(),
@@ -528,7 +528,7 @@ impl Entity {
                 let vertices: Vec<Point2> = polyline.vertices.iter().copied().map(moved).collect();
                 let count = vertices.len();
                 let collapsed = (0..count)
-                    .filter(|index| polyline.closed || index + 1 < count)
+                    .filter(|index| polyline.closes() || index + 1 < count)
                     .any(|index| {
                         TOLERANCE.coincident(vertices[index], vertices[(index + 1) % count])
                     });
@@ -650,7 +650,7 @@ impl Entity {
                             .collect()
                     })
                     .ok_or_else(|| {
-                        if polyline.closed {
+                        if polyline.closes() {
                             return BreakError::NeedsTwoPoints("closed polyline");
                         }
                         let nearest = |point: Point2| {
@@ -796,7 +796,7 @@ impl Entity {
                     .ok_or(ExtendError::NoMeeting)
             }
             // A closed polyline has no ends, like a circle.
-            Entity::Polyline(polyline) if polyline.closed => {
+            Entity::Polyline(polyline) if polyline.closes() => {
                 Err(ExtendError::Unsupported("closed polyline"))
             }
             Entity::Ellipse(_)
@@ -855,7 +855,7 @@ impl Entity {
             }
             Entity::Arc(arc) => Some(arc.arc().circle().bounds()),
             // An open polyline reaches as its first or last segment would alone.
-            Entity::Polyline(polyline) if !polyline.closed => {
+            Entity::Polyline(polyline) if !polyline.closes() => {
                 let segments: Vec<Primitive> = polyline.primitives().collect();
                 let end_segment = if polyline_end_is_nearer(polyline, pick) {
                     segments.last()
@@ -2991,5 +2991,213 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// #379: far from the origin a cutting edge through the trimmed
+    /// object's own end divides nothing, in every direction — the cut is
+    /// a few spacings of the numbers off the end, not on it — and with a
+    /// real cut too, exactly the picked stretch goes. Lines, arcs with a
+    /// radial cutter, and polylines.
+    #[test]
+    fn far_from_the_origin_a_cutter_through_an_end_divides_nothing() {
+        let origin = p(-9.5e6, 8.7e6);
+        let turn = |v: Vec2, by: f64| {
+            Vec2::new(
+                v.x * by.cos() - v.y * by.sin(),
+                v.x * by.sin() + v.y * by.cos(),
+            )
+        };
+        let through = |end: Point2, across: Vec2| -> Entity {
+            LineEntity::new(end - across * 500.0, end + across * 700.0).into()
+        };
+        let mut wrong: Vec<String> = Vec::new();
+        for i in 0..4000 {
+            let angle = f64::from(i) / 4000.0 * std::f64::consts::TAU;
+            let u = Vec2::new(angle.cos(), angle.sin());
+            let across = turn(u, 1.2);
+
+            // A line, cut through its end b, picked near a.
+            let (a, b) = (origin, origin + u * 37.3);
+            let line: Entity = LineEntity::new(a, b).into();
+            let end_cut = through(b, across);
+            match line.trimmed(&end_cut, a + u * 10.0) {
+                Err(TrimError::NoIntersection) => {}
+                other => wrong.push(format!("line {i}: {other:?}")),
+            }
+            // With a real cut at 20 too, picked at 30: the stretch from 20
+            // to b goes, and the head stays whole.
+            let mid_cut = through(a + u * 20.0, across);
+            let cuts: Vec<Point2> = line
+                .intersections(&end_cut, Tables::none())
+                .into_iter()
+                .chain(line.intersections(&mid_cut, Tables::none()))
+                .collect();
+            match line.trim_parts_at(&cuts, a + u * 30.0) {
+                Ok(parts) if parts.kept.len() == 1 => {}
+                other => wrong.push(format!("line and middle {i}: {other:?}")),
+            }
+
+            // An arc, cut radially through its end, picked near its start.
+            let arc: Entity = ArcEntity::new(origin, 37.3, angle, angle + 1.0).into();
+            let end_point = origin + turn(u, 1.0) * 37.3;
+            match arc.trimmed(
+                &through(end_point, turn(u, 1.0)),
+                origin + turn(u, 0.2) * 37.3,
+            ) {
+                Err(TrimError::NoIntersection) => {}
+                other => wrong.push(format!("arc {i}: {other:?}")),
+            }
+
+            // An open polyline, cut through its last vertex, picked on its
+            // first segment.
+            let c = b + across * 25.0;
+            let polyline: Entity = PolylineEntity::new(vec![a, b, c], false).into();
+            match polyline.trimmed(&through(c, u), a + u * 10.0) {
+                Err(TrimError::NoIntersection) => {}
+                other => wrong.push(format!("polyline {i}: {other:?}")),
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} wrong, first: {:?}",
+            wrong.len(),
+            wrong.first()
+        );
+    }
+
+    /// #380: far from the origin EXTEND reaches a boundary straight ahead
+    /// in every direction, and a boundary through the tip does not stop
+    /// it: the extension goes to the one ahead, not 2e-9 to the tip — for
+    /// a line and for an arc.
+    #[test]
+    fn far_from_the_origin_extend_reaches_the_boundary_ahead() {
+        let origin = p(-9.5e6, 8.7e6);
+        let turn = |v: Vec2, by: f64| {
+            Vec2::new(
+                v.x * by.cos() - v.y * by.sin(),
+                v.x * by.sin() + v.y * by.cos(),
+            )
+        };
+        let across = |at: Point2, direction: Vec2| -> Entity {
+            LineEntity::new(at - direction * 900.0, at + direction * 1100.0).into()
+        };
+        let mut wrong: Vec<String> = Vec::new();
+        for i in 0..4000 {
+            let angle = f64::from(i) / 4000.0 * std::f64::consts::TAU;
+            let u = Vec2::new(angle.cos(), angle.sin());
+            let tip = origin + u * 37.3;
+            let line: Entity = LineEntity::new(origin, tip).into();
+            let ahead = tip + u * 21.1;
+            let target = across(ahead, turn(u, 1.2));
+            let reaches = |result: Result<Entity, ExtendError>| match result {
+                Ok(Entity::Line(longer)) => {
+                    longer.start == origin && longer.end.distance_to(ahead) < 1e-6
+                }
+                _ => false,
+            };
+            let alone = line.extended(&target, tip);
+            if !reaches(alone.clone()) {
+                wrong.push(format!("alone {i}: {alone:?}"));
+            }
+            let at_tip = across(tip, turn(u, 0.7));
+            let boundary: Vec<_> = at_tip
+                .own_primitives()
+                .into_iter()
+                .chain(target.own_primitives())
+                .collect();
+            let both = line.extended_to(&boundary, tip);
+            if !reaches(both.clone()) {
+                wrong.push(format!("with one through the tip {i}: {both:?}"));
+            }
+
+            // An arc from its end, with one boundary through that end and
+            // one 0.3 rad on round its circle: it reaches the one on.
+            let arc: Entity = ArcEntity::new(origin, 37.3, angle, angle + 1.0).into();
+            let radial = |by: f64| turn(u, by);
+            let end = origin + radial(1.0) * 37.3;
+            let on = origin + radial(1.3) * 37.3;
+            let short = |at: Point2, direction: Vec2| -> Entity {
+                LineEntity::new(at - direction * 5.0, at + direction * 5.0).into()
+            };
+            let boundary: Vec<_> = short(end, radial(1.0))
+                .own_primitives()
+                .into_iter()
+                .chain(short(on, radial(1.3)).own_primitives())
+                .collect();
+            let grown = arc.extended_to(&boundary, end);
+            let reached = match &grown {
+                Ok(Entity::Arc(longer)) => longer.arc().end_point().distance_to(on) < 1e-6,
+                _ => false,
+            };
+            if !reached {
+                wrong.push(format!("arc {i}: {grown:?}"));
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} wrong, first: {:?}",
+            wrong.len(),
+            wrong.first()
+        );
+
+        // The issue's own line and boundary.
+        let line: Entity = LineEntity::new(
+            p(-9500000.0, 8700000.0),
+            p(-9499962.718405299, 8700001.171621313),
+        )
+        .into();
+        let boundary: Entity = LineEntity::new(
+            p(-9500860.380032491, 8699177.282113576),
+            p(-9499206.627844382, 8700661.476208134),
+        )
+        .into();
+        match line.extended(&boundary, p(-9499962.718405299, 8700001.171621313)) {
+            Ok(Entity::Line(longer)) => {
+                assert!(
+                    longer
+                        .end
+                        .distance_to(p(-9499941.628816877, 8700001.83438833))
+                        < 1e-6
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// #382: a polyline flagged closed with two vertices and no arc
+    /// between them — as DXF may hold — is one open segment to every edit:
+    /// BREAK keeps what lies before the break, one cut TRIMs it, and it
+    /// can be EXTENDed and LENGTHENed from its end. Its flag is kept.
+    #[test]
+    fn a_closed_flag_on_one_straight_segment_edits_it_as_open() {
+        let polyline: Entity =
+            PolylineEntity::with_bulges(vec![p(0.0, 0.0), p(10.0, 0.0)], vec![0.0, 0.0], true)
+                .into();
+        let Entity::Polyline(flagged) = &polyline else {
+            unreachable!()
+        };
+        assert!(flagged.closed && !flagged.closes());
+
+        let pieces = polyline.broken(p(10.0, 0.0), p(5.0, 0.0)).unwrap();
+        match pieces.as_slice() {
+            [Entity::Polyline(piece)] => {
+                assert_eq!(piece.vertices, vec![p(0.0, 0.0), p(5.0, 0.0)]);
+            }
+            other => panic!("{other:?}"),
+        }
+        let cutter: Entity = LineEntity::new(p(5.0, -5.0), p(5.0, 5.0)).into();
+        assert_eq!(
+            polyline
+                .trimmed(&cutter, p(8.0, 0.0))
+                .map(|kept| kept.len()),
+            Ok(1)
+        );
+        let wall: Entity = LineEntity::new(p(20.0, -5.0), p(20.0, 5.0)).into();
+        assert!(polyline.extended(&wall, p(9.0, 0.0)).is_ok());
+        assert!(
+            polyline
+                .lengthened(p(9.0, 0.0), Lengthening::Delta(5.0))
+                .is_ok()
+        );
     }
 }

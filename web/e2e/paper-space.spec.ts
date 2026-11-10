@@ -86,6 +86,27 @@ test("a layout with two viewports at different scales is drawn, the model throug
   });
 });
 
+// #401: a layout with no viewport is paper all the same: its own line is
+// drawn, and nothing of the model, which no viewport shows.
+test("a layout with no viewport draws its own objects and none of the model", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "baselines are compared in Chromium only");
+  await openApp(page);
+  await page.keyboard.press("F7");
+  // The model: a cross, 400 across, which would fill the sheet.
+  await enter(page, "L", "0,0", "400,280", "", "L", "0,280", "400,0", "");
+  await enter(page, "LAYOUT", "N", "Sheet");
+  await enter(page, "L", "20,250", "350,250", "");
+  await enter(page, "ZOOM", "E");
+  await page.mouse.move(5, 5);
+  await expect(page).toHaveScreenshot("layout-without-viewport.png", {
+    clip: await clipOfCanvas(page),
+    maxDiffPixelRatio: 0.002,
+  });
+});
+
 /** The canvas's rectangle on the page, for a screenshot of it alone. */
 async function clipOfCanvas(
   page: Page,

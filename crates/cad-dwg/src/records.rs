@@ -356,7 +356,7 @@ pub fn xrecord(
                     for _ in 0..n {
                         raw.push(data.rc()?);
                     }
-                    String::from_utf8_lossy(&raw).into_owned()
+                    cad_dxf::from_code_page(&raw)
                 };
                 body.text(code, &text);
             }

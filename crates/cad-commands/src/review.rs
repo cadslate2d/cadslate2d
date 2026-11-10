@@ -290,7 +290,7 @@ const SAMPLES: u32 = 12;
 /// The points of a closed outline: a closed polyline's vertices.
 fn ring(entity: &Entity) -> Option<Vec<Point2>> {
     match entity {
-        Entity::Polyline(p) if p.closed && p.vertices.len() >= 3 => Some(p.vertices.clone()),
+        Entity::Polyline(p) if p.closes() && p.vertices.len() >= 3 => Some(p.vertices.clone()),
         _ => None,
     }
 }
@@ -1116,7 +1116,7 @@ fn sheet(drawing: &Drawing, boxed: &[(EntityId, &Entity, Aabb)]) -> Option<Sheet
     let edge = boxed
         .iter()
         .filter(|(id, entity, _)| {
-            group.members.contains(id) && matches!(entity, Entity::Polyline(p) if p.closed)
+            group.members.contains(id) && matches!(entity, Entity::Polyline(p) if p.closes())
         })
         .map(|(_, _, b)| *b)
         .max_by(|a, b| area(a).total_cmp(&area(b)))?;

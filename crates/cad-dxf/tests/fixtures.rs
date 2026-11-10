@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use cad_core::tolerance::LinearTolerance;
 use cad_core::{Aabb, Point2, Vec2};
 use cad_document::{
     BlockReferenceEntity, Chain, Color, DimStyleId, DimensionEntity, Drawing, Entity, Group,
@@ -168,6 +169,7 @@ fn the_matrix_names_only_tests_and_fixtures_that_exist() {
         "src/export.rs",
         "src/report.rs",
         "src/wipeout.rs",
+        "src/text_codes.rs",
         "tests/fixtures.rs",
         // The drawing order's tiers, which the reader and the writer share.
         "../cad-document/src/draw_order.rs",
@@ -809,7 +811,9 @@ fn points_from_another_writer_and_the_point_style_round_trip() {
         "not lossy: the size written back is the default"
     );
     let again = export(&import.drawing);
-    assert!(again.contains("\n$PDMODE\n 70\n3\n") && !again.contains("$PDSIZE"));
+    // The size is written whatever it is: absent, AutoCAD reads 0, a size
+    // relative to the screen (#432).
+    assert!(again.contains("\n$PDMODE\n 70\n3\n") && again.contains("\n$PDSIZE\n 40\n1.0\n"));
     // A relative size with no points is not worth a word.
     let silent = "  0\nSECTION\n  2\nHEADER\n  9\n$PDSIZE\n 40\n0.0\n  0\nENDSEC\n  0\nEOF\n";
     let import = cad_dxf::import(silent.as_bytes()).unwrap();
@@ -2097,13 +2101,17 @@ fn dimensions_from_another_writer() {
     assert!(vertex.distance_to(Point2::new(0.0, 100.0)) < 1e-9);
     assert_eq!(dimensions[3].line_point, Point2::new(15.0, 115.0));
     // The radius: centre and radius from the two points, placed where the
-    // text was.
-    assert_eq!(
-        dimensions[5].measure,
-        Measure::Radius {
-            center: Point2::new(200.0, 0.0),
-            radius: 30.0
-        }
+    // text was. The radius is a distance between them, which a platform's
+    // `hypot` may round an ulp either way of 30.
+    let Measure::Radius { center, radius } = dimensions[5].measure else {
+        panic!("radius");
+    };
+    assert_eq!(center, Point2::new(200.0, 0.0));
+    assert!(
+        LinearTolerance::DEFAULT
+            .around(&[center])
+            .is_zero(radius - 30.0),
+        "{radius}"
     );
     // The drafter's text, and its turn away from where it would read.
     assert_eq!(dimensions[7].text_override.as_deref(), Some("TYP"));

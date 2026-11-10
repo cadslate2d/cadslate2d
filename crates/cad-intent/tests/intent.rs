@@ -263,6 +263,24 @@ fn what_is_refused_says_where_and_why() {
             "0 and 1 are both [0, 0]: two points in a row must differ — leave one out".into(),
         ),
     );
+    // #367: far from the origin two points closer than the coordinates'
+    // own spacing are one point, as the drawing and the chain see them;
+    // and a chain must spread along an axis, not only diagonally.
+    invalid(
+        r#"{"op": "dim_chain", "side": "below", "points": [[100000000, 0], [100000000.00000005, 0]]}"#,
+        "points",
+        Reason::Told(
+            "0 and 1 are both [100000000, 0]: two points in a row must differ — leave one out"
+                .into(),
+        ),
+    );
+    invalid(
+        r#"{"op": "dim_chain", "side": "below", "points": [[0, 0], [8e-10, 8e-10]]}"#,
+        "points",
+        Reason::Said(
+            "no two points differ along x or along y: a chain dimensions points spread along one axis",
+        ),
+    );
     // A dimension scale other than the sheet's set in a view would resize
     // every view's dimensions: the house's sheet had no room (#358). The
     // sheet's own is harmless, and models give it.
@@ -626,6 +644,28 @@ fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
     );
     assert!(generated.contains(r#""version""#));
     assert_eq!(VERSION, 25);
+}
+
+/// #367: a chain with fewer than two points to dimension, compiled
+/// without being validated — the engine's own documents are not parsed —
+/// makes nothing; it does not panic.
+#[test]
+fn a_chain_with_nothing_to_dimension_compiles_to_nothing() {
+    for points in [
+        vec![[100_000_000.0, 0.0], [100_000_000.000_000_05, 0.0]],
+        vec![[0.0, 0.0], [8e-10, 8e-10]],
+        vec![[5.0, 5.0]],
+    ] {
+        let intent = Intent {
+            version: VERSION,
+            units: None,
+            operations: vec![cad_intent::Operation::DimChain {
+                points,
+                side: cad_intent::ChainSide::Below,
+            }],
+        };
+        assert!(compile(&intent).is_empty());
+    }
 }
 
 proptest! {

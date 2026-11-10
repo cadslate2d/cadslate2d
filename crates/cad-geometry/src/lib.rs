@@ -65,7 +65,10 @@ pub use path_offset::{
     PathOffsetError, PathSpan, offset_path, path_spans, raw_offset, stitch_spans,
 };
 pub use pattern::{LineFamily, pattern_lines};
-pub use polygon::{arc_chords, contains as ring_contains, flatten_path, signed_area, tessellate};
+pub use polygon::{
+    arc_chords, contains as ring_contains, even_odd_fill, flatten_path, rings_cross, signed_area,
+    tessellate,
+};
 pub use polyline::{
     arc_from_bulge, bulge_end_tangent, bulge_from_arc, bulge_from_tangent, bulge_primitive,
     is_straight, polyline_closes, polyline_primitives, polyline_spans,

@@ -29,7 +29,7 @@ impl Path {
     /// have more than [`MAX_CLOUD_ARCS`] arcs.
     pub fn revision_cloud(&self, min: f64, max: f64, reverse: bool) -> Option<Self> {
         let lengths_fine = min.is_finite() && max.is_finite() && min > 0.0 && min <= max;
-        if !self.closed || !lengths_fine {
+        if !self.closes() || !lengths_fine {
             return None;
         }
         let tolerance = LinearTolerance::DEFAULT.around(&self.vertices);

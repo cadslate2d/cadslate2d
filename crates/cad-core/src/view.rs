@@ -83,8 +83,15 @@ impl View {
 
     /// Changes the canvas size, keeping the same world point at the centre.
     pub fn resize(&mut self, width: f64, height: f64) {
-        self.width = width.max(1.0);
-        self.height = height.max(1.0);
+        // A size that is not finite is no size (#403): kept as it was, as
+        // `look_at` keeps a centre that is not finite, so no point on the
+        // screen maps to one that is not.
+        if width.is_finite() {
+            self.width = width.max(1.0);
+        }
+        if height.is_finite() {
+            self.height = height.max(1.0);
+        }
     }
 
     pub fn world_to_screen(&self, point: Point2) -> ScreenPoint {

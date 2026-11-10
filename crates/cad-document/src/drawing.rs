@@ -7,11 +7,11 @@ mod settle;
 use std::fmt;
 use std::sync::Arc;
 
-use cad_core::{Aabb, EntityId, LengthUnit, Vec2};
+use cad_core::{Aabb, EntityId, LengthUnit, Point2, Vec2};
 
 use crate::block::{Block, BlockId, BlockTable, initial_blocks};
 use crate::constraint::{
-    Constraint, ConstraintError, ConstraintId, ConstraintTable, Reference, Shape,
+    Constraint, ConstraintError, ConstraintId, ConstraintTable, Kind, Part, Reference, Shape,
     initial_constraints,
 };
 use crate::dim_style::{DimStyle, DimStyleError, DimStyleId, DimStyleTable, initial_dim_styles};
@@ -27,8 +27,8 @@ use crate::layout::{Layout, LayoutId, LayoutPlot, LayoutTable, initial_layouts};
 use crate::leader::LeaderError;
 use crate::linetype::{LinetypeDef, LinetypeError, LinetypeId, LinetypeTable, initial_linetypes};
 use crate::mleader::{
-    MLeaderContent, MLeaderEntity, MLeaderError, MLeaderStyle, MLeaderStyleError, MLeaderStyleId,
-    MLeaderStyleTable, initial_mleader_styles,
+    MLeaderError, MLeaderStyle, MLeaderStyleError, MLeaderStyleId, MLeaderStyleTable,
+    initial_mleader_styles,
 };
 use crate::named_view::{NamedView, NamedViewId, NamedViewTable, initial_named_views};
 use crate::names::{NameError, check_name, same_name};
@@ -42,8 +42,7 @@ use crate::text_style::{
 use crate::viewport::ViewportError;
 use crate::{
     Change, Color, DrawingSettings, Entity, EntityChange, EntityRecord, EntityStore, Linetype,
-    Lineweight, MTextEntity, Properties, Revision, SettingsChange, SpatialIndex, TextEntity,
-    Transaction,
+    Lineweight, Properties, Revision, SettingsChange, SpatialIndex, TableRow, Transaction,
 };
 
 /// A 2D drawing.
@@ -80,12 +79,10 @@ pub struct Drawing {
     history: History,
     revision: Revision,
     shown_revision: Revision,
-    /// What each change to what is shown touched, newest last: the shown
-    /// revision before it, the one after, and the entities — or `None`
-    /// when everything did, as when a layer is switched off. Derived state
-    /// such as the render scene asks [`Drawing::shown_changes_since`] what
-    /// to redo instead of redoing all of it (ADR-0022).
-    journal: VecDeque<(Revision, Revision, Option<Vec<EntityId>>)>,
+    /// What each change to what is shown touched, newest last. Derived
+    /// state such as the render scene asks [`Drawing::shown_changes_since`]
+    /// what to redo instead of redoing all of it (ADR-0022).
+    journal: VecDeque<Journaled>,
     /// The spaces: the model first, then the layouts (#191).
     layouts: LayoutTable,
     /// Named sets of objects picked together (#214).
@@ -101,6 +98,21 @@ pub struct Drawing {
     /// Why transactions were not applied since the session last asked
     /// (ADR-0038): the edits the constraints refused.
     refusals: Vec<String>,
+    /// Transactions committed and not refused, those that changed nothing
+    /// included (#434).
+    commits: u64,
+}
+
+/// One change to what is shown, as the journal remembers it.
+#[derive(Clone, Debug)]
+struct Journaled {
+    /// The shown revision before it.
+    before: Revision,
+    /// The entities it touched, or `None` when everything was, as when a
+    /// layer is switched off.
+    changed: Option<Vec<EntityId>>,
+    /// Of those, the ones it moved to another space (#404).
+    moved: Vec<EntityId>,
 }
 
 /// How many changes the journal remembers; a scene further behind than
@@ -137,6 +149,7 @@ impl Clone for Drawing {
             views: self.views.clone(),
             mleader_styles: self.mleader_styles.clone(),
             refusals: self.refusals.clone(),
+            commits: self.commits,
         }
     }
 }
@@ -151,6 +164,8 @@ pub struct ApplyReport {
     pub removed: Vec<EntityId>,
     /// Entities whose geometry or properties changed.
     pub replaced: Vec<EntityId>,
+    /// Of the replaced, those moved to another space (#404).
+    pub moved: Vec<EntityId>,
     /// Whether a row of any table changed: a layer made, renamed, removed.
     pub tables_changed: bool,
     /// Why the transaction was not applied: it could not be settled with
@@ -322,6 +337,10 @@ pub enum TransactionError {
     /// A viewport is a window of a layout's paper: it cannot be in the
     /// model, nor in a block.
     ViewportOffPaper,
+    /// An xline or a ray is drawn by the overlay, clipped to the view, and
+    /// kept out of the extents (ADR-0031): a block, placed as committed
+    /// geometry with bounds, cannot hold one (#415).
+    ConstructionInBlock,
     /// The layout does not exist, in the drawing or earlier in this
     /// transaction.
     UnknownLayout(LayoutId),
@@ -432,6 +451,7 @@ impl fmt::Display for TransactionError {
             Self::BadBlockScale => write!(f, "a block reference's scale must be positive"),
             Self::BadViewport(error) => write!(f, "{error}"),
             Self::ViewportOffPaper => write!(f, "a viewport belongs on a layout's paper"),
+            Self::ConstructionInBlock => write!(f, "a block cannot hold an xline or a ray"),
             Self::UnknownLayout(id) => write!(f, "layout {id} does not exist"),
             Self::PermanentLayout => write!(f, "the model cannot be removed or renamed"),
             Self::LayoutInUse(id) => write!(
@@ -484,11 +504,37 @@ fn largest_radius(entity: &Entity, tables: Tables<'_>) -> Option<f64> {
             .filter(|radius| radius.is_finite())
             .reduce(f64::max)
     }
+    // Every arc the committed scene draws for the entity counts, as
+    // `cad_render::walk_entity` draws them (#390): a dimension's laid-out
+    // arc, a point's marker circle, a hatch's boundary, and whatever a
+    // block or a multileader's block note places.
     match entity {
         Entity::Circle(circle) => Some(circle.radius).filter(|radius| radius.is_finite()),
         Entity::Arc(arc) => Some(arc.radius).filter(|radius| radius.is_finite()),
         Entity::Polyline(polyline) if polyline.has_arcs() => largest(polyline.primitives()),
-        Entity::BlockRef(_) => largest(entity.primitives(tables).into_iter()),
+        Entity::BlockRef(reference) => tables
+            .blocks
+            .flatten(reference, crate::Properties::default())
+            .iter()
+            .filter_map(|(part, _)| largest_radius(part, tables))
+            .reduce(f64::max),
+        Entity::Dimension(dimension) => largest(
+            dimension
+                .layout(tables.dim_style(dimension.style))
+                .arcs
+                .into_iter()
+                .map(cad_geometry::Primitive::Arc),
+        ),
+        Entity::Point(point) => largest(tables.point_style.marker(point.position).into_iter()),
+        Entity::Hatch(hatch) => hatch
+            .loops
+            .iter()
+            .filter_map(|path| largest(crate::PolylineEntity::from(path.clone()).primitives()))
+            .reduce(f64::max),
+        Entity::MLeader(mleader) => mleader
+            .layout(tables.mleader_style(mleader.style), tables)
+            .block
+            .and_then(|(reference, _)| largest_radius(&Entity::BlockRef(reference), tables)),
         // Chords, segments, or no primitives at all.
         Entity::Polyline(_)
         | Entity::Line(_)
@@ -497,13 +543,9 @@ fn largest_radius(entity: &Entity, tables: Tables<'_>) -> Option<f64> {
         | Entity::AttributeDefinition(_)
         | Entity::Text(_)
         | Entity::MText(_)
-        | Entity::Dimension(_)
-        | Entity::Hatch(_)
         | Entity::Viewport(_)
         | Entity::Wipeout(_)
-        | Entity::Point(_)
         | Entity::Leader(_)
-        | Entity::MLeader(_)
         | Entity::XLine(_)
         | Entity::Ray(_) => None,
     }
@@ -615,6 +657,7 @@ impl Drawing {
             views: initial_named_views(),
             mleader_styles: initial_mleader_styles(),
             refusals: Vec::new(),
+            commits: 0,
         }
     }
 
@@ -914,33 +957,30 @@ impl Drawing {
         {
             return Err(TransactionError::UnknownLinetype(id));
         }
+        // Every row it refers to is there (#370).
+        for row in entity.table_refs() {
+            match row {
+                TableRow::TextStyle(id) if !drawing.text_styles.contains(id) => {
+                    return Err(TransactionError::UnknownTextStyle(id));
+                }
+                TableRow::DimStyle(id) if !drawing.dim_styles.contains(id) => {
+                    return Err(TransactionError::UnknownDimStyle(id));
+                }
+                TableRow::MLeaderStyle(id) if !drawing.mleader_styles.contains(id) => {
+                    return Err(TransactionError::UnknownMLeaderStyle(id));
+                }
+                TableRow::Block(id) if !drawing.blocks.contains(id) => {
+                    return Err(TransactionError::UnknownBlock(id));
+                }
+                _ => {}
+            }
+        }
         match entity {
-            Entity::Text(TextEntity { style, .. }) | Entity::MText(MTextEntity { style, .. })
-                if !drawing.text_styles.contains(*style) =>
-            {
-                Err(TransactionError::UnknownTextStyle(*style))
-            }
-            Entity::BlockRef(reference) if !drawing.blocks.contains(reference.block) => {
-                Err(TransactionError::UnknownBlock(reference.block))
-            }
-            Entity::Dimension(dimension) if !drawing.dim_styles.contains(dimension.style) => {
-                Err(TransactionError::UnknownDimStyle(dimension.style))
-            }
             Entity::Dimension(dimension) if dimension.check().is_err() => Err(
                 TransactionError::BadDimension(dimension.check().unwrap_err()),
             ),
-            Entity::Leader(leader) if !drawing.dim_styles.contains(leader.style) => {
-                Err(TransactionError::UnknownDimStyle(leader.style))
-            }
             Entity::Leader(leader) if leader.check().is_err() => {
                 Err(TransactionError::BadLeader(leader.check().unwrap_err()))
-            }
-            Entity::MLeader(MLeaderEntity {
-                content: MLeaderContent::Block { block, .. },
-                ..
-            }) if !drawing.blocks.contains(*block) => Err(TransactionError::UnknownBlock(*block)),
-            Entity::MLeader(mleader) if !drawing.mleader_styles.contains(mleader.style) => {
-                Err(TransactionError::UnknownMLeaderStyle(mleader.style))
             }
             Entity::MLeader(mleader) => mleader.check().map_err(TransactionError::BadMLeader),
             Entity::BlockRef(reference)
@@ -1017,6 +1057,40 @@ impl Drawing {
         self.orders.keys().next().copied().unwrap_or(0)
     }
 
+    /// Every entity whose geometry a change to `row` changes: those that
+    /// refer to it, and the references that place, directly or through
+    /// other blocks, a definition holding one — a block's dimension is laid
+    /// out by its style as a dimension of its own is (#388). For a block
+    /// row, that is every reference that places it or a block that does.
+    /// Each table change that redraws its dependents asks here.
+    fn dependents_of(&self, row: TableRow) -> Vec<EntityId> {
+        self.dependents_where(|entity| entity.refers_to(row))
+    }
+
+    /// Every entity that `holds`, and every reference that places,
+    /// directly or through other blocks, a definition holding one: what a
+    /// change to what such entities are drawn by — a table row, a setting
+    /// (#389) — changes the geometry of.
+    fn dependents_where(&self, holds: impl Fn(&Entity) -> bool) -> Vec<EntityId> {
+        let holding: Vec<BlockId> = self
+            .blocks
+            .iter()
+            .filter(|(_, block)| block.entities.iter().any(|record| holds(&record.entity)))
+            .map(|(id, _)| id)
+            .collect();
+        self.entities
+            .iter()
+            .filter_map(|(entity_id, entity)| {
+                let nested = entity.placed_block().is_some_and(|placed| {
+                    holding
+                        .iter()
+                        .any(|held| *held == placed || self.blocks.reaches(placed, *held))
+                });
+                (holds(entity) || nested).then_some(entity_id)
+            })
+            .collect()
+    }
+
     /// Notes the largest radius of a circle or arc in entity `id`, or that
     /// it has none — or that it is gone (#210).
     fn note_radius(&mut self, id: EntityId) {
@@ -1067,16 +1141,34 @@ impl Drawing {
     /// drawing this journal does not know, or more changes than it
     /// remembers (ADR-0022).
     pub fn shown_changes_since(&self, since: Revision) -> Option<Vec<EntityId>> {
+        self.journaled_since(since, |entry| entry.changed.clone())
+    }
+
+    /// Of [`shown_changes_since`](Self::shown_changes_since), the entities
+    /// moved between spaces since `since` (#404): each was where it is now
+    /// and somewhere else, so what was made of it where it was is stale
+    /// too. `None` when the journal does not reach back that far.
+    pub fn moved_since(&self, since: Revision) -> Option<Vec<EntityId>> {
+        self.journaled_since(since, |entry| Some(entry.moved.clone()))
+    }
+
+    /// What `take` reads from each journal entry since `since`, newest
+    /// first; `None` when the journal does not reach back that far or
+    /// `take` gives `None` for an entry.
+    fn journaled_since(
+        &self,
+        since: Revision,
+        take: impl Fn(&Journaled) -> Option<Vec<EntityId>>,
+    ) -> Option<Vec<EntityId>> {
         if since == self.shown_revision {
             return Some(Vec::new());
         }
         let mut ids = Vec::new();
-        for (before, after, changed) in self.journal.iter().rev() {
-            ids.extend(changed.as_ref()?.iter().copied());
-            if *before == since {
+        for entry in self.journal.iter().rev() {
+            ids.extend(take(entry)?);
+            if entry.before == since {
                 return Some(ids);
             }
-            let _ = after;
         }
         None
     }
@@ -1194,6 +1286,14 @@ impl Drawing {
     /// (ADR-0038). The session writes them to the log.
     pub fn take_refusals(&mut self) -> Vec<String> {
         std::mem::take(&mut self.refusals)
+    }
+
+    /// How many transactions have been committed and not refused, counting
+    /// those that changed nothing and so left no history entry and no new
+    /// revision (#434): what tells a command that set something to what it
+    /// was from one that committed nothing at all.
+    pub fn commits(&self) -> u64 {
+        self.commits
     }
 
     /// The drawing's constraints (ADR-0038), in the order they were made.
@@ -1541,6 +1641,7 @@ impl Drawing {
             others: Vec::new(),
             space: LayoutId::MODEL,
             held: BTreeSet::new(),
+            restated: BTreeSet::new(),
         }
     }
 
@@ -1672,6 +1773,9 @@ impl Drawing {
                     self.note_radius(*id);
                     self.note_order(before.order, false);
                     self.note_order(after.order, true);
+                    if before.space != after.space {
+                        report.moved.push(*id);
+                    }
                     report.replaced.push(*id);
                 }
                 Change::Layer(change) => {
@@ -1712,19 +1816,12 @@ impl Drawing {
                     // One row changed; every multileader drawn by it is
                     // laid out afresh, and its index entry with it.
                     if let TableChange::Replace { id, .. } = change {
-                        let dependents: Vec<EntityId> = self
-                            .entities
-                            .iter()
-                            .filter_map(|(entity_id, entity)| match &**entity {
-                                Entity::MLeader(mleader) if mleader.style == *id => Some(entity_id),
-                                _ => None,
-                            })
-                            .collect();
-                        for entity_id in dependents {
+                        for entity_id in self.dependents_of(TableRow::MLeaderStyle(*id)) {
                             if let Some(entity) = self.entities.get(entity_id) {
                                 let bounds = entity.bounds(self.tables());
                                 self.index.update(entity_id, bounds);
                             }
+                            self.note_radius(entity_id);
                             report.replaced.push(entity_id);
                         }
                     }
@@ -1735,18 +1832,7 @@ impl Drawing {
                     // One change to the row; every dimension drawn by it is
                     // laid out afresh, so its index entry is (§19.6).
                     if let TableChange::Replace { id, .. } = change {
-                        let dependents: Vec<EntityId> = self
-                            .entities
-                            .iter()
-                            .filter_map(|(entity_id, entity)| match &**entity {
-                                Entity::Dimension(dimension) if dimension.style == *id => {
-                                    Some(entity_id)
-                                }
-                                Entity::Leader(leader) if leader.style == *id => Some(entity_id),
-                                _ => None,
-                            })
-                            .collect();
-                        for entity_id in dependents {
+                        for entity_id in self.dependents_of(TableRow::DimStyle(*id)) {
                             if let Some(entity) = self.entities.get(entity_id) {
                                 let tables = Tables {
                                     blocks: &self.blocks,
@@ -1769,18 +1855,9 @@ impl Drawing {
                     // reference that places it, directly or through other
                     // blocks, is recomputed here (§19.6).
                     if let TableChange::Replace { id, .. } = change {
-                        let dependents: Vec<EntityId> = self
-                            .entities
-                            .iter()
-                            .filter_map(|(entity_id, entity)| {
-                                // A reference, or a multileader's block
-                                // note (#241).
-                                let placed = entity.placed_block()?;
-                                (placed == *id || self.blocks.reaches(placed, *id))
-                                    .then_some(entity_id)
-                            })
-                            .collect();
-                        for entity_id in dependents {
+                        // A reference, or a multileader's block note
+                        // (#241), placing it or a block that does.
+                        for entity_id in self.dependents_of(TableRow::Block(*id)) {
                             if let Some(entity) = self.entities.get(entity_id) {
                                 self.index.update(entity_id, entity.bounds(self.tables()));
                             }
@@ -1789,7 +1866,23 @@ impl Drawing {
                         }
                     }
                 }
-                Change::Settings(change) => self.settings = change.after,
+                Change::Settings(change) => {
+                    self.settings = change.after;
+                    // A point is drawn, and bounded, by the point style:
+                    // every point and every reference holding one is laid
+                    // out afresh, its index entry with it (#389).
+                    if change.before.point_style != change.after.point_style {
+                        let points =
+                            self.dependents_where(|entity| matches!(entity, Entity::Point(_)));
+                        for entity_id in points {
+                            if let Some(entity) = self.entities.get(entity_id) {
+                                self.index.update(entity_id, entity.bounds(self.tables()));
+                            }
+                            self.note_radius(entity_id);
+                            report.replaced.push(entity_id);
+                        }
+                    }
+                }
             }
         }
         self.revision = Revision::next();
@@ -1805,8 +1898,11 @@ impl Drawing {
                 ids.extend(&report.replaced);
                 ids
             });
-            self.journal
-                .push_back((before, self.shown_revision, changed));
+            self.journal.push_back(Journaled {
+                before,
+                changed,
+                moved: report.moved.clone(),
+            });
             if self.journal.len() > JOURNAL_LENGTH {
                 self.journal.pop_front();
             }
@@ -1836,6 +1932,9 @@ pub struct TransactionBuilder<'d> {
     /// Entities whose every unknown is held when the transaction settles
     /// its constraints (ADR-0038).
     held: BTreeSet<EntityId>,
+    /// Constraints this transaction restated with what it transformed:
+    /// their places are set, and not followed again (#426).
+    restated: BTreeSet<ConstraintId>,
 }
 
 impl TransactionBuilder<'_> {
@@ -1875,17 +1974,12 @@ impl TransactionBuilder<'_> {
         source: EntityId,
         entity: impl Into<Entity>,
     ) -> Result<EntityId, TransactionError> {
-        let record = self
+        let properties = self
             .drawing
             .record(source)
-            .ok_or(TransactionError::UnknownEntity(source))?;
-        let (properties, space, order) = (record.properties, record.space, record.order);
-        let entity = entity.into();
-        self.known_text_style(&entity)?;
-        self.known_block(&entity)?;
-        viewport_placeable(&entity, space)?;
-        let record = EntityRecord::new(entity, properties).in_space(space);
-        Ok(self.insert_record(record.in_order(order)))
+            .ok_or(TransactionError::UnknownEntity(source))?
+            .properties;
+        self.insert_from(source, entity, properties)
     }
 
     /// Adds a new entity to `space` — the model, or a layout — with the
@@ -1904,11 +1998,35 @@ impl TransactionBuilder<'_> {
             lineweight: settings.current_lineweight,
         };
         let entity = entity.into();
-        self.known_text_style(&entity)?;
-        self.known_block(&entity)?;
+        self.known_rows(&entity)?;
         viewport_placeable(&entity, space)?;
         let record = EntityRecord::new(entity, properties).in_space(space);
         Ok(self.insert_record(record.in_order(self.drawing.top_order())))
+    }
+
+    /// Adds a new entity made from `source` — a part of it exploded — with
+    /// properties of its own, in `source`'s space and draw-order tier
+    /// (ADR-0032, #427), as [`Self::insert_like`] puts a copy. `source` is
+    /// read from the drawing as it was when the transaction began, so it
+    /// may be removed in it.
+    pub fn insert_from(
+        &mut self,
+        source: EntityId,
+        entity: impl Into<Entity>,
+        properties: Properties,
+    ) -> Result<EntityId, TransactionError> {
+        let record = self
+            .drawing
+            .record(source)
+            .ok_or(TransactionError::UnknownEntity(source))?;
+        let (space, order) = (record.space, record.order);
+        self.known_layer(properties.layer)?;
+        self.known_linetype(properties.linetype)?;
+        let entity = entity.into();
+        self.known_rows(&entity)?;
+        viewport_placeable(&entity, space)?;
+        let record = EntityRecord::new(entity, properties).in_space(space);
+        Ok(self.insert_record(record.in_order(order)))
     }
 
     /// Adds a new entity to `space` with the given properties.
@@ -1922,8 +2040,7 @@ impl TransactionBuilder<'_> {
         self.known_layer(properties.layer)?;
         self.known_linetype(properties.linetype)?;
         let entity = entity.into();
-        self.known_text_style(&entity)?;
-        self.known_block(&entity)?;
+        self.known_rows(&entity)?;
         viewport_placeable(&entity, space)?;
         let record = EntityRecord::new(entity, properties).in_space(space);
         Ok(self.insert_record(record.in_order(self.drawing.top_order())))
@@ -2218,8 +2335,7 @@ impl TransactionBuilder<'_> {
             return Err(TransactionError::PermanentMLeaderStyle);
         }
         let row = self.existing_mleader_style(id)?;
-        let uses =
-            |entity: &Entity| matches!(entity, Entity::MLeader(mleader) if mleader.style == id);
+        let uses = |entity: &Entity| entity.refers_to(TableRow::MLeaderStyle(id));
         let pending = self.changes.iter().any(|change| match change {
             Change::Entity(EntityChange::Insert { record, .. })
             | Change::Entity(EntityChange::Replace { after: record, .. }) => uses(&record.entity),
@@ -2420,15 +2536,18 @@ impl TransactionBuilder<'_> {
     }
 
     /// Replaces an existing entity's geometry, keeping its ID and its
-    /// properties.
+    /// properties. As constraints settle, the unknowns whose values it
+    /// changed are held and the rest are free to follow (ADR-0038 §5): an
+    /// end grip's point stays where it was put. An edit that set the whole
+    /// of the entity — a transform, a midpoint or centre grip — uses
+    /// [`Self::replace_whole`].
     pub fn replace(
         &mut self,
         id: EntityId,
         entity: impl Into<Entity>,
     ) -> Result<(), TransactionError> {
         let entity = entity.into();
-        self.known_text_style(&entity)?;
-        self.known_block(&entity)?;
+        self.known_rows(&entity)?;
         let before = self.existing(id)?;
         viewport_placeable(&entity, before.space)?;
         let after = before.with_entity(entity);
@@ -2459,6 +2578,229 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
+    /// Replaces `id` by `first` and inserts `others` beside it, removing
+    /// `absorbed`: what cutting an entity (BREAK, TRIM), joining others
+    /// into it (JOIN), or numbering its parts afresh (PEDIT: a vertex
+    /// inserted, a line made a polyline) makes. `first` keeps `id` and its
+    /// properties; the others are inserted like it, and their IDs returned.
+    ///
+    /// Unlike [`Self::replace`], an end keeps no meaning by its name: the
+    /// end a cut piece has now is not the end that was cut away. Each
+    /// constraint on a point of `id` or of `absorbed` — an end, a centre, a
+    /// vertex — or on a straight edge — a line's, a polyline's segment —
+    /// goes to the piece with that point, or a straight edge between the
+    /// same two points, where it was, and is removed when no piece has it
+    /// (#421, #422). Otherwise, one on an edge of `id` stays with `first` where the cut
+    /// keeps what it says of the edge — its line or its circle: a
+    /// direction, a tangency, a point on it, a radius — and is removed
+    /// where it says a straight edge's length, which the cut changed; one
+    /// on an edge of `absorbed` goes with it. A carried row is checked as
+    /// any row is, and removed when its parts now repeat or do not fit.
+    pub fn reshape(
+        &mut self,
+        id: EntityId,
+        first: Entity,
+        others: Vec<Entity>,
+        absorbed: &[EntityId],
+    ) -> Result<Vec<EntityId>, TransactionError> {
+        let mut sources: Vec<(EntityId, Entity)> = Vec::new();
+        for &source in std::iter::once(&id).chain(absorbed) {
+            let entity = (*self.existing(source)?.entity).clone();
+            sources.push((source, entity));
+        }
+        let inserted = others
+            .into_iter()
+            .map(|piece| self.insert_like(id, piece))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut placed: Vec<(EntityId, Entity)> = vec![(id, first.clone())];
+        for &piece in &inserted {
+            let entity = self.record_now(piece).expect("just inserted").entity;
+            placed.push((piece, (*entity).clone()));
+        }
+        // The constraints carried to the pieces, or removed, before the
+        // sources change: what `remove` and `replace` then find refers
+        // only to what is there.
+        let mut rewritten = Vec::new();
+        for (constraint_id, constraint) in self.constraints_now() {
+            if !sources
+                .iter()
+                .any(|(source, _)| constraint.refers_to(*source))
+            {
+                continue;
+            }
+            let references: Option<Vec<Reference>> = constraint
+                .references
+                .iter()
+                .map(
+                    |reference| match sources.iter().find(|(s, _)| *s == reference.entity) {
+                        None => Some(*reference),
+                        Some((source, entity)) => carried(
+                            reference.part,
+                            entity,
+                            &placed,
+                            either_way(&constraint.kind),
+                        )
+                        .or_else(|| {
+                            let edge = reference.part == Part::Edge;
+                            (edge && *source == id && cut_keeps(&constraint.kind, entity, &first))
+                                .then_some(*reference)
+                        }),
+                    },
+                )
+                .collect();
+            match references {
+                Some(references) if references != constraint.references => {
+                    let after = Constraint {
+                        references,
+                        ..constraint.clone()
+                    };
+                    self.push_other(Change::Constraint(TableChange::Replace {
+                        id: constraint_id,
+                        before: constraint,
+                        after,
+                    }));
+                    rewritten.push(constraint_id);
+                }
+                Some(_) => {}
+                None => self.push_other(Change::Constraint(TableChange::Remove {
+                    id: constraint_id,
+                    row: constraint,
+                })),
+            }
+        }
+        for &source in absorbed {
+            self.remove(source)?;
+        }
+        self.replace(id, first)?;
+        // Checked as any row is, now the pieces are in place: a joint that
+        // closed a loop names one vertex twice, and goes.
+        for constraint_id in rewritten {
+            if let Some(row) = self.constraint_now(constraint_id).cloned()
+                && self.check_constraint(&row, Some(constraint_id)).is_err()
+            {
+                self.push_other(Change::Constraint(TableChange::Remove {
+                    id: constraint_id,
+                    row,
+                }));
+            }
+        }
+        Ok(inserted)
+    }
+
+    /// Replaces an existing entity's geometry as a whole — a move, a turn,
+    /// a scale, a reflection of it — and holds every unknown of it as
+    /// constraints settle (ADR-0038 §5), not only those whose values
+    /// changed: the point a transform leaves where it was is set too, and
+    /// never slides to keep a constraint (#420).
+    pub fn replace_whole(
+        &mut self,
+        id: EntityId,
+        entity: impl Into<Entity>,
+    ) -> Result<(), TransactionError> {
+        self.replace(id, entity)?;
+        self.hold(id);
+        Ok(())
+    }
+
+    /// Says what `transform` did to the constraints among `ids`, which
+    /// were all just put through it. A dimension's place goes with them
+    /// (#426). Under a reflection (MIRROR, #425), a constraint keeps its
+    /// meaning only if it is said again: an arc's ends trade places, a
+    /// tangent touches a line's other side, an angle turns the other way,
+    /// and a distance along an axis the mirror reverses is measured from
+    /// its other point. One that names anything outside `ids` is left to
+    /// settling, as is a distance along an axis a slanted mirror does not
+    /// keep.
+    pub fn restate_constraints(&mut self, ids: &[EntityId], transform: &cad_geometry::Transform) {
+        use crate::constraint::{Axis, Kind, Part, Touch};
+        use cad_core::Point2;
+        let reflects = transform.reverses_orientation();
+        let image = |v: Vec2| transform.apply(Point2::ORIGIN + v) - transform.apply(Point2::ORIGIN);
+        let reversed = |v: Vec2| {
+            let w = image(v);
+            let tolerance = cad_core::tolerance::LinearTolerance::DEFAULT;
+            tolerance.is_zero(w.x + v.x) && tolerance.is_zero(w.y + v.y)
+        };
+        let (flips_x, flips_y) = (reversed(Vec2::new(1.0, 0.0)), reversed(Vec2::new(0.0, 1.0)));
+        let ids: BTreeSet<EntityId> = ids.iter().copied().collect();
+        for (constraint_id, before) in self.constraints_now() {
+            if !before.references.iter().all(|r| ids.contains(&r.entity)) {
+                continue;
+            }
+            // Said to be restated, whether or not its row changes: a place
+            // the transform leaves where it was is set all the same.
+            self.restated.insert(constraint_id);
+            let mut after = before.clone();
+            after.place = after.place.map(|place| transform.apply(place));
+            if !reflects {
+                if after != before {
+                    self.push_other(Change::Constraint(TableChange::Replace {
+                        id: constraint_id,
+                        before,
+                        after,
+                    }));
+                }
+                continue;
+            }
+            for reference in &mut after.references {
+                let arc = self
+                    .record_now(reference.entity)
+                    .is_some_and(|record| matches!(*record.entity, Entity::Arc(_)));
+                if arc {
+                    reference.part = match reference.part {
+                        Part::Start => Part::End,
+                        Part::End => Part::Start,
+                        part => part,
+                    };
+                }
+            }
+            match &mut after.kind {
+                Kind::Tangent { touch } => {
+                    *touch = match *touch {
+                        Touch::Left => Touch::Right,
+                        Touch::Right => Touch::Left,
+                        other => other,
+                    };
+                }
+                Kind::Angle { value } => *value = -*value,
+                Kind::Distance { axis, .. } => {
+                    let reverses = match axis {
+                        Axis::Horizontal => flips_x,
+                        Axis::Vertical => flips_y,
+                        Axis::Aligned => false,
+                    };
+                    if reverses {
+                        after.references.swap(0, 1);
+                    }
+                }
+                // What a reflection leaves as it was: a coincidence, a
+                // direction, a length, a radius. A level or a plumb is kept
+                // by an axis-parallel mirror and broken by a slanted one,
+                // and a fix by any: settling says which. Every kind is
+                // named, so a new one with a handedness is decided here.
+                Kind::Coincident
+                | Kind::Collinear
+                | Kind::Concentric
+                | Kind::Parallel
+                | Kind::Perpendicular
+                | Kind::Horizontal
+                | Kind::Vertical
+                | Kind::Symmetric
+                | Kind::Equal
+                | Kind::Fix { .. }
+                | Kind::Radius { .. }
+                | Kind::Diameter { .. } => {}
+            }
+            if after != before {
+                self.push_other(Change::Constraint(TableChange::Replace {
+                    id: constraint_id,
+                    before,
+                    after,
+                }));
+            }
+        }
+    }
+
     /// Changes an existing entity's properties, keeping its ID and sharing
     /// its geometry.
     pub fn set_properties(
@@ -2483,8 +2825,7 @@ impl TransactionBuilder<'_> {
         properties: Properties,
     ) -> Result<(), TransactionError> {
         let entity = entity.into();
-        self.known_text_style(&entity)?;
-        self.known_block(&entity)?;
+        self.known_rows(&entity)?;
         self.known_layer(properties.layer)?;
         self.known_linetype(properties.linetype)?;
         let before = self.existing(id)?;
@@ -3164,12 +3505,7 @@ impl TransactionBuilder<'_> {
         if self.settings_now().current_text_style == id {
             return Err(TransactionError::TextStyleInUse(id));
         }
-        let uses = |entity: &Entity| match entity {
-            Entity::Text(text) => text.style == id,
-            Entity::MText(text) => text.style == id,
-            Entity::AttributeDefinition(definition) => definition.text.style == id,
-            _ => false,
-        };
+        let uses = |entity: &Entity| entity.refers_to(TableRow::TextStyle(id));
         let pending = self.changes.iter().any(|change| match change {
             Change::Entity(EntityChange::Insert { record, .. }) => uses(&record.entity),
             Change::Entity(EntityChange::Replace { after, .. }) => uses(&after.entity),
@@ -3238,11 +3574,7 @@ impl TransactionBuilder<'_> {
         if self.settings_now().current_dim_style == id {
             return Err(TransactionError::DimStyleInUse(id));
         }
-        let uses = |entity: &Entity| match entity {
-            Entity::Dimension(dimension) => dimension.style == id,
-            Entity::Leader(leader) => leader.style == id,
-            _ => false,
-        };
+        let uses = |entity: &Entity| entity.refers_to(TableRow::DimStyle(id));
         let pending = self.changes.iter().any(|change| match change {
             Change::Entity(EntityChange::Insert { record, .. }) => uses(&record.entity),
             Change::Entity(EntityChange::Replace { after, .. }) => uses(&after.entity),
@@ -3414,6 +3746,18 @@ impl TransactionBuilder<'_> {
                 ..ApplyReport::default()
             };
         }
+        self.follow_dimensions();
+        self.drawing.commits += 1;
+        // A change whose after is its before changes nothing — a setting
+        // set to what it is, a layer switched off that is off — and a
+        // transaction of nothing else is no transaction: no history entry,
+        // no new revision, the drawing as saved as it was, and REDO kept
+        // (#434). Dropped only now, once settling has written into the
+        // changes it found.
+        self.changes.retain(|change| !change.is_identity());
+        if self.changes.is_empty() {
+            return ApplyReport::default();
+        }
         let transaction = Transaction::new(self.changes);
         let report = self.drawing.apply(&transaction);
         self.drawing.history.record(transaction);
@@ -3508,33 +3852,6 @@ impl TransactionBuilder<'_> {
         }
     }
 
-    /// Whether `entity` may be stored: a block reference must place a
-    /// block that exists — never the drawing itself — at a positive scale.
-    fn known_block(&self, entity: &Entity) -> Result<(), TransactionError> {
-        // A multileader's block note (#241): a block that is there.
-        if let Entity::MLeader(MLeaderEntity {
-            content: MLeaderContent::Block { block, .. },
-            ..
-        }) = entity
-            && (*block == BlockId::FIRST || self.block_now(*block).is_none())
-        {
-            return Err(TransactionError::UnknownBlock(*block));
-        }
-        let Entity::BlockRef(reference) = entity else {
-            return Ok(());
-        };
-        if reference.block == BlockId::FIRST {
-            return Err(TransactionError::PermanentBlock);
-        }
-        if self.block_now(reference.block).is_none() {
-            return Err(TransactionError::UnknownBlock(reference.block));
-        }
-        if !(reference.scale.is_finite() && reference.scale > 0.0) {
-            return Err(TransactionError::BadBlockScale);
-        }
-        Ok(())
-    }
-
     /// Whether a definition's entities are ones the drawing could hold,
     /// and none of them places `id` itself, directly or through others.
     fn check_block_contents(&self, id: BlockId, block: &Block) -> Result<(), TransactionError> {
@@ -3545,11 +3862,17 @@ impl TransactionBuilder<'_> {
         {
             return Err(TransactionError::ViewportOffPaper);
         }
+        if block
+            .entities
+            .iter()
+            .any(|record| record.entity.is_unbounded())
+        {
+            return Err(TransactionError::ConstructionInBlock);
+        }
         for record in block.entities.iter() {
             self.known_layer(record.properties.layer)?;
             self.known_linetype(record.properties.linetype)?;
-            self.known_text_style(&record.entity)?;
-            self.known_block(&record.entity)?;
+            self.known_rows(&record.entity)?;
         }
         if self.drawing.blocks.would_cycle(id, block) {
             return Err(TransactionError::BlockCycle(id));
@@ -3944,33 +4267,48 @@ impl TransactionBuilder<'_> {
         }
     }
 
-    /// Whether the entity may be stored: a text's style must exist once
-    /// this transaction commits; a dimension's too, and the dimension must
-    /// be one that can be laid out.
-    fn known_text_style(&self, entity: &Entity) -> Result<(), TransactionError> {
-        let style = match entity {
-            Entity::Text(text) => text.style,
-            Entity::MText(text) => text.style,
+    /// Whether `entity` is one the drawing could hold as this transaction
+    /// leaves it: a dimension or multileader of a shape it can be drawn
+    /// from, every row it refers to there (#370) — a block other than the
+    /// model's — and a reference at a scale.
+    fn known_rows(&self, entity: &Entity) -> Result<(), TransactionError> {
+        match entity {
             Entity::Dimension(dimension) => {
                 dimension.check().map_err(TransactionError::BadDimension)?;
-                if self.dim_style_now(dimension.style).is_none() {
-                    return Err(TransactionError::UnknownDimStyle(dimension.style));
-                }
-                return Ok(());
             }
-            // A multileader's style likewise, and points it can be drawn
-            // from (#240).
-            Entity::MLeader(mleader) => {
-                mleader.check().map_err(TransactionError::BadMLeader)?;
-                if self.mleader_style_now(mleader.style).is_none() {
-                    return Err(TransactionError::UnknownMLeaderStyle(mleader.style));
+            // Points a multileader can be drawn from (#240).
+            Entity::MLeader(mleader) => mleader.check().map_err(TransactionError::BadMLeader)?,
+            _ => {}
+        }
+        for row in entity.table_refs() {
+            match row {
+                TableRow::TextStyle(id) if self.text_style_now(id).is_none() => {
+                    return Err(TransactionError::UnknownTextStyle(id));
                 }
-                return Ok(());
+                TableRow::DimStyle(id) if self.dim_style_now(id).is_none() => {
+                    return Err(TransactionError::UnknownDimStyle(id));
+                }
+                TableRow::MLeaderStyle(id) if self.mleader_style_now(id).is_none() => {
+                    return Err(TransactionError::UnknownMLeaderStyle(id));
+                }
+                // The model's block is placed by nothing; a multileader's
+                // block note (#241) naming it names no block.
+                TableRow::Block(id) if id == BlockId::FIRST => {
+                    return Err(match entity {
+                        Entity::BlockRef(_) => TransactionError::PermanentBlock,
+                        _ => TransactionError::UnknownBlock(id),
+                    });
+                }
+                TableRow::Block(id) if self.block_now(id).is_none() => {
+                    return Err(TransactionError::UnknownBlock(id));
+                }
+                _ => {}
             }
-            _ => return Ok(()),
-        };
-        if self.text_style_now(style).is_none() {
-            return Err(TransactionError::UnknownTextStyle(style));
+        }
+        if let Entity::BlockRef(reference) = entity
+            && !(reference.scale.is_finite() && reference.scale > 0.0)
+        {
+            return Err(TransactionError::BadBlockScale);
         }
         Ok(())
     }
@@ -4067,6 +4405,122 @@ impl TransactionBuilder<'_> {
             None => Ok(()),
         }
     }
+}
+
+/// Whether what `kind` says of a straight edge holds of it run the other
+/// way: JOIN turns a member round to chain it (#422). A direction, a line
+/// a point is on, a length do; a signed angle and the side a tangent
+/// touches do not. Every kind is named, so a new one is decided here.
+fn either_way(kind: &Kind) -> bool {
+    match kind {
+        Kind::Coincident
+        | Kind::Collinear
+        | Kind::Parallel
+        | Kind::Perpendicular
+        | Kind::Horizontal
+        | Kind::Vertical
+        | Kind::Symmetric
+        | Kind::Equal => true,
+        Kind::Angle { .. } | Kind::Tangent { .. } => false,
+        // Said of points or of circular edges, never of a straight one.
+        Kind::Concentric
+        | Kind::Fix { .. }
+        | Kind::Distance { .. }
+        | Kind::Radius { .. }
+        | Kind::Diameter { .. } => false,
+    }
+}
+
+/// Whether cutting or joining `before` into `after` keeps what `kind` says
+/// of its edge (#421). A line's edge is read as its line and an arc's as
+/// its circle, which a cut keeps; an equal length is the one thing said of
+/// a straight edge that it changes.
+/// Every kind is named, so a new one is decided here rather than kept
+/// through a cut by default.
+fn cut_keeps(kind: &Kind, before: &Entity, after: &Entity) -> bool {
+    match kind {
+        // Of a straight edge, its length; of a circular one, its radius.
+        Kind::Equal => match (before, after) {
+            (Entity::Line(a), Entity::Line(b)) => cad_core::tolerance::LinearTolerance::DEFAULT
+                .around(&[a.start, a.end, b.start, b.end])
+                .is_zero(a.start.distance_to(a.end) - b.start.distance_to(b.end)),
+            (Entity::Line(_), _) => false,
+            _ => true,
+        },
+        // A direction, the line or circle a point or a tangent is on, a
+        // centre, a radius.
+        Kind::Coincident
+        | Kind::Collinear
+        | Kind::Concentric
+        | Kind::Parallel
+        | Kind::Perpendicular
+        | Kind::Horizontal
+        | Kind::Vertical
+        | Kind::Tangent { .. }
+        | Kind::Symmetric
+        | Kind::Angle { .. }
+        | Kind::Radius { .. }
+        | Kind::Diameter { .. } => true,
+        // Said of points only, never of an edge.
+        Kind::Fix { .. } | Kind::Distance { .. } => true,
+    }
+}
+
+/// Where `part` of `from` is among `pieces`: the piece with a point where
+/// that point was, or a straight edge — a line's, a polyline's segment —
+/// between the same two points, and its part there (#421, #422); run the
+/// other way too when `either_way`. `None` for a circular edge, or when no
+/// piece has it.
+fn carried(
+    part: Part,
+    from: &Entity,
+    pieces: &[(EntityId, Entity)],
+    either_way: bool,
+) -> Option<Reference> {
+    let near = |a: Point2, b: Point2| {
+        cad_core::tolerance::LinearTolerance::DEFAULT
+            .around(&[a, b])
+            .coincident(a, b)
+    };
+    if let Some(at) = part.position_on(from) {
+        return pieces.iter().find_map(|(id, piece)| {
+            Part::points_of(piece)
+                .into_iter()
+                .find(|candidate| candidate.position_on(piece).is_some_and(|p| near(p, at)))
+                .map(|candidate| Reference::new(*id, candidate))
+        });
+    }
+    // A straight edge: a line's, or a polyline's segment, by its two ends.
+    let ends = |entity: &Entity, part: Part| -> Option<(Point2, Point2)> {
+        match (entity, part) {
+            (Entity::Line(line), Part::Edge) => Some((line.start, line.end)),
+            (Entity::Polyline(polyline), Part::Segment(n)) => {
+                part.shape_on(entity)?;
+                let count = polyline.vertices.len();
+                let n = n as usize;
+                Some((polyline.vertices[n], polyline.vertices[(n + 1) % count]))
+            }
+            _ => None,
+        }
+    };
+    let (a, b) = ends(from, part)?;
+    pieces.iter().find_map(|(id, piece)| {
+        let candidates: Vec<Part> = match piece {
+            Entity::Line(_) => vec![Part::Edge],
+            Entity::Polyline(polyline) => (0..polyline.vertices.len() as u32)
+                .map(Part::Segment)
+                .collect(),
+            _ => Vec::new(),
+        };
+        candidates
+            .into_iter()
+            .find(|candidate| {
+                ends(piece, *candidate).is_some_and(|(p, q)| {
+                    (near(p, a) && near(q, b)) || (either_way && near(p, b) && near(q, a))
+                })
+            })
+            .map(|candidate| Reference::new(*id, candidate))
+    })
 }
 
 #[cfg(test)]
@@ -6240,6 +6694,22 @@ mod tests {
             tx.insert(ghost.clone()),
             Err(TransactionError::UnknownTextStyle(TextStyleId::from_raw(9)))
         );
+        // An attribute definition's text and a leader refer to rows too,
+        // and are refused the ones that are not there (#370).
+        assert_eq!(
+            tx.insert(crate::AttributeDefinitionEntity::new(
+                "T",
+                "Tag?",
+                ghost.clone()
+            )),
+            Err(TransactionError::UnknownTextStyle(TextStyleId::from_raw(9)))
+        );
+        let mut leader = crate::LeaderEntity::new(vec![Point2::ORIGIN, Point2::new(5.0, 5.0)]);
+        leader.style = DimStyleId::from_raw(9);
+        assert_eq!(
+            tx.insert(leader),
+            Err(TransactionError::UnknownDimStyle(DimStyleId::from_raw(9)))
+        );
         tx.commit();
 
         let mut tx = drawing.transaction();
@@ -6504,6 +6974,17 @@ mod tests {
         assert_eq!(
             tx.redefine_block(BlockId::FIRST, chair_block()),
             Err(TransactionError::PermanentBlock)
+        );
+        // Nor a construction line, which has no bounds to place (#415).
+        let xline =
+            crate::XLineEntity::through(Point2::new(0.0, 5.0), Point2::new(1.0, 5.0)).unwrap();
+        assert_eq!(
+            tx.define_block(Block::new(
+                "Guide",
+                Point2::ORIGIN,
+                vec![EntityRecord::new(xline, Properties::default())]
+            )),
+            Err(TransactionError::ConstructionInBlock)
         );
         // A reference must place something that exists, at a positive scale.
         assert_eq!(
@@ -7213,6 +7694,38 @@ mod tests {
     }
 
     #[test]
+    fn a_transaction_of_changes_to_what_is_already_so_is_no_transaction() {
+        // #434: no history entry, no new revision, REDO kept; counted all
+        // the same as committed.
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let id = tx.insert(line(0.0, 0.0, 10.0, 0.0)).unwrap();
+        tx.commit();
+        drawing.undo().unwrap();
+        assert!(drawing.can_redo());
+        let (revision, commits) = (drawing.revision(), drawing.commits());
+        let mut tx = drawing.transaction();
+        tx.set_ltscale(1.0).unwrap();
+        tx.commit();
+        assert_eq!(drawing.revision(), revision);
+        assert!(drawing.can_redo(), "REDO kept");
+        assert_eq!(drawing.commits(), commits + 1);
+
+        // Beside a change that is one, it alone is recorded.
+        drawing.redo().unwrap();
+        let mut tx = drawing.transaction();
+        tx.set_ltscale(1.0).unwrap();
+        tx.replace(id, line(0.0, 0.0, 20.0, 0.0)).unwrap();
+        tx.commit();
+        drawing.undo().unwrap();
+        assert_eq!(drawing.ltscale(), 1.0);
+        assert_eq!(
+            drawing.entity(id),
+            Some(&Entity::Line(line(0.0, 0.0, 10.0, 0.0)))
+        );
+    }
+
+    #[test]
     fn new_objects_take_the_top_tier_and_pieces_their_source_s() {
         let mut drawing = Drawing::new();
         assert_eq!((drawing.bottom_order(), drawing.top_order()), (0, 0));
@@ -7247,6 +7760,46 @@ mod tests {
         assert_eq!(order(&drawing, back), Some(0), "one reorder, undone as one");
         assert_eq!(order(&drawing, front), Some(0));
         assert_eq!((drawing.bottom_order(), drawing.top_order()), (0, 0));
+    }
+
+    #[test]
+    fn an_exploded_part_takes_its_source_s_tier_and_its_own_properties() {
+        // #427: the source is removed in the same transaction, and read as
+        // it was when the transaction began.
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let walls = tx.add_layer(Layer::named("walls")).unwrap();
+        let back = tx.insert(line(0.0, 0.0, 10.0, 0.0)).unwrap();
+        tx.insert(line(0.0, 1.0, 10.0, 1.0)).unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.set_order(back, -1).unwrap();
+        tx.commit();
+
+        let mut tx = drawing.transaction();
+        tx.remove(back).unwrap();
+        let properties = Properties {
+            layer: walls,
+            ..Properties::default()
+        };
+        let part = tx
+            .insert_from(back, line(0.0, 0.0, 5.0, 0.0), properties)
+            .unwrap();
+        assert_eq!(
+            tx.insert_from(
+                back,
+                line(5.0, 0.0, 10.0, 0.0),
+                Properties {
+                    layer: LayerId::from_raw(99),
+                    ..Properties::default()
+                }
+            ),
+            Err(TransactionError::UnknownLayer(LayerId::from_raw(99)))
+        );
+        tx.commit();
+        let record = drawing.record(part).unwrap();
+        assert_eq!(record.order, -1, "the source's tier, not the top");
+        assert_eq!(record.properties.layer, walls, "its own properties");
     }
 
     #[test]
@@ -7486,6 +8039,36 @@ mod tests {
             Some(sheet),
             "one change, redone as one"
         );
+    }
+
+    /// #404: a move between spaces is said as one — in the report, and to
+    /// whatever asks what moved since a revision — whether made, undone,
+    /// or redone; a change in place is not one.
+    #[test]
+    fn a_move_between_spaces_is_reported_and_journaled() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+        let id = tx.insert(line(0.0, 0.0, 10.0, 0.0)).unwrap();
+        let other = tx.insert(line(0.0, 5.0, 10.0, 5.0)).unwrap();
+        tx.commit();
+        let shown = drawing.shown_revision();
+        let mut tx = drawing.transaction();
+        tx.set_space(id, sheet).unwrap();
+        tx.replace(other, line(0.0, 6.0, 10.0, 6.0)).unwrap();
+        let report = tx.commit();
+        assert_eq!(report.moved, vec![id]);
+        assert_eq!(drawing.moved_since(shown), Some(vec![id]));
+        let mut changed = drawing.shown_changes_since(shown).unwrap();
+        changed.sort();
+        assert_eq!(changed, vec![id, other], "a move is a change too");
+
+        let moved = drawing.shown_revision();
+        assert_eq!(drawing.undo().map(|report| report.moved), Some(vec![id]));
+        assert_eq!(drawing.moved_since(moved), Some(vec![id]));
+        assert_eq!(drawing.redo().map(|report| report.moved), Some(vec![id]));
+        assert_eq!(drawing.moved_since(shown), Some(vec![id, id, id]));
+        assert_eq!(drawing.moved_since(drawing.shown_revision()), Some(vec![]));
     }
 
     #[test]
@@ -8892,5 +9475,183 @@ mod tests {
             let (kept, afresh) = tiers(&drawing);
             prop_assert_eq!(kept, afresh);
         }
+    }
+
+    /// #388: a style change reaches the block references whose definition
+    /// holds a dimension or multileader in that style — directly or
+    /// through another block — as it reaches one of the drawing's own:
+    /// their index entries follow the new layout, and they are told
+    /// replaced, so their scene chunk is drawn again.
+    #[test]
+    fn a_style_change_reaches_references_that_hold_it() {
+        let p = Point2::new;
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let dimension = crate::DimensionEntity::new(
+            crate::Measure::Aligned {
+                a: p(0.0, 0.0),
+                b: p(10.0, 0.0),
+            },
+            p(5.0, 5.0),
+        );
+        let noted = tx
+            .define_block(crate::Block::new(
+                "noted",
+                p(0.0, 0.0),
+                vec![EntityRecord::new(
+                    Entity::Dimension(dimension),
+                    Properties::default(),
+                )],
+            ))
+            .unwrap();
+        let outer = tx
+            .define_block(crate::Block::new(
+                "outer",
+                p(0.0, 0.0),
+                vec![EntityRecord::new(
+                    Entity::BlockRef(crate::BlockReferenceEntity::new(
+                        noted,
+                        p(100.0, 0.0),
+                        1.0,
+                        0.0,
+                    )),
+                    Properties::default(),
+                )],
+            ))
+            .unwrap();
+        let leader = crate::MLeaderEntity::new(
+            p(300.0, 0.0),
+            p(310.0, 5.0),
+            crate::MLeaderContent::Text("note".into()),
+        );
+        let leadered = tx
+            .define_block(crate::Block::new(
+                "leadered",
+                p(0.0, 0.0),
+                vec![EntityRecord::new(
+                    Entity::MLeader(leader),
+                    Properties::default(),
+                )],
+            ))
+            .unwrap();
+        let direct = tx
+            .insert(crate::BlockReferenceEntity::new(
+                noted,
+                p(0.0, 0.0),
+                1.0,
+                0.0,
+            ))
+            .unwrap();
+        let nested = tx
+            .insert(crate::BlockReferenceEntity::new(
+                outer,
+                p(0.0, 0.0),
+                1.0,
+                0.0,
+            ))
+            .unwrap();
+        let with_leader = tx
+            .insert(crate::BlockReferenceEntity::new(
+                leadered,
+                p(0.0, 0.0),
+                1.0,
+                0.0,
+            ))
+            .unwrap();
+        let plain = tx
+            .insert(LineEntity::new(p(0.0, -50.0), p(10.0, -50.0)))
+            .unwrap();
+        tx.commit();
+
+        // The dimension style, ten times the size.
+        let before = drawing.bounds_of(drawing.entity(direct).unwrap());
+        let shown = drawing.shown_revision();
+        let mut style = drawing.dim_styles().get(DimStyleId::FIRST).unwrap().clone();
+        style.scale *= 10.0;
+        let mut tx = drawing.transaction();
+        tx.replace_dim_style(DimStyleId::FIRST, style).unwrap();
+        let report = tx.commit();
+        let after = drawing.bounds_of(drawing.entity(direct).unwrap());
+        assert!(after.max().y > before.max().y + 10.0, "the layout grew");
+        let mut replaced = report.replaced.clone();
+        replaced.sort();
+        assert_eq!(replaced, vec![direct, nested]);
+        let mut changed = drawing.shown_changes_since(shown).unwrap();
+        changed.sort();
+        assert_eq!(changed, vec![direct, nested]);
+        let grown = Aabb::from_points(p(0.0, before.max().y + 1.0), p(10.0, after.max().y - 1.0));
+        assert!(
+            drawing.query(&grown).contains(&direct),
+            "found where it grew"
+        );
+        assert!(!report.replaced.contains(&plain) && !report.replaced.contains(&with_leader));
+
+        // The multileader style, its text and arrows ten times the size.
+        let mut style = drawing
+            .mleader_styles()
+            .get(crate::MLeaderStyleId::FIRST)
+            .unwrap()
+            .clone();
+        style.text_height *= 10.0;
+        style.arrow_size *= 10.0;
+        let mut tx = drawing.transaction();
+        tx.replace_mleader_style(crate::MLeaderStyleId::FIRST, style)
+            .unwrap();
+        let report = tx.commit();
+        assert_eq!(report.replaced, vec![with_leader]);
+    }
+
+    /// #389: a point style change re-indexes every point, and every block
+    /// reference holding one, so a query finds them where they now reach;
+    /// undo brings the old reach back.
+    #[test]
+    fn a_point_style_change_reindexes_points_and_references_holding_them() {
+        let p = Point2::new;
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let point = tx.insert(crate::PointEntity::new(p(0.0, 0.0))).unwrap();
+        let block = tx
+            .define_block(crate::Block::new(
+                "marked",
+                p(0.0, 0.0),
+                vec![EntityRecord::new(
+                    Entity::Point(crate::PointEntity::new(p(0.0, 0.0))),
+                    Properties::default(),
+                )],
+            ))
+            .unwrap();
+        let reference = tx
+            .insert(crate::BlockReferenceEntity::new(
+                block,
+                p(0.0, 500.0),
+                1.0,
+                0.0,
+            ))
+            .unwrap();
+        let plain = tx
+            .insert(LineEntity::new(p(0.0, -900.0), p(1.0, -900.0)))
+            .unwrap();
+        tx.set_point_style(crate::PointStyle::new(crate::PointStyle::CROSS, 1.0))
+            .unwrap();
+        tx.commit();
+        // Where the crosses' arms reach at size 100, and not at size 1.
+        let far = Aabb::from_points(p(40.0, -1.0), p(60.0, 1.0));
+        let far_up = Aabb::from_points(p(40.0, 499.0), p(60.0, 501.0));
+        assert!(drawing.query(&far).is_empty());
+
+        let mut tx = drawing.transaction();
+        tx.set_point_style(crate::PointStyle::new(crate::PointStyle::CROSS, 100.0))
+            .unwrap();
+        let report = tx.commit();
+        assert_eq!(drawing.query(&far), vec![point]);
+        assert_eq!(drawing.query(&far_up), vec![reference]);
+        let mut replaced = report.replaced.clone();
+        replaced.sort();
+        assert_eq!(replaced, vec![point, reference]);
+        assert!(!report.replaced.contains(&plain));
+
+        drawing.undo();
+        assert!(drawing.query(&far).is_empty(), "undone: the old reach");
+        assert!(drawing.query(&far_up).is_empty());
     }
 }

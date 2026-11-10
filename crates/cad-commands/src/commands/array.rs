@@ -12,6 +12,7 @@ use cad_input::{ExpectedInput, InputKind, Keyword};
 
 use super::ltscale::display;
 use super::modify::{SELECT_OBJECTS, adopt_selection, selection_expected};
+use super::placement::ITEM_LIMIT;
 use crate::command::angle_degrees;
 use crate::{Command, CommandContext, CommandInput, OverlayItem, Prompt, Step, TransientEdit};
 
@@ -19,7 +20,6 @@ const RECTANGULAR: Keyword = Keyword::new("Rectangular");
 const POLAR: Keyword = Keyword::new("Polar");
 const YES: Keyword = Keyword::new("Yes");
 const NO: Keyword = Keyword::new("No");
-const COUNT_LIMIT: f64 = 10_000.0;
 
 /// A rectangular array: so many rows and columns, so far apart. A
 /// negative spacing goes the other way.
@@ -198,12 +198,13 @@ impl ArrayCommand {
         Step::Finished
     }
 
-    /// A count typed: a whole number from `least` up.
+    /// A count typed: a whole number from `least` up to the most items
+    /// an array makes.
     fn count(value: f64, least: f64) -> Option<usize> {
         let whole = value.round();
         (value.is_finite()
             && (value - whole).abs() < 1e-9
-            && (least..=COUNT_LIMIT).contains(&whole))
+            && (least..=ITEM_LIMIT as f64).contains(&whole))
         .then_some(whole as usize)
     }
 }
@@ -275,10 +276,19 @@ impl Command for ArrayCommand {
                     self.rectangular.rows = rows;
                     self.state = State::Columns;
                 }
-                None => ctx.message("Enter a whole number of rows, 1 or more."),
+                None => ctx.message(format!("Enter a whole number of rows, 1 to {ITEM_LIMIT}.")),
             },
             (State::Rows, CommandInput::Accept) => self.state = State::Columns,
             (State::Columns, CommandInput::Distance(columns)) => match Self::count(columns, 1.0) {
+                // Rows by columns is the number of items, held to the
+                // same limit as each count (#386): the preview and the
+                // commit make every one of them.
+                Some(columns) if self.rectangular.rows * columns > ITEM_LIMIT => {
+                    ctx.message(format!(
+                        "{} rows by {columns} columns would be more than {ITEM_LIMIT} items.",
+                        self.rectangular.rows
+                    ));
+                }
                 Some(columns) => {
                     self.rectangular.columns = columns;
                     match self.after_columns(ctx) {
@@ -286,7 +296,9 @@ impl Command for ArrayCommand {
                         None => return Step::Finished,
                     }
                 }
-                None => ctx.message("Enter a whole number of columns, 1 or more."),
+                None => ctx.message(format!(
+                    "Enter a whole number of columns, 1 to {ITEM_LIMIT}."
+                )),
             },
             (State::Columns, CommandInput::Accept) => match self.after_columns(ctx) {
                 Some(state) => self.state = state,
@@ -321,7 +333,7 @@ impl Command for ArrayCommand {
                     self.polar.count = count;
                     self.state = State::Fill;
                 }
-                None => ctx.message("Enter a whole number of items, 2 or more."),
+                None => ctx.message(format!("Enter a whole number of items, 2 to {ITEM_LIMIT}.")),
             },
             (State::Fill, CommandInput::Angle(degrees)) => {
                 if !degrees.is_finite() || degrees == 0.0 || degrees.abs() > 360.0 {

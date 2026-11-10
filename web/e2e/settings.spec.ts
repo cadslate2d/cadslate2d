@@ -99,8 +99,20 @@ test("the settings panel sets the theme, the unit, and the autosave delay, and t
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await panel.getByLabel("Drawing unit").selectOption("mm");
   await expect(logLines(page).last()).toContainText("The drawing is in millimetres.");
-  await panel.getByLabel("Autosave after (seconds)").fill("3");
-  await panel.getByRole("button", { name: "Close" }).click();
+  // Typed key by key, the field takes them (#411).
+  await panel.getByLabel("Autosave after (seconds)").click();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.type("3");
+  await expect(panel.getByLabel("Autosave after (seconds)")).toHaveValue("3");
+  // A checkbox focused takes no keys of its own: F7 still turns the grid.
+  const grid = await toggle(page, "GRID").getAttribute("aria-pressed");
+  await panel.getByRole("checkbox").first().focus();
+  await page.keyboard.press("F7");
+  await expect(toggle(page, "GRID")).not.toHaveAttribute("aria-pressed", grid ?? "");
+  await page.keyboard.press("F7");
+  // Enter on the button focused presses it.
+  await panel.getByRole("button", { name: "Close" }).focus();
+  await page.keyboard.press("Enter");
   await expect(panel).toHaveCount(0);
 
   await page.reload();

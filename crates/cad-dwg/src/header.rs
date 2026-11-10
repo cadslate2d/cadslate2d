@@ -485,7 +485,7 @@ impl File<'_> {
                 }
                 Tv => Value::Text(match strings.as_mut() {
                     Some(s) => s.text_unicode(limits)?,
-                    None => String::from_utf8_lossy(&data.text(limits)?).into_owned(),
+                    None => data.code_page_text(limits)?,
                 }),
                 HData => Value::Handle(data.handle()?),
                 H => Value::Handle(match handles.as_mut() {

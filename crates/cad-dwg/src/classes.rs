@@ -95,7 +95,7 @@ impl File<'_> {
             let mut text = || -> Result<String, DwgError> {
                 match strings.as_mut() {
                     Some(s) => s.text_unicode(limits),
-                    None => Ok(String::from_utf8_lossy(&data.text(limits)?).into_owned()),
+                    None => data.code_page_text(limits),
                 }
             };
             let app_name = text()?;

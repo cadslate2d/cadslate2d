@@ -5,8 +5,8 @@ use cad_commands::{
     SelectionSummary, Session, Toggle, Toggles, UiState,
 };
 use cad_core::{ClipTransform, LengthUnit, Point2, ScreenPoint};
-use cad_document::{Entity, LayoutId, ViewportEntity};
-use cad_render::{OverlayFrame, RenderScene, SceneCache, viewport_view};
+use cad_document::{LayoutId, ViewportEntity};
+use cad_render::{OverlayFrame, RenderScene, SceneCache, viewport_view, viewports_shown};
 use js_sys::{Float32Array, Uint8Array, Uint32Array};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -734,6 +734,14 @@ impl CadSession {
         Uint8Array::from(text.as_bytes())
     }
 
+    /// A line for the command log from the host (#410): what the browser
+    /// refused when it was asked to write a file — a full disk, a
+    /// permission taken back — once per refusal.
+    pub fn notify(&mut self, message: &str) -> u32 {
+        let dirty = self.session.notify(message.trim().to_owned());
+        self.report(dirty)
+    }
+
     /// Records that the host has saved the drawing (the bytes of
     /// `snapshot_file`) as `format` — to `name`, when it has a file now
     /// (#159, #319).
@@ -884,26 +892,19 @@ impl CadSession {
         Uint32Array::from(words.as_slice())
     }
 
-    /// The viewports of the layout shown (#193), each as its frame in
-    /// clip space — `x0, y0, x1, y1` — then one clip transform per
-    /// region of `scene_regions` for the model seen through it. Empty on
-    /// the model, and for a viewport that is off. Changes with the view
-    /// and the drawing; a copy.
+    /// The viewports of the layout shown (#193): empty on the model; on a
+    /// layout a leading 1 — the paper, whether or not any viewport shows
+    /// the model through it (#401) — then each viewport that is on, as its
+    /// frame in clip space — `x0, y0, x1, y1` — and one clip transform per
+    /// region of `scene_regions` for the model seen through it. Changes
+    /// with the view and the drawing; a copy.
     pub fn scene_viewports(&mut self) -> Vec<f32> {
         let space = self.session.space();
         if space == LayoutId::MODEL {
             return Vec::new();
         }
         let paper = self.session.view().clone();
-        let windows: Vec<ViewportEntity> = self
-            .session
-            .drawing()
-            .shown_in(space)
-            .filter_map(|(_, entity)| match entity {
-                Entity::Viewport(viewport) if viewport.on => Some(*viewport),
-                _ => None,
-            })
-            .collect();
+        let windows: Vec<ViewportEntity> = viewports_shown(self.session.drawing(), space).collect();
         let regions = self.scene().regions();
         let clip = paper.clip_transform(Point2::ORIGIN);
         let to_clip = |point: Point2| {
@@ -912,7 +913,7 @@ impl CadSession {
                 (point.y as f32) * clip.scale[1] + clip.translate[1],
             ]
         };
-        let mut out = Vec::new();
+        let mut out = vec![1.0];
         for window in windows {
             let frame = window.frame();
             let [x0, y0] = to_clip(frame.min());
@@ -1159,6 +1160,59 @@ SE",
             state.export_losses
         );
     }
+    /// #403: a pointer event at a point that is not a number places
+    /// nothing; the line is drawn between the clicks that were on the
+    /// screen, and what is saved opens again.
+    #[test]
+    fn a_pointer_event_that_is_not_on_the_screen_places_nothing() {
+        use cad_document::Entity;
+        let mut cad = CadSession::new();
+        cad.resize(800.0, 600.0);
+        cad.submit_text("L");
+        assert_eq!(cad.pointer_down(f64::NAN, f64::NAN, 0, 0), 0);
+        assert_eq!(cad.pointer_up(f64::NAN, f64::NAN, 0, 0), 0);
+        assert_eq!(cad.pointer_move(f64::INFINITY, 300.0, 0), 0);
+        for (x, y) in [(400.0, 300.0), (500.0, 300.0)] {
+            cad.pointer_down(x, y, 0, 0);
+            cad.pointer_up(x, y, 0, 0);
+        }
+        cad.submit_text("");
+        let lines: Vec<_> = cad
+            .session
+            .drawing()
+            .entities()
+            .map(|(_, entity)| entity.clone())
+            .collect();
+        match lines.as_slice() {
+            [Entity::Line(line)] => {
+                assert!(line.start.is_finite() && line.end.is_finite(), "{line:?}");
+                assert!(line.start.distance_to(line.end) > 0.0);
+            }
+            other => panic!("{other:?}"),
+        }
+        let bytes = cad.snapshot_file("dxf");
+        let reopened = cad_dxf::import(&bytes).expect("the saved drawing opens");
+        assert_eq!(reopened.report.lines, 1);
+    }
+
+    /// #406: what the host is told of an open: the scene changed when the
+    /// file was read and the drawing replaced, and only then; a file that
+    /// cannot be read leaves the drawing and says so in the log alone.
+    #[test]
+    fn an_open_says_whether_it_replaced_the_drawing() {
+        let mut cad = CadSession::new();
+        cad.submit_text("L");
+        cad.submit_text("0,0");
+        cad.submit_text("10,0");
+        cad.submit_text("");
+        let refused = cad.load_drawing(b"not a drawing", "bad.dxf");
+        assert_eq!(refused & Dirty::SCENE.bits(), 0);
+        assert_ne!(refused & Dirty::UI.bits(), 0);
+        assert_eq!(cad.session.drawing().len(), 1, "the drawing stays");
+        let opened = cad.load_drawing(&fixture("dxf/valid/minimal-line.dxf"), "plan.dxf");
+        assert_ne!(opened & Dirty::SCENE.bits(), 0);
+    }
+
     /// #254: a proposal through the calls the host makes: the drawing is
     /// untouched until Accept, which is one undo; an invalid document is
     /// refused in the log.

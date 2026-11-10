@@ -6,20 +6,36 @@ use std::f64::consts::TAU;
 use cad_core::Point2;
 use cad_core::tolerance::LinearTolerance;
 
-use crate::intersect::{line_circle, line_line};
+use crate::intersect::{line_circle, line_line, on_arc, on_segment};
 use crate::{Arc, Primitive, Segment, normalize_angle};
 
 /// Where the infinite line through `segment` meets `primitive` itself.
-fn line_meets(segment: &Segment, primitive: &Primitive, tolerance: LinearTolerance) -> Vec<Point2> {
-    let on_the_line: Vec<Point2> = match primitive {
-        Primitive::Segment(other) => line_line(segment, other).into_iter().collect(),
+///
+/// Whether a hit on the line is on a segment or an arc is decided by where
+/// it is along it, as intersection decides it — never by measuring its
+/// distance from the boundary again, which far from the origin is a few
+/// spacings of the numbers and refused a boundary straight ahead
+/// (ADR-0012, #380). A hit on a circle is on it by construction.
+fn line_meets(segment: &Segment, primitive: &Primitive) -> Vec<Point2> {
+    match primitive {
+        Primitive::Segment(other) => line_line(segment, other)
+            .filter(|point| on_segment(other, *point))
+            .into_iter()
+            .collect(),
         Primitive::Circle(circle) => line_circle(segment, circle).as_slice().to_vec(),
-        Primitive::Arc(arc) => line_circle(segment, &arc.circle()).as_slice().to_vec(),
-    };
-    on_the_line
-        .into_iter()
-        .filter(|point| tolerance.is_zero(primitive.distance_to_point(*point)))
-        .collect()
+        Primitive::Arc(arc) => line_circle(segment, &arc.circle())
+            .as_slice()
+            .iter()
+            .copied()
+            .filter(|point| on_arc(arc, *point))
+            .collect(),
+    }
+}
+
+/// Whether `point` is the tip itself, at their own magnitude (ADR-0012):
+/// a boundary through the tip is already met, not one to extend to.
+fn at_tip(point: Point2, tip: Point2, tolerance: LinearTolerance) -> bool {
+    tolerance.around(&[point, tip]).coincident(point, tip)
 }
 
 /// `segment` lengthened in a straight line from its end (or, with
@@ -39,9 +55,9 @@ pub fn extend_segment(
     let onwards = tip - tail;
     let meeting = boundary
         .iter()
-        .flat_map(|primitive| line_meets(segment, primitive, tolerance))
+        .flat_map(|primitive| line_meets(segment, primitive))
         // Beyond the tip, not behind it; and already touching is not an extension.
-        .filter(|point| (*point - tip).dot(onwards) > 0.0 && !tolerance.coincident(*point, tip))
+        .filter(|point| (*point - tip).dot(onwards) > 0.0 && !at_tip(*point, tip, tolerance))
         .min_by(|a, b| tip.distance_to(*a).total_cmp(&tip.distance_to(*b)))?;
     Some(if from_end {
         Segment::new(segment.start, meeting)
@@ -80,7 +96,7 @@ pub fn extend_arc(
     let grow = boundary
         .iter()
         .flat_map(|primitive| circle.intersect(primitive).as_slice().to_vec())
-        .filter(|point| !tolerance.coincident(*point, tip))
+        .filter(|point| !at_tip(*point, tip, tolerance))
         .map(turn)
         .filter(|turn| *turn > 0.0 && *turn < gap)
         .min_by(f64::total_cmp)?;

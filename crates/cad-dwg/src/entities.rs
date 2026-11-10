@@ -32,6 +32,10 @@ pub struct Decoded {
     pub handle: u64,
     pub kind: String,
     pub groups: Groups,
+    /// How many of `groups` are the common entity data (§20.4.1) — the
+    /// handle, the colour, the lineweight, and the rest — written first:
+    /// where a subclass marker of the entity's own goes (#429).
+    pub common: usize,
     /// 0: owned by a block or an entity; 1: paper space; 2: model space.
     pub entmode: u8,
     pub owner: Option<u64>,
@@ -63,6 +67,7 @@ impl Decoded {
             handle,
             kind: kind.to_owned(),
             groups: Groups::default(),
+            common: 0,
             entmode: 2,
             owner: None,
             next: None,
@@ -169,6 +174,7 @@ pub fn decode(
         _ => LinetypeRef::ByLayer,
     };
     common_groups(&mut out.groups, object.handle, &common);
+    out.common = out.groups.0.len();
     let limits = file.limits();
     let d = &mut streams.data;
     match kind {
@@ -423,7 +429,7 @@ fn text_field(
 ) -> Result<String, DwgError> {
     match strings {
         Some(s) => s.text_unicode(limits),
-        None => Ok(String::from_utf8_lossy(&d.text(limits)?).into_owned()),
+        None => d.code_page_text(limits),
     }
 }
 
@@ -1458,7 +1464,7 @@ fn mleader(
     if has_text {
         let text = match strings.as_mut() {
             Some(s) => s.text_unicode(limits)?,
-            None => String::from_utf8_lossy(&d.text(limits)?).into_owned(),
+            None => d.code_page_text(limits)?,
         };
         text_fields.push(text.clone());
         groups.text(304, &text);
@@ -1620,7 +1626,7 @@ fn mleader(
         let attdef = handles.handle()?.resolve(own);
         let label = match strings.as_mut() {
             Some(s) => s.text_unicode(limits)?,
-            None => String::from_utf8_lossy(&d.text(limits)?).into_owned(),
+            None => d.code_page_text(limits)?,
         };
         let ui_index = d.bs()?;
         let width = d.bd()?;

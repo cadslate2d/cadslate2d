@@ -265,6 +265,15 @@ pub fn export_bytes(drawing: &Drawing) -> Vec<u8> {
     code_page(&export(drawing))
 }
 
+/// `text`, all ASCII with `\U+XXXX` escapes, as the characters a Unicode
+/// string holds — a DWG's of R2007 or later (#428): each escape of a
+/// character outside ASCII as that character, and the escape of a
+/// backslash that `escaped` writes before a literal `\U+` as it is, so
+/// the text reads back as it was.
+pub fn unicode(text: &str) -> String {
+    crate::import::unescaped(text, |c| !c.is_ascii()).into_owned()
+}
+
 /// `text`, all ASCII with `\U+XXXX` escapes, in Windows-1252: each escape
 /// of a character the code page has as its byte, the others as written.
 pub fn code_page(text: &str) -> Vec<u8> {
@@ -672,10 +681,11 @@ struct Writer {
 }
 
 /// Every dimension, with its properties, in the order their DIMENSION
-/// records are written: those inside block definitions first, in table
-/// order, then each layout's in ID order, then the model's in ID order —
-/// the order their records are written — so that the n-th DIMENSION
-/// written owns the n-th anonymous block.
+/// records are written, so that the n-th DIMENSION written owns the n-th
+/// anonymous block: each layout's, in its paper block, in table order;
+/// then those inside block definitions, in table order; then the model's,
+/// in ENTITIES (#392). [`Writer::blocks`] and the entities' phase are
+/// that order.
 fn dimensions_in_write_order(drawing: &Drawing) -> Vec<(DimensionEntity, Properties)> {
     let mut out = Vec::new();
     let mut take = |record: &EntityRecord| {
@@ -683,39 +693,42 @@ fn dimensions_in_write_order(drawing: &Drawing) -> Vec<(DimensionEntity, Propert
             out.push((dimension.clone(), record.properties));
         }
     };
+    let in_space = |space| {
+        records_in(drawing, space)
+            .into_iter()
+            .filter_map(|id| drawing.record(id))
+    };
+    for (id, _) in drawing.layouts().iter() {
+        if id != LayoutId::MODEL {
+            in_space(id).for_each(&mut take);
+        }
+    }
     for (id, block) in drawing.blocks().iter() {
         if id != BlockId::FIRST {
             block.entities.iter().for_each(&mut take);
         }
     }
-    let spaces = drawing
-        .layouts()
-        .iter()
-        .map(|(id, _)| id)
-        .filter(|id| *id != LayoutId::MODEL)
-        .chain(std::iter::once(LayoutId::MODEL));
-    for space in spaces {
-        for id in records_in(drawing, space) {
-            if let Some(record) = drawing.record(id) {
-                take(record);
-            }
-        }
-    }
+    in_space(LayoutId::MODEL).for_each(&mut take);
     out
 }
 
-/// The name of the n-th dimension's anonymous block, counting from one.
 /// A value as an AC1015 file holds it: ASCII as it is, every other
 /// character as AutoCAD writes it, `\U+XXXX` — one per UTF-16 unit — since
 /// the file declares the Windows-1252 code page and a reader decodes it so
-/// (#358). Read back by the import as the characters they were.
+/// (#358). A backslash that would start such an escape is itself one,
+/// `\U+005C`, so words that happen to read `\U+0041` are not taken for
+/// the character (#394). Read back by the import as the characters they
+/// were.
 fn escaped(value: &str) -> std::borrow::Cow<'_, str> {
-    if value.is_ascii() {
+    const ESCAPE: &str = "\\U+";
+    if value.is_ascii() && !value.contains(ESCAPE) {
         return std::borrow::Cow::Borrowed(value);
     }
     let mut out = String::with_capacity(value.len() + 8);
-    for c in value.chars() {
-        if c.is_ascii() {
+    for (at, c) in value.char_indices() {
+        if c == '\\' && value[at..].starts_with(ESCAPE) {
+            out.push_str("\\U+005C");
+        } else if c.is_ascii() {
             out.push(c);
         } else {
             let mut units = [0u16; 2];
@@ -727,6 +740,22 @@ fn escaped(value: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
+/// `value` with each control character but a tab a space, so it stays on
+/// its line of the file (#430) and reads back as it is written.
+fn control_spaced(value: &str) -> std::borrow::Cow<'_, str> {
+    let control = |c: char| c.is_control() && c != '\t';
+    if !value.chars().any(control) {
+        return std::borrow::Cow::Borrowed(value);
+    }
+    std::borrow::Cow::Owned(
+        value
+            .chars()
+            .map(|c| if control(c) { ' ' } else { c })
+            .collect(),
+    )
+}
+
+/// The name of the n-th dimension's anonymous block, counting from one.
 fn dimension_block_name(n: usize) -> String {
     format!("*D{n}")
 }
@@ -802,7 +831,17 @@ impl Writer {
     /// One group: the code right-aligned in three columns, then the value.
     fn group(&mut self, code: i32, value: &str) {
         let value = escaped(value);
-        writeln!(self.out, "{code:>3}\n{value}").expect("writing to a String cannot fail");
+        // A value is one line of the file: a line break or another control
+        // character a DWG's length-counted string may hold (#430) is a
+        // space there, as the reader takes one in a text's words, so the
+        // file saved again is the file read. The records a DWG is written
+        // from keep the character itself.
+        let line = control_spaced(&value);
+        debug_assert!(
+            !line.contains(['\n', '\r']),
+            "a group value is one line: {line:?}"
+        );
+        writeln!(self.out, "{code:>3}\n{line}").expect("writing to a String cannot fail");
         if let Some(groups) = &mut self.groups {
             groups.push((code, value.into_owned()));
         }
@@ -903,11 +942,11 @@ impl Writer {
             self.group(9, "$PDMODE");
             self.int(70, i64::from(settings.point_style.mode));
         }
-        #[allow(clippy::float_cmp)]
-        if settings.point_style.size != defaults.point_style.size {
-            self.group(9, "$PDSIZE");
-            self.real(40, settings.point_style.size);
-        }
+        // The size always: a file without it is AutoCAD's default, 0 — a
+        // size relative to the screen — which ours, 1 in drawing units, is
+        // not; a DWG's header would be given that 0 and read so (#432).
+        self.group(9, "$PDSIZE");
+        self.real(40, settings.point_style.size);
         if let Some(extents) = drawing.extents() {
             self.group(9, "$EXTMIN");
             self.point(10, extents.min());
@@ -1829,7 +1868,7 @@ impl Writer {
         self.int(71, 5);
         self.real(42, layout.value);
         if let Some(text) = &dimension.text_override {
-            self.group(1, text);
+            self.group(1, &mtext_codes(text));
         }
         if let Some(angle) = dimension.text_angle {
             let on_its_own = dimension
@@ -2996,6 +3035,71 @@ mod tests {
         assert_eq!(read.value(), 300.0);
     }
 
+    /// Each DIMENSION names the anonymous block holding its own geometry
+    /// when blocks and layouts both hold dimensions (#392): the layouts'
+    /// paper blocks are written before the user's blocks, and the
+    /// dimensions are counted in that order.
+    #[test]
+    fn each_dimension_names_the_block_of_its_own_geometry() {
+        use cad_document::{Block, Layout};
+        let dimension = |length: f64| {
+            DimensionEntity::new(
+                Measure::Linear {
+                    a: Point2::ORIGIN,
+                    b: Point2::new(length, 0.0),
+                    rotation: 0.0,
+                },
+                Point2::new(length / 2.0, 10.0),
+            )
+        };
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.define_block(Block::new(
+            "B",
+            Point2::ORIGIN,
+            vec![EntityRecord::new(dimension(100.0), Properties::default())],
+        ))
+        .unwrap();
+        let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+        tx.insert_in(sheet, dimension(7.0)).unwrap();
+        tx.insert(dimension(30.0)).unwrap();
+        tx.commit();
+        let text = export(&drawing);
+
+        // What each anonymous block's text says, by the block's name.
+        let mut shown: HashMap<&str, String> = HashMap::new();
+        let mut block = None;
+        let mut kind = "";
+        for (code, value) in groups(&text) {
+            match (code, value) {
+                (0, "ENDBLK") => block = None,
+                (0, k) => kind = k,
+                (2, name) if kind == "BLOCK" && name.starts_with("*D") => block = Some(name),
+                (1, words) if matches!(kind, "TEXT" | "MTEXT") => {
+                    if let Some(name) = block {
+                        shown.entry(name).or_default().push_str(words);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let named: Vec<(&str, f64)> = records(&text, "DIMENSION")
+            .iter()
+            .map(|record| {
+                let length = value(record, 42).unwrap().parse().unwrap();
+                (value(record, 2).unwrap(), length)
+            })
+            .collect();
+        assert_eq!(named.len(), 3);
+        for (name, length) in named {
+            let words = shown.get(name).map_or("", String::as_str);
+            assert!(
+                words.contains(&format!("{length:.2}")),
+                "{name} measures {length} but its block shows {words:?}"
+            );
+        }
+    }
+
     #[test]
     fn an_empty_drawing_is_a_complete_file_with_its_permanent_rows() {
         let dxf = export(&Drawing::new());
@@ -3670,6 +3774,205 @@ mod tests {
             vec!["100% sure, 50%% more, %%%%%%%%%%%", "rate 5%\nends %%"]
         );
         assert!(!back.report.has_unsupported_content());
+        assert_eq!(back.report.formatting_dropped, 0);
+        assert_eq!(export(&back.drawing), text);
+    }
+
+    /// A character beyond the first 65,536 — an emoji, a mathematical
+    /// letter, a CJK Extension B character — goes out as a surrogate pair
+    /// of escapes, as AutoCAD writes it, and comes back as itself (#393).
+    #[test]
+    fn a_character_beyond_the_basic_plane_survives() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.insert(TextEntity::new(Point2::ORIGIN, 2.5, 0.0, "smile 😀 x"))
+            .unwrap();
+        tx.insert(MTextEntity::new(
+            Point2::new(0.0, 10.0),
+            60.0,
+            2.5,
+            0.0,
+            "𝑥 = 𠀋\n😀".to_owned(),
+        ))
+        .unwrap();
+        tx.commit();
+        let text = export(&drawing);
+        assert!(text.contains("\nsmile \\U+D83D\\U+DE00 x\n"));
+        let back = crate::import(text.as_bytes()).unwrap();
+        let mut contents: Vec<String> = back
+            .drawing
+            .entities()
+            .map(|(_, entity)| match entity {
+                Entity::Text(text) => text.content.clone(),
+                Entity::MText(text) => text.content.clone(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        contents.sort();
+        assert_eq!(contents, vec!["smile 😀 x", "𝑥 = 𠀋\n😀"]);
+        assert!(!back.report.has_unsupported_content());
+        assert_eq!(export(&back.drawing), text);
+    }
+
+    /// #430: a line break a DWG's text may hold is a space in the file, as
+    /// the reader takes it, so what is read saves again as the same file;
+    /// the records a DWG is written from keep the break itself.
+    #[test]
+    fn a_line_break_in_single_line_text_does_not_split_its_group() {
+        use cad_document::{DimensionEntity, Measure};
+        let drawing = Drawing::from_entities([Entity::Text(TextEntity::new(
+            Point2::ORIGIN,
+            1.0,
+            0.0,
+            "first\nsecond\r",
+        ))]);
+        let text = export(&drawing);
+        assert!(text.contains("\nfirst second \n"), "{text}");
+        let back = crate::import(text.as_bytes()).expect("a readable file");
+        let (_, Entity::Text(read)) = back.drawing.entities().next().unwrap() else {
+            panic!("a text");
+        };
+        assert_eq!(read.content, "first second ");
+        assert_eq!(back.report.with_dropped_properties, 0, "spaces, as written");
+        // Read, the drawing is what the file says: saved again and read
+        // again, the same file, and its text line the first file's.
+        let second = export(&back.drawing);
+        assert!(second.contains("\nfirst second \n"));
+        let third = export(&crate::import(second.as_bytes()).unwrap().drawing);
+        assert_eq!(third, second, "saved again, the same file");
+        let records = export_records(&drawing);
+        assert!(
+            records
+                .iter()
+                .flat_map(|r| &r.groups)
+                .any(|(_, value)| value == "first\nsecond\r"),
+            "the records keep the break"
+        );
+
+        // An override is MTEXT: its break is `\\P`, read as one line and
+        // reported, as before.
+        let mut dimension = DimensionEntity::new(
+            Measure::Aligned {
+                a: Point2::new(0.0, 0.0),
+                b: Point2::new(10.0, 0.0),
+            },
+            Point2::new(5.0, 5.0),
+        );
+        dimension.text_override = Some("A\nB".to_owned());
+        let text = export(&Drawing::from_entities([Entity::Dimension(dimension)]));
+        assert!(text.contains("\nA\\PB\n"), "{text}");
+        let back = crate::import(text.as_bytes()).expect("a readable file");
+        assert_eq!(back.report.formatting_dropped, 1);
+    }
+
+    /// #428: what a DWG's Unicode strings are written from — every
+    /// character outside ASCII as itself, a pair as the one character it
+    /// is, and the escape of a backslash before a literal `\U+` kept, so
+    /// the reader's decoding gives the text back.
+    #[test]
+    fn unicode_writes_the_characters_and_keeps_a_literal_escape() {
+        let text = "Gr\\U+00F6\\U+00DFe \\U+2300 \\U+D834\\U+DD1E \\U+005CU+0041";
+        assert_eq!(unicode(text), "Größe ⌀ 𝄞 \\U+005CU+0041");
+        assert_eq!(unicode("plain"), "plain");
+        // The code page has ö and ß, not ⌀: that one stays an escape.
+        assert_eq!(
+            code_page("Gr\\U+00F6\\U+00DFe \\U+2300"),
+            b"Gr\xF6\xDFe \\U+2300"
+        );
+        // Read back, each is the text it was escaped from.
+        let original = "Größe ⌀ 𝄞 \\U+0041";
+        assert_eq!(
+            crate::import::unescaped(&unicode(&escaped(original)), |c| !c.is_control()),
+            original
+        );
+    }
+
+    /// Words that read like an escape — `\U+0041` in a note about escapes
+    /// — are written so that they are not taken for the character: the
+    /// backslash as `\U+005C`. They come back as written, in a TEXT and in
+    /// an MTEXT, where the next words up to a semicolon used to vanish as
+    /// an alignment code (#394).
+    #[test]
+    fn words_that_read_like_an_escape_survive() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.insert(TextEntity::new(
+            Point2::ORIGIN,
+            2.5,
+            0.0,
+            "see \\U+0041 here, \\U+D83D\\U+DE00, \\U+",
+        ))
+        .unwrap();
+        tx.insert(MTextEntity::new(
+            Point2::new(0.0, 10.0),
+            60.0,
+            2.5,
+            0.0,
+            "see \\U+0041; here".to_owned(),
+        ))
+        .unwrap();
+        tx.commit();
+        let text = export(&drawing);
+        assert!(
+            text.contains("\nsee \\U+005CU+0041 here, \\U+005CU+D83D\\U+005CU+DE00, \\U+005CU+\n")
+        );
+        assert!(text.contains("\nsee \\\\U+005CU+0041; here\n"));
+        let back = crate::import(text.as_bytes()).unwrap();
+        let mut contents: Vec<String> = back
+            .drawing
+            .entities()
+            .map(|(_, entity)| match entity {
+                Entity::Text(text) => text.content.clone(),
+                Entity::MText(text) => text.content.clone(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        contents.sort();
+        assert_eq!(
+            contents,
+            vec![
+                "see \\U+0041 here, \\U+D83D\\U+DE00, \\U+",
+                "see \\U+0041; here"
+            ]
+        );
+        assert!(!back.report.has_unsupported_content());
+        assert_eq!(back.report.formatting_dropped, 0);
+        assert_eq!(export(&back.drawing), text);
+    }
+
+    /// `%%065` in a file's TEXT is `A`, as AutoCAD reads it (#397); and
+    /// words of ours that read `%%065` are written so that they come back
+    /// as written, each `%` of the run escaped.
+    #[test]
+    fn a_character_code_reads_as_its_character_and_words_like_one_survive() {
+        let file = "  0\nSECTION\n  2\nENTITIES\n  0\nTEXT\n  8\n0\n 10\n0.0\n 20\n0.0\n 40\n1.0\n  1\n%%065BC\n  0\nENDSEC\n  0\nEOF\n";
+        let read = crate::import(file.as_bytes()).unwrap();
+        let contents = |drawing: &Drawing| -> Vec<String> {
+            drawing
+                .entities()
+                .map(|(_, entity)| match entity {
+                    Entity::Text(text) => text.content.clone(),
+                    other => panic!("{other:?}"),
+                })
+                .collect()
+        };
+        assert_eq!(contents(&read.drawing), ["ABC"]);
+        assert_eq!(read.report.formatting_dropped, 0);
+
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        tx.insert(TextEntity::new(
+            Point2::ORIGIN,
+            2.5,
+            0.0,
+            "code %%065, 5%065",
+        ))
+        .unwrap();
+        tx.commit();
+        let text = export(&drawing);
+        assert!(text.contains("\ncode %%%%%%065, 5%065\n"));
+        let back = crate::import(text.as_bytes()).unwrap();
+        assert_eq!(contents(&back.drawing), ["code %%065, 5%065"]);
         assert_eq!(back.report.formatting_dropped, 0);
         assert_eq!(export(&back.drawing), text);
     }

@@ -126,7 +126,7 @@ impl Path {
         // segment; nearest-segment order is what matters here.
         let count = path_spans(self).len();
         let follows = |earlier: usize, later: usize| {
-            later == earlier + 1 || (self.closed && earlier + 1 == count && later == 0)
+            later == earlier + 1 || (self.closes() && earlier + 1 == count && later == 0)
         };
         if follows(a.segment, b.segment) {
             Some(((a.segment + 1) % self.vertices.len(), true))

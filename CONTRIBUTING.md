@@ -30,14 +30,14 @@ Every pull request must pass `make check`. CI runs it too.
 ## The workflow
 
 - **The maintainer commits to `main` directly.** That is the project's own way of working and is not a model for contributors.
-- **Everyone else contributes by pull request** against `main`, from a fork. Keep a pull request to one issue where practical. The CI check and the CLA check must pass; the maintainer reviews and merges.
+- **Everyone else contributes by pull request** against `main`, from a fork. Keep a pull request to one issue where practical. The CI check must pass; the maintainer reviews and merges.
 - **Commit messages:** a short title in the imperative or as a statement of what changed, a body that explains why, and the issue reference.
 
 ## The Contributor License Agreement
 
-The repository is licensed [AGPL-3.0-or-later](LICENSE) ([ADR-0035](docs/adr/0035-licence.md)). To keep the project's licensing coherent, contributors sign the [Contributor License Agreement](CLA.md) once: it grants the maintainer a licence to your contribution, including under other licences, and it leaves your own copyright with you.
+The repository is licensed [AGPL-3.0-or-later](LICENSE) ([ADR-0035](docs/adr/0035-licence.md)). To keep the project's licensing coherent, every contribution is made under the [Contributor License Agreement](CLA.md): it grants the maintainer a licence to your contribution, including under other licences, and it leaves your own copyright with you.
 
-The CLA check on your first pull request will ask you to sign by commenting on it. Pull requests from unsigned authors are not merged.
+Read it before you open a pull request: submitting one accepts it, and nothing more is asked of you. A comment on the pull request points to it.
 
 ## Reporting a security issue
 

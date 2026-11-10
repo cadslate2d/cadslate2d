@@ -26,7 +26,7 @@ Format: each line is one glyph — five characters of glyph number, three of ver
 ################################################################################
 
 ================================================================================
-react 19.3.0 (MIT)
+react 19.3.1 (MIT)
 https://react.dev/
 --------------------------------------------------------------------------------
 MIT License
@@ -52,7 +52,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ================================================================================
-react-dom 19.3.0 (MIT)
+react-dom 19.3.1 (MIT)
 https://react.dev/
 --------------------------------------------------------------------------------
 MIT License

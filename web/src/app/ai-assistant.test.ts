@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 import type { AiContext, ProposalSummary } from "../cad/engine";
-import { AiAssistant, STALE_PAGE, type AssistantHost, type SessionStore } from "./ai-assistant";
+import {
+  AiAssistant,
+  STALE_PAGE,
+  withoutSignIn,
+  type AssistantHost,
+  type SessionStore,
+} from "./ai-assistant";
 import { AiError, type AiAnswer, type AiClient, type AiRequest, type Allowance } from "./ai-client";
 
 const allowance = (remaining: number): Allowance => ({
@@ -160,6 +166,121 @@ describe("the AI assistant (#260)", () => {
     expect(await assistant.start("#ai-sign-in=x")).toBe("#ai-sign-in=x");
     await assistant.ask("a circle");
     expect(assistant.getSnapshot().turns).toEqual([]);
+  });
+
+  // #408: an answer belongs to the account it was asked in.
+  test("an answer that arrives after signing out, or as an error, is dropped", async () => {
+    for (const ending of ["sign out", "delete"] as const) {
+      for (const comes of ["answer", "error"] as const) {
+        const { assistant, client, host } = await signedIn();
+        let settle!: (answer: AiAnswer) => void;
+        let fail!: (error: AiError) => void;
+        client.interpret = (session, request) => {
+          client.asked.push({ session, request });
+          return new Promise<AiAnswer>((resolve, reject) => {
+            settle = resolve;
+            fail = reject;
+          });
+        };
+        const asking = assistant.ask("a circle");
+        expect(assistant.getSnapshot().busy).toBe(true);
+        if (ending === "sign out") await assistant.signOut();
+        else await assistant.deleteAccount();
+        if (comes === "answer") {
+          settle({
+            request: 7,
+            reply: "A circle.",
+            intent: CIRCLE,
+            alternatives: [],
+            allowance: allowance(98),
+          });
+        } else {
+          fail(new AiError("unavailable", "The service is not answering."));
+        }
+        await asking;
+        const what = `${ending}, then the ${comes}`;
+        expect(host.proposed, what).toHaveLength(0);
+        expect(assistant.getSnapshot(), what).toMatchObject({
+          status: "signed-out",
+          turns: [],
+          busy: false,
+          error: undefined,
+          proposal: undefined,
+        });
+      }
+    }
+  });
+
+  test("the AI's explanation of a stopped proposal, coming after signing out, is dropped", async () => {
+    const { assistant, client, host } = await signedIn();
+    host.stopped = "operation 0: FILLET refused: The lines are parallel";
+    let settle!: (text: string) => void;
+    client.explain = (_session, request, reason) => {
+      client.explained.push([request, reason]);
+      return new Promise<string>((resolve) => {
+        settle = resolve;
+      });
+    };
+    const asking = assistant.ask("fillet these");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(client.explained).toHaveLength(1);
+    await assistant.signOut();
+    settle("Those lines are parallel, so they never meet.");
+    await asking;
+    expect(assistant.getSnapshot()).toMatchObject({
+      status: "signed-out",
+      turns: [],
+      busy: false,
+    });
+  });
+
+  test("an account read back after signing out does not sign the panel in again", async () => {
+    const { assistant, client } = await signedIn();
+    let settle!: () => void;
+    const account = client.account.bind(client);
+    client.account = (session) =>
+      new Promise((resolve) => {
+        settle = () => resolve(account(session));
+      });
+    const refreshing = assistant.refresh();
+    await assistant.signOut();
+    settle();
+    await refreshing;
+    expect(assistant.getSnapshot()).toMatchObject({
+      status: "signed-out",
+      email: undefined,
+      error: undefined,
+    });
+
+    // Nor does an error then.
+    const again = await signedIn();
+    again.client.account = () =>
+      new Promise((_resolve, reject) => {
+        settle = () => reject(new AiError("unavailable", "The service is not answering."));
+      });
+    const failing = again.assistant.refresh();
+    await again.assistant.signOut();
+    settle();
+    await failing;
+    expect(again.assistant.getSnapshot()).toMatchObject({
+      status: "signed-out",
+      error: undefined,
+    });
+  });
+
+  // #409: what is left of the fragment is a fragment, wherever the token was.
+  test("the sign-in token is taken out of the fragment, and the rest kept as one", async () => {
+    expect(withoutSignIn("#ai-sign-in=t&tab=ai")).toBe("#tab=ai");
+    expect(withoutSignIn("#tab=ai&ai-sign-in=t")).toBe("#tab=ai");
+    expect(withoutSignIn("#a=1&ai-sign-in=t&b=2")).toBe("#a=1&b=2");
+    expect(withoutSignIn("#ai-sign-in=t")).toBe("");
+    expect(withoutSignIn("#tab=ai")).toBe("#tab=ai");
+    expect(withoutSignIn("#")).toBe("");
+    expect(withoutSignIn("")).toBe("");
+    const client = new FakeClient();
+    const assistant = new AiAssistant(new FakeHost(), client, new MemoryStore());
+    expect(await assistant.start("#ai-sign-in=good-token&tab=ai")).toBe("#tab=ai");
+    expect(assistant.getSnapshot().status).toBe("signed-in");
   });
 
   test("a request or a reply is copied to the clipboard; a refusal copies nothing and breaks nothing", async () => {

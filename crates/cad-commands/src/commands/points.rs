@@ -129,7 +129,7 @@ impl DivideCommand {
     /// them, and, on a closed curve, the start too.
     fn divisions(path: &Path, count: usize) -> Vec<Point2> {
         let length = path.length();
-        let first = if path.closed { 0 } else { 1 };
+        let first = if path.closes() { 0 } else { 1 };
         (first..count)
             .filter_map(|k| path.point_along(length * k as f64 / count as f64))
             .collect()
@@ -148,7 +148,7 @@ fn picked_curve(ctx: &mut CommandContext<'_>, entity: EntityId, at: Point2) -> O
 
 /// `path` run from its end nearest `at`; a closed one as it is.
 pub(super) fn from_end_nearest(path: Path, at: Point2) -> Path {
-    if path.closed {
+    if path.closes() {
         return path;
     }
     let (first, last) = (path.vertices[0], path.vertices[path.vertices.len() - 1]);

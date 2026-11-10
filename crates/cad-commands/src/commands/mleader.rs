@@ -92,7 +92,7 @@ impl Command for MLeaderCommand {
         self.block_scale = style.block_scale;
         // A style that names a block starts with it, when there is one.
         let named = style.block.as_deref().and_then(|name| {
-            let id = ctx.drawing.blocks().find(name)?;
+            let id = ctx.drawing.blocks().placeable(name)?;
             Some(Note::Block(id, name.to_owned(), style.block_scale))
         });
         if let Some(note) = named {
@@ -148,7 +148,7 @@ impl Command for MLeaderCommand {
             (State::Content, _) => State::Arrowhead,
             (State::BlockName, CommandInput::Text(name)) if !name.trim().is_empty() => {
                 let name = name.trim();
-                match ctx.drawing.blocks().find(name) {
+                match ctx.drawing.blocks().placeable(name) {
                     Some(id) => {
                         self.note = Note::Block(id, name.to_owned(), self.block_scale);
                         State::Arrowhead

@@ -73,6 +73,22 @@ struct Chunk {
 /// so a drawing of ordinary size is one run per kind, as before.
 pub const MAX_ORIGIN_OFFSET: f64 = 100_000.0;
 
+/// The viewports through which the model is shown on the layout `space`
+/// (#193): those shown there and switched on. The scene draws the model
+/// through these, and the overlay its far curves (#402); one rule for
+/// both.
+pub fn viewports_shown(
+    drawing: &Drawing,
+    space: LayoutId,
+) -> impl Iterator<Item = ViewportEntity> + '_ {
+    drawing
+        .shown_in(space)
+        .filter_map(|(_, entity)| match entity {
+            Entity::Viewport(viewport) if viewport.on => Some(*viewport),
+            _ => None,
+        })
+}
+
 /// The view of the model through `viewport` as seen on `paper`, the view
 /// of the layout (#193): the pixels inside the viewport's frame show the
 /// model points the viewport shows there. The model's scene is drawn
@@ -683,20 +699,8 @@ impl RenderScene {
         mut properties: Properties,
         order: i16,
     ) {
-        // A linetype is for curves: a text is drawn continuous, or its
-        // glyphs would fall apart into dashes. Nor a dimension's text, nor
-        // a hatch, whose pattern carries its own dashes.
-        if matches!(
-            entity,
-            Entity::Text(_)
-                | Entity::MText(_)
-                | Entity::Dimension(_)
-                | Entity::Hatch(_)
-                | Entity::Viewport(_)
-                | Entity::Point(_)
-                | Entity::Leader(_)
-                | Entity::MLeader(_)
-        ) {
+        // A linetype is for curves: what is not one is drawn continuous.
+        if crate::drawn_continuous(entity) {
             properties.linetype = Linetype::CONTINUOUS;
         }
         let style = style_word(self.style_of(Look::Drawn(properties)), order);
@@ -844,12 +848,18 @@ impl SceneCache {
             match (self.scene.as_mut(), changed) {
                 (Some(scene), Some(ids)) => {
                     // A changed entity's chunk in the part of its space;
-                    // one that is gone could have been in either.
+                    // one that is gone could have been in either, and one
+                    // moved between the model and the layout (#404) left
+                    // the other.
                     let model_chunks = scene.model_chunks.max(needed);
+                    let moved = drawing.moved_since(scene.revision).unwrap_or_default();
                     let mut chunks: BTreeSet<usize> = BTreeSet::new();
                     for id in &ids {
                         let id_chunk = (id.raw() / CHUNK_IDS) as usize;
-                        let on_paper = drawing.space_of(*id).map(|at| at == space);
+                        let on_paper = drawing
+                            .space_of(*id)
+                            .filter(|_| !moved.contains(id))
+                            .map(|at| at == space);
                         if on_paper != Some(true) || space == LayoutId::MODEL {
                             chunks.insert(id_chunk);
                         }
@@ -1432,6 +1442,88 @@ mod tests {
         assert!((regions[0].origin.y - 5e6).abs() < 1.0);
     }
 
+    /// #404: an entity moved between the model and a layout leaves the
+    /// chunk it was in as well as entering the other: the layout's scene,
+    /// repacked, is the scene built afresh, both ways.
+    #[test]
+    fn an_entity_moved_between_spaces_leaves_its_old_chunk() {
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let sheet = tx.add_layout(Layout::named("Sheet")).unwrap();
+        let model_line = tx
+            .insert(LineEntity::new(
+                Point2::new(0.0, 0.0),
+                Point2::new(100.0, 0.0),
+            ))
+            .unwrap();
+        tx.insert_in(
+            sheet,
+            ViewportEntity::new(
+                Point2::new(100.0, 50.0),
+                200.0,
+                100.0,
+                Point2::new(50.0, 0.0),
+                0.5,
+            ),
+        )
+        .unwrap();
+        let paper_line = tx
+            .insert_in(
+                sheet,
+                LineEntity::new(Point2::new(0.0, 0.0), Point2::new(10.0, 0.0)),
+            )
+            .unwrap();
+        tx.commit();
+        let mut cache = SceneCache::new();
+        cache.scene_in(&drawing, sheet);
+        // What each region draws, in drawing units: a repacked chunk may
+        // keep the origin it had, so the instances, not the offsets, are
+        // compared.
+        let drawn = |scene: &RenderScene| -> Vec<(bool, Vec<[f64; 4]>)> {
+            let segments = scene.frame().segments();
+            scene
+                .regions()
+                .iter()
+                .map(|region| {
+                    let first = region.first[0] as usize;
+                    let lines = (first..first + region.count[0] as usize)
+                        .map(|i| {
+                            let s = &segments[i * 4..i * 4 + 4];
+                            let (x, y) = (region.origin.x, region.origin.y);
+                            [
+                                x + f64::from(s[0]),
+                                y + f64::from(s[1]),
+                                x + f64::from(s[2]),
+                                y + f64::from(s[3]),
+                            ]
+                        })
+                        .collect();
+                    (region.paper, lines)
+                })
+                .collect()
+        };
+        let fresh = |drawing: &Drawing| drawn(SceneCache::new().scene_in(drawing, sheet));
+        for (moved, to) in [(paper_line, LayoutId::MODEL), (model_line, sheet)] {
+            let mut tx = drawing.transaction();
+            tx.set_space(moved, to).unwrap();
+            tx.commit();
+            let repacked = drawn(cache.scene_in(&drawing, sheet));
+            assert_eq!(repacked, fresh(&drawing), "{moved:?} to {to:?}");
+        }
+        assert_eq!(cache.partial_build_count(), 2, "repacked, not rebuilt");
+        let regions = cache.scene_in(&drawing, sheet).regions();
+        assert_eq!(
+            regions[0].count,
+            [1, 0, 0],
+            "the paper's line, now the model's"
+        );
+        assert_eq!(
+            regions[1].count,
+            [5, 0, 0],
+            "the frame, and the model's line"
+        );
+    }
+
     /// #193: a layout's scene is the model's chunks, then the layout's own,
     /// each region saying which; a paper edit re-packs the paper's chunk
     /// alone, and a model edit the model's; a change of space rebuilds.
@@ -1749,6 +1841,46 @@ mod tests {
         assert!(
             scene.frame().segment_distances().iter().all(|d| *d == 0.0),
             "no path runs through a text"
+        );
+    }
+
+    /// #405: an attribute definition's tag is text too, drawn continuous
+    /// on a dashed layer, as a text is.
+    #[test]
+    fn an_attribute_definitions_tag_is_drawn_continuous_whatever_its_layer_says() {
+        use cad_document::{AttributeDefinitionEntity, Linetype, LinetypeDef, TextEntity};
+
+        let dashed = Layer {
+            linetype: Linetype::Named(cad_document::LinetypeId::from_raw(1)),
+            ..Layer::named("dashed")
+        };
+        let tag = TextEntity::new(Point2::new(0.0, 0.0), 10.0, 0.0, "TAG");
+        let definition = AttributeDefinitionEntity::new("TAG", "Tag?", tag);
+        let drawing = Drawing::from_parts(
+            [dashed],
+            [LinetypeDef::built_in_named("Dashed").unwrap()],
+            [
+                (Entity::AttributeDefinition(definition), on(1)),
+                (Entity::Line(line(0.0, 20.0, 50.0, 20.0)), on(1)),
+            ],
+        )
+        .unwrap();
+        let mut cache = SceneCache::new();
+        let scene = cache.scene(&drawing);
+        let patterns = patterns_of(scene);
+        let styles = scene.segment_styles();
+        let (line_style, tag_styles) = styles.split_last().unwrap();
+        assert!(!tag_styles.is_empty());
+        for style in tag_styles {
+            assert_eq!(
+                patterns[*style as usize],
+                RenderScene::PATTERN_CONTINUOUS,
+                "an attribute definition's tag is drawn dashed"
+            );
+        }
+        assert_ne!(
+            patterns[*line_style as usize],
+            RenderScene::PATTERN_CONTINUOUS
         );
     }
 }

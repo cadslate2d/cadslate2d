@@ -55,9 +55,6 @@ pub(crate) struct PeditCommand {
     id: Option<EntityId>,
     /// The polyline as it stands, for the preview, which has no drawing.
     polyline: Option<PolylineEntity>,
-    /// The polyline as it was before each change this command made, for
-    /// `Undo` within the command.
-    history: Vec<PolylineEntity>,
 }
 
 impl PeditCommand {
@@ -66,7 +63,6 @@ impl PeditCommand {
             state: State::Pick,
             id: None,
             polyline: None,
-            history: Vec::new(),
         }
     }
 
@@ -79,15 +75,33 @@ impl PeditCommand {
         polyline
     }
 
-    /// Replaces the polyline with `changed`, remembering what it was.
+    /// Replaces the polyline with `changed`, in a transaction of its own
+    /// that `Undo` can take back. Its vertices keep their numbers, so a
+    /// constraint on one follows it where it moves.
     fn change(&mut self, ctx: &mut CommandContext<'_>, changed: PolylineEntity) {
-        let (Some(id), Some(was)) = (self.id, self.current(ctx)) else {
+        self.commit(ctx, changed, false);
+    }
+
+    /// The same, for a change that numbers the vertices afresh — one
+    /// inserted: a constraint on a vertex or a segment goes to the one
+    /// where it was (#422).
+    fn renumber(&mut self, ctx: &mut CommandContext<'_>, changed: PolylineEntity) {
+        self.commit(ctx, changed, true);
+    }
+
+    fn commit(&mut self, ctx: &mut CommandContext<'_>, changed: PolylineEntity, renumbered: bool) {
+        let Some(id) = self.id else {
             return;
         };
         let mut tx = ctx.transaction();
-        if tx.replace(id, changed.clone()).is_ok() {
+        let done = if renumbered {
+            tx.reshape(id, changed.clone().into(), Vec::new(), &[])
+                .map(|_| ())
+        } else {
+            tx.replace(id, changed.clone())
+        };
+        if done.is_ok() {
             tx.commit();
-            self.history.push(was);
             self.polyline = Some(changed);
         }
     }
@@ -140,20 +154,21 @@ impl PeditCommand {
         let Entity::Polyline(polyline) = joined.entity else {
             return;
         };
-        let was = self.current(ctx);
         let added = joined.members.len() - 1;
+        // As JOIN: a constraint on a point still an end, or on a segment,
+        // goes where that is in the joined polyline (#422).
+        let absorbed: Vec<EntityId> = joined
+            .members
+            .iter()
+            .filter(|member| **member != 0)
+            .map(|member| ids[*member])
+            .collect();
         let mut tx = ctx.transaction();
-        let mut ok = tx.replace(id, polyline).is_ok();
-        for member in &joined.members {
-            if *member != 0 {
-                ok &= tx.remove(ids[*member]).is_ok();
-            }
-        }
+        let ok = tx
+            .reshape(id, polyline.into(), Vec::new(), &absorbed)
+            .is_ok();
         if ok {
             tx.commit();
-            if let Some(was) = was {
-                self.history.push(was);
-            }
             self.current(ctx);
             ctx.message(format!(
                 "{} added to the polyline.",
@@ -249,8 +264,10 @@ impl Command for PeditCommand {
             (State::Convert(id), CommandInput::Keyword(_) | CommandInput::Accept) => {
                 let id = *id;
                 if let Some(polyline) = ctx.drawing.entity(id).and_then(Self::as_polyline) {
+                    // A line's ends are the polyline's vertices 0 and 1 now,
+                    // and its edge segment 0: what was on them goes there.
                     let mut tx = ctx.transaction();
-                    if tx.replace(id, polyline).is_ok() {
+                    if tx.reshape(id, polyline.into(), Vec::new(), &[]).is_ok() {
                         tx.commit();
                         self.id = Some(id);
                         ctx.selection.clear();
@@ -265,7 +282,7 @@ impl Command for PeditCommand {
                 };
                 match keyword {
                     CLOSE => {
-                        if polyline.closed {
+                        if polyline.closes() {
                             ctx.message("The polyline is already closed.");
                         } else if polyline.vertices.len() < 3 {
                             ctx.message("A polyline needs three vertices to close.");
@@ -274,6 +291,9 @@ impl Command for PeditCommand {
                         }
                     }
                     OPEN => {
+                        // The flag, not closes(): a flag set on two
+                        // vertices in a line closes nothing, but the panel
+                        // shows it, and Open clears it (#382).
                         if !polyline.closed {
                             ctx.message("The polyline is already open.");
                         } else {
@@ -281,7 +301,7 @@ impl Command for PeditCommand {
                         }
                     }
                     JOIN => {
-                        if polyline.closed {
+                        if polyline.closes() {
                             ctx.message("A closed polyline has no ends to join to.");
                         } else {
                             self.state = State::JoinSelect;
@@ -295,14 +315,25 @@ impl Command for PeditCommand {
                                 .with_width(polyline.width());
                         self.change(ctx, straight);
                     }
-                    _ => match (self.id, self.history.pop()) {
-                        (Some(id), Some(was)) => {
-                            let mut tx = ctx.transaction();
-                            tx.replace(id, was.clone()).expect("the polyline is live");
-                            tx.commit();
-                            self.polyline = Some(was);
+                    // The last change this command made, taken back whole —
+                    // a join's removed objects with the polyline (#384) —
+                    // as LINE's Undo takes back a segment.
+                    _ => match ctx.drawing.rollback_last_in_group() {
+                        Some(_) => {
+                            // Taking back the conversion of a line or an
+                            // arc leaves no polyline to edit: back to the
+                            // pick, saying so.
+                            if self.current(ctx).is_none() {
+                                let kind = self
+                                    .id
+                                    .and_then(|id| ctx.drawing.entity(id))
+                                    .map_or("object", Entity::kind_name);
+                                ctx.message(format!("The {kind} is as it was."));
+                                self.id = None;
+                                self.state = State::Pick;
+                            }
                         }
-                        _ => ctx.message("Nothing to undo."),
+                        None => ctx.message("Nothing to undo."),
                     },
                 }
             }
@@ -367,7 +398,7 @@ impl Command for PeditCommand {
             (State::VertexInsert { index }, CommandInput::Point(to)) => {
                 let index = *index;
                 if let Some(polyline) = self.current(ctx) {
-                    self.change(ctx, Self::with_vertex(&polyline, index, to, true));
+                    self.renumber(ctx, Self::with_vertex(&polyline, index, to, true));
                 }
                 self.state = State::Vertex { index: index + 1 };
             }

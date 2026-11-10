@@ -87,6 +87,15 @@ impl Named for Block {
 
 pub type BlockId = TableId<Block>;
 pub type BlockTable = Table<Block>;
+
+impl Table<Block> {
+    /// The block of that name a reference may place, whatever its case:
+    /// never the model's own row, which a transaction refuses to place
+    /// (#383). What a command takes a block name for asks here.
+    pub fn placeable(&self, name: &str) -> Option<BlockId> {
+        self.find(name).filter(|id| *id != BlockId::FIRST)
+    }
+}
 /// A reversible change to one block: defined, removed, or — redefined,
 /// renamed — replaced by one row, whatever it holds and however many
 /// references place it (§19.6).

@@ -99,9 +99,18 @@ test("the hatch dialog chooses the pattern, angle, and scale", async ({ page }) 
     "aria-checked",
     "true",
   );
-  await dialog.getByLabel("Angle").fill("15");
-  await dialog.getByLabel("Scale").fill("3");
-  await dialog.getByRole("button", { name: "Pick Points" }).click();
+  // Typed, key by key, as a user does (#411): the keys are the fields'.
+  await dialog.getByLabel("Angle").click();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.type("15");
+  await dialog.getByLabel("Scale").click();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.type("3");
+  await expect(dialog.getByLabel("Angle")).toHaveValue("15");
+  await expect(page.locator("#command-input")).toHaveValue("");
+  // Enter on the button focused presses it.
+  await dialog.getByRole("button", { name: "Pick Points" }).focus();
+  await page.keyboard.press("Enter");
   await expect(dialog).toHaveCount(0);
   await expect(prompt(page)).toHaveText("Pick internal point or [Select/Pattern/Angle/SCale]:");
   await clickWorld(page, canvas, -70, 0);

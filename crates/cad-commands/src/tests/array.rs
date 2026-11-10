@@ -335,11 +335,11 @@ fn counts_spacings_and_fills_are_checked_and_an_array_of_one_is_nothing() {
     let mut h = Harness::with_entities([LineEntity::new(p(0.0, 0.0), p(10.0, 0.0)).into()]);
     h.click_world(p(5.0, 0.0));
     h.enter_all(&["ARRAY", "", "0"]);
-    assert_eq!(last(&h), "Enter a whole number of rows, 1 or more.");
+    assert_eq!(last(&h), "Enter a whole number of rows, 1 to 10000.");
     h.enter("1.5");
-    assert_eq!(last(&h), "Enter a whole number of rows, 1 or more.");
+    assert_eq!(last(&h), "Enter a whole number of rows, 1 to 10000.");
     h.enter_all(&["2", "0"]);
-    assert_eq!(last(&h), "Enter a whole number of columns, 1 or more.");
+    assert_eq!(last(&h), "Enter a whole number of columns, 1 to 10000.");
     h.enter_all(&["1", "0"]);
     assert_eq!(last(&h), "The distance between rows cannot be zero.");
     h.enter("25");
@@ -355,7 +355,7 @@ fn counts_spacings_and_fills_are_checked_and_an_array_of_one_is_nothing() {
     // Polar refusals.
     h.click_world(p(5.0, 0.0));
     h.enter_all(&["ARRAY", "P", "0,0", "1"]);
-    assert_eq!(last(&h), "Enter a whole number of items, 2 or more.");
+    assert_eq!(last(&h), "Enter a whole number of items, 2 to 10000.");
     h.enter_all(&["3", "0"]);
     assert_eq!(last(&h), "The angle to fill is up to 360°, and not zero.");
     h.enter("400");
@@ -365,6 +365,51 @@ fn counts_spacings_and_fills_are_checked_and_an_array_of_one_is_nothing() {
     // Nothing selected: asked, and Enter with nothing finishes.
     h.enter_all(&["ARRAY", ""]);
     assert_eq!(last(&h), "No objects selected.");
+}
+
+/// #386: rows by columns is held to the same total as a polar count, so
+/// neither the preview nor the commit makes 10⁸ copies. A product over the
+/// limit is refused at the columns, which are asked again; the limit itself
+/// is accepted.
+#[test]
+fn rows_by_columns_and_the_polar_count_are_held_to_the_most_items_an_array_makes() {
+    let mut h = Harness::with_entities([LineEntity::new(p(0.0, 0.0), p(10.0, 0.0)).into()]);
+    h.click_world(p(5.0, 0.0));
+    h.enter_all(&["ARRAY", "R", "10001"]);
+    assert_eq!(last(&h), "Enter a whole number of rows, 1 to 10000.");
+    h.enter_all(&["2000", "2000"]);
+    assert_eq!(
+        last(&h),
+        "2000 rows by 2000 columns would be more than 10000 items."
+    );
+    assert_eq!(h.prompt(), "Enter the number of columns (|||) <1>:");
+    h.enter("10001");
+    assert_eq!(last(&h), "Enter a whole number of columns, 1 to 10000.");
+    // At the limit, the original counted: 2000 by 5 goes on to the spacing,
+    // and a pointer move previews the 9 999 copies, no more.
+    h.enter("5");
+    assert_eq!(h.prompt(), "Specify the distance between rows:");
+    h.move_to(450.0, 250.0);
+    let previewed = h
+        .session
+        .overlay()
+        .into_iter()
+        .filter(|item| matches!(item, OverlayItem::PreviewTransformed { .. }))
+        .count();
+    assert_eq!(previewed, 9_999);
+    h.escape();
+    h.escape();
+    h.click_world(p(5.0, 0.0));
+    h.enter_all(&["ARRAY", "R", "100", "100"]);
+    h.move_to(450.0, 250.0);
+    h.enter_all(&["20", "20"]);
+    assert_eq!(last(&h), "100 rows by 100 columns: 9999 copies made.");
+    assert_eq!(h.session.drawing().shown().count(), 10_000);
+    h.undo();
+    // A polar count is the same total.
+    h.click_world(p(5.0, 0.0));
+    h.enter_all(&["ARRAY", "P", "0,0", "10001"]);
+    assert_eq!(last(&h), "Enter a whole number of items, 2 to 10000.");
 }
 
 proptest! {

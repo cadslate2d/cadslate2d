@@ -46,6 +46,8 @@ describe("WASM API surface", () => {
       "mark_exported",
       // #245: File › New, the whole drawing replaced in one call.
       "new_drawing",
+      // #410: a line for the log from the host, once per file the browser refused to write.
+      "notify",
       "overlay_arc_batches",
       "overlay_arcs",
       "overlay_batches",

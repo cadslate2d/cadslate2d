@@ -24,6 +24,9 @@ const WRITER_LOSSES: &[(&str, &str)] = &[
     // The writer leaves a style's block scale at 1 (LibreDWG reads the
     // same), so the Balloon style's 1.5 is the DXF's alone.
     ("ezdxf-r2010-multileaders", "name: \"Balloon\""),
+    // A DWG holds no current multileader style (#431): "Callout" is the
+    // DXF's alone.
+    ("ezdxf-r2010-multileaders", "current multileader style"),
 ];
 
 #[test]
@@ -205,4 +208,86 @@ fn a_proxy_entity_and_an_unknown_class_are_reported_not_guessed() {
     let original = read("ezdxf-r2010-draw-order.AC1015.dwg");
     let lines = original.report.summary().join("\n");
     assert!(lines.contains("1 wipeout"), "{lines}");
+}
+
+/// A DWG before R2007 holds its strings in the code page its header names
+/// (#399). One in ANSI 1252, as AutoCAD writes it in the West, is read as
+/// written — a layer "Elétrica", a text "Ø20 30°" — as the same drawing
+/// saved as DXF is; one in a code page this reader has no table for says
+/// so when any character beyond ASCII came from it. R2007 strings are
+/// UTF-16 and need no table. The drawings are written by the independent
+/// writer, as the fixtures are, from a DXF naming the code page.
+#[test]
+fn strings_are_read_in_the_drawing_s_code_page() {
+    use std::io::Cursor;
+
+    use acadrust::{DwgWriter, DxfReader, DxfVersion};
+
+    let written = |code_page: &str, layer: &str, words: &str, version: DxfVersion| {
+        let dxf = format!(
+            "  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1015\n  9\n$DWGCODEPAGE\n  3\n{code_page}\n  0\nENDSEC\n  0\nSECTION\n  2\nTABLES\n  0\nTABLE\n  2\nLAYER\n 70\n1\n  0\nLAYER\n  2\n{layer}\n 70\n0\n 62\n7\n  6\nCONTINUOUS\n  0\nENDTAB\n  0\nENDSEC\n  0\nSECTION\n  2\nENTITIES\n  0\nTEXT\n  8\n{layer}\n 10\n0\n 20\n0\n 40\n1\n  1\n{words}\n  0\nENDSEC\n  0\nEOF\n"
+        );
+        let mut document = DxfReader::from_reader(Cursor::new(dxf.into_bytes()))
+            .and_then(|reader| reader.read())
+            .unwrap();
+        document.version = version;
+        let bytes = DwgWriter::write_to_vec(&document).unwrap();
+        cad_dwg::import(&bytes).unwrap()
+    };
+    let layers = |import: &cad_dwg::Import| -> Vec<String> {
+        import
+            .drawing
+            .layers()
+            .iter()
+            .map(|(_, layer)| layer.name.clone())
+            .collect()
+    };
+    let texts = |import: &cad_dwg::Import| -> Vec<String> {
+        import
+            .drawing
+            .entities()
+            .filter_map(|(_, entity)| match entity {
+                Entity::Text(text) => Some(text.content.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    for version in [DxfVersion::AC1015, DxfVersion::AC1018, DxfVersion::AC1021] {
+        let western = written(
+            "ANSI_1252",
+            "El\\U+00E9trica",
+            "\\U+00D820 30\\U+00B0",
+            version,
+        );
+        assert_eq!(layers(&western), ["0", "Elétrica"], "{version:?}");
+        assert_eq!(texts(&western), ["Ø20 30°"], "{version:?}");
+        assert!(
+            western.report.unsupported.is_empty(),
+            "{version:?}: {:?}",
+            western.report.unsupported
+        );
+
+        // Cyrillic, in ANSI 1251: no table here, so before R2007 the
+        // report says the characters may not be the ones written.
+        let cyrillic = written("ANSI_1251", "\\U+0416ena", "Zena", version);
+        let said = cyrillic.report.unsupported.get("(DWG-CODE-PAGE)").copied();
+        if version == DxfVersion::AC1021 {
+            assert_eq!(layers(&cyrillic), ["0", "Жena"]);
+            assert_eq!(said, None, "{version:?}");
+        } else {
+            assert_eq!(
+                said,
+                Some(1),
+                "{version:?}: {:?}",
+                cyrillic.report.unsupported
+            );
+        }
+        // ASCII is the same in every code page: nothing to say.
+        let plain = written("ANSI_1251", "Plain", "Words", version);
+        assert_eq!(
+            plain.report.unsupported.get("(DWG-CODE-PAGE)"),
+            None,
+            "{version:?}"
+        );
+    }
 }

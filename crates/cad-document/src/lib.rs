@@ -57,7 +57,7 @@ mod wipeout;
 pub use aci::{FOREGROUND_INDEX, Paint, index_paint, nearest_index};
 pub use block::{Block, BlockChange, BlockId, BlockReferenceEntity, BlockTable, empty_blocks};
 /// A hatch's boundary loop: a closed path of straight and arc segments.
-pub use cad_geometry::{Path, Spline};
+pub use cad_geometry::{Path, Spline, Transform};
 pub use constraint::{
     Axis, Constraint, ConstraintChange, ConstraintError, ConstraintId, ConstraintTable, Kind, Part,
     Reference, Shape, Touch,
@@ -74,7 +74,7 @@ pub use editing::{
 };
 pub use entity::{
     ArcEntity, AttributeDefinitionEntity, CircleEntity, EllipseEntity, Entity, LineEntity,
-    MTextEntity, PolylineEntity, SharedEntity, SplineEntity, TextEntity,
+    MTextEntity, PolylineEntity, SharedEntity, SplineEntity, TableRef, TableRow, TextEntity,
 };
 pub use exploding::ExplodeError;
 pub use grips::{EntityGrip, GripKind};

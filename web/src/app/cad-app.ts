@@ -21,6 +21,26 @@ import {
 import { UiStore } from "./ui-store";
 
 const RENDER_FLAGS = Dirty.Scene | Dirty.Overlay | Dirty.View;
+
+/** What the log says first when the browser refuses a request's file (#410). */
+const FILE_REFUSED: Record<HostRequest, string> = {
+  [HostRequest.None]: "That could not be done",
+  [HostRequest.OpenFile]: "The file could not be opened",
+  [HostRequest.ExportFile]: "The drawing was not saved",
+  [HostRequest.SaveFile]: "The drawing was not saved",
+  [HostRequest.Settings]: "The settings could not be opened",
+  [HostRequest.Plot]: "The plot was not saved",
+  [HostRequest.InsertFile]: "The file could not be inserted",
+  [HostRequest.WriteBlock]: "The block was not written",
+  [HostRequest.NewDrawing]: "A new drawing could not be started",
+  [HostRequest.OpenBrief]: "The brief could not be read",
+};
+
+/** Why the browser refused, in its own words, without a full stop of its own. */
+function refusal(error: unknown): string {
+  const words = error instanceof Error ? error.message || error.name : String(error);
+  return words.trim().replace(/\.+$/, "");
+}
 /** What OPEN offers to pick (#318): the format is read from the bytes. */
 const DRAWING_ACCEPT = ".dxf,.dwg";
 /** What INSERT offers to pick (#222). */
@@ -122,6 +142,10 @@ export class CadApp {
   #render: (() => void) | undefined;
   /** The revision last kept, so an unchanged drawing is not written again. */
   #keptRevision: number | undefined;
+  /** The newest keep, settled: the next waits for it (#407). */
+  #keeping: Promise<void> = Promise.resolve();
+  /** How many keeps are under way or waiting. */
+  #keepsUnderWay = 0;
   /** Cancels the pending autosave, while one is pending. */
   #cancelAutosave: (() => void) | undefined;
   /** The autosave found on start, while the user has not decided about it. */
@@ -448,10 +472,36 @@ export class CadApp {
   }
 
   /** Writes the drawing to the autosave slot; `exported` says a file holds it too. */
-  async #keep(exported: boolean): Promise<void> {
+  /**
+   * Keeps the drawing in the browser, `exported` when a file holds it. One
+   * keep at a time (#407): the engine writes one snapshot at a time, so a
+   * keep asked for while another is in slices — a save during an autosave
+   * — waits for it, and reads the drawing then; the newest says last
+   * whether a file holds it.
+   */
+  #keep(exported: boolean): Promise<void> {
+    // None under way: it starts at once, its first slice with it.
+    const kept =
+      this.#keepsUnderWay === 0
+        ? this.#keepNow(exported)
+        : this.#keeping.then(() => this.#keepNow(exported));
+    this.#keepsUnderWay += 1;
+    this.#keeping = kept
+      .catch(() => undefined)
+      .finally(() => {
+        this.#keepsUnderWay -= 1;
+      });
+    return kept;
+  }
+
+  async #keepNow(exported: boolean): Promise<void> {
     if (this.#failed) return;
     const state = this.engine.uiState();
-    if (!exported && !state.unsavedChanges) return;
+    // Whether a file holds what is kept is read now, with the drawing it
+    // keeps: a keep that waited may find the drawing changed since the
+    // file was written (#407).
+    const held = exported && !state.unsavedChanges;
+    if (!held && !state.unsavedChanges) return;
     this.#keptRevision = state.revision;
     // The drawing changed while the snapshot was being written: what the
     // next pause keeps will have the change too.
@@ -471,7 +521,7 @@ export class CadApp {
         handle: storable ? handle : undefined,
         bytes,
         savedAt,
-        exported,
+        exported: held,
       });
       this.#keptAt = savedAt;
     } catch {
@@ -521,7 +571,29 @@ export class CadApp {
     if (dirty & Dirty.Host) void this.#serveHostRequest(this.engine.takeHostRequest());
   }
 
+  /**
+   * Serves what a command asked of the browser. When the browser refuses
+   * to write or read a file — a full disk, a permission taken back — the
+   * log says so (#410), and nothing is marked saved.
+   */
   async #serveHostRequest(request: { kind: HostRequest; format?: DocumentFormat }): Promise<void> {
+    await this.#refusedSays(FILE_REFUSED[request.kind], () => this.#serve(request));
+  }
+
+  /** Runs `work`, and puts in the log what the browser refused of it, after `what`. */
+  async #refusedSays(what: string, work: () => Promise<void>): Promise<void> {
+    try {
+      await work();
+    } catch (error) {
+      if (this.#failed) return;
+      // The log says it for the user; the console keeps the trace, for
+      // whoever finds it was not the browser at all.
+      console.error(error);
+      this.#afterInput(this.engine.notify(`${what}: ${refusal(error)}.`));
+    }
+  }
+
+  async #serve(request: { kind: HostRequest; format?: DocumentFormat }): Promise<void> {
     switch (request.kind) {
       case HostRequest.OpenFile:
         return this.#openFile();
@@ -599,7 +671,11 @@ export class CadApp {
       return;
     const file = await this.#host.files.open(DRAWING_ACCEPT);
     if (!file) return;
-    this.loop.invalidate(this.engine.loadDrawing(file.bytes, file.name));
+    const dirty = this.engine.loadDrawing(file.bytes, file.name);
+    this.loop.invalidate(dirty);
+    // A file that cannot be read leaves the drawing as it was (#406): it
+    // is not the drawing's file, and what was kept of the drawing stays.
+    if ((dirty & Dirty.Scene) === 0) return;
     this.#target = file.target;
     // The opened file holds the drawing: whatever was kept before is replaced.
     this.#cancelAutosave?.();
@@ -631,7 +707,11 @@ export class CadApp {
     this.ui.setExportWarning(undefined);
     if (this.#failed) return;
     const pending = this.#pendingSave;
-    if (pending) void this.#performSave(pending.ask, pending.format);
+    if (pending) {
+      void this.#refusedSays(FILE_REFUSED[HostRequest.SaveFile], () =>
+        this.#performSave(pending.ask, pending.format),
+      );
+    }
   }
 
   /** The export the warning asked about: the user chose not to. */

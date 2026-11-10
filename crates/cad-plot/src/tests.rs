@@ -405,6 +405,30 @@ fn a_dashed_linetype_becomes_a_dash_array_scaled_to_the_page_and_runs_on_through
     .unwrap();
     let ops = parse(content_of(&plot_pdf(&text, &settings())));
     assert_eq!(ops.dashes, vec![Vec::<f64>::new()]);
+    // And an attribute definition's tag, which is text too (#405).
+    let definition = cad_document::AttributeDefinitionEntity::new(
+        "TAG",
+        "Tag?",
+        TextEntity::new(p(0.0, 0.0), 10.0, 0.0, "Dash"),
+    );
+    let tagged = Drawing::from_parts(
+        [],
+        [LinetypeDef::built_in_named("DASHED").unwrap()],
+        [(
+            Entity::AttributeDefinition(definition),
+            Properties {
+                linetype: Linetype::Named(cad_document::LinetypeId::from_raw(1)),
+                ..Properties::default()
+            },
+        )],
+    )
+    .unwrap();
+    let ops = parse(content_of(&plot_pdf(&tagged, &settings())));
+    assert_eq!(
+        ops.dashes,
+        vec![Vec::<f64>::new()],
+        "the tag is plotted dashed"
+    );
 }
 
 #[test]
@@ -703,6 +727,39 @@ fn a_layout_plots_its_paper_at_one_to_one_and_the_model_through_each_viewport_at
     let model = pull_apart(content_of(&plot_pdf(&drawing, &settings())));
     assert!(model.viewports.is_empty());
     assert_eq!(parse(&model.paper).points.len(), 2);
+}
+
+/// #413: on a layout the paper's own objects lie over every viewport, as on
+/// screen: a wipeout on the paper masks the model seen through the
+/// viewport beneath it, so the viewport is painted first.
+#[test]
+fn a_layouts_paper_is_painted_over_its_viewports() {
+    let full = ViewportEntity::new(p(100.0, 150.0), 150.0, 100.0, p(50.0, 0.0), 1.0);
+    let (mut drawing, sheet) = layout_drawing(None, &[full]);
+    let mut tx = drawing.transaction();
+    tx.insert_in(
+        sheet,
+        cad_document::WipeoutEntity::new(vec![p(80.0, 120.0), p(140.0, 120.0), p(140.0, 180.0)])
+            .unwrap(),
+    )
+    .unwrap();
+    tx.commit();
+    let content = content_of(&plot_pdf_in(&drawing, sheet, &settings())).to_owned();
+    let mask = content
+        .find("q 1 1 1 rg\n")
+        .expect("the wipeout's white mask");
+    // The page's clip is the first; the viewport's frame the second.
+    let viewport = content
+        .match_indices(" re W n\n")
+        .nth(1)
+        .map(|(at, _)| at)
+        .expect("the viewport's clip");
+    let model_line = content[viewport..].find("S\n").map(|at| viewport + at);
+    assert!(
+        model_line.is_some_and(|at| at < mask),
+        "the model is painted over the mask"
+    );
+    assert!(viewport < mask);
 }
 
 /// #194, #208: the page is the sheet the layout's row says — set here,
@@ -1092,4 +1149,123 @@ fn the_page_is_painted_in_the_drawing_order_and_a_wipeout_masks_in_white() {
     for point in &parse(content).points {
         assert!(page.contains_point(*point), "{point:?} is off the page");
     }
+}
+
+/// #412 (ADR-0032): within a tier every fill lies beneath every stroke on
+/// paper as on screen — the fills inside a block, a nested block, or a
+/// multileader's block note too, whichever comes first in the definition.
+#[test]
+fn a_tiers_fills_are_painted_beneath_its_strokes_whatever_holds_them() {
+    use cad_document::{MLeaderContent, MLeaderEntity};
+
+    let square = |x: f64| {
+        HatchEntity::solid(vec![Path {
+            vertices: vec![p(x, 0.0), p(x + 10.0, 0.0), p(x + 10.0, 10.0), p(x, 10.0)],
+            bulges: vec![0.0; 4],
+            closed: true,
+        }])
+    };
+    let in_colour = |index: u8| Properties {
+        color: Color::Index(index),
+        ..Properties::default()
+    };
+    let (red, blue) = (in_colour(1), in_colour(5));
+    // Where the fill is painted and where the blue line's colour is set.
+    // A block note is drawn in the multileader's colour, so the fill is
+    // found by what paints it, not by its red.
+    let order = |drawing: &Drawing| {
+        let content = content_of(&plot_pdf(drawing, &settings())).to_owned();
+        let fill = content.find("f*\n").expect("a fill");
+        let line = content.find("0 0 1 RG").expect("the blue line");
+        (fill, line)
+    };
+
+    // A block: its line, then its fill, defined after it.
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    let filled = tx
+        .define_block(Block::new(
+            "Filled",
+            Point2::ORIGIN,
+            vec![
+                EntityRecord::new(line(0.0, 5.0, 10.0, 5.0), blue),
+                EntityRecord::new(square(0.0), red),
+            ],
+        ))
+        .unwrap();
+    tx.insert(BlockReferenceEntity::new(filled, Point2::ORIGIN, 1.0, 0.0))
+        .unwrap();
+    tx.commit();
+    let (fill, line_at) = order(&drawing);
+    assert!(fill < line_at, "the fill is painted over the line");
+
+    // Nested: the same block inside another, after a line of its own.
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    let inner = tx
+        .define_block(Block::new(
+            "Inner",
+            Point2::ORIGIN,
+            vec![EntityRecord::new(square(0.0), red)],
+        ))
+        .unwrap();
+    let outer = tx
+        .define_block(Block::new(
+            "Outer",
+            Point2::ORIGIN,
+            vec![
+                EntityRecord::new(line(0.0, 5.0, 10.0, 5.0), blue),
+                EntityRecord::new(
+                    BlockReferenceEntity::new(inner, Point2::ORIGIN, 1.0, 0.0),
+                    Properties::default(),
+                ),
+            ],
+        ))
+        .unwrap();
+    tx.insert(BlockReferenceEntity::new(outer, Point2::ORIGIN, 1.0, 0.0))
+        .unwrap();
+    tx.commit();
+    let (fill, line_at) = order(&drawing);
+    assert!(fill < line_at, "a nested fill is painted over the line");
+
+    // Across entities of one tier: a line, then a reference to a fill.
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    tx.insert_with(line(0.0, 5.0, 10.0, 5.0), blue).unwrap();
+    let block = tx
+        .define_block(Block::new(
+            "Fill",
+            Point2::ORIGIN,
+            vec![EntityRecord::new(square(0.0), red)],
+        ))
+        .unwrap();
+    tx.insert(BlockReferenceEntity::new(block, Point2::ORIGIN, 1.0, 0.0))
+        .unwrap();
+    tx.commit();
+    let (fill, line_at) = order(&drawing);
+    assert!(
+        fill < line_at,
+        "a reference's fill is painted over another's line"
+    );
+
+    // A multileader's block note, its fill beside a line of the tier.
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    tx.insert_with(line(20.0, 15.0, 40.0, 15.0), blue).unwrap();
+    let tag = tx
+        .define_block(Block::new(
+            "Tag",
+            Point2::ORIGIN,
+            vec![EntityRecord::new(square(0.0), red)],
+        ))
+        .unwrap();
+    let note = MLeaderContent::Block {
+        block: tag,
+        scale: 1.0,
+    };
+    tx.insert(MLeaderEntity::new(p(0.0, 0.0), p(20.0, 10.0), note))
+        .unwrap();
+    tx.commit();
+    let (fill, line_at) = order(&drawing);
+    assert!(fill < line_at, "a note's fill is painted over the line");
 }

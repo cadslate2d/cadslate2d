@@ -95,7 +95,11 @@ pub fn stated(prompt: &str) -> Stated {
         if *c != ':' || i == 0 {
             continue;
         }
-        let left = i - 1 - chars[..i].iter().rev().take_while(|c| **c == ' ').count();
+        // Nothing but spaces before the colon: no number to its left (#368).
+        let spaces = chars[..i].iter().rev().take_while(|c| **c == ' ').count();
+        let Some(left) = i.checked_sub(1 + spaces) else {
+            continue;
+        };
         let right = i + 1 + chars[i + 1..].iter().take_while(|c| **c == ' ').count();
         if right >= chars.len() || !chars[left].is_ascii_digit() || !chars[right].is_ascii_digit() {
             continue;
@@ -241,6 +245,32 @@ fn departed(intent: &Intent, stated: &Stated) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #368: a colon with only spaces before it reads no scale, and does
+    /// not panic.
+    #[test]
+    fn a_colon_with_nothing_before_it_but_spaces_is_no_scale() {
+        for text in [" :5", "  :50", ":50", " : 50", "   :"] {
+            assert!(stated(text).scales.is_empty(), "{text:?}");
+        }
+        assert_eq!(stated(" 1:50").scales, vec![1.0 / 50.0]);
+    }
+
+    proptest::proptest! {
+        /// `stated` reads a request, a sheet's texts, and a model's checks:
+        /// any text is read without a panic (#368).
+        #[test]
+        fn any_text_is_read_without_a_panic(text in "\\PC{0,40}") {
+            let _ = stated(&text);
+        }
+
+        /// Spaces, colons, and digits: what a scale is made of, in any
+        /// order — a colon first among them.
+        #[test]
+        fn any_run_of_spaces_colons_and_digits_is_read_without_a_panic(text in "[ :0-9.]{0,12}") {
+            let _ = stated(&text);
+        }
+    }
 
     #[test]
     fn the_paper_and_scales_a_request_names_are_read_and_slopes_are_not() {

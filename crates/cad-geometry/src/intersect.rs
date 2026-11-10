@@ -332,7 +332,7 @@ impl Primitive {
 /// Whether `point` — already known to be on the segment's line, because
 /// that is how it was computed — is on the segment: between its ends, or
 /// within the tolerance of one.
-fn on_segment(segment: &Segment, point: Point2) -> bool {
+pub(crate) fn on_segment(segment: &Segment, point: Point2) -> bool {
     let direction = segment.end - segment.start;
     let length = direction.length();
     let along = (point - segment.start).dot(direction) / (length * length);
@@ -347,7 +347,7 @@ fn on_segment(segment: &Segment, point: Point2) -> bool {
 /// nearly straight arc the centre is millions of units away, and at that
 /// range a coordinate cannot be told apart from its neighbour a nanometre
 /// off: the check would reject points for the arithmetic's noise.
-fn on_arc(arc: &Arc, point: Point2) -> bool {
+pub(crate) fn on_arc(arc: &Arc, point: Point2) -> bool {
     let offset = point - arc.center;
     let tolerance = LINEAR.around(&[point, arc.center]).at_magnitude(arc.radius);
     arc.contains_angle(offset.y.atan2(offset.x))

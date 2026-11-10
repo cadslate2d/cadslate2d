@@ -26,8 +26,9 @@ use crate::{Command, CommandContext, CommandInput, OverlayItem, Prompt, Step};
 
 const DIAMETER: Keyword = Keyword::new("Diameter");
 const MEASURE: Keyword = Keyword::new("Measure");
-/// The most items an array along a path or over a grid makes.
-const ITEM_LIMIT: usize = 10_000;
+/// The most items an array makes — along a path, over a grid, or ARRAY's
+/// rows by columns or round a centre — the original counted (#386).
+pub(super) const ITEM_LIMIT: usize = 10_000;
 
 /// A curve picked for a tangency: the object, the curve its piece nearest
 /// the pick lies on — a line as the whole line, an arc as its circle —
@@ -445,7 +446,7 @@ impl ArrayPathCommand {
     /// path, evenly round a closed one.
     fn spread(path: &Path, count: usize) -> Vec<f64> {
         let length = path.length();
-        let gaps = if path.closed { count } else { count - 1 };
+        let gaps = if path.closes() { count } else { count - 1 };
         (0..count)
             .map(|k| length * k as f64 / gaps as f64)
             .collect()
@@ -458,7 +459,7 @@ impl ArrayPathCommand {
         (0..)
             .map(|k| k as f64 * spacing)
             .take_while(|d| {
-                if path.closed {
+                if path.closes() {
                     *d < length - spacing * 1e-9
                 } else {
                     *d <= room
@@ -508,8 +509,9 @@ impl ArrayPathCommand {
         for (index, item) in moved.into_iter().enumerate() {
             for (source, entity) in item {
                 if index == 0 {
+                    // Moved whole to the first place, like MOVE.
                     transaction
-                        .replace(source, entity)
+                        .replace_whole(source, entity)
                         .expect("the selection is live");
                     items.push(source);
                 } else {
@@ -729,7 +731,8 @@ impl ArrayGridCommand {
                 }
             }
         }
-        if offsets.len() > ITEM_LIMIT {
+        // The copies and the selection's own place: the original counted.
+        if offsets.len() >= ITEM_LIMIT {
             return Err(format!(
                 "That would be more than {ITEM_LIMIT} items: a larger spacing."
             ));

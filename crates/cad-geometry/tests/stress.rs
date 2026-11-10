@@ -20,7 +20,9 @@ use std::f64::consts::{PI, TAU};
 
 use cad_core::tolerance::LinearTolerance;
 use cad_core::{Point2, Vec2};
-use cad_geometry::intersect::{circle_circle, line_circle, line_line, segment_segment};
+use cad_geometry::intersect::{
+    circle_circle, line_circle, line_line, segment_arc, segment_segment,
+};
 use cad_geometry::{
     Arc, ArcJoinError, Circle, Corner, JoinedArcs, Path, PathSpan, Primitive, Segment, break_arc,
     break_segment, distance_to_line, extend_segment, fillet_curves, join_arcs, join_segments,
@@ -408,6 +410,43 @@ proptest! {
         }
     }
 
+    /// #379: a cutting edge through the curve's own end divides nothing,
+    /// however far from the origin — the crossing computed there lies a
+    /// few spacings of the numbers off the end, and is the end. A line cut
+    /// at a slant, an arc cut radially.
+    #[test]
+    fn a_cutter_through_an_end_divides_nothing_however_far_from_the_origin(
+        frame in frame(), direction in 0.0..TAU, slant in 0.3..(PI - 0.3),
+        radius in 1.0..100f64, sweep in 0.2..6.0f64,
+    ) {
+        let along = unit(direction);
+        let start = frame.place(0.0, 0.0);
+        let line = Segment::new(start, start + along * frame.length(37.3));
+        let across = unit(direction + slant);
+        let cutter = Segment::new(
+            line.end - across * frame.length(500.0),
+            line.end + across * frame.length(700.0),
+        );
+        if let Some(cut) = segment_segment(&line, &cutter) {
+            let pick = start + along * frame.length(10.0);
+            prop_assert!(trim_segment_parts(&line, &[cut], pick, TOLERANCE).is_none(), "{:?}", cut);
+        }
+
+        let arc = Arc::new(start, frame.length(radius), direction, sweep);
+        let end = arc.end_point();
+        let radial = unit(direction + sweep);
+        let cutter = Segment::new(
+            end - radial * frame.length(radius * 0.5),
+            end + radial * frame.length(500.0),
+        );
+        let cuts = segment_arc(&cutter, &arc);
+        let pick = arc.point_at(direction + sweep * 0.2);
+        prop_assert!(
+            trim_arc_parts(&arc, cuts.as_slice(), pick, TOLERANCE).is_none(),
+            "{:?}", cuts.as_slice()
+        );
+    }
+
     // ── EXTEND ──
 
     /// A line extended to a boundary — at any angle, down to a hair from
@@ -430,7 +469,14 @@ proptest! {
         ));
         let slack = frame.slack(2e4);
 
-        if let Some(extended) = extend_segment(&line, true, &[boundary], TOLERANCE) {
+        let result = extend_segment(&line, true, &[boundary], TOLERANCE);
+        // A boundary crossing at a real angle is reached, however far from
+        // the origin (#380); only a crossing a hair from parallel may be
+        // refused.
+        if slant.sin().abs() > 0.04 {
+            prop_assert!(result.is_some(), "a boundary straight ahead is reached");
+        }
+        if let Some(extended) = result {
             prop_assert_eq!(extended.start, line.start, "the other end is untouched");
             prop_assert!(extended.end.is_finite());
             prop_assert!(extended.distance_to_point(line.end) <= slack, "it still passes through its old end");

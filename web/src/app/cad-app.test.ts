@@ -93,6 +93,8 @@ class FakeFiles implements FileAccess {
   /** What was written back to a target. */
   written: { name: string; text: string; bytes?: Uint8Array }[] = [];
   writeAnswer = true;
+  /** What the browser throws when it is asked to write: a full disk, say (#410). */
+  refusal: Error | undefined;
 
   open(): Promise<PickedFile | undefined> {
     this.picks += 1;
@@ -105,6 +107,7 @@ class FakeFiles implements FileAccess {
     mimeType: string,
     format?: string,
   ): Promise<FileTarget | undefined> {
+    if (this.refusal) return Promise.reject(this.refusal);
     const text = textOf(content);
     const bytes = typeof content === "string" ? undefined : content;
     this.saved.push({ name, text, bytes, mimeType, format });
@@ -112,6 +115,7 @@ class FakeFiles implements FileAccess {
   }
 
   write(target: FileTarget, content: FileContent): Promise<boolean> {
+    if (this.refusal) return Promise.reject(this.refusal);
     if (!this.writeAnswer) return Promise.resolve(false);
     const text = textOf(content);
     const bytes = typeof content === "string" ? undefined : content;
@@ -419,6 +423,74 @@ describe("export", () => {
 
 // DESIGN §25.3: where the browser can write back to a file, SAVE does; elsewhere, a download.
 describe("saving to a file", () => {
+  test("a file that cannot be opened is not the drawing's file, and the kept drawing stays unexported (#406)", async () => {
+    const { app, host, tick, enter, segmentCount } = harness();
+    host.files.writesBack = true;
+    enter("L", "0,0", "10,0", "");
+    await tick();
+    host.confirmAnswer = true;
+    host.files.fileToPick = {
+      name: "bad.dxf",
+      bytes: encode("not a drawing"),
+      target: { name: "bad.dxf" },
+    };
+    enter("OPEN");
+    await tick();
+    await tick();
+    expect(app.ui.getSnapshot().log.at(-1)).toMatch(/^Cannot open bad\.dxf/);
+    expect(segmentCount()).toBe(1);
+    expect(app.ui.getSnapshot()).toMatchObject({ documentName: undefined, unsavedChanges: true });
+    expect(host.autosave.record?.exported).not.toBe(true);
+
+    // Saved, it asks where: the file that could not be read is untouched.
+    enter("SAVE");
+    await tick();
+    expect(host.files.written.map((write) => write.name)).not.toContain("bad.dxf");
+    expect(host.files.saved.map((save) => save.name)).toEqual(["drawing.dxf"]);
+  });
+
+  test("a file the browser refuses to write is said in the log, and the drawing stays unsaved (#410)", async () => {
+    const { app, host, tick, enter } = harness();
+    host.files.writesBack = true;
+    host.files.fileToPick = {
+      name: "plan.dxf",
+      bytes: encode(cleanFile),
+      target: { name: "plan.dxf" },
+    };
+    enter("OPEN");
+    await tick();
+    enter("L", "0,0", "10,0", "");
+    await tick();
+    const log = () => app.ui.getSnapshot().log;
+
+    host.files.refusal = new DOMException("disk full", "QuotaExceededError");
+    const traced = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    for (const command of ["DXFOUT", "SAVE"]) {
+      enter(command);
+      await tick();
+      await tick();
+      expect(log().at(-1), command).toBe("The drawing was not saved: disk full.");
+      expect(app.ui.getSnapshot().unsavedChanges, command).toBe(true);
+    }
+    expect(host.files.written).toHaveLength(0);
+
+    host.files.refusal = new DOMException("The request is not allowed.", "NotAllowedError");
+    enter("PLOT", "A3", "E", "1:2", "Y", "M");
+    await tick();
+    await tick();
+    expect(log().at(-1)).toBe("The plot was not saved: The request is not allowed.");
+    // Each refusal also keeps its trace in the console.
+    expect(traced).toHaveBeenCalledTimes(3);
+    traced.mockRestore();
+
+    // The browser writes again: so does SAVE.
+    host.files.refusal = undefined;
+    enter("SAVE");
+    await tick();
+    expect(host.files.written.map((write) => write.name)).toEqual(["plan.dxf"]);
+    expect(app.ui.getSnapshot().unsavedChanges).toBe(false);
+  });
+
   test("with write-back: OPEN keeps the file, SAVE writes to it, SAVEAS asks and switches", async () => {
     const { app, host, tick, enter } = harness();
     host.files.writesBack = true;
@@ -936,6 +1008,60 @@ describe("the autosave in slices", () => {
     expect(kept).toContain("CIRCLE");
     expect(kept.split("\nAcDbLine\n").length - 1).toBe(SNAPSHOT_SLICE + 1);
     expect(app.ui.getSnapshot().unsavedChanges).toBe(true);
+  });
+
+  test("a save while the autosave is in slices leaves the drawing kept as exported (#407)", async () => {
+    const { app, host, tick, timers, enter, decode } = harness();
+    await tick();
+    enter("L");
+    for (let i = 0; i <= SNAPSHOT_SLICE + 1; i += 1) enter(`${i},0`);
+    enter("");
+    await tick();
+    // The pause ends: the autosave's first slice runs and schedules the next.
+    timers.splice(0).forEach((timer) => timer.callback());
+    expect(timers.map((timer) => timer.ms)).toEqual([0]);
+
+    // Saved now, before the autosave's slices are done.
+    enter("DXFOUT");
+    await tick();
+    for (let round = 0; round < 100 && timers.length > 0; round += 1) {
+      timers.splice(0).forEach((timer) => timer.callback());
+      await tick();
+    }
+    await tick();
+    expect(host.files.saved).toHaveLength(1);
+    expect(app.ui.getSnapshot().unsavedChanges).toBe(false);
+    expect(host.autosave.record?.exported, "a file holds the drawing").toBe(true);
+    expect((decode(host.autosave.record) ?? "").split("\nAcDbLine\n").length - 1).toBe(
+      SNAPSHOT_SLICE + 1,
+    );
+  });
+
+  test("an edit after the save, before the waiting keep runs, is kept as not exported (#407)", async () => {
+    const { app, host, tick, timers, enter, decode } = harness();
+    await tick();
+    enter("L");
+    for (let i = 0; i <= SNAPSHOT_SLICE + 1; i += 1) enter(`${i},0`);
+    enter("");
+    await tick();
+    timers.splice(0).forEach((timer) => timer.callback());
+    expect(timers.map((timer) => timer.ms)).toEqual([0]);
+
+    // Saved during the autosave's slices; then, before its keep runs, a
+    // circle the file does not hold.
+    enter("DXFOUT");
+    await tick();
+    enter("C", "10,10", "5");
+    for (let round = 0; round < 100 && timers.length > 0; round += 1) {
+      timers.splice(0).forEach((timer) => timer.callback());
+      await tick();
+    }
+    await tick();
+    expect(host.files.saved).toHaveLength(1);
+    expect(host.files.saved[0]?.text).not.toContain("CIRCLE");
+    expect(app.ui.getSnapshot().unsavedChanges).toBe(true);
+    expect(host.autosave.record?.exported, "no file holds the circle").toBe(false);
+    expect(decode(host.autosave.record)).toContain("CIRCLE");
   });
 });
 

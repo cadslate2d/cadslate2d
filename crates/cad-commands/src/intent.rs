@@ -13,7 +13,7 @@ use cad_intent::{Answer, Compiled, Intent, Pick, Step, Targets};
 
 use cad_input::InputKind;
 
-use crate::{Dirty, KeyAction, Modifiers, PointerButton, Session};
+use crate::{Dirty, Modifiers, PointerButton, Session};
 
 /// What stopped an operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -274,10 +274,11 @@ impl Session {
         // The slate is clean: no command in progress, and no selection the
         // command would take as its objects unless the operation names one.
         if self.command_active() {
-            self.key(KeyAction::Escape);
+            self.cancel_active();
         }
         let log_from = self.log_total();
         let revision = self.drawing().revision();
+        let commits = self.drawing().commits();
         let first_new = self.drawing().next_entity_id();
         // An operation that acts on no objects and makes none — a layer, a
         // setting — leaves the selection as it was, so "the selection"
@@ -288,20 +289,17 @@ impl Session {
             .iter()
             .any(|step| matches!(step, Step::Select(_) | Step::SelectView(_) | Step::Pick(_)));
         let result = self.run_steps(compiled, scale, views, place);
-        let log_lines = self.log_since(log_from);
         // The command's own words for what it refused: the last line it
         // wrote that is a sentence, not the echo of a prompt and answer.
-        // While it is still asking, a sentence (ending in a period) is the
-        // one way to tell a refusal from a plain echo.
-        let reason = log_lines
-            .iter()
+        let reason = self
+            .log_since(log_from)
+            .into_iter()
             .rev()
-            .find(|line| line.ends_with('.') && !line.starts_with("Command:"))
-            .cloned();
+            .find(|line| line.ends_with('.') && !line.starts_with("Command:"));
         let changed = self.drawing().revision() != revision;
         if self.command_active() {
             let prompt = self.prompt();
-            self.key(KeyAction::Escape);
+            self.cancel_active();
             return Err(result.err().unwrap_or(match reason {
                 Some(reason) => RunError::Refused {
                     operation,
@@ -317,17 +315,11 @@ impl Session {
         }
         result?;
         // A command that goes on after a refusal — OFFSET, TRIM, EXTEND ask
-        // for the next object — ends having changed nothing, and said why.
-        // Once it is no longer asking, nothing is echoed after that last
-        // line, so it is the reason even without a period: a
-        // `TransactionError`'s `Display` has none (#369).
-        let reason = reason.or_else(|| {
-            log_lines
-                .last()
-                .filter(|line| !line.starts_with("Command:"))
-                .cloned()
-        });
-        if let (false, Some(reason)) = (changed, reason) {
+        // for the next object — ends having committed nothing, and said
+        // why. One that committed what was already so — a setting to its
+        // value — changed nothing, and was not refused (#434).
+        let committed = self.drawing().commits() != commits;
+        if let (false, false, Some(reason)) = (changed, committed, reason) {
             return Err(RunError::Refused {
                 operation,
                 command,

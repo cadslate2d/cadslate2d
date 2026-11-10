@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 
+use cad_core::tolerance::{LinearTolerance, ParametricTolerance};
 use cad_core::{Aabb, EntityId, LengthUnit, PixelTolerance, Point2, ScreenPoint, View};
 use cad_document::{
     Color, Drawing, Entity, FOREGROUND_INDEX, Layout, LayoutId, Paint, Revision, ViewportEntity,
@@ -249,6 +250,16 @@ impl Default for Session {
     }
 }
 
+/// What a proposal's run read of the session besides the drawing and the
+/// space: see [`Session::run_context`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunContext {
+    view: View,
+    selection: Selection,
+    toggles: Toggles,
+    settings: DraftingSettings,
+}
+
 impl Session {
     /// A session on an empty drawing.
     pub fn new() -> Self {
@@ -338,11 +349,45 @@ impl Session {
     /// run a proposal against (#254).
     pub(crate) fn scratch(&self) -> Session {
         let mut scratch = Session::with_drawing(self.drawing.clone()).with_toggles(self.toggles);
-        scratch.settings = self.settings;
-        scratch.view = self.view.clone();
         scratch.space = self.space;
-        scratch.selection = self.selection.clone();
+        let context = self.run_context();
+        scratch.settings = context.settings;
+        scratch.view = context.view;
+        scratch.selection = context.selection;
         scratch
+    }
+
+    /// What an intent's run reads of the session besides the drawing and
+    /// the space (#433): the view a pick is a click in, the selection an
+    /// operation on "the selection" takes, the aids and settings a point
+    /// goes through. A proposal is computed with it, and Accept runs with
+    /// it again, so what is committed is what was shown.
+    pub(crate) fn run_context(&self) -> RunContext {
+        RunContext {
+            view: self.view.clone(),
+            selection: self.selection.clone(),
+            toggles: self.toggles,
+            settings: self.settings,
+        }
+    }
+
+    /// Runs `run` with `context` in place of the session's own: the view,
+    /// the aids, and the settings given back after it, the selection left
+    /// as `run` leaves it.
+    pub(crate) fn with_run_context<T>(
+        &mut self,
+        context: &RunContext,
+        run: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let view = std::mem::replace(&mut self.view, context.view.clone());
+        let toggles = std::mem::replace(&mut self.toggles, context.toggles);
+        let settings = std::mem::replace(&mut self.settings, context.settings);
+        self.selection = context.selection.clone();
+        let result = run(self);
+        self.view = view;
+        self.toggles = toggles;
+        self.settings = settings;
+        result
     }
 
     pub(crate) fn proposal_ref(&self) -> &Option<Proposal> {
@@ -357,12 +402,26 @@ impl Session {
         self.proposal.take()
     }
 
+    /// Opens an undo group of the session's own — a proposal's (#254) —
+    /// never inside a command's, whose closing would merge what came
+    /// before into it (#371): end the command first, with
+    /// `cancel_active`.
     pub(crate) fn begin_undo_group(&mut self) {
+        debug_assert!(
+            self.active.is_none(),
+            "an undo group opened while a command is active nests in the command's"
+        );
         self.drawing.begin_group();
     }
 
     pub(crate) fn end_undo_group(&mut self) {
         self.drawing.end_group();
+    }
+
+    /// Takes back everything committed in the open undo group, which is
+    /// then empty: nothing of it can be redone.
+    pub(crate) fn roll_back_undo_group(&mut self) {
+        while self.drawing.rollback_last_in_group().is_some() {}
     }
 
     /// Whether a command is in progress.
@@ -427,7 +486,19 @@ impl Session {
             return None;
         }
         // Nothing is offered on an object a click would not take.
-        self.pick(cursor).filter(|id| !self.drawing.is_locked(*id))
+        self.pick(cursor).filter(|id| self.would_take(*id))
+    }
+
+    /// Whether a click would give the active command `entity`: nothing
+    /// acts on an object on a locked layer, but a command may change the
+    /// layer itself (#213). The hover highlight and the click both ask
+    /// here, so they agree (#378).
+    fn would_take(&self, entity: EntityId) -> bool {
+        !self.drawing.is_locked(entity)
+            || self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.command.picks_locked_objects())
     }
 
     /// The grip being dragged, if a grip edit is in progress.
@@ -745,7 +816,7 @@ impl Session {
             });
         }
         items.extend(self.selection.iter().map(OverlayItem::Highlight));
-        if let Some(proposal) = &self.proposal {
+        if let Some(proposal) = self.proposal() {
             proposal.overlay(&mut items);
         }
         self.constraint_overlay(&mut items);
@@ -837,10 +908,22 @@ impl Session {
     /// The canvas changed size, in CSS pixels.
     pub fn resize(&mut self, width: f64, height: f64) -> Dirty {
         self.view.resize(width, height);
+        // The paper behind the viewport worked through is on the same
+        // canvas: it keeps its size with the model's view, or the frame's
+        // centre is read through a canvas that is gone when the viewport
+        // takes the view back, and PSPACE restores the old size (#374).
+        // Both keep their centres and scales, so the viewport shows what
+        // it showed.
+        if let Some(through) = self.through.as_mut() {
+            through.paper_view.resize(width, height);
+        }
         Dirty::VIEW | Dirty::OVERLAY
     }
 
     pub fn pointer_move(&mut self, at: ScreenPoint, _modifiers: Modifiers) -> Dirty {
+        if !on_screen(at) {
+            return Dirty::NONE;
+        }
         self.cursor = Some(at);
         if self.rested_at != Some(at) {
             self.rested_at = None;
@@ -905,6 +988,9 @@ impl Session {
         button: PointerButton,
         modifiers: Modifiers,
     ) -> Dirty {
+        if !on_screen(at) {
+            return Dirty::NONE;
+        }
         self.cursor = Some(at);
         match button {
             PointerButton::Middle => {
@@ -935,13 +1021,7 @@ impl Session {
                     // A command acts on what it picks, and nothing acts on
                     // an object on a locked layer — but a command may
                     // change the layer itself (#213).
-                    Some(entity)
-                        if self.drawing.is_locked(entity)
-                            && !self
-                                .active
-                                .as_ref()
-                                .is_some_and(|active| active.command.picks_locked_objects()) =>
-                    {
+                    Some(entity) if !self.would_take(entity) => {
                         self.log.push(self.locked_message(entity));
                         Dirty::UI
                     }
@@ -983,6 +1063,9 @@ impl Session {
     /// opens with its words. A grip the two clicks took without moving is
     /// let go first. Anywhere else a double click is two clicks.
     pub fn double_click(&mut self, at: ScreenPoint) -> Dirty {
+        if !on_screen(at) {
+            return Dirty::NONE;
+        }
         let mut dirty = Dirty::NONE;
         if self.active_grip().is_some() && self.grip_press.is_none() {
             // The second click took the text's grip and nothing was moved:
@@ -1024,6 +1107,11 @@ impl Session {
                 self.pan_anchor = None;
                 Dirty::NONE
             }
+            // Released nowhere: a press is let go, and nothing is placed.
+            PointerButton::Primary if !on_screen(at) => {
+                self.grip_press = None;
+                Dirty::NONE
+            }
             PointerButton::Primary => {
                 // A grip that was pressed and dragged is dropped on release;
                 // one that was only clicked stays in hand until the next click.
@@ -1052,7 +1140,7 @@ impl Session {
 
     /// Wheel input at `at`. Negative `delta_y` (wheel up) zooms in about the cursor.
     pub fn wheel(&mut self, at: ScreenPoint, delta_y: f64, _modifiers: Modifiers) -> Dirty {
-        if !delta_y.is_finite() || delta_y == 0.0 {
+        if !delta_y.is_finite() || delta_y == 0.0 || !on_screen(at) {
             return Dirty::NONE;
         }
         let delta = delta_y.clamp(-MAX_WHEEL_DELTA, MAX_WHEEL_DELTA);
@@ -1103,12 +1191,27 @@ impl Session {
     /// view is the space's as it was left — a layout's first view is its
     /// sheet — and the scene is the space's. Nothing in the drawing
     /// changes. The model worked through a viewport is left as `MODEL`
-    /// leaves it: the viewport takes the view.
+    /// leaves it: the viewport takes the view; for a layout, by way of the
+    /// viewport's paper, whose view that layout keeps (#376).
     pub fn set_space(&mut self, space: LayoutId) -> Dirty {
         if !self.drawing.layouts().contains(space) {
             return self.notify("That layout does not exist.");
         }
-        let mut dirty = self.leave_viewport();
+        // From the model worked through a viewport to a layout, back onto
+        // the viewport's paper first — PSPACE (#376): what is on
+        // screen is the viewport's view, not the model's own, which stays
+        // as it was kept; the paper's view is the layout's to keep. To the
+        // model, the viewport takes the view and the session stays.
+        let mut dirty = Dirty::NONE;
+        if space == LayoutId::MODEL {
+            if let Some(through) = self.through.as_ref() {
+                self.views
+                    .insert(through.layout, through.paper_view.clone());
+            }
+            dirty |= self.leave_viewport();
+        } else if self.through.is_some() {
+            dirty |= self.back_to_paper();
+        }
         if space == self.space {
             return dirty;
         }
@@ -1204,14 +1307,21 @@ impl Session {
         let scale = self.view.scale() / paper_view.scale();
         let frame_center = paper_view.world_to_screen(window.center);
         let view_center = self.view.screen_to_world(frame_center);
+        // A view not panned or zoomed comes back a few roundings off — the
+        // centre through the frame's screen point and back — and is the
+        // same view: nothing to commit, nor a step to undo (#374).
+        let same_center = LinearTolerance::DEFAULT
+            .around(&[view_center, window.view_center])
+            .coincident(view_center, window.view_center);
+        let same_scale = ParametricTolerance::DEFAULT.eq(scale / window.scale, 1.0);
+        if same_center && same_scale {
+            return Dirty::NONE;
+        }
         let updated = ViewportEntity {
             view_center,
             scale,
             ..window
         };
-        if updated == window {
-            return Dirty::NONE;
-        }
         self.drawing.begin_group();
         let mut transaction = self.drawing.transaction();
         let dirty = match transaction.replace(through.viewport, updated) {
@@ -1241,6 +1351,8 @@ impl Session {
         self.space_epoch += 1;
         self.previous_views.clear();
         self.selection.clear();
+        self.selection_box = None;
+        self.selection_shape = None;
         dirty | Dirty::SCENE | Dirty::OVERLAY | Dirty::VIEW | Dirty::UI
     }
 
@@ -1502,6 +1614,8 @@ impl Session {
         self.active = None;
         self.selection_box = None;
         self.selection.clear();
+        // The previous selection named the other drawing's objects (#372).
+        self.previous_selection = Selection::default();
         self.last_point = Point2::ORIGIN;
         self.space = LayoutId::MODEL;
         self.space_epoch += 1;
@@ -1555,8 +1669,12 @@ impl Session {
 
     // ── internals ──
 
+    /// Where the cursor is in the drawing; nowhere when that is not a
+    /// finite point (#403), however the view came to map it so.
     fn cursor_world(&self) -> Option<Point2> {
-        self.cursor.map(|cursor| self.view.screen_to_world(cursor))
+        self.cursor
+            .map(|cursor| self.view.screen_to_world(cursor))
+            .filter(|point| point.is_finite())
     }
 
     /// The active command, if a pointer click would reach it as a point: it
@@ -1786,7 +1904,20 @@ impl Session {
         remove: bool,
         method: SelectionMethod,
     ) -> Dirty {
-        let ids = self.with_groups(ids);
+        // Only what is there to be picked can be selected: an object that
+        // exists, on a layer shown, in this space — the rule ALL and LAST
+        // follow. Remembered ids (Previous) and ids from outside (an
+        // intent) may name objects since erased, hidden, or elsewhere
+        // (#372). Removing takes out what is there whatever it is.
+        let ids: Vec<EntityId> = if remove {
+            ids.to_vec()
+        } else {
+            ids.iter()
+                .copied()
+                .filter(|id| self.drawing.is_shown_in(*id, self.space))
+                .collect()
+        };
+        let ids = self.with_groups(&ids);
         let ids = ids.as_slice();
         let locked = if remove {
             0
@@ -1989,7 +2120,11 @@ impl Session {
         Dirty::OVERLAY | Dirty::UI
     }
 
-    fn cancel_active(&mut self) -> Dirty {
+    /// Ends the active command, whatever it is in the middle of — a fence,
+    /// a box — as many Escapes as it takes would: its undo group closes,
+    /// and what it made is its own step. One Escape cancels the innermost
+    /// thing first, which may leave the command asking (#371).
+    pub(crate) fn cancel_active(&mut self) -> Dirty {
         self.selection_box = None;
         self.selection_shape = None;
         self.removing = false;
@@ -2073,12 +2208,64 @@ impl Session {
         if self.host_request.is_some() {
             dirty |= Dirty::HOST;
         }
-        dirty | self.apply_space_request()
+        dirty |= self.apply_space_request();
+        dirty | self.settle_space()
+    }
+
+    /// Keeps the session in a space the drawing has (#373): a command —
+    /// LAYOUT Delete, U, REDO — may take away the layout the session is
+    /// on or works the model through, or the viewport it works through.
+    /// The model worked through a layout that is gone stays the model; a
+    /// viewport that is gone leaves the model for its paper; a layout that
+    /// is gone leaves for the model.
+    fn settle_space(&mut self) -> Dirty {
+        let mut dirty = Dirty::NONE;
+        if let Some(through) = &self.through {
+            let layout = through.layout;
+            let viewport = through.viewport;
+            if !self.drawing.layouts().contains(layout) {
+                self.through = None;
+                self.views.remove(&layout);
+                self.log
+                    .push("The layout worked through is gone: in the model.".to_owned());
+                dirty |= Dirty::OVERLAY | Dirty::UI;
+            } else if !(matches!(self.drawing.entity(viewport), Some(Entity::Viewport(_)))
+                && self.drawing.space_of(viewport) == Some(layout))
+            {
+                let through = self.through.take().expect("checked");
+                self.view = through.paper_view;
+                self.space = layout;
+                self.space_epoch += 1;
+                self.previous_views.clear();
+                self.selection.clear();
+                self.log
+                    .push("The viewport worked through is gone: back on the paper.".to_owned());
+                dirty |= Dirty::SCENE | Dirty::OVERLAY | Dirty::VIEW | Dirty::UI;
+            }
+        }
+        let space = self.space;
+        if space != LayoutId::MODEL && !self.drawing.layouts().contains(space) {
+            dirty |= self.set_space(LayoutId::MODEL);
+            // Its view is of nothing now; a layout made again may take
+            // its ID.
+            self.views.remove(&space);
+            self.log
+                .push("The layout is gone: in the model.".to_owned());
+        }
+        dirty
     }
 }
 
 /// Pointer travel, in pixels, beyond which press-and-release is a drag.
 const DRAG_THRESHOLD: f64 = 4.0;
+
+/// Whether a point the host gives for the pointer is a place on the screen
+/// (#403): a host's bug, a layout of no size, or a synthetic event can give
+/// one that is not a number, and nothing that comes of it — a point, a
+/// pick, a pan — can be drawn, saved, or read back.
+fn on_screen(at: ScreenPoint) -> bool {
+    at.x.is_finite() && at.y.is_finite()
+}
 
 fn dragged(from: ScreenPoint, to: ScreenPoint) -> bool {
     (to.x - from.x).hypot(to.y - from.y) > DRAG_THRESHOLD

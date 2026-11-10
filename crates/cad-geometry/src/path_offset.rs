@@ -185,7 +185,7 @@ pub fn raw_offset(path: &Path, signed: f64) -> Vec<PathSpan> {
         raw.extend(span.offset(signed));
         let next = match index + 1 {
             next if next < spans.len() => Some(next),
-            _ if path.closed && spans.len() > 1 => Some(0),
+            _ if path.closes() && spans.len() > 1 => Some(0),
             _ => None,
         };
         if let Some(next) = next {

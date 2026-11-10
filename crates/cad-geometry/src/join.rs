@@ -140,7 +140,7 @@ impl Path {
             .map(|index| {
                 // Segment `index` of the result is this segment of the
                 // original, backwards. An open path has no last segment.
-                if self.closed {
+                if self.closes() {
                     -bulge((2 * count - 2 - index) % count)
                 } else if index + 1 < count {
                     -bulge(count - 2 - index)
@@ -189,7 +189,7 @@ impl Path {
 /// `paths` is taken.
 pub fn chain_paths(paths: &[Path], tolerance: LinearTolerance) -> Vec<Chain> {
     let mut free: Vec<usize> = (0..paths.len())
-        .filter(|index| !paths[*index].closed && paths[*index].vertices.len() > 1)
+        .filter(|index| !paths[*index].closes() && paths[*index].vertices.len() > 1)
         .collect();
     let mut chains = Vec::new();
     while !free.is_empty() {

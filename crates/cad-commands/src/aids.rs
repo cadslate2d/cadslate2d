@@ -56,8 +56,13 @@ impl Track {
             TrackKind::Object => "Tracking",
         };
         // Up to two decimals, without trailing zeros: 45°, 22.5°, 33.33°.
+        // An angle a hair below 360 rounds to it, and is the 0 it is (#377).
         let angle = format!("{:.2}", self.angle);
-        let angle = angle.trim_end_matches('0').trim_end_matches('.');
+        let angle = if angle == "360.00" {
+            "0"
+        } else {
+            angle.trim_end_matches('0').trim_end_matches('.')
+        };
         format!("{aid}: {:.4} < {angle}°", self.distance())
     }
 }
@@ -253,6 +258,20 @@ mod tests {
 
     fn p(x: f64, y: f64) -> Point2 {
         Point2::new(x, y)
+    }
+
+    /// #377: a tracked direction a hair below 360° reads as 0°.
+    #[test]
+    fn a_track_a_hair_below_360_reads_as_0() {
+        let track = |angle: f64| Track {
+            kind: TrackKind::Polar,
+            from: p(0.0, 0.0),
+            point: p(50.0, 0.0),
+            angle,
+        };
+        assert_eq!(track(359.999).label(), "Polar: 50.0000 < 0°");
+        assert_eq!(track(359.99).label(), "Polar: 50.0000 < 359.99°");
+        assert_eq!(track(45.0).label(), "Polar: 50.0000 < 45°");
     }
 
     #[test]

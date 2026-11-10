@@ -54,6 +54,41 @@ const TOGGLE_KEYS: Readonly<
 
 const EDITING_KEYS = new Set(["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Home", "End"]);
 
+/** Where a key was pressed, as far as the command line cares (#411). */
+export interface KeyTarget {
+  /** The command line's own input. */
+  readonly commandLine: boolean;
+  /** Another field: an input, a text area, a list, words being edited. */
+  readonly field: boolean;
+  /** Inside a dialog: its buttons and choices. */
+  readonly inDialog: boolean;
+}
+
+/** The keys a dialog's buttons and choices answer: press, and move among them. */
+const DIALOG_KEYS = new Set([
+  " ",
+  "Enter",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Home",
+  "End",
+]);
+
+/**
+ * Whether `key` is for the control it was pressed in rather than the command
+ * line (#411): every key typed in a field but Escape, which still cancels the
+ * command; and a dialog's keys on its buttons and choices, so Enter presses
+ * the button focused and the arrows move among choices. Elsewhere — the
+ * drawing, a toolbar button just clicked — keys drive the command line.
+ */
+export function keyBelongsToTarget(key: string, target: KeyTarget): boolean {
+  if (target.commandLine || key === "Escape") return false;
+  if (target.field) return true;
+  return target.inDialog && DIALOG_KEYS.has(key);
+}
+
 /**
  * @param spaceAccepts whether Space submits like Enter at the current prompt
  * @param inputEmpty   whether the command line has no text; Delete then acts on the selection

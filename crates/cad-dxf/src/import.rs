@@ -31,11 +31,14 @@ use crate::properties::{
     LAYER_FROZEN, LAYER_LOCKED, LINETYPE_BY_BLOCK, LINETYPE_BY_LAYER, color_from_dxf,
     lineweight_from_dxf, pattern_from_dxf,
 };
-use crate::text_codes::{plain_mtext, plain_text};
+use crate::text_codes::{plain_line, plain_mtext};
 use crate::{DxfError, ImportReport};
 
 /// Start of every binary DXF file.
 const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF";
+/// The UTF-8 byte order mark some writers put before the first line —
+/// ezdxf's `utf-8-sig`, Notepad — which says nothing a reader needs.
+const BYTE_ORDER_MARK: &[u8] = b"\xEF\xBB\xBF";
 /// Records that belong to the entity before them (POLYLINE vertices, INSERT
 /// attributes) and are not counted on their own.
 /// Records that follow another and are read with it: none, now that
@@ -45,6 +48,16 @@ const SUBORDINATE_RECORDS: [&str; 0] = [];
 const POLYLINE_NOT_2D: i64 = 8 | 16 | 32 | 64;
 /// Polyline flag bit: closed.
 const POLYLINE_CLOSED: i64 = 1;
+/// POLYLINE flag bits for a polyline PEDIT has fitted, by arcs (2) or by a
+/// spline (4).
+const POLYLINE_FITTED: i64 = 2 | 4;
+/// VERTEX flag bit: a control point of a spline-fit polyline's frame,
+/// which is not drawn.
+const VERTEX_SPLINE_FRAME: i64 = 16;
+/// Report key for a fitted POLYLINE (#395): kept as it is drawn — the
+/// fitted vertices, with their bulges — and its fit dropped: a spline's
+/// frame, a curve's tangents, so it can no longer be decurved.
+pub(crate) const FITTED_POLYLINE: &str = "(fitted POLYLINE kept as drawn)";
 /// Report key for supported entity types with geometry the drawing cannot hold.
 pub(crate) const INVALID: &str = "(invalid geometry)";
 /// Report keys for table rows the drawing cannot hold as written.
@@ -91,7 +104,21 @@ const NESTING_TOO_DEEP: &str = "(blocks nested too deep)";
 /// Report keys for what an INSERT carries that a reference cannot hold:
 /// the reference is imported as far as the model holds, the rest said.
 const INSERT_NON_UNIFORM: &str = "(INSERT with a non-uniform scale)";
+/// An object stored in a coordinate system tilted out of the drawing's
+/// plane (#391): its normal (210, 220, 230) is neither up nor down. It is
+/// kept as read, in its own coordinates.
+const EXTRUSION_TILTED: &str = "(extrusion out of the plane)";
+/// A text AutoCAD draws backwards — by its generation flag (71, 2), or by
+/// a normal pointing down (#391), but not both, which cancel (#398). It is
+/// placed where it stands, and read the right way round.
+const TEXT_BACKWARDS: &str = "(text drawn backwards)";
+/// A text AutoCAD draws upside down, by its generation flag (71, 4): read
+/// the right way up (#398).
+const TEXT_UPSIDE_DOWN: &str = "(text drawn upside down)";
 const INSERT_ARRAY: &str = "(INSERT array)";
+/// Report key for an XLINE or a RAY in a block's definition: a block
+/// cannot hold one, so it is left out (#415).
+const CONSTRUCTION_IN_BLOCK: &str = "(XLINE or RAY in a block)";
 /// Report key for an INSERT of a block the file never defines: not imported.
 const INSERT_UNDEFINED: &str = "(INSERT of an undefined block)";
 /// Report key for the text and shapes of a complex linetype: the dashes
@@ -184,7 +211,15 @@ pub fn import_records(
     limits: &ImportLimits,
 ) -> Result<Import, DxfError> {
     let mut reader = Reader::new(Groups::new("", limits.max_value_bytes), limits);
-    for record in records {
+    for mut record in records {
+        // A value carries what a file does: an escape for each character
+        // its code page lacks — a DWG before R2007 writes them, as AutoCAD
+        // does — read as the character, as the file's text is (#428).
+        for (_, value) in &mut record.groups {
+            if let std::borrow::Cow::Owned(decoded) = unescaped(value, |c| !c.is_control()) {
+                *value = decoded;
+            }
+        }
         match record.section {
             Section::Header => {
                 for (code, value) in &record.groups {
@@ -238,6 +273,8 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
     if bytes.starts_with(BINARY_SENTINEL) {
         return Err(DxfError::BinaryDxf);
     }
+    // A byte order mark is not part of the first group code (#396).
+    let bytes = bytes.strip_prefix(BYTE_ORDER_MARK).unwrap_or(bytes);
     let text = decoded(bytes);
 
     let mut reader = Reader::new(Groups::new(&text, limits.max_value_bytes), limits);
@@ -255,23 +292,47 @@ fn decoded(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
         Ok(text) => std::borrow::Cow::Borrowed(text),
         Err(_) => std::borrow::Cow::Owned(bytes.iter().map(|&b| windows_1252(b)).collect()),
     };
+    match text {
+        std::borrow::Cow::Borrowed(text) => unescaped(text, |c| !c.is_control()),
+        std::borrow::Cow::Owned(text) => {
+            std::borrow::Cow::Owned(unescaped(&text, |c| !c.is_control()).into_owned())
+        }
+    }
+}
+
+/// `text` with each `\U+XXXX` escape of a character `decode` takes written
+/// as that character, and the others as they are. A character beyond the
+/// first 65,536 is two escapes, a surrogate pair, as AutoCAD and our
+/// export write it (#393). Shared by the file's text, the records of
+/// another front end (#428), and the DWG writer's Unicode strings.
+pub(crate) fn unescaped(text: &str, decode: impl Fn(char) -> bool) -> std::borrow::Cow<'_, str> {
     if !text.contains("\\U+") {
-        return text;
+        return std::borrow::Cow::Borrowed(text);
+    }
+    // The UTF-16 unit an escape at the start of `text` names.
+    fn unit(text: &str) -> Option<u16> {
+        text.strip_prefix("\\U+")
+            .and_then(|rest| rest.get(..4))
+            .filter(|d| d.bytes().all(|b| b.is_ascii_hexdigit()))
+            .and_then(|d| u16::from_str_radix(d, 16).ok())
     }
     let mut out = String::with_capacity(text.len());
-    let mut rest: &str = &text;
+    let mut rest: &str = text;
     while let Some(at) = rest.find("\\U+") {
         out.push_str(&rest[..at]);
-        let digits = rest.get(at + 3..at + 7);
-        match digits
-            .filter(|d| d.bytes().all(|b| b.is_ascii_hexdigit()))
-            .and_then(|d| u32::from_str_radix(d, 16).ok())
-            .and_then(char::from_u32)
-            .filter(|c| !c.is_control())
-        {
+        let first = unit(&rest[at..]);
+        let second = rest.get(at + 7..).and_then(unit);
+        let (c, length) = match (first, second) {
+            (Some(high @ 0xD800..=0xDBFF), Some(low @ 0xDC00..=0xDFFF)) => (
+                char::decode_utf16([high, low]).next().and_then(Result::ok),
+                14,
+            ),
+            (unit, _) => (unit.and_then(|u| char::from_u32(u32::from(u))), 7),
+        };
+        match c.filter(|c| decode(*c)) {
             Some(c) => {
                 out.push(c);
-                rest = &rest[at + 7..];
+                rest = &rest[at + length..];
             }
             None => {
                 out.push_str("\\U+");
@@ -283,10 +344,17 @@ fn decoded(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
+/// Bytes in Windows-1252 — the code page of a file before 2007, and of a
+/// DWG's strings before R2007 (#399) — as the characters they are: the
+/// inverse of [`code_page`](crate::code_page) for every byte.
+pub fn from_code_page(bytes: &[u8]) -> String {
+    bytes.iter().map(|&b| windows_1252(b)).collect()
+}
+
 /// A Windows-1252 byte as its character: ASCII and Latin-1 as they are,
 /// and the twenty-seven printable characters of 0x80 to 0x9F where that
 /// code page puts them (the five it leaves undefined as Latin-1's).
-fn windows_1252(byte: u8) -> char {
+pub(crate) fn windows_1252(byte: u8) -> char {
     const HIGH: [char; 32] = [
         '\u{20AC}', '\u{81}', '\u{201A}', '\u{192}', '\u{201E}', '\u{2026}', '\u{2020}',
         '\u{2021}', '\u{2C6}', '\u{2030}', '\u{160}', '\u{2039}', '\u{152}', '\u{8D}', '\u{17D}',
@@ -844,6 +912,22 @@ fn polyline_width(constant: Option<f64>, starts: &[f64], ends: &[f64]) -> (f64, 
     (first, false)
 }
 
+/// Which way an object's coordinate system faces (#391), from its normal
+/// (210, 220, 230). AutoCAD writes a mirrored arc, circle, text, polyline,
+/// or reference with its normal pointing down, its X axis then running the
+/// other way: the object is the reflection, across the Y axis, of what its
+/// coordinates say.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Facing {
+    /// Up, (0, 0, 1), or not given: the coordinates are the world's.
+    #[default]
+    Up,
+    /// Down, (0, 0, -1): the world's X is the negative of the object's.
+    Down,
+    /// Out of the plane: no reflection or turn in the plane makes it.
+    Tilted,
+}
+
 /// Collects a polyline that may span several records.
 #[derive(Debug, Default)]
 struct PolylineBuilder {
@@ -861,6 +945,8 @@ struct PolylineBuilder {
     /// Not a 2D polyline at all (mesh, 3D polyline): already reported; its
     /// vertices are swallowed.
     unsupported: bool,
+    /// Which way the polyline's coordinate system faces (#391).
+    facing: Facing,
     properties: Pending,
 }
 
@@ -1192,27 +1278,45 @@ impl<'a> Reader<'a> {
                 self.import(Entity::Point(point), body)?;
             }
             (_, "CIRCLE") if entities => match body.circle(record.line)? {
-                Some(circle) => self.import(Entity::Circle(circle), body)?,
+                Some(circle) => {
+                    let circle = self.in_world(Entity::Circle(circle), body.facing());
+                    self.import(circle, body)?;
+                }
                 None => self.report.count_unsupported(INVALID),
             },
             (_, "ARC") if entities => match body.arc(record.line)? {
-                Some(arc) => self.import(Entity::Arc(arc), body)?,
+                Some(arc) => {
+                    let arc = self.in_world(Entity::Arc(arc), body.facing());
+                    self.import(arc, body)?;
+                }
                 None => self.report.count_unsupported(INVALID),
             },
             (_, "ELLIPSE") if entities => match body.ellipse(record.line)? {
-                Some(ellipse) => self.import(Entity::Ellipse(ellipse), body)?,
+                Some(ellipse) => {
+                    let ellipse = self.ellipse_in_world(ellipse, body.facing());
+                    self.import(Entity::Ellipse(ellipse), body)?;
+                }
                 None => self.report.count_unsupported(INVALID),
             },
             (_, "TEXT") if entities => {
-                let (text, dropped) = body.text(record.line)?;
+                let Some((text, anchor, dropped)) = body.text(record.line)? else {
+                    self.report.count_unsupported(INVALID);
+                    return Ok(());
+                };
                 let mut pending = body.pending();
                 pending.dropped |= dropped;
-                self.push(Entity::Text(text), pending)?;
+                let rotation = text.rotation;
+                let text = self.text_in_world(Entity::Text(text), anchor, rotation, body);
+                self.push(text, pending)?;
             }
             // An attribute definition (#183): a text with a tag (2), a
             // prompt (3), and flags (70); its words are the default.
             (_, "ATTDEF") if entities => {
-                let (text, dropped) = body.text(record.line)?;
+                let Some((text, anchor, dropped)) = body.text(record.line)? else {
+                    self.report.count_unsupported(INVALID);
+                    return Ok(());
+                };
+                let rotation = text.rotation;
                 let mut pending = body.pending();
                 pending.dropped |= dropped;
                 let mut definition = AttributeDefinitionEntity::new(
@@ -1221,17 +1325,34 @@ impl<'a> Reader<'a> {
                     text,
                 );
                 definition.invisible = body.flags & 1 != 0;
-                self.push(Entity::AttributeDefinition(definition), pending)?;
+                let definition = self.text_in_world(
+                    Entity::AttributeDefinition(definition),
+                    anchor,
+                    rotation,
+                    body,
+                );
+                self.push(definition, pending)?;
             }
             // An attribute (#183): the value (1) its tag (2) has on the
             // INSERT just read, which it follows until SEQEND.
             (_, "ATTRIB") if entities => {
                 let tag = body.name.clone().unwrap_or_default();
-                let (value, _) = plain_text(body.text.as_deref().unwrap_or(""));
+                let (value, _) = plain_line(body.text.as_deref().unwrap_or(""));
                 self.attach_attribute(&tag, &value);
             }
             (_, "MTEXT") if entities => {
-                let (text, formatting) = body.mtext(record.line)?;
+                let Some((text, formatting)) = body.mtext(record.line)? else {
+                    self.report.count_unsupported(INVALID);
+                    return Ok(());
+                };
+                // Its insertion and any direction (11, 21) are the world's;
+                // a rotation alone is turned in `mtext` (#391). Facing down,
+                // AutoCAD draws it backwards.
+                match body.facing() {
+                    Facing::Up => {}
+                    Facing::Down => self.report.count_unsupported(TEXT_BACKWARDS),
+                    Facing::Tilted => self.report.count_unsupported(EXTRUSION_TILTED),
+                }
                 if formatting {
                     self.report.formatting_dropped += 1;
                 }
@@ -1252,6 +1373,11 @@ impl<'a> Reader<'a> {
                     RayEntity::new(base, direction).map(Entity::Ray)
                 };
                 match entity {
+                    // A block is placed as geometry with bounds, which a
+                    // construction line has not (#415).
+                    Some(_) if matches!(self.open_block, Some(OpenBlock::User(_))) => {
+                        self.report.count_unsupported(CONSTRUCTION_IN_BLOCK);
+                    }
                     Some(entity) => self.import(entity, body)?,
                     None => self.report.count_unsupported(INVALID),
                 }
@@ -1292,6 +1418,7 @@ impl<'a> Reader<'a> {
                     constant_width: body.constant_width,
                     start_widths: body.start_widths.clone(),
                     end_widths: body.end_widths.clone(),
+                    facing: body.facing(),
                 };
                 self.finish_polyline(builder)?;
             }
@@ -1299,12 +1426,15 @@ impl<'a> Reader<'a> {
                 let unsupported = body.flags & POLYLINE_NOT_2D != 0;
                 if unsupported {
                     self.report.count_unsupported("POLYLINE");
+                } else if body.flags & POLYLINE_FITTED != 0 {
+                    self.report.count_unsupported(FITTED_POLYLINE);
                 }
                 // A POLYLINE's own 40 and 41 are the default widths of
                 // its vertices.
                 self.open_polyline = Some(PolylineBuilder {
                     closed: body.flags & POLYLINE_CLOSED != 0,
                     unsupported,
+                    facing: body.facing(),
                     properties: body.pending(),
                     constant_width: match (body.radius, body.width) {
                         (Some(start), Some(end)) if (start - end).abs() < f64::EPSILON => {
@@ -1318,10 +1448,13 @@ impl<'a> Reader<'a> {
                 });
             }
             (_, "VERTEX") if entities => {
+                // A spline frame's control point is not on the curve
+                // drawn; the vertices that are come with it (#395).
                 let open = self
                     .open_polyline
                     .as_mut()
-                    .filter(|polyline| !polyline.unsupported);
+                    .filter(|polyline| !polyline.unsupported)
+                    .filter(|_| body.flags & VERTEX_SPLINE_FRAME == 0);
                 if let Some(polyline) = open {
                     polyline
                         .vertices
@@ -1462,7 +1595,8 @@ impl<'a> Reader<'a> {
         };
         let mut pending = body.pending();
         pending.block = Some(name);
-        self.push(Entity::BlockRef(reference), pending)
+        let reference = self.in_world(Entity::BlockRef(reference), body.facing());
+        self.push(reference, pending)
     }
 
     /// A row of the LAYER table. Its name must be one a layer can have; the
@@ -1565,7 +1699,10 @@ impl<'a> Reader<'a> {
     /// (4) from the centre (10) and the point on the circle (15); the
     /// angle at a vertex (5) from the vertex (15), the points (13, 14), and
     /// the arc's (10). Where the text is (11) places a radius or diameter.
-    /// The text (1) is the drafter's unless empty or `<>`; the text's angle
+    /// The text (1) is the drafter's unless empty or `<>`, its codes
+    /// decoded as an MTEXT's and its lines — `\X` puts some under the
+    /// dimension line — run into one, `<>` in it standing for the value
+    /// (#418); the text's angle
     /// (53) is a turn away from where it would read on its own. The style
     /// is named (3) and made if the file did not define it; the anonymous
     /// block is not read, the layout engine drawing the dimension afresh
@@ -1635,9 +1772,21 @@ impl<'a> Reader<'a> {
             self.report.count_unsupported(INVALID);
             return Ok(());
         };
-        match body.text.as_deref().map(str::trim) {
-            None | Some("") | Some("<>") => {}
-            Some(words) => dimension.text_override = Some(words.to_owned()),
+        let (words, dropped) = plain_mtext(body.text.as_deref().unwrap_or(""));
+        let lines: Vec<&str> = words
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        // Words under the dimension line, or on a line of their own, are
+        // run into the one line: a layout the drawing does not hold.
+        let split = lines.len() > 1;
+        let words = lines.join(" ");
+        if dropped || split {
+            self.report.formatting_dropped += 1;
+        }
+        if !words.is_empty() && words != "<>" {
+            dimension.text_override = Some(words);
         }
         if let Some(turn) = body.text_rotation
             && turn != 0.0
@@ -1673,6 +1822,11 @@ impl<'a> Reader<'a> {
             self.report.count_unsupported(key);
         }
         let hatch = HatchEntity::solid(read.loops).styled(read.style.unwrap_or(HatchStyle::Solid));
+        // Its boundary is in its coordinate system (#391); its pattern's
+        // angle and origin turn with it.
+        let Entity::Hatch(hatch) = self.in_world(Entity::Hatch(hatch), body.facing()) else {
+            unreachable!("a hatch stays a hatch")
+        };
         match hatch.check() {
             Ok(()) => self.push(Entity::Hatch(hatch), body.pending()),
             // A pattern too fine to draw is filled solid instead.
@@ -1910,6 +2064,131 @@ impl<'a> Reader<'a> {
         Ok(styles)
     }
 
+    /// An entity read in its object's coordinate system, in the world's
+    /// (#391): as it is when the system faces up, reflected across the Y
+    /// axis when it faces down — a mirrored arc's ends trade places, a
+    /// reference is mirrored — and kept as read, reported, when it is
+    /// tilted out of the plane. A text facing down is drawn backwards by
+    /// AutoCAD; it is placed so and read the right way round, reported.
+    fn in_world(&mut self, entity: Entity, facing: Facing) -> Entity {
+        match facing {
+            Facing::Up => entity,
+            Facing::Tilted => {
+                self.report.count_unsupported(EXTRUSION_TILTED);
+                entity
+            }
+            Facing::Down => {
+                let across_y =
+                    cad_document::Transform::mirror(Point2::ORIGIN, Point2::new(0.0, 1.0))
+                        .expect("the Y axis is a line");
+                entity.transformed(&across_y)
+            }
+        }
+    }
+
+    /// A TEXT or an ATTDEF where AutoCAD draws it (#398): mirrored by its
+    /// generation flag about its anchor — the point its justification
+    /// places, the alignment point when it has one — backwards (71, 2)
+    /// about the line up through it, upside down (4) about the line along
+    /// the text through it, as MIRROR with MIRRTEXT on leaves the
+    /// alignment point and sets the flag; and by a normal facing down
+    /// (#391) across the Y axis. An even number of mirrors is
+    /// a turn or a move, which a text holds exactly: the backwards flag
+    /// and a normal facing down cancel, and backwards and upside down is
+    /// a half turn. An odd number leaves it a mirror image, which a text
+    /// cannot be: it is placed where AutoCAD shows it, read the right way
+    /// round, and reported — as upside down when that flag is the only
+    /// mirror, and as backwards otherwise.
+    fn text_in_world(
+        &mut self,
+        entity: Entity,
+        anchor: Point2,
+        rotation: f64,
+        body: &RecordBody,
+    ) -> Entity {
+        let facing = body.facing();
+        let generation = body.attachment.unwrap_or(0);
+        if facing == Facing::Tilted {
+            if generation & 2 != 0 {
+                self.report.count_unsupported(TEXT_BACKWARDS);
+            }
+            if generation & 4 != 0 {
+                self.report.count_unsupported(TEXT_UPSIDE_DOWN);
+            }
+            return self.in_world(entity, facing);
+        }
+        let along = cad_core::Vec2::new(rotation.cos(), rotation.sin());
+        let up = cad_core::Vec2::new(-along.y, along.x);
+        let mut mirrors = Vec::new();
+        if generation & 2 != 0 {
+            mirrors.extend(cad_document::Transform::mirror(anchor, anchor + up));
+        }
+        if generation & 4 != 0 {
+            mirrors.extend(cad_document::Transform::mirror(anchor, anchor + along));
+        }
+        if facing == Facing::Down {
+            mirrors.extend(cad_document::Transform::mirror(
+                Point2::ORIGIN,
+                Point2::new(0.0, 1.0),
+            ));
+        }
+        if mirrors.is_empty() {
+            return entity;
+        }
+        if mirrors.len() % 2 == 0 {
+            let image = |p: Point2| mirrors.iter().fold(p, |p, mirror| mirror.apply(p));
+            let ahead = anchor + along;
+            return match cad_document::Transform::aligning(
+                anchor,
+                ahead,
+                image(anchor),
+                image(ahead),
+                false,
+            ) {
+                Some(rigid) => entity.transformed(&rigid),
+                None => entity,
+            };
+        }
+        let upside_down = mirrors.len() == 1 && generation & 4 != 0;
+        self.report.count_unsupported(if upside_down {
+            TEXT_UPSIDE_DOWN
+        } else {
+            TEXT_BACKWARDS
+        });
+        mirrors
+            .iter()
+            .fold(entity, |entity, mirror| entity.transformed(mirror))
+    }
+
+    /// An ellipse whose normal faces some way (#391). Its centre and axis
+    /// are the world's whatever the normal, but its parameters run
+    /// counter-clockwise about the normal: facing down, the arc from `s` to
+    /// `e` is, seen from above, the arc from `-e` to `-s`. Tilted, it is
+    /// kept as read and reported.
+    fn ellipse_in_world(&mut self, ellipse: EllipseEntity, facing: Facing) -> EllipseEntity {
+        match facing {
+            Facing::Up => ellipse,
+            Facing::Tilted => {
+                self.report.count_unsupported(EXTRUSION_TILTED);
+                ellipse
+            }
+            Facing::Down => {
+                let whole = (ellipse.end_parameter - ellipse.start_parameter)
+                    .rem_euclid(std::f64::consts::TAU)
+                    == 0.0;
+                if whole {
+                    return ellipse;
+                }
+                let turn = |parameter: f64| (-parameter).rem_euclid(std::f64::consts::TAU);
+                EllipseEntity {
+                    start_parameter: turn(ellipse.end_parameter),
+                    end_parameter: turn(ellipse.start_parameter),
+                    ..ellipse
+                }
+            }
+        }
+    }
+
     fn import(&mut self, entity: Entity, body: &RecordBody) -> Result<(), DxfError> {
         self.push(entity, body.pending())
     }
@@ -2010,6 +2289,7 @@ impl<'a> Reader<'a> {
                 PolylineEntity::with_bulges(polyline.vertices, polyline.bulges, polyline.closed)
                     .with_width(width),
             );
+            let entity = self.in_world(entity, polyline.facing);
             self.push(entity, properties)?;
         }
         Ok(())
@@ -2742,6 +3022,9 @@ struct RecordBody {
     ys: Vec<f64>,
     /// Group 70: entity or table-row flags.
     flags: i64,
+    /// Groups 210, 220, 230: the normal of the object's coordinate system
+    /// (#391), when the file gives one.
+    normal: [Option<f64>; 3],
     /// Group 42 of each vertex, in step with `xs`: the bulge of the polyline
     /// segment that starts there. Zero where the vertex has none.
     bulges: Vec<f64>,
@@ -2829,6 +3112,29 @@ struct RecordBody {
 }
 
 impl RecordBody {
+    /// Which way the object's coordinate system faces (#391): up when its
+    /// normal is not given, or has no length to point any way.
+    fn facing(&self) -> Facing {
+        let [x, y, z] = self.normal.map(|value| value.unwrap_or(0.0));
+        let z = if self.normal.iter().all(Option::is_none) {
+            1.0
+        } else {
+            z
+        };
+        let length = (x * x + y * y + z * z).sqrt();
+        if !length.is_finite() || length == 0.0 {
+            return Facing::Up;
+        }
+        // In the plane's own terms: a normal whose slope out of the vertical
+        // is within the angular tolerance is vertical.
+        let tilted = !cad_core::tolerance::AngularTolerance::DEFAULT.is_zero(x.hypot(y) / length);
+        match (tilted, z > 0.0) {
+            (true, _) => Facing::Tilted,
+            (false, true) => Facing::Up,
+            (false, false) => Facing::Down,
+        }
+    }
+
     /// A VIEWPORT (#192): its frame — centre (10, 20), width (40), height
     /// (41) — the model point at its centre (12, 22), the height of its
     /// view (45), and whether it is on (68, positive). `None` for a frame
@@ -2881,6 +3187,9 @@ impl RecordBody {
             271 => self.dim_decimals = group.value.parse().ok(),
             66 => self.follow = group.value.trim() != "0",
             70 => self.flags = group.value.parse().unwrap_or(0),
+            210 => self.normal[0] = Some(real(group)?),
+            220 => self.normal[1] = Some(real(group)?),
+            230 => self.normal[2] = Some(real(group)?),
             11 => self.x1 = Some(real(group)?),
             21 => self.y1 = Some(real(group)?),
             13 => self.x13 = Some(real(group)?),
@@ -2942,9 +3251,13 @@ impl RecordBody {
             // no scale at all.
             #[allow(clippy::float_cmp)]
             48 => self.has_dropped_properties |= real(group)? != 1.0,
-            // Thickness, and elevation: a 2D drawing keeps neither. Zero is
-            // the default and loses nothing.
-            30 | 31 | 39 => self.has_dropped_properties |= real(group)? != 0.0,
+            // Thickness, and elevation — a lightweight polyline's too (38,
+            // #398): a 2D drawing keeps neither. Zero is the default and
+            // loses nothing.
+            30 | 31 | 38 | 39 => self.has_dropped_properties |= real(group)? != 0.0,
+            // Invisible (60, #398): the drawing shows what it holds, so an
+            // invisible object comes in visible, and the file is lossy.
+            60 => self.has_dropped_properties |= group.value.trim() != "0",
             _ => {}
         }
         Ok(())
@@ -2995,11 +3308,15 @@ impl RecordBody {
     /// words land where they were; aligned and fit text — stretched to a
     /// second point — is read as left text at its first point, and the
     /// stretch is dropped. Whether anything was dropped is the second value.
-    fn text(&self, at: usize) -> Result<(TextEntity, bool), DxfError> {
+    fn text(&self, at: usize) -> Result<Option<(TextEntity, Point2, bool)>, DxfError> {
         let need = |value, group| required(value, at, "TEXT", group);
         let first = Point2::new(need(self.x0, 10)?, need(self.y0, 20)?);
         let height = need(self.radius, 40)?;
-        let (content, mut dropped) = plain_text(self.text.as_deref().unwrap_or(""));
+        // A text's height is positive (#419): none is invalid.
+        if !height.is_finite() || height <= 0.0 {
+            return Ok(None);
+        }
+        let (content, mut dropped) = plain_line(self.text.as_deref().unwrap_or(""));
         let rotation = self.start_degrees.unwrap_or(0.0).to_radians();
         let (halign, valign) = (self.halign.unwrap_or(0), self.valign.unwrap_or(0));
         let alignment = match (self.x1, self.y1) {
@@ -3051,21 +3368,30 @@ impl RecordBody {
                 dropped = true;
             }
         }
-        Ok((text, dropped || !height.is_finite() || height <= 0.0))
+        Ok(Some((text, anchor, dropped)))
     }
 
     /// An MTEXT: its words, in pieces, with the formatting taken out; its
     /// top left worked out from whichever of the nine attachment points the
     /// insertion is. The second value says whether formatting was dropped.
-    fn mtext(&self, at: usize) -> Result<(MTextEntity, bool), DxfError> {
+    fn mtext(&self, at: usize) -> Result<Option<(MTextEntity, bool)>, DxfError> {
         let need = |value, group| required(value, at, "MTEXT", group);
         let insertion = Point2::new(need(self.x0, 10)?, need(self.y0, 20)?);
         let height = need(self.radius, 40)?;
+        // A text's height is positive (#419): none is invalid.
+        if !height.is_finite() || height <= 0.0 {
+            return Ok(None);
+        }
         let mut raw = self.chunks.concat();
         raw.push_str(self.text.as_deref().unwrap_or(""));
         let (content, dropped) = plain_mtext(&raw);
         // The direction may be given as a vector (11, 21) instead of an angle.
         let rotation = match (self.start_degrees, self.x1, self.y1) {
+            // A rotation is about the object's own X axis, which runs the
+            // other way when its system faces down (#391).
+            (Some(degrees), ..) if self.facing() == Facing::Down => {
+                std::f64::consts::PI - degrees.to_radians()
+            }
             (Some(degrees), ..) => degrees.to_radians(),
             (None, Some(x), Some(y)) if x != 0.0 || y != 0.0 => y.atan2(x),
             _ => 0.0,
@@ -3088,7 +3414,7 @@ impl RecordBody {
             _ => 0.0,
         };
         text.insertion = insertion - frame.along * across + frame.up * down;
-        Ok((text, dropped))
+        Ok(Some((text, dropped)))
     }
 
     /// A POINT (#198): its place (10, 20).
@@ -3365,6 +3691,94 @@ mod tests {
         dxf(&groups)
     }
 
+    /// #419: a text's height is positive. A TEXT, an ATTDEF, or an MTEXT
+    /// whose height (40) is zero or less is invalid geometry, as a circle
+    /// with no radius is: not imported, and counted.
+    #[test]
+    fn a_text_with_no_height_is_invalid() {
+        for height in ["-2.5", "0"] {
+            let text = entities(&[
+                (0, "TEXT"),
+                (8, "0"),
+                (10, "0"),
+                (20, "0"),
+                (40, height),
+                (1, "words"),
+                (0, "ATTDEF"),
+                (8, "0"),
+                (10, "0"),
+                (20, "0"),
+                (40, height),
+                (1, "default"),
+                (2, "TAG"),
+                (0, "MTEXT"),
+                (8, "0"),
+                (10, "0"),
+                (20, "0"),
+                (40, height),
+                (1, "paragraph"),
+                (0, "TEXT"),
+                (8, "0"),
+                (10, "0"),
+                (20, "0"),
+                (40, "2.5"),
+                (1, "kept"),
+            ]);
+            let imported = import(text.as_bytes()).unwrap();
+            assert_eq!(
+                imported.report.unsupported.get(INVALID),
+                Some(&3),
+                "{height}"
+            );
+            let kept: Vec<&Entity> = imported.drawing.entities().map(|(_, e)| e).collect();
+            assert!(
+                matches!(kept.as_slice(), [Entity::Text(text)] if text.content == "kept"),
+                "{kept:?}"
+            );
+            assert_eq!(imported.report.with_dropped_properties, 0);
+        }
+    }
+
+    /// #418: a drafter's dimension text is decoded — `<>` the measured
+    /// value as the style shows it, `%%c` the diameter sign, `\X` the
+    /// break under the dimension line run into one line — and written
+    /// back as it was read.
+    #[test]
+    fn a_dimension_text_override_is_decoded_and_its_value_stands_in_for_angle_brackets() {
+        let shown = |words: &str| {
+            let text = entities(&[
+                (0, "DIMENSION"),
+                (8, "0"),
+                (10, "0"),
+                (20, "10"),
+                (70, "0"),
+                (1, words),
+                (13, "0"),
+                (23, "0"),
+                (14, "100"),
+                (24, "0"),
+                (50, "0"),
+            ]);
+            let imported = import(text.as_bytes()).unwrap();
+            let drawing = &imported.drawing;
+            let (_, entity) = drawing.entities().next().expect("a dimension");
+            let Entity::Dimension(dimension) = entity else {
+                panic!("{entity:?}");
+            };
+            let style = drawing.dim_styles().get(dimension.style).unwrap();
+            let again = import(export(drawing).as_bytes()).unwrap();
+            let (_, back) = again.drawing.entities().next().unwrap();
+            assert_eq!(back, entity, "{words} is written back as read");
+            (dimension.content(style), imported.report.formatting_dropped)
+        };
+        assert_eq!(shown("2X <> TYP"), ("2X 100.00 TYP".to_owned(), 0));
+        assert_eq!(shown("%%c<>"), ("Ø100.00".to_owned(), 0));
+        assert_eq!(shown("<>\\XTYP"), ("100.00 TYP".to_owned(), 1));
+        assert_eq!(shown("{\\H2;BIG} <>"), ("BIG 100.00".to_owned(), 1));
+        assert_eq!(shown("a \\\\ b"), ("a \\ b".to_owned(), 0));
+        assert_eq!(shown("<>"), ("100.00".to_owned(), 0));
+    }
+
     const LINE_0_0_TO_10_5: [(i32, &str); 6] = [
         (0, "LINE"),
         (8, "0"),
@@ -3608,6 +4022,240 @@ mod tests {
         assert_eq!(claimed.report.hatches, 1);
     }
 
+    /// #391: an object whose coordinate system faces down — AutoCAD's
+    /// mirrored arc, circle, polyline, text, reference — comes in where it
+    /// stands in the world: reflected across the Y axis. One tilted out of
+    /// the plane is kept as read and reported; a normal facing up changes
+    /// nothing.
+    #[test]
+    fn an_object_facing_down_is_read_where_it_stands() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        let down: [(i32, &str); 3] = [(210, "0.0"), (220, "0.0"), (230, "-1.0")];
+        let with = |groups: &[(i32, &str)], normal: &[(i32, &str)]| -> Vec<(i32, String)> {
+            groups
+                .iter()
+                .chain(normal)
+                .map(|(code, value)| (*code, (*value).to_owned()))
+                .collect()
+        };
+        let mut body: Vec<(i32, String)> = Vec::new();
+        body.extend(with(
+            &[
+                (0, "ARC"),
+                (8, "0"),
+                (10, "10.0"),
+                (20, "5.0"),
+                (40, "2.0"),
+                (50, "0.0"),
+                (51, "90.0"),
+            ],
+            &down,
+        ));
+        body.extend(with(
+            &[
+                (0, "CIRCLE"),
+                (8, "0"),
+                (10, "3.0"),
+                (20, "4.0"),
+                (40, "1.0"),
+            ],
+            &down,
+        ));
+        body.extend(with(
+            &[
+                (0, "LWPOLYLINE"),
+                (8, "0"),
+                (90, "2"),
+                (70, "0"),
+                (10, "0.0"),
+                (20, "0.0"),
+                (42, "0.5"),
+                (10, "10.0"),
+                (20, "0.0"),
+            ],
+            &down,
+        ));
+        body.extend(with(
+            &[
+                (0, "TEXT"),
+                (8, "0"),
+                (10, "7.0"),
+                (20, "1.0"),
+                (40, "2.5"),
+                (1, "Ab"),
+            ],
+            &down,
+        ));
+        // A half ellipse, upper as its parameters run about a normal facing
+        // down: the lower half seen from above.
+        body.extend(with(
+            &[
+                (0, "ELLIPSE"),
+                (8, "0"),
+                (10, "0.0"),
+                (20, "0.0"),
+                (11, "4.0"),
+                (21, "0.0"),
+                (40, "0.5"),
+                (41, "0.0"),
+                (42, "3.141592653589793"),
+            ],
+            &down,
+        ));
+        // A paragraph turned by a rotation alone, about its own X axis.
+        body.extend(with(
+            &[
+                (0, "MTEXT"),
+                (8, "0"),
+                (10, "0.0"),
+                (20, "20.0"),
+                (40, "2.5"),
+                (50, "30.0"),
+                (1, "Ab"),
+            ],
+            &down,
+        ));
+        // Facing up, said or not: as read.
+        body.extend(with(
+            &[
+                (0, "CIRCLE"),
+                (8, "0"),
+                (10, "3.0"),
+                (20, "4.0"),
+                (40, "1.0"),
+            ],
+            &[(210, "0.0"), (220, "0.0"), (230, "1.0")],
+        ));
+        // Tilted: as read, reported.
+        body.extend(with(
+            &[
+                (0, "CIRCLE"),
+                (8, "0"),
+                (10, "3.0"),
+                (20, "4.0"),
+                (40, "1.0"),
+            ],
+            &[(210, "1.0"), (220, "0.0"), (230, "0.0")],
+        ));
+        let borrowed: Vec<(i32, &str)> = body.iter().map(|(c, v)| (*c, v.as_str())).collect();
+        let import = import(entities(&borrowed).as_bytes()).unwrap();
+        let read = entities_of(&import);
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+
+        let Entity::Arc(arc) = &read[0] else {
+            panic!("{:?}", read[0])
+        };
+        assert!(
+            close(arc.center.x, -10.0) && close(arc.center.y, 5.0),
+            "{arc:?}"
+        );
+        assert!(
+            close(arc.start_angle, FRAC_PI_2) && close(arc.end_angle, PI),
+            "from 90° to 180°: {arc:?}"
+        );
+        let Entity::Circle(circle) = &read[1] else {
+            panic!("{:?}", read[1])
+        };
+        assert_eq!(circle.center, Point2::new(-3.0, 4.0));
+        let Entity::Polyline(polyline) = &read[2] else {
+            panic!("{:?}", read[2])
+        };
+        assert_eq!(
+            polyline.vertices,
+            vec![Point2::new(0.0, 0.0), Point2::new(-10.0, 0.0)]
+        );
+        assert!(close(polyline.bulge(0), -0.5), "its arc bows the other way");
+        let Entity::Text(text) = &read[3] else {
+            panic!("{:?}", read[3])
+        };
+        assert!(text.insertion.x < 0.0, "placed where it stands: {text:?}");
+        let Entity::Ellipse(ellipse) = &read[4] else {
+            panic!("{:?}", read[4])
+        };
+        let curve = ellipse.ellipse();
+        let middle = curve.point_at(curve.start + curve.sweep / 2.0);
+        assert!(close(curve.sweep, PI), "still a half: {ellipse:?}");
+        assert!(
+            middle.y < 0.0,
+            "the lower half, seen from above: {middle:?}"
+        );
+        let Entity::MText(mtext) = &read[5] else {
+            panic!("{:?}", read[5])
+        };
+        assert!(
+            close(mtext.rotation, 150f64.to_radians()),
+            "π − 30°: {mtext:?}"
+        );
+        let Entity::Circle(up) = &read[6] else {
+            panic!("{:?}", read[6])
+        };
+        assert_eq!(up.center, Point2::new(3.0, 4.0));
+        let Entity::Circle(tilted) = &read[7] else {
+            panic!("{:?}", read[7])
+        };
+        assert_eq!(tilted.center, Point2::new(3.0, 4.0));
+        assert_eq!(import.report.unsupported.get(EXTRUSION_TILTED), Some(&1));
+        assert_eq!(
+            import.report.unsupported.get(TEXT_BACKWARDS),
+            Some(&2),
+            "the text and the paragraph"
+        );
+        assert_eq!(
+            import.report.unsupported.len(),
+            2,
+            "{:?}",
+            import.report.unsupported
+        );
+    }
+
+    /// #391: a reference facing down is mirrored, turned to π − its
+    /// rotation, and placed with its X negated.
+    #[test]
+    fn a_reference_facing_down_is_mirrored_where_it_stands() {
+        let groups = [
+            (0, "SECTION"),
+            (2, "BLOCKS"),
+            (0, "BLOCK"),
+            (8, "0"),
+            (2, "B"),
+            (70, "0"),
+            (10, "0.0"),
+            (20, "0.0"),
+            (0, "LINE"),
+            (8, "0"),
+            (10, "0.0"),
+            (20, "0.0"),
+            (11, "1.0"),
+            (21, "0.0"),
+            (0, "ENDBLK"),
+            (0, "ENDSEC"),
+            (0, "SECTION"),
+            (2, "ENTITIES"),
+            (0, "INSERT"),
+            (8, "0"),
+            (2, "B"),
+            (10, "5.0"),
+            (20, "2.0"),
+            (50, "30.0"),
+            (210, "0.0"),
+            (220, "0.0"),
+            (230, "-1.0"),
+            (0, "ENDSEC"),
+            (0, "EOF"),
+        ];
+        let import = import(dxf(&groups).as_bytes()).unwrap();
+        let read = entities_of(&import);
+        let Some(Entity::BlockRef(reference)) = read.first() else {
+            panic!("{read:?}")
+        };
+        assert_eq!(reference.insertion, Point2::new(-5.0, 2.0));
+        assert!(
+            (reference.rotation - 150f64.to_radians()).abs() < 1e-9,
+            "{reference:?}"
+        );
+        assert!(reference.mirrored);
+    }
+
     #[test]
     fn imports_circles_and_arcs_with_angles_converted_from_degrees() {
         use std::f64::consts::{FRAC_PI_2, PI};
@@ -3694,6 +4342,243 @@ mod tests {
                 true
             )]
         );
+    }
+
+    /// A polyline PEDIT has fitted (#395): a spline's frame (vertex flag
+    /// 16) is not drawn and not read, the spline's vertices (8) are; a
+    /// curve's vertices, the ones it was made from and the ones fitting
+    /// added (1), are all on the curve with their bulges. Either is
+    /// reported, since its fit is not kept.
+    #[test]
+    fn a_fitted_polyline_is_read_as_it_is_drawn() {
+        let mut spline = vec![(0, "POLYLINE"), (66, "1"), (70, "4")];
+        let frame = [("0", "0"), ("5", "5"), ("10", "0")];
+        for (x, y) in frame {
+            spline.extend([(0, "VERTEX"), (10, x), (20, y), (70, "16")]);
+        }
+        let fitted: Vec<(String, String)> = (0..9)
+            .map(|i| {
+                let x = f64::from(i) * 1.25;
+                (x.to_string(), (2.5 - (x - 5.0).abs() / 2.0).to_string())
+            })
+            .collect();
+        for (x, y) in &fitted {
+            spline.extend([(0, "VERTEX"), (10, x), (20, y), (70, "8")]);
+        }
+        spline.push((0, "SEQEND"));
+        let curve = [
+            (0, "POLYLINE"),
+            (66, "1"),
+            (70, "2"),
+            (0, "VERTEX"),
+            (10, "0"),
+            (20, "0"),
+            (42, "0.2"),
+            (70, "0"),
+            (0, "VERTEX"),
+            (10, "2"),
+            (20, "1"),
+            (42, "0.1"),
+            (70, "1"),
+            (0, "VERTEX"),
+            (10, "4"),
+            (20, "0"),
+            (70, "0"),
+            (0, "SEQEND"),
+        ];
+        let import = import(entities(&[spline.as_slice(), &curve].concat()).as_bytes()).unwrap();
+        assert_eq!(import.report.polylines, 2);
+        assert_eq!(import.report.unsupported.get(FITTED_POLYLINE), Some(&2));
+        assert_eq!(import.report.unsupported.len(), 1);
+        let expected: Vec<Point2> = fitted
+            .iter()
+            .map(|(x, y)| p(x.parse().unwrap(), y.parse().unwrap()))
+            .collect();
+        assert_eq!(
+            polylines_of(&import),
+            vec![
+                PolylineEntity::new(expected, false),
+                PolylineEntity::with_bulges(
+                    vec![p(0.0, 0.0), p(2.0, 1.0), p(4.0, 0.0)],
+                    vec![0.2, 0.1, 0.0],
+                    false
+                ),
+            ]
+        );
+    }
+
+    /// What a drawing cannot hold is counted, never dropped in silence
+    /// (#398): an invisible object (60) comes in visible and a lightweight
+    /// polyline's elevation (38) flat, each a property dropped. Each
+    /// default — 0 — loses nothing.
+    #[test]
+    fn invisibility_and_elevation_are_reported() {
+        let line = |sixty: &'static str| {
+            vec![
+                (0, "LINE"),
+                (60, sixty),
+                (10, "0"),
+                (20, "0"),
+                (11, "1"),
+                (21, "1"),
+            ]
+        };
+        let polyline = |elevation: &'static str| {
+            vec![
+                (0, "LWPOLYLINE"),
+                (90, "2"),
+                (70, "0"),
+                (38, elevation),
+                (10, "0"),
+                (20, "0"),
+                (10, "1"),
+                (20, "0"),
+            ]
+        };
+        let count = |records: &[Vec<(i32, &str)>]| {
+            let body: Vec<(i32, &str)> = records.concat();
+            let import = import(entities(&body).as_bytes()).unwrap();
+            assert!(import.report.unsupported.is_empty(), "{:?}", import.report);
+            import.report.with_dropped_properties
+        };
+        assert_eq!(count(&[line("1")]), 1);
+        assert_eq!(count(&[polyline("5.0")]), 1);
+        assert_eq!(
+            count(&[line("0"), polyline("0.0")]),
+            0,
+            "the defaults lose nothing"
+        );
+    }
+
+    /// A text AutoCAD draws mirrored — by its generation flag (71:
+    /// backwards 2, upside down 4) or by a normal facing down (#391) — is
+    /// read where AutoCAD shows it (#398). Mirrored twice it is turned or
+    /// moved, which a text holds exactly, and nothing is said: backwards
+    /// and facing down cancel, backwards and upside down is a half turn.
+    /// Mirrored once or three times it is a mirror image, read the right
+    /// way round and said under one key whichever way the file put it.
+    /// An attribute definition alike.
+    #[test]
+    fn a_mirrored_text_is_read_as_autocad_shows_it() {
+        let text = |kind: &'static str, flags: &'static str, normal: &'static str| {
+            vec![
+                (0, kind),
+                (10, "1"),
+                (20, "0"),
+                (40, "1"),
+                (1, "AB"),
+                (2, "TAG"),
+                (71, flags),
+                (230, normal),
+            ]
+        };
+        let read = |records: Vec<(i32, &str)>| {
+            let import = import(entities(&records).as_bytes()).unwrap();
+            assert_eq!(import.report.with_dropped_properties, 0);
+            let found = |key| import.report.unsupported.get(key).copied().unwrap_or(0);
+            let keys = (
+                found(TEXT_BACKWARDS),
+                found(TEXT_UPSIDE_DOWN),
+                import.report.unsupported.len(),
+            );
+            let placed = import
+                .drawing
+                .entities()
+                .find_map(|(_, entity)| match entity {
+                    Entity::Text(text) => Some(text.clone()),
+                    Entity::AttributeDefinition(definition) => Some(definition.text.clone()),
+                    _ => None,
+                })
+                .unwrap();
+            (keys, placed)
+        };
+        let width = TextEntity::new(p(0.0, 0.0), 1.0, 0.0, "AB").width();
+        let close = |a: Point2, b: Point2| a.distance_to(b) < 1e-9;
+        let turn = |a: f64, b: f64| {
+            (a - b)
+                .rem_euclid(std::f64::consts::TAU)
+                .min((b - a).rem_euclid(std::f64::consts::TAU))
+                < 1e-9
+        };
+
+        // As it reads.
+        let (keys, plain) = read(text("TEXT", "0", "1"));
+        assert_eq!(keys, (0, 0, 0));
+        assert!(close(plain.insertion, p(1.0, 0.0)) && turn(plain.rotation, 0.0));
+
+        // Mirrored once: said, and placed over the mirror image.
+        let (keys, backwards) = read(text("TEXT", "2", "1"));
+        assert_eq!(keys, (1, 0, 1));
+        assert!(
+            close(backwards.start(), p(1.0 - width, 0.0)),
+            "{backwards:?}"
+        );
+        assert_eq!(read(text("TEXT", "0", "-1")).0, (1, 0, 1));
+        assert_eq!(read(text("ATTDEF", "2", "1")).0, (1, 0, 1));
+        assert_eq!(read(text("TEXT", "4", "1")).0, (0, 1, 1));
+
+        // Mirrored twice: held exactly, nothing said. Backwards and facing
+        // down: AutoCAD reads it forwards from where its normal puts it.
+        let (keys, twice) = read(text("TEXT", "2", "-1"));
+        assert_eq!(keys, (0, 0, 0));
+        assert!(
+            close(twice.insertion, p(-1.0, 0.0)) && turn(twice.rotation, 0.0),
+            "{twice:?}"
+        );
+        // Backwards and upside down: a half turn about the insertion.
+        let (keys, half) = read(text("TEXT", "6", "1"));
+        assert_eq!(keys, (0, 0, 0));
+        assert!(
+            close(half.insertion, p(1.0, 0.0)) && turn(half.rotation, std::f64::consts::PI),
+            "{half:?}"
+        );
+        let (keys, half) = read(text("ATTDEF", "4", "-1"));
+        assert_eq!(keys, (0, 0, 0));
+        assert!(
+            close(half.insertion, p(-1.0, 0.0)) && turn(half.rotation, std::f64::consts::PI),
+            "{half:?}"
+        );
+
+        // Three times: a mirror image again.
+        assert_eq!(read(text("TEXT", "6", "-1")).0, (1, 0, 1));
+
+        // Justified, the mirrors are about the anchor — the alignment
+        // point — not the baseline: top-justified at (0, 10), upside down
+        // hangs up from it, its baseline on y = 10; turned half round, the
+        // baseline is a height above it. Middle alike, half a height.
+        let justified = |flags: &'static str, halign: &'static str, valign: &'static str| {
+            vec![
+                (0, "TEXT"),
+                (10, "0"),
+                (20, "0"),
+                (11, "0"),
+                (21, "10"),
+                (40, "1"),
+                (1, "AB"),
+                (72, halign),
+                (73, valign),
+                (71, flags),
+            ]
+        };
+        let (keys, hanging) = read(justified("4", "0", "3"));
+        assert_eq!(keys, (0, 1, 1));
+        assert!(close(hanging.start(), p(0.0, 10.0)), "{hanging:?}");
+        let (keys, turned) = read(justified("6", "0", "3"));
+        assert_eq!(keys, (0, 0, 0));
+        assert!(
+            close(turned.insertion, p(0.0, 11.0)) && turn(turned.rotation, std::f64::consts::PI),
+            "{turned:?}"
+        );
+        let (keys, middle) = read(justified("6", "4", "0"));
+        assert_eq!(keys, (0, 0, 0));
+        assert!(
+            close(middle.insertion, p(0.0, 10.5)) && turn(middle.rotation, std::f64::consts::PI),
+            "{middle:?}"
+        );
+        // Upside down about its middle, it fills the box it filled.
+        let (keys, middle) = read(justified("4", "4", "0"));
+        assert_eq!(keys, (0, 1, 1));
+        assert!(close(middle.insertion, p(0.0, 9.5)), "{middle:?}");
     }
 
     #[test]
@@ -4670,6 +5555,35 @@ mod tests {
         assert_eq!(kinds, vec!["WEIRDNAME", &"X".repeat(MAX_KIND_LENGTH)]);
     }
 
+    /// A file that starts with a UTF-8 byte order mark opens, the mark
+    /// passed over and the lines counted as before (#396).
+    #[test]
+    fn a_byte_order_mark_is_passed_over() {
+        let mut bytes = BYTE_ORDER_MARK.to_vec();
+        bytes.extend_from_slice(entities(&LINE_0_0_TO_10_5).as_bytes());
+        let opened = import(&bytes).unwrap();
+        assert_eq!(opened.report.lines, 1);
+        assert!(!opened.report.has_unsupported_content());
+        // Only at the start: elsewhere it is a character of the words.
+        let mut late = b"999\n".to_vec();
+        late.extend_from_slice(BYTE_ORDER_MARK);
+        late.extend_from_slice(b"note\n");
+        late.extend_from_slice(entities(&LINE_0_0_TO_10_5).as_bytes());
+        assert_eq!(import(&late).unwrap().report.lines, 1);
+        // A mark with no file after it is an empty file, as without it.
+        assert_eq!(
+            import(BYTE_ORDER_MARK).map(|i| i.report.lines).ok(),
+            import(b"").map(|i| i.report.lines).ok()
+        );
+        // The line of an error is the file's own line.
+        let mut broken = BYTE_ORDER_MARK.to_vec();
+        broken.extend_from_slice(b"  0\nSECTION\nnot a code\n");
+        assert_eq!(
+            import(&broken).map(|_| ()),
+            import(b"  0\nSECTION\nnot a code\n").map(|_| ())
+        );
+    }
+
     #[test]
     fn non_utf8_bytes_do_not_stop_an_import() {
         let mut bytes = b"999\ncaf\xe9\n".to_vec();
@@ -4686,6 +5600,25 @@ mod tests {
         // Not an escape, or one for a control character: left as written.
         assert_eq!(decoded(b"\\U+12 \\U+000A"), "\\U+12 \\U+000A");
         assert_eq!(decoded("plain ²".as_bytes()), "plain ²");
+        // A backslash written as an escape is read once, not again with
+        // the words after it (#394).
+        assert_eq!(decoded(b"\\U+005CU+0041"), "\\U+0041");
+        assert_eq!(decoded(b"\\\\U+005CU+0041"), "\\\\U+0041");
+    }
+
+    /// A character beyond the first 65,536 — an emoji, a mathematical
+    /// letter, a CJK Extension B character — is written as a surrogate
+    /// pair of escapes and read as the one character (#393). Half a pair
+    /// names no character and is left as written.
+    #[test]
+    fn a_surrogate_pair_of_escapes_reads_as_its_character() {
+        assert_eq!(decoded(b"smile \\U+D83D\\U+DE00 x"), "smile 😀 x");
+        assert_eq!(decoded(b"\\U+D835\\U+DC65\\U+D840\\U+DC0B"), "𝑥𠀋");
+        assert_eq!(decoded(b"\\U+D83D x"), "\\U+D83D x");
+        assert_eq!(decoded(b"\\U+DE00\\U+D83D"), "\\U+DE00\\U+D83D");
+        assert_eq!(decoded(b"\\U+D83D\\U+2014"), "\\U+D83D—");
+        assert_eq!(decoded(b"end \\U+D83D"), "end \\U+D83D");
+        assert_eq!(decoded("\\U+D8é\\U+DE00".as_bytes()), "\\U+D8é\\U+DE00");
     }
 
     // ── hostile files (§43, #156): every bound is reached by a test ──
@@ -4830,6 +5763,65 @@ mod tests {
         assert_eq!((deep.report.blocks, deep.report.block_references), (40, 1));
         assert_eq!(deep.report.unsupported.get(NESTING_TOO_DEEP), Some(&1));
         assert!(deep.report.has_unsupported_content());
+    }
+
+    #[test]
+    fn construction_lines_in_a_block_are_left_out_and_reported() {
+        // A block cannot hold an xline or a ray (#415): the block keeps its
+        // line, the reference's extents are the line's, and the drawing's
+        // own construction line stays.
+        let text = dxf(&[
+            (0, "SECTION"),
+            (2, "BLOCKS"),
+            (0, "BLOCK"),
+            (2, "GUIDE"),
+            (10, "0"),
+            (20, "0"),
+            (0, "LINE"),
+            (10, "0"),
+            (20, "0"),
+            (11, "10"),
+            (21, "10"),
+            (0, "XLINE"),
+            (10, "0"),
+            (20, "5"),
+            (11, "1"),
+            (21, "0"),
+            (0, "RAY"),
+            (10, "0"),
+            (20, "5"),
+            (11, "0"),
+            (21, "1"),
+            (0, "ENDBLK"),
+            (0, "ENDSEC"),
+            (0, "SECTION"),
+            (2, "ENTITIES"),
+            (0, "INSERT"),
+            (2, "GUIDE"),
+            (10, "0"),
+            (20, "0"),
+            (0, "XLINE"),
+            (10, "0"),
+            (20, "5"),
+            (11, "1"),
+            (21, "0"),
+            (0, "ENDSEC"),
+            (0, "EOF"),
+        ]);
+        let imported = import(text.as_bytes()).unwrap();
+        assert_eq!(
+            imported.report.unsupported.get(CONSTRUCTION_IN_BLOCK),
+            Some(&2)
+        );
+        assert_eq!(imported.report.construction_lines, 1);
+        let drawing = &imported.drawing;
+        let guide = drawing.blocks().find("GUIDE").unwrap();
+        assert_eq!(drawing.blocks().get(guide).unwrap().entities.len(), 1);
+        let extents = drawing.extents().unwrap();
+        assert_eq!(
+            (extents.min(), extents.max()),
+            (Point2::ORIGIN, Point2::new(10.0, 10.0))
+        );
     }
 
     #[test]
@@ -5024,7 +6016,11 @@ mod tests {
             let text: String = groups.iter().map(|(code, value)| format!("{code}\n{value}\n")).collect();
             if let Ok(imported) = import(text.as_bytes()) {
                 let drawing = &imported.drawing;
-                prop_assert_eq!(drawing.len(), lines.len() + texts.len());
+                // Every object is imported or counted: a text whose height
+                // comes to zero or less is invalid geometry (#419); the
+                // lines here never are.
+                let invalid = imported.report.unsupported.get(INVALID).copied().unwrap_or(0);
+                prop_assert_eq!(drawing.len() + invalid, lines.len() + texts.len());
                 for (_, entity) in drawing.entities() {
                     let style = match entity {
                         Entity::Text(t) => Some(t.style),

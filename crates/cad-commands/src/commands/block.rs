@@ -26,8 +26,9 @@ const ENTER_NAME: &str = "Enter block name";
 const BAD_SCALE_FACTOR: &str = "The scale factor must be greater than zero.";
 
 /// The block called `name`, if there is one.
+/// The block of that name a reference may place: never the model's own.
 fn find(ctx: &CommandContext<'_>, name: &str) -> Option<BlockId> {
-    ctx.drawing.blocks().find(name)
+    ctx.drawing.blocks().placeable(name)
 }
 
 /// Why the block table refused a change, in the user's terms.
@@ -116,11 +117,27 @@ impl BlockCommand {
     /// Makes the block out of the selection, which one reference to it
     /// replaces, in one transaction. A refusal changes nothing.
     fn define(ctx: &mut CommandContext<'_>, id: Option<BlockId>, name: &str, base: Point2) -> Step {
-        let ids: Vec<EntityId> = ctx.selection.iter().collect();
-        if ids.is_empty() {
+        let selected: Vec<EntityId> = ctx.selection.iter().collect();
+        if selected.is_empty() {
             ctx.message(NOTHING_SELECTED);
             return Step::Finished;
         }
+        // A construction line stays in the drawing: a block cannot hold
+        // one (#415).
+        let (ids, left): (Vec<EntityId>, Vec<EntityId>) = selected
+            .into_iter()
+            .partition(|id| !ctx.drawing.entity(*id).is_some_and(Entity::is_unbounded));
+        if ids.is_empty() {
+            ctx.message("A block cannot hold an xline or a ray.");
+            return Step::Finished;
+        }
+        let left_out = match left.len() {
+            0 => String::new(),
+            n => format!(
+                " {} left out: a block cannot hold them.",
+                counted(n, "construction line")
+            ),
+        };
         let records: Vec<EntityRecord> = ids
             .iter()
             .filter_map(|id| {
@@ -154,7 +171,7 @@ impl BlockCommand {
             Ok(()) => {
                 let verb = if id.is_some() { "redefined" } else { "defined" };
                 ctx.message(format!(
-                    "Block \"{name}\" {verb} from {}.",
+                    "Block \"{name}\" {verb} from {}.{left_out}",
                     counted(ids.len(), "object")
                 ));
                 ctx.selection.clear();
@@ -332,11 +349,20 @@ impl InsertCommand {
             return Some(block);
         }
         let source = &file.drawing;
-        let records: Vec<EntityRecord> = source
+        // Its construction lines are not brought: a block cannot hold
+        // them (#415).
+        let (records, left): (Vec<EntityRecord>, Vec<EntityRecord>) = source
             .records()
             .filter(|(_, record)| record.space == cad_document::LayoutId::MODEL)
             .map(|(_, record)| record.clone())
-            .collect();
+            .partition(|record| !record.entity.is_unbounded());
+        let left_out = match left.len() {
+            0 => String::new(),
+            n => format!(
+                " {} left out: a block cannot hold them.",
+                counted(n, "construction line")
+            ),
+        };
         if records.is_empty() {
             ctx.message(format!("{} has nothing in its model to insert.", file.name));
             return None;
@@ -350,7 +376,7 @@ impl InsertCommand {
             Ok(block) => {
                 transaction.commit();
                 ctx.message(format!(
-                    "Block \"{name}\" made from {}: {}.",
+                    "Block \"{name}\" made from {}: {}.{left_out}",
                     file.name,
                     counted(count, "object")
                 ));
@@ -366,10 +392,16 @@ impl InsertCommand {
 
     fn commit(ctx: &mut CommandContext<'_>, reference: BlockReferenceEntity) -> Step {
         let mut transaction = ctx.transaction();
-        transaction
-            .insert(reference)
-            .expect("the block was found and the scale checked");
-        transaction.commit();
+        match transaction.insert(reference) {
+            Ok(_) => {
+                transaction.commit();
+            }
+            // Refused, said, never a panic (#383).
+            Err(error) => {
+                drop(transaction);
+                ctx.message(format!("The block cannot be placed: {error}."));
+            }
+        }
         Step::Finished
     }
 }
@@ -604,9 +636,10 @@ impl ExplodeCommand {
                     transaction
                         .remove(id)
                         .expect("selected entities are live and appear once");
+                    // Each part in the exploded object's draw-order tier.
                     for (entity, properties) in pieces {
                         transaction
-                            .insert_with(entity, properties)
+                            .insert_from(id, entity, properties)
                             .expect("the parts of a live entity are on tables the drawing has");
                         parts += 1;
                     }

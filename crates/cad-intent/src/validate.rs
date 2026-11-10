@@ -9,9 +9,12 @@ use crate::{
 };
 
 /// Two points of a document are the same point when the drawing would
-/// treat them so (DESIGN §21).
+/// treat them so (DESIGN §21): at their own magnitude, since far from the
+/// origin neighbouring numbers are further apart than the tolerance
+/// (ADR-0012, #367).
 pub(crate) fn same_point(a: Point, b: Point) -> bool {
-    LinearTolerance::DEFAULT.coincident(point(a), point(b))
+    let (a, b) = (point(a), point(b));
+    LinearTolerance::DEFAULT.around(&[a, b]).coincident(a, b)
 }
 
 /// The bounds a document is held to.
@@ -634,7 +637,19 @@ impl Check {
                 if points.len() > 50 {
                     return Err(self.refuse("points", Reason::TooMany(50)));
                 }
-                self.points("points", points, 2)
+                self.points("points", points, 2)?;
+                // What is dimensioned is the points that move along the
+                // chain's axis: two at least, or there is no dimension to
+                // make (#367).
+                if crate::chain(points).1.len() < 2 {
+                    return Err(self.refuse(
+                        "points",
+                        Reason::Said(
+                            "no two points differ along x or along y: a chain dimensions points spread along one axis",
+                        ),
+                    ));
+                }
+                Ok(())
             }
             Operation::Notes {
                 lines,

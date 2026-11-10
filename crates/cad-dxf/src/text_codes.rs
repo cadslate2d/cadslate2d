@@ -1,13 +1,32 @@
 //! The codes DXF text carries inside its words (DESIGN §24.2; #145).
 //!
 //! A TEXT's `%%d`, `%%p`, and `%%c` are the degree, plus-minus, and
-//! diameter signs; `%%u` and `%%o` switch underlining and overlining. An
+//! diameter signs; `%%u` and `%%o` switch underlining and overlining;
+//! `%%` and three digits is a character by its code (#397). An
 //! MTEXT's words are an inline language: `\P` breaks a paragraph, `\~` is
 //! a space that does not break, braces group, and a dozen backslash codes
 //! change the font, height, colour, stacking, and more. The drawing holds
 //! words and line breaks only, so the words are kept, the breaks are kept,
 //! a stacked fraction becomes `a/b`, and every other code is dropped — and
 //! the report says so.
+
+/// A single-line text's words — a TEXT's, an attribute's — with its codes
+/// resolved; whether anything was dropped. It is one line: a line break or
+/// another control character but a tab, which a DWG's length-counted
+/// string may hold, is a space, and dropped (#430), as the writer puts one
+/// in the file. An MTEXT's breaks are its own, and go through
+/// [`plain_text`] as they are.
+pub(crate) fn plain_line(text: &str) -> (String, bool) {
+    let control = |c: char| c.is_control() && c != '\t';
+    if !text.chars().any(control) {
+        return plain_text(text);
+    }
+    let spaced: String = text
+        .chars()
+        .map(|c| if control(c) { ' ' } else { c })
+        .collect();
+    (plain_text(&spaced).0, true)
+}
 
 /// `text` with the TEXT codes resolved; whether anything was dropped.
 pub(crate) fn plain_text(text: &str) -> (String, bool) {
@@ -16,6 +35,25 @@ pub(crate) fn plain_text(text: &str) -> (String, bool) {
     let mut rest = text;
     while let Some(at) = rest.find("%%") {
         out.push_str(&rest[..at]);
+        // `%%065` is `A`: a character of the code page by its number,
+        // as AutoCAD reads it (#397). One that is not printable is not
+        // words, and is dropped.
+        let digits = rest[at + 2..]
+            .get(..3)
+            .filter(|d| d.bytes().all(|b| b.is_ascii_digit()));
+        if let Some(digits) = digits {
+            let character = digits
+                .parse::<u8>()
+                .ok()
+                .map(crate::import::windows_1252)
+                .filter(|c| !c.is_control());
+            match character {
+                Some(c) => out.push(c),
+                None => dropped = true,
+            }
+            rest = &rest[at + 5..];
+            continue;
+        }
         let code = rest[at + 2..].chars().next();
         rest = &rest[at + 2 + code.map_or(0, char::len_utf8)..];
         match code.map(|c| c.to_ascii_lowercase()) {
@@ -42,7 +80,9 @@ pub(crate) fn plain_mtext(text: &str) -> (String, bool) {
         match c {
             '{' | '}' => {}
             '\\' => match chars.next() {
-                Some('P') | Some('N') => out.push('\n'),
+                // `\X` puts what follows under a dimension's line: a
+                // line break, with no argument (#418).
+                Some('P') | Some('N') | Some('X') => out.push('\n'),
                 Some('~') => out.push(' '),
                 Some('\\') => out.push('\\'),
                 Some('{') => out.push('{'),
@@ -67,7 +107,7 @@ pub(crate) fn plain_mtext(text: &str) -> (String, bool) {
                     }
                 }
                 // Codes with an argument up to the semicolon.
-                Some('f' | 'F' | 'H' | 'C' | 'c' | 'T' | 'Q' | 'W' | 'A' | 'p' | 'X') => {
+                Some('f' | 'F' | 'H' | 'C' | 'c' | 'T' | 'Q' | 'W' | 'A' | 'p') => {
                     dropped = true;
                     for d in chars.by_ref() {
                         if d == ';' {
@@ -101,6 +141,40 @@ mod tests {
         assert_eq!(plain_text("ends %%"), ("ends ".to_owned(), true));
     }
 
+    /// `%%` and three digits is a character by its number in the code
+    /// page (#397); one that is not printable, or past 255, is dropped.
+    /// Fewer digits are not a code of this kind.
+    /// #430: a single-line text's break is a space, and dropped; the codes
+    /// beneath it, which an MTEXT's words go through with their breaks,
+    /// keep a break as it is.
+    #[test]
+    fn a_line_break_is_a_space_in_a_single_line_text_only() {
+        assert_eq!(
+            plain_line("first\nsecond"),
+            ("first second".to_owned(), true)
+        );
+        assert_eq!(plain_line("a\tb %%d"), ("a\tb °".to_owned(), false));
+        assert_eq!(
+            plain_text("first\nsecond"),
+            ("first\nsecond".to_owned(), false)
+        );
+        assert_eq!(plain_mtext("one\\Ptwo"), ("one\ntwo".to_owned(), false));
+    }
+
+    #[test]
+    fn a_percent_code_with_three_digits_is_a_character() {
+        assert_eq!(plain_text("%%065BC"), ("ABC".to_owned(), false));
+        assert_eq!(
+            plain_text("%%0372 %%176 %%128"),
+            ("%2 ° €".to_owned(), false)
+        );
+        // A line feed is not words: dropped, not a line split.
+        assert_eq!(plain_text("1%%0102"), ("12".to_owned(), true));
+        assert_eq!(plain_text("a%%999b"), ("ab".to_owned(), true));
+        assert_eq!(plain_text("%%06"), ("6".to_owned(), true));
+        assert_eq!(plain_mtext("x %%065;"), ("x A;".to_owned(), false));
+    }
+
     #[test]
     fn mtext_keeps_words_and_breaks_and_drops_formatting() {
         assert_eq!(plain_mtext("one\\Ptwo"), ("one\ntwo".to_owned(), false));
@@ -121,6 +195,12 @@ mod tests {
         assert_eq!(plain_mtext("\\S1/2;"), ("1/2".to_owned(), true));
         assert_eq!(plain_mtext("\\Sonly;"), ("only".to_owned(), true));
         assert_eq!(plain_mtext("45%%d\\Pnext"), ("45°\nnext".to_owned(), false));
+        // A dimension's text under its line follows `\X`, which takes no
+        // argument (#418).
+        assert_eq!(
+            plain_mtext("ABOVE\\XBELOW"),
+            ("ABOVE\nBELOW".to_owned(), false)
+        );
         assert_eq!(plain_mtext("trailing\\"), ("trailing".to_owned(), true));
         assert_eq!(
             plain_mtext("\\pxi-2,l2;indented"),

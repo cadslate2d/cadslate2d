@@ -71,7 +71,7 @@ fn rectangle(a: Point2, b: Point2) -> Path {
 /// The outline of an object a cloud can follow, or why it cannot.
 fn outline(entity: &Entity) -> Result<Path, String> {
     match entity {
-        Entity::Polyline(polyline) if polyline.closed => Ok(polyline.path()),
+        Entity::Polyline(polyline) if polyline.closes() => Ok(polyline.path()),
         Entity::Polyline(_) => Err("The polyline is open: a cloud needs a closed outline.".into()),
         Entity::Circle(circle) => {
             let (center, radius) = (circle.center, circle.radius);

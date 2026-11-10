@@ -24,7 +24,7 @@ use cad_document::{
     Properties, ViewportEntity, Weight, WipeoutEntity, draw_order,
 };
 use cad_geometry::{Arc, Primitive};
-use cad_render::{GeometrySink, walk_entity};
+use cad_render::{GeometrySink, drawn_continuous, viewports_shown, walk_entity};
 
 /// PDF points per millimetre: a point is 1/72 of an inch.
 pub const POINTS_PER_MM: f64 = 72.0 / 25.4;
@@ -356,9 +356,10 @@ fn look_of(
 /// The content stream: every shown entity of the space, in the drawing
 /// order (ADR-0032),
 /// each part with its look, inside a clip to the plotted area. On a
-/// layout, the paper's entities at the page's placement — a viewport
-/// itself draws nothing — then, for each viewport that is on, the model's
-/// entities through it, inside a clip to its frame.
+/// layout, for each viewport that is on, the model's entities through it,
+/// inside a clip to its frame; then the paper's entities at the page's
+/// placement over them all, as the screen draws them (#413) — a viewport
+/// itself draws nothing.
 fn content(drawing: &Drawing, space: LayoutId, settings: &PlotSettings, page: &Page) -> String {
     let mut out = String::new();
     // Round caps and joins meet at vertices as they do on screen.
@@ -370,14 +371,12 @@ fn content(drawing: &Drawing, space: LayoutId, settings: &PlotSettings, page: &P
         current: None,
     };
     let ids = painted(drawing, drawing.shown_in(space).map(|(id, _)| id));
-    painter.space(&mut out, &ids, page.placement(), page.area);
-    let viewports: Vec<ViewportEntity> = ids
-        .iter()
-        .filter_map(|id| match drawing.entity(*id) {
-            Some(Entity::Viewport(viewport)) if viewport.on => Some(*viewport),
-            _ => None,
-        })
-        .collect();
+    // The windows the screen draws the model through, by its one rule.
+    let viewports: Vec<ViewportEntity> = if space == LayoutId::MODEL {
+        Vec::new()
+    } else {
+        viewports_shown(drawing, space).collect()
+    };
     if !viewports.is_empty() {
         let model = painted(drawing, drawing.shown().map(|(id, _)| id));
         for viewport in viewports {
@@ -398,6 +397,8 @@ fn content(drawing: &Drawing, space: LayoutId, settings: &PlotSettings, page: &P
             painter.current = None;
         }
     }
+    // The paper's own objects lie over every viewport.
+    painter.space(&mut out, &ids, page.placement(), page.area);
     out.push_str("Q\n");
     out
 }
@@ -446,68 +447,81 @@ impl Painter<'_> {
     /// to (ADR-0031).
     fn space(&mut self, out: &mut String, ids: &[EntityId], placement: Placement, area: Aabb) {
         let drawing = self.drawing;
-        let mut sink = PageSink::new(placement);
-        for id in ids {
-            let Some(entity) = drawing.entity(*id) else {
-                continue;
-            };
-            let properties = drawing.properties(*id).unwrap_or_default();
-            let parts: Vec<(Entity, Properties)> = match entity {
-                Entity::BlockRef(reference) => drawing.blocks().flatten(reference, properties),
-                other => vec![(other.clone(), properties)],
-            };
-            for (part, mut properties) in parts {
-                // A viewport is a window, not a thing on the paper: what it
-                // shows is plotted, its frame is not.
-                if matches!(part, Entity::Viewport(_)) {
+        let tier_of = |id: &EntityId| drawing.record(*id).map_or(0, |record| record.order);
+        // A tier at a time (ADR-0032), as the screen draws it: every fill of
+        // the tier — a block's, a multileader note's — beneath every stroke
+        // of it (#412). Each part is walked once; what it fills and what it
+        // strokes are painted in two passes.
+        for tier in ids.chunk_by(|a, b| tier_of(a) == tier_of(b)) {
+            let mut fills: Vec<(Look, String)> = Vec::new();
+            let mut strokes: Vec<(Look, String)> = Vec::new();
+            for id in tier {
+                let Some(entity) = drawing.entity(*id) else {
                     continue;
-                }
-                // As on screen: a text, a dimension, and a hatch are drawn
-                // continuous, whatever their linetype says.
-                if matches!(
-                    part,
-                    Entity::Text(_)
-                        | Entity::MText(_)
-                        | Entity::Dimension(_)
-                        | Entity::Hatch(_)
-                        | Entity::Point(_)
-                        | Entity::Leader(_)
-                        | Entity::MLeader(_)
-                ) {
-                    properties.linetype = Linetype::CONTINUOUS;
-                }
-                let look = look_of(drawing, &placement, self.settings, properties);
-                if self.current.as_ref() != Some(&look) {
-                    sink.flush(out);
-                    let [red, green, blue] = look.rgb;
-                    let _ = writeln!(
-                        out,
-                        "{} {} {} RG {} {} {} rg",
-                        num(f64::from(red) / 255.0),
-                        num(f64::from(green) / 255.0),
-                        num(f64::from(blue) / 255.0),
-                        num(f64::from(red) / 255.0),
-                        num(f64::from(green) / 255.0),
-                        num(f64::from(blue) / 255.0),
-                    );
-                    let _ = writeln!(out, "{} w", num(look.width));
-                    let dashes: Vec<String> = look.dashes.iter().map(|d| num(*d)).collect();
-                    let _ = writeln!(out, "[{}] 0 d", dashes.join(" "));
-                    self.current = Some(look);
-                }
-                walk_entity(&part, drawing.tables(), &mut sink);
-                let construction = match &part {
-                    Entity::XLine(line) => line.clipped(&area),
-                    Entity::Ray(ray) => ray.clipped(&area),
-                    _ => None,
                 };
-                if let Some(piece) = construction {
-                    sink.segment(piece.start, piece.end, 0.0);
+                let properties = drawing.properties(*id).unwrap_or_default();
+                let parts: Vec<(Entity, Properties)> = match entity {
+                    Entity::BlockRef(reference) => drawing.blocks().flatten(reference, properties),
+                    other => vec![(other.clone(), properties)],
+                };
+                for (part, mut properties) in parts {
+                    // A viewport is a window, not a thing on the paper: what
+                    // it shows is plotted, its frame is not.
+                    if matches!(part, Entity::Viewport(_)) {
+                        continue;
+                    }
+                    // As on screen: what is not a curve is drawn continuous,
+                    // whatever its linetype says.
+                    if drawn_continuous(&part) {
+                        properties.linetype = Linetype::CONTINUOUS;
+                    }
+                    let look = look_of(drawing, &placement, self.settings, properties);
+                    let mut sink = PageSink::new(placement);
+                    walk_entity(&part, drawing.tables(), &mut sink);
+                    let construction = match &part {
+                        Entity::XLine(line) => line.clipped(&area),
+                        Entity::Ray(ray) => ray.clipped(&area),
+                        _ => None,
+                    };
+                    if let Some(piece) = construction {
+                        sink.segment(piece.start, piece.end, 0.0);
+                    }
+                    let (filled, stroked) = sink.take();
+                    if !filled.is_empty() {
+                        fills.push((look.clone(), filled));
+                    }
+                    if !stroked.is_empty() {
+                        strokes.push((look, stroked));
+                    }
                 }
-                sink.flush(out);
+            }
+            for (look, paths) in fills.into_iter().chain(strokes) {
+                self.set_look(out, look);
+                out.push_str(&paths);
             }
         }
-        sink.flush(out);
+    }
+
+    /// Sets the stream's look to `look`, unless it is set so already.
+    fn set_look(&mut self, out: &mut String, look: Look) {
+        if self.current.as_ref() == Some(&look) {
+            return;
+        }
+        let [red, green, blue] = look.rgb;
+        let _ = writeln!(
+            out,
+            "{} {} {} RG {} {} {} rg",
+            num(f64::from(red) / 255.0),
+            num(f64::from(green) / 255.0),
+            num(f64::from(blue) / 255.0),
+            num(f64::from(red) / 255.0),
+            num(f64::from(green) / 255.0),
+            num(f64::from(blue) / 255.0),
+        );
+        let _ = writeln!(out, "{} w", num(look.width));
+        let dashes: Vec<String> = look.dashes.iter().map(|d| num(*d)).collect();
+        let _ = writeln!(out, "[{}] 0 d", dashes.join(" "));
+        self.current = Some(look);
     }
 }
 
@@ -537,20 +551,16 @@ impl PageSink {
         }
     }
 
-    /// Emits what was built: the strokes as one path, then the fills.
-    fn flush(&mut self, out: &mut String) {
-        for mask in self.masks.drain(..) {
-            out.push_str(&mask);
-        }
-        if !self.path.is_empty() {
-            out.push_str(&self.path);
-            out.push_str("S\n");
-            self.path.clear();
-        }
-        self.current = None;
-        for fill in self.fills.drain(..) {
-            out.push_str(&fill);
-        }
+    /// What was built, as two parts of the stream (#412): the areas —
+    /// wipeouts' masks, then fills — and the strokes, as one path.
+    fn take(self) -> (String, String) {
+        let areas: String = self.masks.into_iter().chain(self.fills).collect();
+        let strokes = if self.path.is_empty() {
+            String::new()
+        } else {
+            self.path + "S\n"
+        };
+        (areas, strokes)
     }
 
     fn continues_from(&self, point: Point2) -> bool {

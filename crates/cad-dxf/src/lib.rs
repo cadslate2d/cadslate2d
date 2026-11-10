@@ -25,8 +25,11 @@ mod text_codes;
 mod wipeout;
 
 pub use error::DxfError;
-pub use export::{DrawingChanged, Export, code_page, export, export_bytes, export_records};
+pub use export::{
+    DrawingChanged, Export, code_page, export, export_bytes, export_records, unicode,
+};
 pub use import::{
-    Import, ImportLimits, Record, Section, import, import_records, import_with_limits,
+    Import, ImportLimits, Record, Section, from_code_page, import, import_records,
+    import_with_limits,
 };
 pub use report::ImportReport;

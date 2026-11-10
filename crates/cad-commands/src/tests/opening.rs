@@ -4,7 +4,7 @@
 //! and what is refused.
 
 use cad_core::Point2;
-use cad_document::{Entity, LineEntity};
+use cad_document::{Entity, LineEntity, PolylineEntity};
 use cad_layout::{Room, Setbacks, Spec, Terrain};
 
 use crate::floorplan::{DOORS, EXTERIOR_WALLS, WINDOWS};
@@ -330,4 +330,106 @@ fn a_door_goes_through_a_generated_plans_interior_wall() {
     );
     h.undo();
     assert_eq!(on(&h, DOORS).len(), doors_before);
+}
+
+/// #385: a wall whose other face is a closed polyline running against the
+/// picked face loses only the opening from it, as from a line: the
+/// rectangle keeps 38.8 of its 40, not 1.2. And so for a DOOR, and for the
+/// rectangle picked as the face.
+#[test]
+fn a_closed_face_running_the_other_way_loses_only_the_opening() {
+    // The wall's own polylines, on its layer: a door draws its own.
+    let polyline_length = |h: &Harness| -> f64 {
+        on(h, "0")
+            .iter()
+            .filter_map(|entity| match entity {
+                Entity::Polyline(polyline) => Some(polyline.path().length()),
+                _ => None,
+            })
+            .sum()
+    };
+    let walls = || {
+        Harness::with_entities([
+            PolylineEntity::new(
+                vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)],
+                true,
+            )
+            .into(),
+            LineEntity::new(p(9.0, 0.25), p(1.0, 0.25)).into(),
+        ])
+    };
+    // The opening's width is its default: 1.2 for a window, 0.9 for a door,
+    // which also asks the side it opens into.
+    for (command, pick, then, kept) in [
+        ("WINDOW", p(5.0, 0.25), &["5,0.125", ""][..], 40.0 - 1.2),
+        (
+            "DOOR",
+            p(5.0, 0.25),
+            &["5,0.125", "", "5,5"][..],
+            40.0 - 0.9,
+        ),
+        ("WINDOW", p(5.0, 0.0), &["5,0.125", ""][..], 40.0 - 1.2),
+    ] {
+        let mut h = walls();
+        h.enter_all(&["ZOOM", "E", command]);
+        h.click_world(pick);
+        h.enter_all(then);
+        let left = polyline_length(&h);
+        assert!(
+            (left - kept).abs() < 1e-9,
+            "{command} picked at {pick:?}: the rectangle kept {left}, not {kept}: {:?}",
+            h.log().last()
+        );
+    }
+}
+
+#[test]
+fn an_opening_hands_a_cut_faces_constraints_to_the_pieces_that_have_them() {
+    // #421: the face's far end is the far piece's now, so the return
+    // wall coincident with it stays; the face's level stays on its first
+    // piece.
+    let mut h = Harness::with_entities([
+        LineEntity::new(p(0.0, 0.0), p(10.0, 0.0)).into(),
+        LineEntity::new(p(10.0, 0.2), p(0.0, 0.2)).into(),
+        LineEntity::new(p(10.0, 0.0), p(10.0, -5.0)).into(),
+    ]);
+    h.enter_all(&["GCCOINCIDENT", "10,0", "10,0"]);
+    h.enter("GCHORIZONTAL");
+    h.click_world(p(2.0, 0.0));
+    assert_eq!(h.session.drawing().constraints().len(), 2, "{:?}", h.log());
+    h.enter("WINDOW");
+    h.click_world(p(4.0, 0.0));
+    h.enter_all(&["4,0.1", "1.5"]);
+    let drawing = h.session.drawing();
+    let face = |n: u64| {
+        *drawing
+            .entity(cad_core::EntityId::from_raw(n))
+            .unwrap()
+            .as_line()
+            .unwrap()
+    };
+    assert_eq!(
+        face(3),
+        LineEntity::new(p(10.0, 0.0), p(10.0, -5.0)),
+        "{:?}",
+        h.log()
+    );
+    assert!((face(1).end.x - 3.25).abs() < 1e-9, "{:?}", face(1));
+    let far = drawing
+        .entities()
+        .find_map(|(id, e)| {
+            e.as_line()
+                .is_some_and(|l| l.end == p(10.0, 0.0))
+                .then_some(id)
+        })
+        .expect("the far piece of the face");
+    let rows: Vec<_> = drawing
+        .constraints()
+        .iter()
+        .map(|(_, c)| c.clone())
+        .collect();
+    assert_eq!(rows.len(), 2);
+    assert!(rows[0].refers_to(far) && rows[0].refers_to(cad_core::EntityId::from_raw(3)));
+    assert!(rows[1].refers_to(cad_core::EntityId::from_raw(1)));
+    assert!(drawing.unsatisfied_constraints().is_empty());
 }
