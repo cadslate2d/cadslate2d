@@ -327,10 +327,26 @@ pub fn records(file: &File<'_>) -> Result<Vec<Record>, DwgError> {
             if let Some(name) = decoded.dim_style.and_then(name_of) {
                 groups.text(3, name);
             }
-            if decoded.kind == "MULTILEADER" {
+            // The common groups — the handle, the colour, the lineweight,
+            // the linetype scale, the visibility, the space — lead the
+            // decoded ones; a multileader's go before its marker, where a
+            // file writes them, or the reader takes them for its own and
+            // the record has no handle, no colour, and no group (#429).
+            let own = if decoded.kind == "MULTILEADER" {
+                const COMMON: [i32; 9] = [5, 62, 420, 430, 440, 370, 48, 60, 67];
+                let common = decoded
+                    .groups
+                    .0
+                    .iter()
+                    .take_while(|(code, _)| COMMON.contains(code))
+                    .count();
+                groups.0.extend(decoded.groups.0[..common].iter().cloned());
                 groups.text(100, "AcDbMLeader");
-            }
-            groups.0.extend(decoded.groups.0.iter().cloned());
+                &decoded.groups.0[common..]
+            } else {
+                &decoded.groups.0[..]
+            };
+            groups.0.extend(own.iter().cloned());
             out.push(Record {
                 section,
                 kind: decoded.kind.clone(),
