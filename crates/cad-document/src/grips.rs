@@ -880,20 +880,88 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_grip_moves_the_whole_entity_exactly_where_it_says_so() {
-        // Dragged by an offset, a grip that moves the entity whole leaves it
-        // where translating it would; any other grip does not.
-        let offset = cad_core::Vec2::new(37.5, -12.25);
-        let entities = [
+    /// One entity of every kind — an ellipse whole and as an arc — for
+    /// what must agree over all of them.
+    fn one_of_every_kind() -> Vec<Entity> {
+        use cad_core::Vec2;
+
+        use crate::{
+            BlockId, DimensionEntity, HatchEntity, LeaderEntity, MLeaderContent, MLeaderEntity,
+            Measure, Path, SplineEntity,
+        };
+        let text = TextEntity::new(p(1.0, 2.0), 2.5, 0.0, "A");
+        let ellipse = EllipseEntity {
+            center: p(5.0, 5.0),
+            major: Vec2::new(8.0, 2.0),
+            ratio: 0.5,
+            start_parameter: 0.0,
+            end_parameter: 0.0,
+        };
+        let entities: Vec<Entity> = vec![
             line(),
             circle(),
             arc(),
+            ellipse.into(),
+            EllipseEntity {
+                end_parameter: 2.0,
+                ..ellipse
+            }
+            .into(),
+            SplineEntity::through(&[p(0.0, 0.0), p(4.0, 3.0), p(8.0, -1.0), p(12.0, 2.0)])
+                .unwrap()
+                .into(),
             polyline(false),
+            text.clone().into(),
+            MTextEntity::new(p(1.0, 2.0), 20.0, 2.5, 0.0, "A").into(),
+            AttributeDefinitionEntity::new("T", "Tag?", text).into(),
+            BlockReferenceEntity::new(BlockId::from_raw(1), p(3.0, 1.0), 1.0, 0.0).into(),
+            DimensionEntity::new(
+                Measure::Aligned {
+                    a: p(0.0, 0.0),
+                    b: p(10.0, 0.0),
+                },
+                p(5.0, 5.0),
+            )
+            .into(),
+            HatchEntity::solid(vec![Path {
+                vertices: vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)],
+                bulges: Vec::new(),
+                closed: true,
+            }])
+            .into(),
+            ViewportEntity::new(p(50.0, 40.0), 80.0, 60.0, p(0.0, 0.0), 1.0).into(),
             PointEntity::new(p(3.0, 4.0)).into(),
-            TextEntity::new(p(1.0, 2.0), 2.5, 0.0, "A").into(),
+            LeaderEntity::new(vec![p(0.0, 0.0), p(5.0, 5.0), p(9.0, 5.0)]).into(),
+            XLineEntity {
+                base: p(1.0, 1.0),
+                direction: Vec2::new(0.6, 0.8),
+            }
+            .into(),
+            RayEntity {
+                start: p(1.0, 1.0),
+                direction: Vec2::new(0.6, 0.8),
+            }
+            .into(),
+            WipeoutEntity::new(vec![p(1.0, 1.0), p(6.0, 1.0), p(3.0, 4.0)])
+                .unwrap()
+                .into(),
+            MLeaderEntity::new(p(0.0, 0.0), p(5.0, 5.0), MLeaderContent::Text("A".into())).into(),
         ];
-        for entity in entities {
+        let kinds: std::collections::BTreeSet<String> = entities
+            .iter()
+            .map(|entity| format!("{:?}", std::mem::discriminant(entity)))
+            .collect();
+        assert_eq!(kinds.len(), 19, "every kind of entity, once");
+        entities
+    }
+
+    #[test]
+    fn a_grip_moves_the_whole_entity_exactly_where_it_says_so() {
+        // Dragged by an offset, a grip that moves the entity whole leaves it
+        // where translating it would; any other grip does not — for every
+        // grip of every kind, so `grip_moves_whole` and `grip_moved` agree.
+        let offset = cad_core::Vec2::new(37.5, -12.25);
+        for entity in one_of_every_kind() {
             let translated = entity.translated(offset);
             for (index, grip) in entity.grips().iter().enumerate() {
                 let moved = entity
