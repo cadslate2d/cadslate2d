@@ -537,10 +537,12 @@ impl Drawing {
     /// What the rest of the constrained parts would become were `replaced`
     /// put in place (ADR-0038 §5): the other entities that would move, with
     /// their geometry — what a grip's preview draws as it is dragged — or
-    /// why the edit would be refused.
+    /// why the edit would be refused. Those of them in `whole` are held
+    /// whole, as `TransactionBuilder::replace_whole` holds them.
     pub fn settled_with(
         &self,
         replaced: &[(EntityId, Entity)],
+        whole: &[EntityId],
     ) -> Result<Vec<(EntityId, Entity)>, String> {
         if self.constraints.is_empty() {
             return Ok(Vec::new());
@@ -550,7 +552,8 @@ impl Drawing {
             .map(|(id, entity)| (*id, Some(entity.clone())))
             .collect();
         let ids: BTreeSet<EntityId> = replaced.iter().map(|(id, _)| *id).collect();
-        Prospect::of(self, entities).settle(ids.clone(), &ids, &BTreeSet::new())
+        let held = whole.iter().copied().collect();
+        Prospect::of(self, entities).settle(ids.clone(), &ids, &held)
     }
 
     /// The constraints that do not hold as the drawing is, in ID order:

@@ -411,6 +411,34 @@ impl Entity {
         }
     }
 
+    /// Whether dragging grip `index` moves the whole entity — a line's
+    /// midpoint, a centre, a text's insertion — rather than reshaping it.
+    /// Such an edit set every unknown of the entity, and is committed with
+    /// `TransactionBuilder::replace_whole` (ADR-0038 §5, #420).
+    pub fn grip_moves_whole(&self, index: usize) -> bool {
+        match self {
+            Entity::Line(_) => index == 1,
+            Entity::Circle(_) => index == 0,
+            Entity::Arc(_) => index == 3,
+            Entity::Ellipse(entity) => index == if entity.ellipse().is_full() { 0 } else { 2 },
+            Entity::Viewport(_) => index == 4,
+            Entity::Point(_)
+            | Entity::Text(_)
+            | Entity::MText(_)
+            | Entity::AttributeDefinition(_)
+            | Entity::BlockRef(_)
+            | Entity::XLine(_)
+            | Entity::Ray(_) => index == 0,
+            Entity::Polyline(_)
+            | Entity::Spline(_)
+            | Entity::Leader(_)
+            | Entity::MLeader(_)
+            | Entity::Wipeout(_)
+            | Entity::Dimension(_)
+            | Entity::Hatch(_) => false,
+        }
+    }
+
     /// What to draw while grip `index` is being dragged to `to`: the part of
     /// the entity that changes, as it would look.
     ///
@@ -850,5 +878,37 @@ mod tests {
             pair.grip_preview(0, p(5.0, 5.0)),
             Some(PolylineEntity::new(vec![p(5.0, 5.0), p(10.0, 0.0)], false).into())
         );
+    }
+
+    #[test]
+    fn a_grip_moves_the_whole_entity_exactly_where_it_says_so() {
+        // Dragged by an offset, a grip that moves the entity whole leaves it
+        // where translating it would; any other grip does not.
+        let offset = cad_core::Vec2::new(37.5, -12.25);
+        let entities = [
+            line(),
+            circle(),
+            arc(),
+            polyline(false),
+            PointEntity::new(p(3.0, 4.0)).into(),
+            TextEntity::new(p(1.0, 2.0), 2.5, 0.0, "A").into(),
+        ];
+        for entity in entities {
+            let translated = entity.translated(offset);
+            for (index, grip) in entity.grips().iter().enumerate() {
+                let moved = entity
+                    .grip_moved(index, grip.position + offset)
+                    .expect("a grip moved");
+                let whole = positions(&moved)
+                    .iter()
+                    .zip(positions(&translated))
+                    .all(|(a, b)| close(*a, b));
+                assert_eq!(
+                    entity.grip_moves_whole(index),
+                    whole,
+                    "{entity:?}, grip {index}"
+                );
+            }
+        }
     }
 }

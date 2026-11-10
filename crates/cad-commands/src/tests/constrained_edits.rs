@@ -147,7 +147,10 @@ fn a_grip_drags_the_part_with_it_and_its_preview_shows_it() {
     let previews: Vec<Entity> = h
         .session
         .drawing()
-        .settled_with(&[(id(2), LineEntity::new(p(100.0, 0.0), p(100.0, 80.0)).into())])
+        .settled_with(
+            &[(id(2), LineEntity::new(p(100.0, 0.0), p(100.0, 80.0)).into())],
+            &[],
+        )
         .unwrap()
         .into_iter()
         .map(|(_, entity)| entity)
@@ -384,4 +387,42 @@ fn mirror_reverses_a_signed_distance_and_is_refused() {
     assert_eq!(h.session.drawing().revision(), revision);
     assert_eq!(line(&h, 1).start, p(0.0, 0.0));
     assert_eq!(line(&h, 1).end, p(100.0, 0.0));
+}
+
+#[test]
+fn a_midpoint_grip_moves_the_line_whole() {
+    // #420: the midpoint grip translates the line, as MOVE does. Dragged
+    // straight up, its ends' x keep their bits; held whole, the line does
+    // not slide in x to keep d1, and the drag is refused.
+    let mut h = tied();
+    let dragged = LineEntity::new(p(200.0, 50.0), p(300.0, 50.0));
+    let drawing = h.session.drawing();
+    assert!(
+        drawing
+            .settled_with(&[(id(2), dragged.into())], &[id(2)])
+            .is_err(),
+        "the preview, held whole, shows nothing to follow"
+    );
+    assert!(
+        drawing
+            .settled_with(&[(id(2), dragged.into())], &[])
+            .is_ok(),
+        "held in part, it would have slid"
+    );
+    h.click_world(p(250.0, 0.0));
+    h.click_world(p(250.0, 0.0));
+    h.click_world(p(250.0, 50.0));
+    assert!(refused(&h), "{:?}", h.log());
+    assert_eq!(line(&h, 2).start, p(200.0, 0.0));
+
+    // Its end grip still reshapes it: the start stays 100 from the fixed
+    // end, and the line turns about it.
+    h.escape();
+    h.click_world(p(250.0, 0.0));
+    h.click_world(p(300.0, 0.0));
+    h.click_world(p(200.0, 100.0));
+    holds(&h);
+    assert!(!refused(&h), "{:?}", h.log());
+    assert_eq!(line(&h, 2).start, p(200.0, 0.0));
+    assert_eq!(line(&h, 2).end, p(200.0, 100.0));
 }
