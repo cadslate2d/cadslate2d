@@ -426,3 +426,64 @@ fn a_midpoint_grip_moves_the_line_whole() {
     assert_eq!(line(&h, 2).start, p(200.0, 0.0));
     assert_eq!(line(&h, 2).end, p(200.0, 100.0));
 }
+
+/// Line 1 on layer 0 from 0,0 to 100,0; line 2 on the locked layer
+/// "held" from `from` to `to`.
+fn beside_a_locked_line(from: &str, to: &str) -> Harness {
+    let mut h = Harness::new();
+    h.enter_all(&["LINE", "0,0", "100,0", ""]);
+    h.enter_all(&["LA", "New", "held", "Set", "held", ""]);
+    h.enter_all(&["LINE", from, to, ""]);
+    h.enter_all(&["LA", "Set", "0", "Lock", "held", ""]);
+    assert!(h.session.drawing().is_locked(id(2)), "{:?}", h.log());
+    assert!(!h.session.drawing().is_locked(id(1)));
+    h
+}
+
+#[test]
+fn an_edit_that_would_move_a_locked_object_is_refused() {
+    // #423: line 2 is locked; its start was dragged along by the
+    // coincidence when line 1 moved.
+    let mut h = beside_a_locked_line("100,0", "100,50");
+    h.enter("LA");
+    h.enter_all(&["Unlock", "held", ""]);
+    h.enter_all(&["GCCOINCIDENT", "100,0", "100,0"]);
+    h.enter_all(&["LA", "Lock", "held", ""]);
+    assert_eq!(h.session.drawing().constraints().len(), 1, "{:?}", h.log());
+    let revision = h.session.drawing().revision();
+    h.enter("MOVE");
+    h.click_world(p(50.0, 0.0));
+    h.enter_all(&["", "0,0", "0,10"]);
+    assert_eq!(
+        h.log().last().unwrap(),
+        "The edit would move an object on a locked layer.",
+        "{:?}",
+        h.log()
+    );
+    assert_eq!(h.session.drawing().revision(), revision);
+    assert_eq!(line(&h, 2).start, p(100.0, 0.0));
+    assert_eq!(line(&h, 1).start, p(0.0, 0.0));
+
+    // Unlocked, the same move takes line 2's start along.
+    h.enter_all(&["LA", "Unlock", "held", ""]);
+    h.enter("MOVE");
+    h.click_world(p(50.0, 0.0));
+    h.enter_all(&["", "0,0", "0,10"]);
+    holds(&h);
+    assert!((line(&h, 2).start - p(100.0, 10.0)).length() < 1e-7);
+}
+
+#[test]
+fn a_geometric_constraint_does_not_pick_a_locked_object_by_a_point() {
+    // #423: the typed point 120,30 is the locked line's start; it is not
+    // picked, so nothing is constrained and nothing moves.
+    let mut h = beside_a_locked_line("120,30", "150,80");
+    h.enter_all(&["GCCOINCIDENT", "100,0", "120,30"]);
+    assert!(
+        h.session.drawing().constraints().is_empty(),
+        "{:?}",
+        h.log()
+    );
+    assert_eq!(line(&h, 2).start, p(120.0, 30.0));
+    assert_eq!(line(&h, 1).end, p(100.0, 0.0));
+}
