@@ -10,10 +10,25 @@
 //! a stacked fraction becomes `a/b`, and every other code is dropped — and
 //! the report says so.
 
-/// `text` with the TEXT codes resolved; whether anything was dropped.
+/// `text` with the TEXT codes resolved; whether anything was dropped. A
+/// TEXT is one line: a line break or another control character but a tab,
+/// which a DWG's length-counted string may hold, is a space, and dropped
+/// formatting (#430) — as the writer puts one in the file.
 pub(crate) fn plain_text(text: &str) -> (String, bool) {
-    let mut out = String::with_capacity(text.len());
+    let control = |c: char| c.is_control() && c != '\t';
+    let spaced: String;
     let mut dropped = false;
+    let text = if text.chars().any(control) {
+        dropped = true;
+        spaced = text
+            .chars()
+            .map(|c| if control(c) { ' ' } else { c })
+            .collect();
+        spaced.as_str()
+    } else {
+        text
+    };
+    let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find("%%") {
         out.push_str(&rest[..at]);

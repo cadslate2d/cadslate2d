@@ -264,8 +264,9 @@ fn a_spline_through_points_keeps_them_and_one_with_control_data_of_its_own_is_re
     }
 }
 
-/// #430: a line break a DWG's length-counted text holds survives our DWG
-/// round trip, and the DXF saved from the drawing it opens is readable.
+/// #430: a line break a DWG's length-counted text holds is read as a space,
+/// as a DXF's is, and reported; the DXF saved from the drawing it opens
+/// reads, and saves again as it was.
 #[test]
 fn a_line_break_in_dwg_text_keeps_the_dxf_saved_from_it_readable() {
     use cad_core::Point2;
@@ -286,17 +287,17 @@ fn a_line_break_in_dwg_text_keeps_the_dxf_saved_from_it_readable() {
             .expect("the text")
     };
     for version in VERSIONS {
-        let opened = cad_dwg::import(&cad_dwg::export(&drawing, version).unwrap())
-            .unwrap()
-            .drawing;
-        assert_eq!(content(&opened), "first\nsecond", "{version:?}");
-        let saved = cad_dxf::export_bytes(&opened);
+        let opened = cad_dwg::import(&cad_dwg::export(&drawing, version).unwrap()).unwrap();
+        assert_eq!(content(&opened.drawing), "first second", "{version:?}");
+        assert_eq!(opened.report.with_dropped_properties, 1, "{version:?}");
+        let saved = cad_dxf::export_bytes(&opened.drawing);
         let reopened = cad_dxf::import(&saved)
             .unwrap_or_else(|e| panic!("{version:?}: the DXF saved from it is refused: {e}"));
+        assert_eq!(content(&reopened.drawing), "first second", "{version:?}");
         assert_eq!(
-            content(&reopened.drawing),
-            "first\\U+000Asecond",
-            "{version:?}"
+            cad_dxf::export_bytes(&reopened.drawing),
+            saved,
+            "{version:?}: saved again, the same file"
         );
     }
 }
