@@ -595,3 +595,29 @@ fn a_tangent_arc_is_never_turned_inside_out() {
     assert!((arc.center.y - 40.0).abs() < 1e-7, "{arc:?} {:?}", h.log());
     holds(&h);
 }
+
+#[test]
+fn a_real_conflict_beside_a_circle_is_still_refused_and_says_which() {
+    // #424: holding the radii is a second try, not a way round a
+    // constraint. With its centre fixed and its radius dimensioned, the
+    // circle cannot follow the line: refused, naming a constraint.
+    let mut h = Harness::with_entities([
+        LineEntity::new(p(-50.0, -10.0), p(50.0, -10.0)).into(),
+        cad_document::CircleEntity::new(p(0.0, 0.0), 10.0).into(),
+    ]);
+    h.enter("GCTANGENT");
+    h.click_world(p(30.0, -10.0));
+    h.click_world(p(0.0, 10.0));
+    h.enter_all(&["GCFIX", "0,0"]);
+    h.enter("DCRADIUS");
+    h.click_world(p(10.0, 0.0));
+    h.enter_all(&["20,10", "10"]);
+    assert_eq!(h.session.drawing().constraints().len(), 3, "{:?}", h.log());
+    let revision = h.session.drawing().revision();
+    h.enter("MOVE");
+    h.click_world(p(30.0, -10.0));
+    h.enter_all(&["", "0,0", "0,40"]);
+    let said = h.log().last().unwrap().clone();
+    assert!(said.starts_with("The edit would break"), "{:?}", h.log());
+    assert_eq!(h.session.drawing().revision(), revision);
+}
