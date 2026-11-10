@@ -143,7 +143,7 @@ What the reader could not hold is counted under these keys and named in the comm
 | `(HATCH pattern not in the table)`, `(gradient HATCH)`, `(HATCH pattern too dense)` | A hatch filled solid in place of what the file had |
 | `POLYLINE` | A 3D polyline, mesh, or polyface mesh |
 | `(fitted POLYLINE kept as drawn)` | A polyline PEDIT fitted with a spline or with arcs: the vertices drawn are kept, the spline's frame and the curve's tangents are not, so it cannot be decurved (#395) |
-| `(invalid geometry)` | A circle or arc with a radius that is not positive; a polyline of fewer than two vertices; an `INSERT` with no block name or a scale of zero; a `DIMENSION` missing a point it needs, between parallel lines, or that cannot be laid out |
+| `(invalid geometry)` | A circle or arc with a radius that is not positive; a TEXT, ATTDEF, or MTEXT whose height is not (#419); a polyline of fewer than two vertices; an `INSERT` with no block name or a scale of zero; a `DIMENSION` missing a point it needs, between parallel lines, or that cannot be laid out |
 | `(layer name)`, `(linetype name)`, `(text style name)`, `(dimension style name)`, `(block name)` | A table row or block whose name no row can have |
 | `(dimension style values)` | A dimension style with a value a dimension cannot be drawn by: the default stands for it |
 | `(linetype pattern)` | A pattern the drawing cannot hold: the linetype is continuous |
