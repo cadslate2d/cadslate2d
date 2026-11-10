@@ -26,6 +26,10 @@ use crate::constraint::{Axis, Constraint, ConstraintId, Kind, Part, Touch};
 use crate::transaction::{Change, EntityChange};
 use crate::{ArcEntity, CircleEntity, Entity, LineEntity, PointEntity, PolylineEntity};
 
+/// The least a settled radius may be, at the circle's magnitude: a circle
+/// no larger is none (#424).
+const RADIUS: cad_core::tolerance::LinearTolerance = cad_core::tolerance::LinearTolerance::DEFAULT;
+
 /// An entity's unknowns.
 #[derive(Clone, Debug)]
 enum Vars {
@@ -80,6 +84,14 @@ fn vars_of(system: &mut System, entity: &Entity) -> Option<Vars> {
 }
 
 impl Vars {
+    /// A circle's or an arc's centre and radius, whatever its part.
+    fn round(&self) -> Option<CircleVar> {
+        match self {
+            Self::Circle(c) | Self::Arc { circle: c, .. } => Some(*c),
+            _ => None,
+        }
+    }
+
     /// Every unknown, in a fixed order.
     fn params(&self) -> Vec<usize> {
         let p = |v: &PointVar| [v.x, v.y];
@@ -503,7 +515,54 @@ impl<'a> Prospect<'a> {
         for &p in &locked {
             part.system.hold(p);
         }
-        let solution = cad_geometry::constraint::solve(&part.system, Tolerances::default());
+        let mut solution = cad_geometry::constraint::solve(&part.system, Tolerances::default());
+        // The nearest solution may push a radius through zero, turning a
+        // circle inside out to keep a tangency, or fail on the way there,
+        // as an arc's does (#424). Held where they were, the radii stay
+        // and the rest of the part moves instead; where it cannot, an edit
+        // that only settled inside out is refused, and one that did not
+        // settle at all says why as before.
+        // Only what this solve flattened: a circle the drawing already has
+        // that small is not the edit's doing. The floor is the linear
+        // tolerance at the circle's own magnitude.
+        let before = &part.system.values;
+        let flat = |values: &[f64]| -> Vec<usize> {
+            part.vars
+                .values()
+                .filter_map(Vars::round)
+                .filter(|c| {
+                    let floor = |values: &[f64]| {
+                        RADIUS
+                            .around(&[Point2::new(values[c.center.x], values[c.center.y])])
+                            .value()
+                    };
+                    let r = values[c.radius];
+                    r.is_nan() || (r <= floor(values) && before[c.radius] > floor(before))
+                })
+                .map(|c| c.radius)
+                .collect()
+        };
+        let radii: Vec<usize> = if solution.is_solved() {
+            flat(&solution.values)
+        } else {
+            part.vars
+                .values()
+                .filter_map(Vars::round)
+                .map(|c| c.radius)
+                .collect()
+        };
+        if !radii.is_empty() {
+            let mut kept = part.system.clone();
+            for &r in &radii {
+                kept.hold(r);
+            }
+            let again = cad_geometry::constraint::solve(&kept, Tolerances::default());
+            if again.is_solved() && flat(&again.values).is_empty() {
+                solution = again;
+            } else if solution.is_solved() {
+                return Err("The edit would leave a circle or an arc with no radius.".to_owned());
+            }
+        }
         if !solution.is_solved() {
             // Settled were the locked free to move: it is the lock that
             // refuses the edit, not a constraint.
@@ -896,6 +955,34 @@ mod tests {
         assert!(tx.commit().refused.is_some());
         assert_eq!(drawing.revision(), revision);
         assert_eq!(line_of(&drawing, a).start, Point2::ORIGIN);
+    }
+
+    #[test]
+    fn a_circle_already_that_small_does_not_refuse_an_edit_of_its_part() {
+        // #424: only what a solve flattens is held and refused; a circle a
+        // file brought in at radius 5e-10 is not the edit's doing.
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let line = tx
+            .insert(LineEntity::new(Point2::ORIGIN, Point2::new(10.0, 0.0)))
+            .unwrap();
+        let tiny = tx
+            .insert(crate::CircleEntity::new(Point2::ORIGIN, 5e-10))
+            .unwrap();
+        tx.add_constraint(Constraint::geometric(
+            Kind::Coincident,
+            vec![at(line, Part::Start), at(tiny, Part::Center)],
+        ))
+        .unwrap();
+        assert_eq!(tx.commit().refused, None);
+        let mut tx = drawing.transaction();
+        tx.replace(
+            line,
+            LineEntity::new(Point2::ORIGIN, Point2::new(10.0, 5.0)),
+        )
+        .unwrap();
+        assert_eq!(tx.commit().refused, None);
+        assert_eq!(line_of(&drawing, line).end, Point2::new(10.0, 5.0));
     }
 
     #[test]

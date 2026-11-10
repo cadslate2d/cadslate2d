@@ -227,6 +227,8 @@ Removing a constraint can break nothing, so it triggers nothing.
 
 **Refusal:** an edit that cannot be settled is not applied. The commit's report says why, in the constraint's terms ("The edit would break d1 = 120"), from the equations to blame, and the session logs it.
 
+**A radius stays positive.** The solver's nearest solution may push a circle's or an arc's radius through zero to keep a tangency: a line moved up through a tangent circle's centre gave it a radius of −10. An arc's solve may instead fail on the way there (#424). A solution that leaves a radius at or below the linear tolerance at its circle's magnitude, which the edit pushed there, is solved again with those radii held where they were. A solve that fails while the part has circles or arcs is also solved again, with every radius held. Either way the rest of the part moves instead. A circle the drawing already had that small is not the edit's doing, and refuses nothing. Where holding the radii cannot settle the edit, one that only settled inside out is refused ("The edit would leave a circle or an arc with no radius"), and one that did not settle at all says why, as before.
+
 **Previews** settle the same way on the session's scratch copy, so a grip drag shows the rest of the part following.
 
 **What counts as a change:**
