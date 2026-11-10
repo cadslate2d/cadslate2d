@@ -1991,6 +1991,31 @@ impl TransactionBuilder<'_> {
         Ok(self.insert_record(record.in_order(self.drawing.top_order())))
     }
 
+    /// Adds a new entity made from `source` — a part of it exploded — with
+    /// properties of its own, in `source`'s space and draw-order tier
+    /// (ADR-0032, #427), as [`Self::insert_like`] puts a copy. `source` is
+    /// read from the drawing as it was when the transaction began, so it
+    /// may be removed in it.
+    pub fn insert_from(
+        &mut self,
+        source: EntityId,
+        entity: impl Into<Entity>,
+        properties: Properties,
+    ) -> Result<EntityId, TransactionError> {
+        let record = self
+            .drawing
+            .record(source)
+            .ok_or(TransactionError::UnknownEntity(source))?;
+        let (space, order) = (record.space, record.order);
+        self.known_layer(properties.layer)?;
+        self.known_linetype(properties.linetype)?;
+        let entity = entity.into();
+        self.known_rows(&entity)?;
+        viewport_placeable(&entity, space)?;
+        let record = EntityRecord::new(entity, properties).in_space(space);
+        Ok(self.insert_record(record.in_order(order)))
+    }
+
     /// Adds a new entity to `space` with the given properties.
     pub fn insert_with_in(
         &mut self,
@@ -7335,6 +7360,46 @@ mod tests {
         assert_eq!(order(&drawing, back), Some(0), "one reorder, undone as one");
         assert_eq!(order(&drawing, front), Some(0));
         assert_eq!((drawing.bottom_order(), drawing.top_order()), (0, 0));
+    }
+
+    #[test]
+    fn an_exploded_part_takes_its_source_s_tier_and_its_own_properties() {
+        // #427: the source is removed in the same transaction, and read as
+        // it was when the transaction began.
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let walls = tx.add_layer(Layer::named("walls")).unwrap();
+        let back = tx.insert(line(0.0, 0.0, 10.0, 0.0)).unwrap();
+        tx.insert(line(0.0, 1.0, 10.0, 1.0)).unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.set_order(back, -1).unwrap();
+        tx.commit();
+
+        let mut tx = drawing.transaction();
+        tx.remove(back).unwrap();
+        let properties = Properties {
+            layer: walls,
+            ..Properties::default()
+        };
+        let part = tx
+            .insert_from(back, line(0.0, 0.0, 5.0, 0.0), properties)
+            .unwrap();
+        assert_eq!(
+            tx.insert_from(
+                back,
+                line(5.0, 0.0, 10.0, 0.0),
+                Properties {
+                    layer: LayerId::from_raw(99),
+                    ..Properties::default()
+                }
+            ),
+            Err(TransactionError::UnknownLayer(LayerId::from_raw(99)))
+        );
+        tx.commit();
+        let record = drawing.record(part).unwrap();
+        assert_eq!(record.order, -1, "the source's tier, not the top");
+        assert_eq!(record.properties.layer, walls, "its own properties");
     }
 
     #[test]
