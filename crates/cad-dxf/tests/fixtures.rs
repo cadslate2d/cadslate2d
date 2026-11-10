@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use cad_core::tolerance::LinearTolerance;
 use cad_core::{Aabb, Point2, Vec2};
 use cad_document::{
     BlockReferenceEntity, Chain, Color, DimStyleId, DimensionEntity, Drawing, Entity, Group,
@@ -2104,7 +2105,12 @@ fn dimensions_from_another_writer() {
         panic!("radius");
     };
     assert_eq!(center, Point2::new(200.0, 0.0));
-    assert!((radius - 30.0).abs() < 1e-12, "{radius}");
+    assert!(
+        LinearTolerance::DEFAULT
+            .around(&[center])
+            .is_zero(radius - 30.0),
+        "{radius}"
+    );
     // The drafter's text, and its turn away from where it would read.
     assert_eq!(dimensions[7].text_override.as_deref(), Some("TYP"));
     let turn = dimensions[7].text_angle.expect("turned");
