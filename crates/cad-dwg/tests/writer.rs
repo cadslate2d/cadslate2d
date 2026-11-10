@@ -263,3 +263,93 @@ fn a_spline_through_points_keeps_them_and_one_with_control_data_of_its_own_is_re
         }
     }
 }
+
+/// #428: names and text outside ASCII come back as they were from our own
+/// DWG in every version — a layer, a text style, a block, a layout, and a
+/// text holding a character Windows-1252 has, one it does not, one beyond
+/// the first 65,536, and a literal `\U+` — with nothing reported.
+#[test]
+fn non_ascii_names_and_text_round_trip_in_every_version() {
+    use cad_core::Point2;
+    use cad_document::{
+        Block, BlockReferenceEntity, Entity, EntityRecord, Layer, Layout, LineEntity, Properties,
+        TextEntity, TextStyle,
+    };
+    let p = Point2::new;
+    let content = "Größe ⌀ 5 — 𝄞 \\U+0041";
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    let walls = tx.add_layer(Layer::named("Wände")).unwrap();
+    let style = tx.add_text_style(TextStyle::named("Ação")).unwrap();
+    let door = tx
+        .define_block(Block::new(
+            "Tür",
+            p(0.0, 0.0),
+            vec![EntityRecord::new(
+                Entity::Line(LineEntity::new(p(0.0, 0.0), p(1.0, 0.0))),
+                Properties::default(),
+            )],
+        ))
+        .unwrap();
+    tx.add_layout(Layout::named("Sheet A1 ü")).unwrap();
+    let on_walls = Properties {
+        layer: walls,
+        ..Properties::default()
+    };
+    let mut text = TextEntity::new(p(0.0, 0.0), 2.5, 0.0, content);
+    text.style = style;
+    tx.insert_with(Entity::Text(text), on_walls).unwrap();
+    tx.insert_with(
+        Entity::BlockRef(BlockReferenceEntity::new(door, p(10.0, 0.0), 1.0, 0.0)),
+        on_walls,
+    )
+    .unwrap();
+    tx.commit();
+
+    for version in VERSIONS {
+        assert_eq!(
+            cad_dwg::export_losses(&drawing, version),
+            Vec::<String>::new(),
+            "{version:?}"
+        );
+        let bytes = cad_dwg::export(&drawing, version).unwrap();
+        let import = cad_dwg::import(&bytes).unwrap();
+        let back = &import.drawing;
+        let names = |rows: Vec<&str>| rows.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        assert!(
+            names(back.layers().iter().map(|(_, l)| l.name.as_str()).collect())
+                .contains(&"Wände".to_owned()),
+            "{version:?}: {:?}",
+            import.report
+        );
+        assert!(back.text_styles().find("Ação").is_some(), "{version:?}");
+        assert!(back.blocks().find("Tür").is_some(), "{version:?}");
+        assert!(
+            back.layouts().iter().any(|(_, l)| l.name == "Sheet A1 ü"),
+            "{version:?}"
+        );
+        let texts: Vec<&TextEntity> = back
+            .entities()
+            .filter_map(|(_, e)| match e {
+                Entity::Text(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts.len(), 1, "{version:?}");
+        assert_eq!(texts[0].content, content, "{version:?}");
+        assert_eq!(
+            back.entities()
+                .filter(|(_, e)| matches!(e, Entity::BlockRef(_)))
+                .count(),
+            1,
+            "{version:?}: the reference to Tür"
+        );
+        let said = import.report.summary();
+        assert!(
+            !said
+                .iter()
+                .any(|line| line.contains("Not imported") || line.contains("dropped")),
+            "{version:?}: {said:?}"
+        );
+    }
+}
