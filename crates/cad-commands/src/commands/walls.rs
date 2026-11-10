@@ -9,12 +9,13 @@
 //! from, as one undo (`cad_geometry::walls`).
 
 use cad_core::Point2;
-use cad_document::{ArcEntity, Group, Layer, LineEntity, Properties};
+use cad_document::{ArcEntity, Group, Layer, LineEntity, Properties, same_name};
 use cad_geometry::walls::{self, Kind, Opening, Wall, WallsError};
 use cad_input::{ExpectedInput, Keyword};
 use cad_intent::{Hinge, OpeningKind, Swing, WallLine, WallsSpec};
 
 use super::ltscale::display;
+use crate::log::sentence;
 use crate::{Command, CommandContext, CommandInput, Prompt, Step};
 
 const JSON: Keyword = Keyword::new("Json");
@@ -157,10 +158,17 @@ fn draw(spec: &WallsSpec, base: Point2, ctx: &mut CommandContext<'_>) -> Result<
         match wanted {
             None => Ok(current),
             Some((_, Some(id))) => Ok(id),
-            Some((name, None)) => transaction.add_layer(Layer::named(name)).map_err(|e| e.to_string()),
+            Some((name, None)) => transaction.add_layer(Layer::named(name)).map_err(|e| sentence(&e.to_string())),
         }
     };
-    let (door_layer, window_layer) = (layer_of(doors)?, layer_of(windows)?);
+    let door_layer = layer_of(doors)?;
+    // A door and a window naming the same not-yet-existing layer (#369),
+    // give or take its case, as a layer's name is never taken twice: made
+    // once, not asked for again.
+    let window_layer = match (&spec.door_layer, &spec.window_layer) {
+        (Some(a), Some(b)) if same_name(a, b) => door_layer,
+        _ => layer_of(windows)?,
+    };
     let on = |layer| Properties {
         layer,
         ..Properties::default()
@@ -170,14 +178,14 @@ fn draw(spec: &WallsSpec, base: Point2, ctx: &mut CommandContext<'_>) -> Result<
         made.push(
             transaction
                 .insert_with(LineEntity::new(s.start, s.end), on(current))
-                .map_err(|e| e.to_string())?,
+                .map_err(|e| sentence(&e.to_string()))?,
         );
     }
     for s in &drawn.leaves {
         made.push(
             transaction
                 .insert_with(LineEntity::new(s.start, s.end), on(door_layer))
-                .map_err(|e| e.to_string())?,
+                .map_err(|e| sentence(&e.to_string()))?,
         );
     }
     for arc in &drawn.swings {
@@ -187,14 +195,14 @@ fn draw(spec: &WallsSpec, base: Point2, ctx: &mut CommandContext<'_>) -> Result<
                     ArcEntity::new(arc.center, arc.radius, arc.start, arc.end),
                     on(door_layer),
                 )
-                .map_err(|e| e.to_string())?,
+                .map_err(|e| sentence(&e.to_string()))?,
         );
     }
     for s in &drawn.glass {
         made.push(
             transaction
                 .insert_with(LineEntity::new(s.start, s.end), on(window_layer))
-                .map_err(|e| e.to_string())?,
+                .map_err(|e| sentence(&e.to_string()))?,
         );
     }
     let name = (1..)
@@ -203,7 +211,9 @@ fn draw(spec: &WallsSpec, base: Point2, ctx: &mut CommandContext<'_>) -> Result<
         .expect("a number is free");
     let mut group = Group::named(name.clone(), made);
     group.description = description;
-    transaction.add_group(group).map_err(|e| e.to_string())?;
+    transaction
+        .add_group(group)
+        .map_err(|e| sentence(&e.to_string()))?;
     transaction.commit();
     Ok(format!(
         "{} walls drawn as {name}: {} faces, {} doors, {} windows.",

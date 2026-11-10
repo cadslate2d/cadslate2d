@@ -21,6 +21,7 @@ use cad_input::{ExpectedInput, InputKind, Keyword};
 
 use super::constrain::{edge_at, point_near};
 use super::dimlinear::auto_rotation;
+use crate::log::sentence;
 use crate::{Command, CommandContext, CommandInput, Prompt, Step};
 
 const LINEAR: Keyword = Keyword::new("LInear");
@@ -233,13 +234,6 @@ impl DimConstraintCommand {
             Err(other) => sentence(&other.to_string()),
         }
     }
-}
-
-fn sentence(text: &str) -> String {
-    let mut out = text[..1].to_uppercase();
-    out.push_str(&text[1..]);
-    out.push('.');
-    out
 }
 
 /// `d1 = 120`, `ang1 = 30°`.

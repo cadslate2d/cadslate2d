@@ -15,6 +15,7 @@ use cad_layout::{Layout, Refusal, Room, Setbacks, Spec, Terrain};
 
 use super::ltscale::display;
 use crate::floorplan::{draw, entities, plans, stair_misfits, stair_room};
+use crate::log::sentence;
 use crate::{Command, CommandContext, CommandInput, HostRequest, OverlayItem, Prompt, Step};
 
 const BRIEF: Keyword = Keyword::new("Brief");
@@ -331,7 +332,7 @@ impl Command for FloorPlanCommand {
                         made.len(),
                         stair_misfits(&self.spec, plan).map_or(String::new(), |s| format!(" {s}"))
                     )),
-                    Err(error) => ctx.message(error.to_string()),
+                    Err(error) => ctx.message(sentence(&error.to_string())),
                 }
                 return Step::Finished;
             }

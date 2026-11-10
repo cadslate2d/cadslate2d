@@ -12,6 +12,7 @@ use cad_layout::{Cut, CutError, section};
 
 use crate::bsection::{GROUP, LAYERS, description, entities, mark, meets_a_stair_elsewhere};
 use crate::floorplan::{DrawnPlan, PLAN_GROUP, drawn_plan, plan_holding};
+use crate::log::sentence;
 use crate::views::draw_group;
 use crate::{Command, CommandContext, CommandInput, OverlayItem, Prompt, Step};
 
@@ -144,7 +145,7 @@ impl BuildingSectionCommand {
                 "Section {letter}-{letter} of {} drawn as {name}: {:.2} m long, {:.2} m high.",
                 plan.name, cutting.width, cutting.height
             )),
-            Err(error) => ctx.message(error.to_string()),
+            Err(error) => ctx.message(sentence(&error.to_string())),
         }
         Step::Finished
     }
