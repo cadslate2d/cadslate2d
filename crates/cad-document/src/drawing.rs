@@ -2537,16 +2537,18 @@ impl TransactionBuilder<'_> {
     }
 
     /// Replaces `id` by `first` and inserts `others` beside it, removing
-    /// `absorbed`: what cutting an entity (BREAK, TRIM) or joining others
-    /// into it (JOIN) makes. `first` keeps `id` and its properties; the
-    /// others are inserted like it, and their IDs returned.
+    /// `absorbed`: what cutting an entity (BREAK, TRIM), joining others
+    /// into it (JOIN), or numbering its parts afresh (PEDIT: a vertex
+    /// inserted, a line made a polyline) makes. `first` keeps `id` and its
+    /// properties; the others are inserted like it, and their IDs returned.
     ///
     /// Unlike [`Self::replace`], an end keeps no meaning by its name: the
     /// end a cut piece has now is not the end that was cut away. Each
     /// constraint on a point of `id` or of `absorbed` — an end, a centre, a
-    /// vertex — or on a polyline's straight segment goes to the piece with
-    /// that point or segment where it was, and is removed when no piece has
-    /// it (#421). One on an edge of `id` stays with `first` where the cut
+    /// vertex — or on a straight edge — a line's, a polyline's segment —
+    /// goes to the piece with that point, or a straight edge between the
+    /// same two points, where it was, and is removed when no piece has it
+    /// (#421, #422). Otherwise, one on an edge of `id` stays with `first` where the cut
     /// keeps what it says of the edge — its line or its circle: a
     /// direction, a tangency, a point on it, a radius — and is removed
     /// where it says a straight edge's length, which the cut changed; one
@@ -2590,15 +2592,17 @@ impl TransactionBuilder<'_> {
                 .map(
                     |reference| match sources.iter().find(|(s, _)| *s == reference.entity) {
                         None => Some(*reference),
-                        Some((source, entity)) => {
-                            carried(reference.part, entity, &placed).or_else(|| {
-                                let edge = reference.part == Part::Edge;
-                                (edge
-                                    && *source == id
-                                    && cut_keeps(&constraint.kind, entity, &first))
+                        Some((source, entity)) => carried(
+                            reference.part,
+                            entity,
+                            &placed,
+                            either_way(&constraint.kind),
+                        )
+                        .or_else(|| {
+                            let edge = reference.part == Part::Edge;
+                            (edge && *source == id && cut_keeps(&constraint.kind, entity, &first))
                                 .then_some(*reference)
-                            })
-                        }
+                        }),
                     },
                 )
                 .collect();
@@ -4235,6 +4239,30 @@ impl TransactionBuilder<'_> {
     }
 }
 
+/// Whether what `kind` says of a straight edge holds of it run the other
+/// way: JOIN turns a member round to chain it (#422). A direction, a line
+/// a point is on, a length do; a signed angle and the side a tangent
+/// touches do not. Every kind is named, so a new one is decided here.
+fn either_way(kind: &Kind) -> bool {
+    match kind {
+        Kind::Coincident
+        | Kind::Collinear
+        | Kind::Parallel
+        | Kind::Perpendicular
+        | Kind::Horizontal
+        | Kind::Vertical
+        | Kind::Symmetric
+        | Kind::Equal => true,
+        Kind::Angle { .. } | Kind::Tangent { .. } => false,
+        // Said of points or of circular edges, never of a straight one.
+        Kind::Concentric
+        | Kind::Fix { .. }
+        | Kind::Distance { .. }
+        | Kind::Radius { .. }
+        | Kind::Diameter { .. } => false,
+    }
+}
+
 /// Whether cutting or joining `before` into `after` keeps what `kind` says
 /// of its edge (#421). A line's edge is read as its line and an arc's as
 /// its circle, which a cut keeps; an equal length is the one thing said of
@@ -4271,9 +4299,16 @@ fn cut_keeps(kind: &Kind, before: &Entity, after: &Entity) -> bool {
 }
 
 /// Where `part` of `from` is among `pieces`: the piece with a point where
-/// that point was, or a straight segment between the same two points, and
-/// its part there (#421). `None` for an edge, or when no piece has it.
-fn carried(part: Part, from: &Entity, pieces: &[(EntityId, Entity)]) -> Option<Reference> {
+/// that point was, or a straight edge — a line's, a polyline's segment —
+/// between the same two points, and its part there (#421, #422); run the
+/// other way too when `either_way`. `None` for a circular edge, or when no
+/// piece has it.
+fn carried(
+    part: Part,
+    from: &Entity,
+    pieces: &[(EntityId, Entity)],
+    either_way: bool,
+) -> Option<Reference> {
     let near = |a: Point2, b: Point2| {
         cad_core::tolerance::LinearTolerance::DEFAULT
             .around(&[a, b])
@@ -4287,24 +4322,34 @@ fn carried(part: Part, from: &Entity, pieces: &[(EntityId, Entity)]) -> Option<R
                 .map(|candidate| Reference::new(*id, candidate))
         });
     }
+    // A straight edge: a line's, or a polyline's segment, by its two ends.
     let ends = |entity: &Entity, part: Part| -> Option<(Point2, Point2)> {
-        let (Entity::Polyline(polyline), Part::Segment(n)) = (entity, part) else {
-            return None;
-        };
-        part.shape_on(entity)?;
-        let count = polyline.vertices.len();
-        let n = n as usize;
-        Some((polyline.vertices[n], polyline.vertices[(n + 1) % count]))
+        match (entity, part) {
+            (Entity::Line(line), Part::Edge) => Some((line.start, line.end)),
+            (Entity::Polyline(polyline), Part::Segment(n)) => {
+                part.shape_on(entity)?;
+                let count = polyline.vertices.len();
+                let n = n as usize;
+                Some((polyline.vertices[n], polyline.vertices[(n + 1) % count]))
+            }
+            _ => None,
+        }
     };
     let (a, b) = ends(from, part)?;
     pieces.iter().find_map(|(id, piece)| {
-        let Entity::Polyline(polyline) = piece else {
-            return None;
+        let candidates: Vec<Part> = match piece {
+            Entity::Line(_) => vec![Part::Edge],
+            Entity::Polyline(polyline) => (0..polyline.vertices.len() as u32)
+                .map(Part::Segment)
+                .collect(),
+            _ => Vec::new(),
         };
-        (0..polyline.vertices.len() as u32)
-            .map(Part::Segment)
+        candidates
+            .into_iter()
             .find(|candidate| {
-                ends(piece, *candidate).is_some_and(|(p, q)| near(p, a) && near(q, b))
+                ends(piece, *candidate).is_some_and(|(p, q)| {
+                    (near(p, a) && near(q, b)) || (either_way && near(p, b) && near(q, a))
+                })
             })
             .map(|candidate| Reference::new(*id, candidate))
     })

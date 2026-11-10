@@ -901,6 +901,69 @@ mod tests {
     }
 
     #[test]
+    fn a_signed_angle_on_a_member_joined_the_other_way_round_goes() {
+        // #422: run the other way, the line's angle to another is turned
+        // half round; its level holds either way and is carried.
+        let mut drawing = Drawing::new();
+        let p = Point2::new;
+        let mut tx = drawing.transaction();
+        let path = tx
+            .insert(PolylineEntity::new(
+                vec![p(0.0, 0.0), p(100.0, 0.0), p(100.0, 50.0)],
+                false,
+            ))
+            .unwrap();
+        let member = tx
+            .insert(LineEntity::new(p(0.0, 0.0), p(-50.0, 0.0)))
+            .unwrap();
+        let other = tx
+            .insert(LineEntity::new(p(-50.0, 0.0), p(-50.0, 30.0)))
+            .unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.add_constraint(Constraint::geometric(
+            Kind::Horizontal,
+            vec![at(member, Part::Edge)],
+        ))
+        .unwrap();
+        tx.add_constraint(Constraint::dimensional(
+            "a1",
+            Kind::Angle {
+                value: -std::f64::consts::FRAC_PI_2,
+            },
+            vec![at(member, Part::Edge), at(other, Part::Edge)],
+        ))
+        .unwrap();
+        tx.hold(member);
+        assert_eq!(tx.commit().refused, None);
+        let before = drawing.entity(other).cloned();
+
+        let mut tx = drawing.transaction();
+        tx.reshape(
+            path,
+            PolylineEntity::new(
+                vec![p(-50.0, 0.0), p(0.0, 0.0), p(100.0, 0.0), p(100.0, 50.0)],
+                false,
+            )
+            .into(),
+            Vec::new(),
+            &[member],
+        )
+        .unwrap();
+        assert_eq!(tx.commit().refused, None);
+        let rows: Vec<(Kind, Vec<Reference>)> = drawing
+            .constraints()
+            .iter()
+            .map(|(_, c)| (c.kind.clone(), c.references.clone()))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![(Kind::Horizontal, vec![at(path, Part::Segment(0))])]
+        );
+        assert_eq!(drawing.entity(other).cloned(), before, "nothing moved");
+    }
+
+    #[test]
     fn a_dimension_given_a_new_value_moves_what_it_measures() {
         let (mut drawing, a, b) = corner();
         let d1 = drawing.constraints().find("d1").unwrap();
