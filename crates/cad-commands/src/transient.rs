@@ -61,6 +61,8 @@ impl TransientEdit {
                 .replace_whole(id, entity)
                 .expect("sources are live and appear once");
         }
+        // A mirror changes what the constraints among the sources say.
+        transaction.reflect_constraints(&self.sources, &transform);
         transaction.commit();
     }
 

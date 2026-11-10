@@ -2555,6 +2555,77 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
+    /// Says what a reflection did to the constraints among `ids`, which
+    /// were all just put through `transform` (MIRROR, #425). A constraint
+    /// keeps its meaning only if it is said again: an arc's ends trade
+    /// places, a tangent touches a line's other side, an angle turns the
+    /// other way, and a distance along an axis the mirror reverses is
+    /// measured from its other point; a dimension's place is reflected
+    /// with it. One that names anything outside `ids` is left to settling,
+    /// as is a distance along an axis a slanted mirror does not keep.
+    /// Nothing changes unless `transform` reverses orientation.
+    pub fn reflect_constraints(&mut self, ids: &[EntityId], transform: &cad_geometry::Transform) {
+        use crate::constraint::{Axis, Kind, Part, Touch};
+        use cad_core::Point2;
+        if !transform.reverses_orientation() {
+            return;
+        }
+        let image = |v: Vec2| transform.apply(Point2::ORIGIN + v) - transform.apply(Point2::ORIGIN);
+        let reversed = |v: Vec2| {
+            let w = image(v);
+            let tolerance = cad_core::tolerance::LinearTolerance::DEFAULT;
+            tolerance.is_zero(w.x + v.x) && tolerance.is_zero(w.y + v.y)
+        };
+        let (flips_x, flips_y) = (reversed(Vec2::new(1.0, 0.0)), reversed(Vec2::new(0.0, 1.0)));
+        for (constraint_id, before) in self.constraints_now() {
+            if !before.references.iter().all(|r| ids.contains(&r.entity)) {
+                continue;
+            }
+            let mut after = before.clone();
+            for reference in &mut after.references {
+                let arc = self
+                    .record_now(reference.entity)
+                    .is_some_and(|record| matches!(*record.entity, Entity::Arc(_)));
+                if arc {
+                    reference.part = match reference.part {
+                        Part::Start => Part::End,
+                        Part::End => Part::Start,
+                        part => part,
+                    };
+                }
+            }
+            match &mut after.kind {
+                Kind::Tangent { touch } => {
+                    *touch = match *touch {
+                        Touch::Left => Touch::Right,
+                        Touch::Right => Touch::Left,
+                        other => other,
+                    };
+                }
+                Kind::Angle { value } => *value = -*value,
+                Kind::Distance { axis, .. } => {
+                    let reverses = match axis {
+                        Axis::Horizontal => flips_x,
+                        Axis::Vertical => flips_y,
+                        Axis::Aligned => false,
+                    };
+                    if reverses {
+                        after.references.swap(0, 1);
+                    }
+                }
+                _ => {}
+            }
+            after.place = after.place.map(|place| transform.apply(place));
+            if after != before {
+                self.push_other(Change::Constraint(TableChange::Replace {
+                    id: constraint_id,
+                    before,
+                    after,
+                }));
+            }
+        }
+    }
+
     /// Changes an existing entity's properties, keeping its ID and sharing
     /// its geometry.
     pub fn set_properties(
