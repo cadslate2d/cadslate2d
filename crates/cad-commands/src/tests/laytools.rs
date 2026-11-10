@@ -78,8 +78,38 @@ fn layiso_switches_off_the_other_layers_and_layuniso_puts_them_back() {
     assert!(said(&h, "2 layers restored."));
     assert_eq!(on(&h, &["0", "walls", "doors", "notes"]), [true; 4]);
     assert_eq!(current(&h), "walls", "the current layer stays");
+    // Restored, the layers are no longer as LAYISO left them: the record
+    // stays, for a U that isolates them again (#435), and has nothing to do.
     h.enter("LAYUNISO");
-    assert!(said(&h, "LAYISO has isolated no layers to restore."));
+    assert!(
+        said(&h, "No layer is as LAYISO left it: nothing to restore."),
+        "{:?}",
+        h.log()
+    );
+}
+
+#[test]
+fn layuniso_restores_an_isolation_that_u_brought_back() {
+    // #435: LAYISO, LAYUNISO, U isolates the layers again; LAYUNISO
+    // restores them again, and U and REDO go back and forth.
+    let mut h = drawing();
+    h.enter("LAYISO");
+    h.click_world(p(50.0, 20.0));
+    h.enter("");
+    let isolated = on(&h, &["0", "walls", "doors", "notes"]);
+    assert_eq!(isolated, [false, true, false, false]);
+    h.enter("LAYUNISO");
+    assert_eq!(on(&h, &["0", "walls", "doors", "notes"]), [true; 4]);
+    h.enter("U");
+    assert_eq!(
+        on(&h, &["0", "walls", "doors", "notes"]),
+        isolated,
+        "{:?}",
+        h.log()
+    );
+    h.enter("LAYUNISO");
+    assert!(said(&h, "3 layers restored."), "{:?}", h.log());
+    assert_eq!(on(&h, &["0", "walls", "doors", "notes"]), [true; 4]);
 }
 
 #[test]
@@ -223,4 +253,21 @@ fn laylck_and_layulk_lock_and_unlock_and_laymcur_makes_a_layer_current() {
     assert_eq!(current(&h), "doors");
     h.undo();
     assert_eq!(current(&h), "0");
+}
+
+#[test]
+fn layuniso_puts_back_a_layer_switched_back_by_hand_as_layiso_left_it() {
+    // #435, decided: the last LAYISO's record lasts until the next one, so
+    // LAYUNISO puts back any layer that is as LAYISO left it again, U or
+    // no U; one switched otherwise keeps its change.
+    let mut h = drawing();
+    h.enter("LAYISO");
+    h.click_world(p(50.0, 20.0));
+    h.enter("");
+    h.enter("LAYUNISO");
+    assert_eq!(on(&h, &["0", "walls", "doors", "notes"]), [true; 4]);
+    h.enter_all(&["LA", "OFF", "doors", ""]);
+    h.enter("LAYUNISO");
+    assert!(said(&h, "1 layer restored."), "{:?}", h.log());
+    assert_eq!(on(&h, &["0", "walls", "doors", "notes"]), [true; 4]);
 }
