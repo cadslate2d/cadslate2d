@@ -62,7 +62,9 @@ pub(crate) fn plain_mtext(text: &str) -> (String, bool) {
         match c {
             '{' | '}' => {}
             '\\' => match chars.next() {
-                Some('P') | Some('N') => out.push('\n'),
+                // `\X` puts what follows under a dimension's line: a
+                // line break, with no argument (#418).
+                Some('P') | Some('N') | Some('X') => out.push('\n'),
                 Some('~') => out.push(' '),
                 Some('\\') => out.push('\\'),
                 Some('{') => out.push('{'),
@@ -87,7 +89,7 @@ pub(crate) fn plain_mtext(text: &str) -> (String, bool) {
                     }
                 }
                 // Codes with an argument up to the semicolon.
-                Some('f' | 'F' | 'H' | 'C' | 'c' | 'T' | 'Q' | 'W' | 'A' | 'p' | 'X') => {
+                Some('f' | 'F' | 'H' | 'C' | 'c' | 'T' | 'Q' | 'W' | 'A' | 'p') => {
                     dropped = true;
                     for d in chars.by_ref() {
                         if d == ';' {
@@ -158,6 +160,12 @@ mod tests {
         assert_eq!(plain_mtext("\\S1/2;"), ("1/2".to_owned(), true));
         assert_eq!(plain_mtext("\\Sonly;"), ("only".to_owned(), true));
         assert_eq!(plain_mtext("45%%d\\Pnext"), ("45°\nnext".to_owned(), false));
+        // A dimension's text under its line follows `\X`, which takes no
+        // argument (#418).
+        assert_eq!(
+            plain_mtext("ABOVE\\XBELOW"),
+            ("ABOVE\nBELOW".to_owned(), false)
+        );
         assert_eq!(plain_mtext("trailing\\"), ("trailing".to_owned(), true));
         assert_eq!(
             plain_mtext("\\pxi-2,l2;indented"),

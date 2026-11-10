@@ -265,6 +265,15 @@ pub fn export_bytes(drawing: &Drawing) -> Vec<u8> {
     code_page(&export(drawing))
 }
 
+/// `text`, all ASCII with `\U+XXXX` escapes, as the characters a Unicode
+/// string holds — a DWG's of R2007 or later (#428): each escape of a
+/// character outside ASCII as that character, and the escape of a
+/// backslash that `escaped` writes before a literal `\U+` as it is, so
+/// the text reads back as it was.
+pub fn unicode(text: &str) -> String {
+    crate::import::unescaped(text, |c| !c.is_ascii()).into_owned()
+}
+
 /// `text`, all ASCII with `\U+XXXX` escapes, in Windows-1252: each escape
 /// of a character the code page has as its byte, the others as written.
 pub fn code_page(text: &str) -> Vec<u8> {
@@ -1834,7 +1843,7 @@ impl Writer {
         self.int(71, 5);
         self.real(42, layout.value);
         if let Some(text) = &dimension.text_override {
-            self.group(1, text);
+            self.group(1, &mtext_codes(text));
         }
         if let Some(angle) = dimension.text_angle {
             let on_its_own = dimension
@@ -3778,6 +3787,28 @@ mod tests {
         assert_eq!(contents, vec!["smile 😀 x", "𝑥 = 𠀋\n😀"]);
         assert!(!back.report.has_unsupported_content());
         assert_eq!(export(&back.drawing), text);
+    }
+
+    /// #428: what a DWG's Unicode strings are written from — every
+    /// character outside ASCII as itself, a pair as the one character it
+    /// is, and the escape of a backslash before a literal `\U+` kept, so
+    /// the reader's decoding gives the text back.
+    #[test]
+    fn unicode_writes_the_characters_and_keeps_a_literal_escape() {
+        let text = "Gr\\U+00F6\\U+00DFe \\U+2300 \\U+D834\\U+DD1E \\U+005CU+0041";
+        assert_eq!(unicode(text), "Größe ⌀ 𝄞 \\U+005CU+0041");
+        assert_eq!(unicode("plain"), "plain");
+        // The code page has ö and ß, not ⌀: that one stays an escape.
+        assert_eq!(
+            code_page("Gr\\U+00F6\\U+00DFe \\U+2300"),
+            b"Gr\xF6\xDFe \\U+2300"
+        );
+        // Read back, each is the text it was escaped from.
+        let original = "Größe ⌀ 𝄞 \\U+0041";
+        assert_eq!(
+            crate::import::unescaped(&unicode(&escaped(original)), |c| !c.is_control()),
+            original
+        );
     }
 
     /// Words that read like an escape — `\U+0041` in a note about escapes

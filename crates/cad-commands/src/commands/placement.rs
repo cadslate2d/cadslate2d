@@ -509,8 +509,9 @@ impl ArrayPathCommand {
         for (index, item) in moved.into_iter().enumerate() {
             for (source, entity) in item {
                 if index == 0 {
+                    // Moved whole to the first place, like MOVE.
                     transaction
-                        .replace(source, entity)
+                        .replace_whole(source, entity)
                         .expect("the selection is live");
                     items.push(source);
                 } else {

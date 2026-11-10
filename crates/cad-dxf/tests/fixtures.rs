@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use cad_core::tolerance::LinearTolerance;
 use cad_core::{Aabb, Point2, Vec2};
 use cad_document::{
     BlockReferenceEntity, Chain, Color, DimStyleId, DimensionEntity, Drawing, Entity, Group,
@@ -2098,13 +2099,17 @@ fn dimensions_from_another_writer() {
     assert!(vertex.distance_to(Point2::new(0.0, 100.0)) < 1e-9);
     assert_eq!(dimensions[3].line_point, Point2::new(15.0, 115.0));
     // The radius: centre and radius from the two points, placed where the
-    // text was.
-    assert_eq!(
-        dimensions[5].measure,
-        Measure::Radius {
-            center: Point2::new(200.0, 0.0),
-            radius: 30.0
-        }
+    // text was. The radius is a distance between them, which a platform's
+    // `hypot` may round an ulp either way of 30.
+    let Measure::Radius { center, radius } = dimensions[5].measure else {
+        panic!("radius");
+    };
+    assert_eq!(center, Point2::new(200.0, 0.0));
+    assert!(
+        LinearTolerance::DEFAULT
+            .around(&[center])
+            .is_zero(radius - 30.0),
+        "{radius}"
     );
     // The drafter's text, and its turn away from where it would read.
     assert_eq!(dimensions[7].text_override.as_deref(), Some("TYP"));

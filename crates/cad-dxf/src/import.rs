@@ -116,6 +116,9 @@ const TEXT_BACKWARDS: &str = "(text drawn backwards)";
 /// the right way up (#398).
 const TEXT_UPSIDE_DOWN: &str = "(text drawn upside down)";
 const INSERT_ARRAY: &str = "(INSERT array)";
+/// Report key for an XLINE or a RAY in a block's definition: a block
+/// cannot hold one, so it is left out (#415).
+const CONSTRUCTION_IN_BLOCK: &str = "(XLINE or RAY in a block)";
 /// Report key for an INSERT of a block the file never defines: not imported.
 const INSERT_UNDEFINED: &str = "(INSERT of an undefined block)";
 /// Report key for the text and shapes of a complex linetype: the dashes
@@ -208,7 +211,15 @@ pub fn import_records(
     limits: &ImportLimits,
 ) -> Result<Import, DxfError> {
     let mut reader = Reader::new(Groups::new("", limits.max_value_bytes), limits);
-    for record in records {
+    for mut record in records {
+        // A value carries what a file does: an escape for each character
+        // its code page lacks — a DWG before R2007 writes them, as AutoCAD
+        // does — read as the character, as the file's text is (#428).
+        for (_, value) in &mut record.groups {
+            if let std::borrow::Cow::Owned(decoded) = unescaped(value, |c| !c.is_control()) {
+                *value = decoded;
+            }
+        }
         match record.section {
             Section::Header => {
                 for (code, value) in &record.groups {
@@ -281,8 +292,22 @@ fn decoded(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
         Ok(text) => std::borrow::Cow::Borrowed(text),
         Err(_) => std::borrow::Cow::Owned(bytes.iter().map(|&b| windows_1252(b)).collect()),
     };
+    match text {
+        std::borrow::Cow::Borrowed(text) => unescaped(text, |c| !c.is_control()),
+        std::borrow::Cow::Owned(text) => {
+            std::borrow::Cow::Owned(unescaped(&text, |c| !c.is_control()).into_owned())
+        }
+    }
+}
+
+/// `text` with each `\U+XXXX` escape of a character `decode` takes written
+/// as that character, and the others as they are. A character beyond the
+/// first 65,536 is two escapes, a surrogate pair, as AutoCAD and our
+/// export write it (#393). Shared by the file's text, the records of
+/// another front end (#428), and the DWG writer's Unicode strings.
+pub(crate) fn unescaped(text: &str, decode: impl Fn(char) -> bool) -> std::borrow::Cow<'_, str> {
     if !text.contains("\\U+") {
-        return text;
+        return std::borrow::Cow::Borrowed(text);
     }
     // The UTF-16 unit an escape at the start of `text` names.
     fn unit(text: &str) -> Option<u16> {
@@ -292,11 +317,9 @@ fn decoded(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
             .and_then(|d| u16::from_str_radix(d, 16).ok())
     }
     let mut out = String::with_capacity(text.len());
-    let mut rest: &str = &text;
+    let mut rest: &str = text;
     while let Some(at) = rest.find("\\U+") {
         out.push_str(&rest[..at]);
-        // A character beyond the first 65,536 is two escapes, a surrogate
-        // pair, as AutoCAD and our export write it (#393).
         let first = unit(&rest[at..]);
         let second = rest.get(at + 7..).and_then(unit);
         let (c, length) = match (first, second) {
@@ -306,7 +329,7 @@ fn decoded(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
             ),
             (unit, _) => (unit.and_then(|u| char::from_u32(u32::from(u))), 7),
         };
-        match c.filter(|c| !c.is_control()) {
+        match c.filter(|c| decode(*c)) {
             Some(c) => {
                 out.push(c);
                 rest = &rest[at + length..];
@@ -1350,6 +1373,11 @@ impl<'a> Reader<'a> {
                     RayEntity::new(base, direction).map(Entity::Ray)
                 };
                 match entity {
+                    // A block is placed as geometry with bounds, which a
+                    // construction line has not (#415).
+                    Some(_) if matches!(self.open_block, Some(OpenBlock::User(_))) => {
+                        self.report.count_unsupported(CONSTRUCTION_IN_BLOCK);
+                    }
                     Some(entity) => self.import(entity, body)?,
                     None => self.report.count_unsupported(INVALID),
                 }
@@ -1671,7 +1699,10 @@ impl<'a> Reader<'a> {
     /// (4) from the centre (10) and the point on the circle (15); the
     /// angle at a vertex (5) from the vertex (15), the points (13, 14), and
     /// the arc's (10). Where the text is (11) places a radius or diameter.
-    /// The text (1) is the drafter's unless empty or `<>`; the text's angle
+    /// The text (1) is the drafter's unless empty or `<>`, its codes
+    /// decoded as an MTEXT's and its lines — `\X` puts some under the
+    /// dimension line — run into one, `<>` in it standing for the value
+    /// (#418); the text's angle
     /// (53) is a turn away from where it would read on its own. The style
     /// is named (3) and made if the file did not define it; the anonymous
     /// block is not read, the layout engine drawing the dimension afresh
@@ -1741,9 +1772,21 @@ impl<'a> Reader<'a> {
             self.report.count_unsupported(INVALID);
             return Ok(());
         };
-        match body.text.as_deref().map(str::trim) {
-            None | Some("") | Some("<>") => {}
-            Some(words) => dimension.text_override = Some(words.to_owned()),
+        let (words, dropped) = plain_mtext(body.text.as_deref().unwrap_or(""));
+        let lines: Vec<&str> = words
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        // Words under the dimension line, or on a line of their own, are
+        // run into the one line: a layout the drawing does not hold.
+        let split = lines.len() > 1;
+        let words = lines.join(" ");
+        if dropped || split {
+            self.report.formatting_dropped += 1;
+        }
+        if !words.is_empty() && words != "<>" {
+            dimension.text_override = Some(words);
         }
         if let Some(turn) = body.text_rotation
             && turn != 0.0
@@ -3694,6 +3737,46 @@ mod tests {
             );
             assert_eq!(imported.report.with_dropped_properties, 0);
         }
+    }
+
+    /// #418: a drafter's dimension text is decoded — `<>` the measured
+    /// value as the style shows it, `%%c` the diameter sign, `\X` the
+    /// break under the dimension line run into one line — and written
+    /// back as it was read.
+    #[test]
+    fn a_dimension_text_override_is_decoded_and_its_value_stands_in_for_angle_brackets() {
+        let shown = |words: &str| {
+            let text = entities(&[
+                (0, "DIMENSION"),
+                (8, "0"),
+                (10, "0"),
+                (20, "10"),
+                (70, "0"),
+                (1, words),
+                (13, "0"),
+                (23, "0"),
+                (14, "100"),
+                (24, "0"),
+                (50, "0"),
+            ]);
+            let imported = import(text.as_bytes()).unwrap();
+            let drawing = &imported.drawing;
+            let (_, entity) = drawing.entities().next().expect("a dimension");
+            let Entity::Dimension(dimension) = entity else {
+                panic!("{entity:?}");
+            };
+            let style = drawing.dim_styles().get(dimension.style).unwrap();
+            let again = import(export(drawing).as_bytes()).unwrap();
+            let (_, back) = again.drawing.entities().next().unwrap();
+            assert_eq!(back, entity, "{words} is written back as read");
+            (dimension.content(style), imported.report.formatting_dropped)
+        };
+        assert_eq!(shown("2X <> TYP"), ("2X 100.00 TYP".to_owned(), 0));
+        assert_eq!(shown("%%c<>"), ("Ø100.00".to_owned(), 0));
+        assert_eq!(shown("<>\\XTYP"), ("100.00 TYP".to_owned(), 1));
+        assert_eq!(shown("{\\H2;BIG} <>"), ("BIG 100.00".to_owned(), 1));
+        assert_eq!(shown("a \\\\ b"), ("a \\ b".to_owned(), 0));
+        assert_eq!(shown("<>"), ("100.00".to_owned(), 0));
     }
 
     const LINE_0_0_TO_10_5: [(i32, &str); 6] = [
@@ -5680,6 +5763,65 @@ mod tests {
         assert_eq!((deep.report.blocks, deep.report.block_references), (40, 1));
         assert_eq!(deep.report.unsupported.get(NESTING_TOO_DEEP), Some(&1));
         assert!(deep.report.has_unsupported_content());
+    }
+
+    #[test]
+    fn construction_lines_in_a_block_are_left_out_and_reported() {
+        // A block cannot hold an xline or a ray (#415): the block keeps its
+        // line, the reference's extents are the line's, and the drawing's
+        // own construction line stays.
+        let text = dxf(&[
+            (0, "SECTION"),
+            (2, "BLOCKS"),
+            (0, "BLOCK"),
+            (2, "GUIDE"),
+            (10, "0"),
+            (20, "0"),
+            (0, "LINE"),
+            (10, "0"),
+            (20, "0"),
+            (11, "10"),
+            (21, "10"),
+            (0, "XLINE"),
+            (10, "0"),
+            (20, "5"),
+            (11, "1"),
+            (21, "0"),
+            (0, "RAY"),
+            (10, "0"),
+            (20, "5"),
+            (11, "0"),
+            (21, "1"),
+            (0, "ENDBLK"),
+            (0, "ENDSEC"),
+            (0, "SECTION"),
+            (2, "ENTITIES"),
+            (0, "INSERT"),
+            (2, "GUIDE"),
+            (10, "0"),
+            (20, "0"),
+            (0, "XLINE"),
+            (10, "0"),
+            (20, "5"),
+            (11, "1"),
+            (21, "0"),
+            (0, "ENDSEC"),
+            (0, "EOF"),
+        ]);
+        let imported = import(text.as_bytes()).unwrap();
+        assert_eq!(
+            imported.report.unsupported.get(CONSTRUCTION_IN_BLOCK),
+            Some(&2)
+        );
+        assert_eq!(imported.report.construction_lines, 1);
+        let drawing = &imported.drawing;
+        let guide = drawing.blocks().find("GUIDE").unwrap();
+        assert_eq!(drawing.blocks().get(guide).unwrap().entities.len(), 1);
+        let extents = drawing.extents().unwrap();
+        assert_eq!(
+            (extents.min(), extents.max()),
+            (Point2::ORIGIN, Point2::new(10.0, 10.0))
+        );
     }
 
     #[test]

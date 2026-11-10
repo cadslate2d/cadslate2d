@@ -333,6 +333,10 @@ pub enum TransactionError {
     /// A viewport is a window of a layout's paper: it cannot be in the
     /// model, nor in a block.
     ViewportOffPaper,
+    /// An xline or a ray is drawn by the overlay, clipped to the view, and
+    /// kept out of the extents (ADR-0031): a block, placed as committed
+    /// geometry with bounds, cannot hold one (#415).
+    ConstructionInBlock,
     /// The layout does not exist, in the drawing or earlier in this
     /// transaction.
     UnknownLayout(LayoutId),
@@ -443,6 +447,7 @@ impl fmt::Display for TransactionError {
             Self::BadBlockScale => write!(f, "a block reference's scale must be positive"),
             Self::BadViewport(error) => write!(f, "{error}"),
             Self::ViewportOffPaper => write!(f, "a viewport belongs on a layout's paper"),
+            Self::ConstructionInBlock => write!(f, "a block cannot hold an xline or a ray"),
             Self::UnknownLayout(id) => write!(f, "layout {id} does not exist"),
             Self::PermanentLayout => write!(f, "the model cannot be removed or renamed"),
             Self::LayoutInUse(id) => write!(
@@ -1623,6 +1628,7 @@ impl Drawing {
             others: Vec::new(),
             space: LayoutId::MODEL,
             held: BTreeSet::new(),
+            restated: BTreeSet::new(),
         }
     }
 
@@ -1913,6 +1919,9 @@ pub struct TransactionBuilder<'d> {
     /// Entities whose every unknown is held when the transaction settles
     /// its constraints (ADR-0038).
     held: BTreeSet<EntityId>,
+    /// Constraints this transaction restated with what it transformed:
+    /// their places are set, and not followed again (#426).
+    restated: BTreeSet<ConstraintId>,
 }
 
 impl TransactionBuilder<'_> {
@@ -1952,16 +1961,12 @@ impl TransactionBuilder<'_> {
         source: EntityId,
         entity: impl Into<Entity>,
     ) -> Result<EntityId, TransactionError> {
-        let record = self
+        let properties = self
             .drawing
             .record(source)
-            .ok_or(TransactionError::UnknownEntity(source))?;
-        let (properties, space, order) = (record.properties, record.space, record.order);
-        let entity = entity.into();
-        self.known_rows(&entity)?;
-        viewport_placeable(&entity, space)?;
-        let record = EntityRecord::new(entity, properties).in_space(space);
-        Ok(self.insert_record(record.in_order(order)))
+            .ok_or(TransactionError::UnknownEntity(source))?
+            .properties;
+        self.insert_from(source, entity, properties)
     }
 
     /// Adds a new entity to `space` — the model, or a layout — with the
@@ -1984,6 +1989,31 @@ impl TransactionBuilder<'_> {
         viewport_placeable(&entity, space)?;
         let record = EntityRecord::new(entity, properties).in_space(space);
         Ok(self.insert_record(record.in_order(self.drawing.top_order())))
+    }
+
+    /// Adds a new entity made from `source` — a part of it exploded — with
+    /// properties of its own, in `source`'s space and draw-order tier
+    /// (ADR-0032, #427), as [`Self::insert_like`] puts a copy. `source` is
+    /// read from the drawing as it was when the transaction began, so it
+    /// may be removed in it.
+    pub fn insert_from(
+        &mut self,
+        source: EntityId,
+        entity: impl Into<Entity>,
+        properties: Properties,
+    ) -> Result<EntityId, TransactionError> {
+        let record = self
+            .drawing
+            .record(source)
+            .ok_or(TransactionError::UnknownEntity(source))?;
+        let (space, order) = (record.space, record.order);
+        self.known_layer(properties.layer)?;
+        self.known_linetype(properties.linetype)?;
+        let entity = entity.into();
+        self.known_rows(&entity)?;
+        viewport_placeable(&entity, space)?;
+        let record = EntityRecord::new(entity, properties).in_space(space);
+        Ok(self.insert_record(record.in_order(order)))
     }
 
     /// Adds a new entity to `space` with the given properties.
@@ -2493,7 +2523,11 @@ impl TransactionBuilder<'_> {
     }
 
     /// Replaces an existing entity's geometry, keeping its ID and its
-    /// properties.
+    /// properties. As constraints settle, the unknowns whose values it
+    /// changed are held and the rest are free to follow (ADR-0038 §5): an
+    /// end grip's point stays where it was put. An edit that set the whole
+    /// of the entity — a transform, a midpoint or centre grip — uses
+    /// [`Self::replace_whole`].
     pub fn replace(
         &mut self,
         id: EntityId,
@@ -2529,6 +2563,120 @@ impl TransactionBuilder<'_> {
         }
         self.push(EntityChange::Replace { id, before, after });
         Ok(())
+    }
+
+    /// Replaces an existing entity's geometry as a whole — a move, a turn,
+    /// a scale, a reflection of it — and holds every unknown of it as
+    /// constraints settle (ADR-0038 §5), not only those whose values
+    /// changed: the point a transform leaves where it was is set too, and
+    /// never slides to keep a constraint (#420).
+    pub fn replace_whole(
+        &mut self,
+        id: EntityId,
+        entity: impl Into<Entity>,
+    ) -> Result<(), TransactionError> {
+        self.replace(id, entity)?;
+        self.hold(id);
+        Ok(())
+    }
+
+    /// Says what `transform` did to the constraints among `ids`, which
+    /// were all just put through it. A dimension's place goes with them
+    /// (#426). Under a reflection (MIRROR, #425), a constraint keeps its
+    /// meaning only if it is said again: an arc's ends trade places, a
+    /// tangent touches a line's other side, an angle turns the other way,
+    /// and a distance along an axis the mirror reverses is measured from
+    /// its other point. One that names anything outside `ids` is left to
+    /// settling, as is a distance along an axis a slanted mirror does not
+    /// keep.
+    pub fn restate_constraints(&mut self, ids: &[EntityId], transform: &cad_geometry::Transform) {
+        use crate::constraint::{Axis, Kind, Part, Touch};
+        use cad_core::Point2;
+        let reflects = transform.reverses_orientation();
+        let image = |v: Vec2| transform.apply(Point2::ORIGIN + v) - transform.apply(Point2::ORIGIN);
+        let reversed = |v: Vec2| {
+            let w = image(v);
+            let tolerance = cad_core::tolerance::LinearTolerance::DEFAULT;
+            tolerance.is_zero(w.x + v.x) && tolerance.is_zero(w.y + v.y)
+        };
+        let (flips_x, flips_y) = (reversed(Vec2::new(1.0, 0.0)), reversed(Vec2::new(0.0, 1.0)));
+        let ids: BTreeSet<EntityId> = ids.iter().copied().collect();
+        for (constraint_id, before) in self.constraints_now() {
+            if !before.references.iter().all(|r| ids.contains(&r.entity)) {
+                continue;
+            }
+            // Said to be restated, whether or not its row changes: a place
+            // the transform leaves where it was is set all the same.
+            self.restated.insert(constraint_id);
+            let mut after = before.clone();
+            after.place = after.place.map(|place| transform.apply(place));
+            if !reflects {
+                if after != before {
+                    self.push_other(Change::Constraint(TableChange::Replace {
+                        id: constraint_id,
+                        before,
+                        after,
+                    }));
+                }
+                continue;
+            }
+            for reference in &mut after.references {
+                let arc = self
+                    .record_now(reference.entity)
+                    .is_some_and(|record| matches!(*record.entity, Entity::Arc(_)));
+                if arc {
+                    reference.part = match reference.part {
+                        Part::Start => Part::End,
+                        Part::End => Part::Start,
+                        part => part,
+                    };
+                }
+            }
+            match &mut after.kind {
+                Kind::Tangent { touch } => {
+                    *touch = match *touch {
+                        Touch::Left => Touch::Right,
+                        Touch::Right => Touch::Left,
+                        other => other,
+                    };
+                }
+                Kind::Angle { value } => *value = -*value,
+                Kind::Distance { axis, .. } => {
+                    let reverses = match axis {
+                        Axis::Horizontal => flips_x,
+                        Axis::Vertical => flips_y,
+                        Axis::Aligned => false,
+                    };
+                    if reverses {
+                        after.references.swap(0, 1);
+                    }
+                }
+                // What a reflection leaves as it was: a coincidence, a
+                // direction, a length, a radius. A level or a plumb is kept
+                // by an axis-parallel mirror and broken by a slanted one,
+                // and a fix by any: settling says which. Every kind is
+                // named, so a new one with a handedness is decided here.
+                Kind::Coincident
+                | Kind::Collinear
+                | Kind::Concentric
+                | Kind::Parallel
+                | Kind::Perpendicular
+                | Kind::Horizontal
+                | Kind::Vertical
+                | Kind::Symmetric
+                | Kind::Equal
+                | Kind::Fix { .. }
+                | Kind::Radius { .. }
+                | Kind::Diameter { .. } => {}
+            }
+            if after != before {
+                self.push_other(Change::Constraint(TableChange::Replace {
+                    id: constraint_id,
+                    before,
+                    after,
+                }));
+            }
+        }
     }
 
     /// Changes an existing entity's properties, keeping its ID and sharing
@@ -3476,6 +3624,7 @@ impl TransactionBuilder<'_> {
                 ..ApplyReport::default()
             };
         }
+        self.follow_dimensions();
         let transaction = Transaction::new(self.changes);
         let report = self.drawing.apply(&transaction);
         self.drawing.history.record(transaction);
@@ -3579,6 +3728,13 @@ impl TransactionBuilder<'_> {
             .any(|record| matches!(*record.entity, Entity::Viewport(_)))
         {
             return Err(TransactionError::ViewportOffPaper);
+        }
+        if block
+            .entities
+            .iter()
+            .any(|record| record.entity.is_unbounded())
+        {
+            return Err(TransactionError::ConstructionInBlock);
         }
         for record in block.entities.iter() {
             self.known_layer(record.properties.layer)?;
@@ -6570,6 +6726,17 @@ mod tests {
             tx.redefine_block(BlockId::FIRST, chair_block()),
             Err(TransactionError::PermanentBlock)
         );
+        // Nor a construction line, which has no bounds to place (#415).
+        let xline =
+            crate::XLineEntity::through(Point2::new(0.0, 5.0), Point2::new(1.0, 5.0)).unwrap();
+        assert_eq!(
+            tx.define_block(Block::new(
+                "Guide",
+                Point2::ORIGIN,
+                vec![EntityRecord::new(xline, Properties::default())]
+            )),
+            Err(TransactionError::ConstructionInBlock)
+        );
         // A reference must place something that exists, at a positive scale.
         assert_eq!(
             tx.insert(BlockReferenceEntity::new(
@@ -7312,6 +7479,46 @@ mod tests {
         assert_eq!(order(&drawing, back), Some(0), "one reorder, undone as one");
         assert_eq!(order(&drawing, front), Some(0));
         assert_eq!((drawing.bottom_order(), drawing.top_order()), (0, 0));
+    }
+
+    #[test]
+    fn an_exploded_part_takes_its_source_s_tier_and_its_own_properties() {
+        // #427: the source is removed in the same transaction, and read as
+        // it was when the transaction began.
+        let mut drawing = Drawing::new();
+        let mut tx = drawing.transaction();
+        let walls = tx.add_layer(Layer::named("walls")).unwrap();
+        let back = tx.insert(line(0.0, 0.0, 10.0, 0.0)).unwrap();
+        tx.insert(line(0.0, 1.0, 10.0, 1.0)).unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.set_order(back, -1).unwrap();
+        tx.commit();
+
+        let mut tx = drawing.transaction();
+        tx.remove(back).unwrap();
+        let properties = Properties {
+            layer: walls,
+            ..Properties::default()
+        };
+        let part = tx
+            .insert_from(back, line(0.0, 0.0, 5.0, 0.0), properties)
+            .unwrap();
+        assert_eq!(
+            tx.insert_from(
+                back,
+                line(5.0, 0.0, 10.0, 0.0),
+                Properties {
+                    layer: LayerId::from_raw(99),
+                    ..Properties::default()
+                }
+            ),
+            Err(TransactionError::UnknownLayer(LayerId::from_raw(99)))
+        );
+        tx.commit();
+        let record = drawing.record(part).unwrap();
+        assert_eq!(record.order, -1, "the source's tier, not the top");
+        assert_eq!(record.properties.layer, walls, "its own properties");
     }
 
     #[test]

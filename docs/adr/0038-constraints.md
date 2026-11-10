@@ -217,7 +217,9 @@ Removing a constraint can break nothing, so it triggers nothing.
 
 **What is held:**
 
-- **Unknowns the transaction set:** of every entity it replaced, the unknowns whose values it changed. A grip's point stays where it was put.
+- **Unknowns the transaction set:** of every entity it replaced, the unknowns whose values it changed. An end grip's point stays where it was put.
+- **Every unknown of an entity replaced whole:** `TransactionBuilder::replace_whole`, which a command uses when it set all of the entity — MOVE, ROTATE, SCALE, MIRROR, and ALIGN of their selection, a grip that moves its entity whole (`Entity::grip_moves_whole`: a line's midpoint, a centre, an insertion point), what STRETCH's window holds whole, ARRAYPATH's first item, the views a sheet moves. A transform leaves the point it is about with the bits it had, and read by the rule above that point would be free to slide: a line scaled about its own end kept its length and moved off it (#420). `replace` is for an edit of part of an entity — a grip that reshapes it, what STRETCH's window crosses — whose other points follow. A grip's preview settles the same way (`Drawing::settled_with` takes what is replaced whole).
+- **Every unknown of an entity on a locked layer:** what is on a locked layer is not changed, so an edit that could only be settled by moving one is refused, saying so ("The edit would move an object on a locked layer") rather than blaming a constraint (#423).
 - **The first object of a new geometric constraint:** a command that adds a constraint between two objects asks the builder to hold the first object's unknowns. The second moves to it, as in AutoCAD.
 - **Nothing else.** A changed dimension's value holds nothing beyond the above, and the solver takes the solution reached from the current geometry. With the usual fix or a first constrained corner, that is the far side moving; with nothing fixed, both sides move, as little as they can (§4).
 
@@ -225,12 +227,16 @@ Removing a constraint can break nothing, so it triggers nothing.
 
 **Refusal:** an edit that cannot be settled is not applied. The commit's report says why, in the constraint's terms ("The edit would break d1 = 120"), from the equations to blame, and the session logs it.
 
+**A radius stays positive.** The solver's nearest solution may push a circle's or an arc's radius through zero to keep a tangency: a line moved up through a tangent circle's centre gave it a radius of −10. An arc's solve may instead fail on the way there (#424). A solution that leaves a radius at or below the linear tolerance at its circle's magnitude, which the edit pushed there, is solved again with those radii held where they were. A solve that fails while the part has circles or arcs is also solved again, with every radius held. Either way the rest of the part moves instead. A circle the drawing already had that small is not the edit's doing, and refuses nothing. Where holding the radii cannot settle the edit, one that only settled inside out is refused ("The edit would leave a circle or an arc with no radius"), and one that did not settle at all says why, as before.
+
 **Previews** settle the same way on the session's scratch copy, so a grip drag shows the rest of the part following.
 
 **What counts as a change:**
 
 - Moving every entity of a part together (MOVE, ROTATE) holds everything and breaks nothing but a `Fix`.
 - Scaling breaks dimensions, as in AutoCAD.
+- **A dimension goes with its geometry** (#426). A dimensional constraint's place is where its dimension line is drawn, in the drawing's coordinates. A transform of everything it measures (`restate_constraints`) puts the place through the same transform. Any other edit that moves what it measures, such as a grip, a STRETCH, or settling, moves the place by as much as the centre of its measured parts moved. The centre before is read from the row as it was against the drawing as it was, and the centre after from the row as it will be, so a part renamed in between, such as a vertex inserted before it, is still the same point. A constraint `restate_constraints` restated is left as restated: the builder records it, rather than guessing from whether the place changed, since a turn about the place leaves it where it was. So is a place the transaction set itself.
+- **Mirroring** keeps every constraint whose parts all go through it, once each is restated in the same transaction by `TransactionBuilder::restate_constraints`, which `TransientEdit::commit` calls (#425). An arc's ends trade places, so its `Start` and `End` swap. A line–circle tangency touches the line's other side. An angle turns the other way. A horizontal or vertical distance that an axis-parallel mirror reverses is measured from its other point. A dimension's place is mirrored with it. A distance along an axis that a slanted mirror does not keep, like a constraint across the mirror, is left to settling, which keeps it or refuses the edit.
 - An edit that only changes properties settles nothing.
 
 An unconstrained drawing pays one lookup per touched entity.

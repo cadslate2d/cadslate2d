@@ -6,7 +6,7 @@ use std::f64::consts::FRAC_PI_2;
 use cad_core::Point2;
 use cad_document::{
     Block, BlockId, BlockReferenceEntity, Color, Drawing, Entity, EntityRecord, Layer, LayerId,
-    LineEntity, PolylineEntity, Properties,
+    LineEntity, PolylineEntity, Properties, RayEntity, XLineEntity,
 };
 
 use crate::OverlayItem;
@@ -101,6 +101,49 @@ fn block_replaces_the_selection_with_one_reference_and_one_undo_restores_it() {
     assert!(h.session.drawing().blocks().find("Chair").is_none());
     h.redo();
     assert_eq!(references(&h).len(), 1);
+}
+
+#[test]
+fn block_leaves_construction_lines_in_the_drawing() {
+    // A block is placed as committed geometry with bounds; an xline or a
+    // ray has none, and would be printed but not drawn (#415).
+    let xline = Entity::XLine(XLineEntity::through(p(0.0, 5.0), p(1.0, 5.0)).unwrap());
+    let ray = Entity::Ray(RayEntity::through(p(5.0, 0.0), p(5.0, 1.0)).unwrap());
+    let mut h = Harness::with_entities([
+        line(0.0, 0.0, 10.0, 0.0),
+        line(0.0, 0.0, 0.0, 10.0),
+        xline.clone(),
+        ray.clone(),
+    ]);
+    h.enter_all(&["SELECT", "ALL", ""]);
+    assert_eq!(h.session.selection().len(), 4);
+    h.enter_all(&["B", "Chair", "0,0"]);
+    assert_eq!(
+        h.log().last().unwrap(),
+        "Block \"Chair\" defined from 2 objects. 2 construction lines left out: a block cannot hold them."
+    );
+    let drawing = h.session.drawing();
+    let chair = drawing.blocks().find("Chair").expect("a block");
+    assert_eq!(drawing.blocks().get(chair).unwrap().entities.len(), 2);
+    let left = h.entities();
+    assert_eq!(
+        left.len(),
+        3,
+        "the reference and the two construction lines"
+    );
+    assert!(left.contains(&xline) && left.contains(&ray));
+    let extents = drawing.extents().expect("the reference has bounds");
+    assert_eq!(extents.max(), p(10.0, 10.0));
+
+    // Construction lines alone make no block.
+    let mut h = Harness::with_entities([xline]);
+    h.enter_all(&["SELECT", "ALL", "", "B", "Guide", "0,0"]);
+    assert_eq!(
+        h.log().last().unwrap(),
+        "A block cannot hold an xline or a ray."
+    );
+    assert!(h.session.drawing().blocks().find("Guide").is_none());
+    assert_eq!(h.entities().len(), 1);
 }
 
 #[test]

@@ -338,7 +338,11 @@ fn accented(glyphs: &[Glyph], ascent: f64, descent: f64) -> Vec<(char, Glyph)> {
 /// the hyphen, an em dash 1.6 times — the curly quotes as its straight ones, the
 /// ellipsis as three full stops, the multiplication sign as an × in the
 /// box of its plus, and the bullet as a small ring at the hyphen's
-/// height. Each lies within the glyphs it is made from.
+/// height. The plus-minus sign of a tolerance is the plus, three quarters
+/// as tall, over a bar at its foot; the ordinals `º` and `ª` of "Nº 3"
+/// and "1ª" (#417) are the `o` and the `a` at a superscript's size, their
+/// tops at the cap height, over a bar. Each lies within the glyphs it is
+/// made from.
 fn typographic(glyphs: &[Glyph]) -> Vec<(char, Glyph)> {
     let of = |c: char| glyphs.get((c as u32 - FIRST_CHAR) as usize);
     let mut extras = Vec::new();
@@ -421,6 +425,54 @@ fn typographic(glyphs: &[Glyph]) -> Vec<(char, Glyph)> {
                 advance: plus.advance,
             },
         ));
+        let squeezed = plus
+            .strokes
+            .iter()
+            .map(|stroke| {
+                stroke
+                    .iter()
+                    .map(|p| Vec2::new(p.x, high.y - (high.y - p.y) * 0.75))
+                    .collect()
+            })
+            .chain([vec![Vec2::new(low.x, low.y), Vec2::new(high.x, low.y)]])
+            .collect();
+        extras.push((
+            '±',
+            Glyph {
+                strokes: squeezed,
+                advance: plus.advance,
+            },
+        ));
+    }
+    for (ordinal, letter) in [('º', 'o'), ('ª', 'a')] {
+        if let Some(glyph) = of(letter) {
+            let (low, high) = bounds(glyph);
+            // Small, raised so the letter's top is at the cap height, and
+            // underlined a little below it.
+            let raised = 1.0 - high.y * SUPERSCRIPT;
+            let mut strokes: Vec<Vec<Vec2>> = glyph
+                .strokes
+                .iter()
+                .map(|stroke| {
+                    stroke
+                        .iter()
+                        .map(|p| Vec2::new(p.x * SUPERSCRIPT, raised + p.y * SUPERSCRIPT))
+                        .collect()
+                })
+                .collect();
+            let bar = raised - 0.15;
+            strokes.push(vec![
+                Vec2::new(low.x * SUPERSCRIPT, bar),
+                Vec2::new(high.x * SUPERSCRIPT, bar),
+            ]);
+            extras.push((
+                ordinal,
+                Glyph {
+                    strokes,
+                    advance: glyph.advance * SUPERSCRIPT,
+                },
+            ));
+        }
     }
     extras
 }
@@ -834,7 +886,8 @@ mod tests {
     #[test]
     fn typographic_marks_are_drawn_within_the_font() {
         let font = Font::simplex();
-        for mark in ['—', '–', '‘', '’', '“', '”', '…', '×', '•'] {
+        for mark in ['—', '–', '‘', '’', '“', '”', '…', '×', '•', '±', 'º', 'ª']
+        {
             let glyph = font.glyph(mark).unwrap_or_else(|| panic!("{mark}"));
             assert!(!glyph.strokes.is_empty() && glyph.advance > 0.0);
             for point in glyph.strokes.iter().flatten() {
@@ -843,7 +896,31 @@ mod tests {
         }
         assert!(font.advance("—") > font.advance("–") && font.advance("–") >= font.advance("-"));
         assert!(close(font.advance("…"), 3.0 * font.advance(".")));
-        for c in "TRUSS T-01 — WARREN ROOF TRUSS; 10 × 5 cm “RHS”…".chars() {
+        // A tolerance's ± and the ordinals of "Nº 3" and "1ª" (#417): the
+        // ± in its plus's box with a bar at the foot, each ordinal small
+        // and raised to the cap height over its bar.
+        let reach = |c: char| {
+            let points = || font.glyph(c).unwrap().strokes.iter().flatten();
+            (
+                points().map(|p| p.y).fold(f64::MAX, f64::min),
+                points().map(|p| p.y).fold(f64::MIN, f64::max),
+            )
+        };
+        assert_eq!(reach('±'), reach('+'));
+        assert!(close(font.advance("±"), font.advance("+")));
+        for (ordinal, letter) in [('º', 'o'), ('ª', 'a')] {
+            let (bottom, top) = reach(ordinal);
+            assert!(
+                close(top, 1.0) && bottom > 0.3,
+                "{ordinal}: {bottom} to {top}"
+            );
+            assert!(close(
+                font.advance(&ordinal.to_string()),
+                font.advance(&letter.to_string()) * 0.6
+            ));
+        }
+        for c in "TRUSS T-01 — WARREN ROOF TRUSS; 10 × 5 cm “RHS”… Nº 3, 1ª, Ø20 ±0.1".chars()
+        {
             assert!(font.glyph(c).is_some(), "{c}");
         }
     }
@@ -981,7 +1058,7 @@ mod tests {
         /// characters the font lacks included.
         #[test]
         fn strokes_lie_within_the_metrics_box_at_any_angle(
-            text in "[ -~é€]{0,12}",
+            text in "[ -~é€±ºª]{0,12}",
             height in 0.1..100.0f64,
             angle in -7.0..7.0f64,
             ox in -1000.0..1000.0f64,
