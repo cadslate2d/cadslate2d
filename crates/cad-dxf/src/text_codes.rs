@@ -10,25 +10,28 @@
 //! a stacked fraction becomes `a/b`, and every other code is dropped — and
 //! the report says so.
 
-/// `text` with the TEXT codes resolved; whether anything was dropped. A
-/// TEXT is one line: a line break or another control character but a tab,
-/// which a DWG's length-counted string may hold, is a space, and dropped
-/// formatting (#430) — as the writer puts one in the file.
-pub(crate) fn plain_text(text: &str) -> (String, bool) {
+/// A single-line text's words — a TEXT's, an attribute's — with its codes
+/// resolved; whether anything was dropped. It is one line: a line break or
+/// another control character but a tab, which a DWG's length-counted
+/// string may hold, is a space, and dropped (#430), as the writer puts one
+/// in the file. An MTEXT's breaks are its own, and go through
+/// [`plain_text`] as they are.
+pub(crate) fn plain_line(text: &str) -> (String, bool) {
     let control = |c: char| c.is_control() && c != '\t';
-    let spaced: String;
-    let mut dropped = false;
-    let text = if text.chars().any(control) {
-        dropped = true;
-        spaced = text
-            .chars()
-            .map(|c| if control(c) { ' ' } else { c })
-            .collect();
-        spaced.as_str()
-    } else {
-        text
-    };
+    if !text.chars().any(control) {
+        return plain_text(text);
+    }
+    let spaced: String = text
+        .chars()
+        .map(|c| if control(c) { ' ' } else { c })
+        .collect();
+    (plain_text(&spaced).0, true)
+}
+
+/// `text` with the TEXT codes resolved; whether anything was dropped.
+pub(crate) fn plain_text(text: &str) -> (String, bool) {
     let mut out = String::with_capacity(text.len());
+    let mut dropped = false;
     let mut rest = text;
     while let Some(at) = rest.find("%%") {
         out.push_str(&rest[..at]);
@@ -141,6 +144,23 @@ mod tests {
     /// `%%` and three digits is a character by its number in the code
     /// page (#397); one that is not printable, or past 255, is dropped.
     /// Fewer digits are not a code of this kind.
+    /// #430: a single-line text's break is a space, and dropped; the codes
+    /// beneath it, which an MTEXT's words go through with their breaks,
+    /// keep a break as it is.
+    #[test]
+    fn a_line_break_is_a_space_in_a_single_line_text_only() {
+        assert_eq!(
+            plain_line("first\nsecond"),
+            ("first second".to_owned(), true)
+        );
+        assert_eq!(plain_line("a\tb %%d"), ("a\tb °".to_owned(), false));
+        assert_eq!(
+            plain_text("first\nsecond"),
+            ("first\nsecond".to_owned(), false)
+        );
+        assert_eq!(plain_mtext("one\\Ptwo"), ("one\ntwo".to_owned(), false));
+    }
+
     #[test]
     fn a_percent_code_with_three_digits_is_a_character() {
         assert_eq!(plain_text("%%065BC"), ("ABC".to_owned(), false));
