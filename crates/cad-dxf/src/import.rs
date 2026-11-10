@@ -31,7 +31,7 @@ use crate::properties::{
     LAYER_FROZEN, LAYER_LOCKED, LINETYPE_BY_BLOCK, LINETYPE_BY_LAYER, color_from_dxf,
     lineweight_from_dxf, pattern_from_dxf,
 };
-use crate::text_codes::{plain_mtext, plain_text};
+use crate::text_codes::{plain_line, plain_mtext};
 use crate::{DxfError, ImportReport};
 
 /// Start of every binary DXF file.
@@ -1299,7 +1299,10 @@ impl<'a> Reader<'a> {
                 None => self.report.count_unsupported(INVALID),
             },
             (_, "TEXT") if entities => {
-                let (text, anchor, dropped) = body.text(record.line)?;
+                let Some((text, anchor, dropped)) = body.text(record.line)? else {
+                    self.report.count_unsupported(INVALID);
+                    return Ok(());
+                };
                 let mut pending = body.pending();
                 pending.dropped |= dropped;
                 let rotation = text.rotation;
@@ -1309,7 +1312,10 @@ impl<'a> Reader<'a> {
             // An attribute definition (#183): a text with a tag (2), a
             // prompt (3), and flags (70); its words are the default.
             (_, "ATTDEF") if entities => {
-                let (text, anchor, dropped) = body.text(record.line)?;
+                let Some((text, anchor, dropped)) = body.text(record.line)? else {
+                    self.report.count_unsupported(INVALID);
+                    return Ok(());
+                };
                 let rotation = text.rotation;
                 let mut pending = body.pending();
                 pending.dropped |= dropped;
@@ -1331,11 +1337,14 @@ impl<'a> Reader<'a> {
             // INSERT just read, which it follows until SEQEND.
             (_, "ATTRIB") if entities => {
                 let tag = body.name.clone().unwrap_or_default();
-                let (value, _) = plain_text(body.text.as_deref().unwrap_or(""));
+                let (value, _) = plain_line(body.text.as_deref().unwrap_or(""));
                 self.attach_attribute(&tag, &value);
             }
             (_, "MTEXT") if entities => {
-                let (text, formatting) = body.mtext(record.line)?;
+                let Some((text, formatting)) = body.mtext(record.line)? else {
+                    self.report.count_unsupported(INVALID);
+                    return Ok(());
+                };
                 // Its insertion and any direction (11, 21) are the world's;
                 // a rotation alone is turned in `mtext` (#391). Facing down,
                 // AutoCAD draws it backwards.
@@ -3299,11 +3308,15 @@ impl RecordBody {
     /// words land where they were; aligned and fit text — stretched to a
     /// second point — is read as left text at its first point, and the
     /// stretch is dropped. Whether anything was dropped is the second value.
-    fn text(&self, at: usize) -> Result<(TextEntity, Point2, bool), DxfError> {
+    fn text(&self, at: usize) -> Result<Option<(TextEntity, Point2, bool)>, DxfError> {
         let need = |value, group| required(value, at, "TEXT", group);
         let first = Point2::new(need(self.x0, 10)?, need(self.y0, 20)?);
         let height = need(self.radius, 40)?;
-        let (content, mut dropped) = plain_text(self.text.as_deref().unwrap_or(""));
+        // A text's height is positive (#419): none is invalid.
+        if !height.is_finite() || height <= 0.0 {
+            return Ok(None);
+        }
+        let (content, mut dropped) = plain_line(self.text.as_deref().unwrap_or(""));
         let rotation = self.start_degrees.unwrap_or(0.0).to_radians();
         let (halign, valign) = (self.halign.unwrap_or(0), self.valign.unwrap_or(0));
         let alignment = match (self.x1, self.y1) {
@@ -3355,20 +3368,20 @@ impl RecordBody {
                 dropped = true;
             }
         }
-        Ok((
-            text,
-            anchor,
-            dropped || !height.is_finite() || height <= 0.0,
-        ))
+        Ok(Some((text, anchor, dropped)))
     }
 
     /// An MTEXT: its words, in pieces, with the formatting taken out; its
     /// top left worked out from whichever of the nine attachment points the
     /// insertion is. The second value says whether formatting was dropped.
-    fn mtext(&self, at: usize) -> Result<(MTextEntity, bool), DxfError> {
+    fn mtext(&self, at: usize) -> Result<Option<(MTextEntity, bool)>, DxfError> {
         let need = |value, group| required(value, at, "MTEXT", group);
         let insertion = Point2::new(need(self.x0, 10)?, need(self.y0, 20)?);
         let height = need(self.radius, 40)?;
+        // A text's height is positive (#419): none is invalid.
+        if !height.is_finite() || height <= 0.0 {
+            return Ok(None);
+        }
         let mut raw = self.chunks.concat();
         raw.push_str(self.text.as_deref().unwrap_or(""));
         let (content, dropped) = plain_mtext(&raw);
@@ -3401,7 +3414,7 @@ impl RecordBody {
             _ => 0.0,
         };
         text.insertion = insertion - frame.along * across + frame.up * down;
-        Ok((text, dropped))
+        Ok(Some((text, dropped)))
     }
 
     /// A POINT (#198): its place (10, 20).
@@ -3676,6 +3689,54 @@ mod tests {
         groups.extend_from_slice(body);
         groups.extend_from_slice(&[(0, "ENDSEC"), (0, "EOF")]);
         dxf(&groups)
+    }
+
+    /// #419: a text's height is positive. A TEXT, an ATTDEF, or an MTEXT
+    /// whose height (40) is zero or less is invalid geometry, as a circle
+    /// with no radius is: not imported, and counted.
+    #[test]
+    fn a_text_with_no_height_is_invalid() {
+        for height in ["-2.5", "0"] {
+            let text = entities(&[
+                (0, "TEXT"),
+                (8, "0"),
+                (10, "0"),
+                (20, "0"),
+                (40, height),
+                (1, "words"),
+                (0, "ATTDEF"),
+                (8, "0"),
+                (10, "0"),
+                (20, "0"),
+                (40, height),
+                (1, "default"),
+                (2, "TAG"),
+                (0, "MTEXT"),
+                (8, "0"),
+                (10, "0"),
+                (20, "0"),
+                (40, height),
+                (1, "paragraph"),
+                (0, "TEXT"),
+                (8, "0"),
+                (10, "0"),
+                (20, "0"),
+                (40, "2.5"),
+                (1, "kept"),
+            ]);
+            let imported = import(text.as_bytes()).unwrap();
+            assert_eq!(
+                imported.report.unsupported.get(INVALID),
+                Some(&3),
+                "{height}"
+            );
+            let kept: Vec<&Entity> = imported.drawing.entities().map(|(_, e)| e).collect();
+            assert!(
+                matches!(kept.as_slice(), [Entity::Text(text)] if text.content == "kept"),
+                "{kept:?}"
+            );
+            assert_eq!(imported.report.with_dropped_properties, 0);
+        }
     }
 
     /// #418: a drafter's dimension text is decoded — `<>` the measured
