@@ -740,6 +740,21 @@ fn escaped(value: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
+/// `value` with each control character but a tab a space, so it stays on
+/// its line of the file (#430) and reads back as it is written.
+fn control_spaced(value: &str) -> std::borrow::Cow<'_, str> {
+    let control = |c: char| c.is_control() && c != '\t';
+    if !value.chars().any(control) {
+        return std::borrow::Cow::Borrowed(value);
+    }
+    std::borrow::Cow::Owned(
+        value
+            .chars()
+            .map(|c| if control(c) { ' ' } else { c })
+            .collect(),
+    )
+}
+
 /// The name of the n-th dimension's anonymous block, counting from one.
 fn dimension_block_name(n: usize) -> String {
     format!("*D{n}")
@@ -816,7 +831,17 @@ impl Writer {
     /// One group: the code right-aligned in three columns, then the value.
     fn group(&mut self, code: i32, value: &str) {
         let value = escaped(value);
-        writeln!(self.out, "{code:>3}\n{value}").expect("writing to a String cannot fail");
+        // A value is one line of the file: a line break or another control
+        // character a DWG's length-counted string may hold (#430) is a
+        // space there, as the reader takes one in a text's words, so the
+        // file saved again is the file read. The records a DWG is written
+        // from keep the character itself.
+        let line = control_spaced(&value);
+        debug_assert!(
+            !line.contains(['\n', '\r']),
+            "a group value is one line: {line:?}"
+        );
+        writeln!(self.out, "{code:>3}\n{line}").expect("writing to a String cannot fail");
         if let Some(groups) = &mut self.groups {
             groups.push((code, value.into_owned()));
         }
@@ -3787,6 +3812,57 @@ mod tests {
         assert_eq!(contents, vec!["smile 😀 x", "𝑥 = 𠀋\n😀"]);
         assert!(!back.report.has_unsupported_content());
         assert_eq!(export(&back.drawing), text);
+    }
+
+    /// #430: a line break a DWG's text may hold is a space in the file, as
+    /// the reader takes it, so what is read saves again as the same file;
+    /// the records a DWG is written from keep the break itself.
+    #[test]
+    fn a_line_break_in_single_line_text_does_not_split_its_group() {
+        use cad_document::{DimensionEntity, Measure};
+        let drawing = Drawing::from_entities([Entity::Text(TextEntity::new(
+            Point2::ORIGIN,
+            1.0,
+            0.0,
+            "first\nsecond\r",
+        ))]);
+        let text = export(&drawing);
+        assert!(text.contains("\nfirst second \n"), "{text}");
+        let back = crate::import(text.as_bytes()).expect("a readable file");
+        let (_, Entity::Text(read)) = back.drawing.entities().next().unwrap() else {
+            panic!("a text");
+        };
+        assert_eq!(read.content, "first second ");
+        assert_eq!(back.report.with_dropped_properties, 0, "spaces, as written");
+        // Read, the drawing is what the file says: saved again and read
+        // again, the same file, and its text line the first file's.
+        let second = export(&back.drawing);
+        assert!(second.contains("\nfirst second \n"));
+        let third = export(&crate::import(second.as_bytes()).unwrap().drawing);
+        assert_eq!(third, second, "saved again, the same file");
+        let records = export_records(&drawing);
+        assert!(
+            records
+                .iter()
+                .flat_map(|r| &r.groups)
+                .any(|(_, value)| value == "first\nsecond\r"),
+            "the records keep the break"
+        );
+
+        // An override is MTEXT: its break is `\\P`, read as one line and
+        // reported, as before.
+        let mut dimension = DimensionEntity::new(
+            Measure::Aligned {
+                a: Point2::new(0.0, 0.0),
+                b: Point2::new(10.0, 0.0),
+            },
+            Point2::new(5.0, 5.0),
+        );
+        dimension.text_override = Some("A\nB".to_owned());
+        let text = export(&Drawing::from_entities([Entity::Dimension(dimension)]));
+        assert!(text.contains("\nA\\PB\n"), "{text}");
+        let back = crate::import(text.as_bytes()).expect("a readable file");
+        assert_eq!(back.report.formatting_dropped, 1);
     }
 
     /// #428: what a DWG's Unicode strings are written from — every

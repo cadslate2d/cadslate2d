@@ -31,7 +31,7 @@ use crate::properties::{
     LAYER_FROZEN, LAYER_LOCKED, LINETYPE_BY_BLOCK, LINETYPE_BY_LAYER, color_from_dxf,
     lineweight_from_dxf, pattern_from_dxf,
 };
-use crate::text_codes::{plain_mtext, plain_text};
+use crate::text_codes::{plain_line, plain_mtext};
 use crate::{DxfError, ImportReport};
 
 /// Start of every binary DXF file.
@@ -1337,7 +1337,7 @@ impl<'a> Reader<'a> {
             // INSERT just read, which it follows until SEQEND.
             (_, "ATTRIB") if entities => {
                 let tag = body.name.clone().unwrap_or_default();
-                let (value, _) = plain_text(body.text.as_deref().unwrap_or(""));
+                let (value, _) = plain_line(body.text.as_deref().unwrap_or(""));
                 self.attach_attribute(&tag, &value);
             }
             (_, "MTEXT") if entities => {
@@ -3316,7 +3316,7 @@ impl RecordBody {
         if !height.is_finite() || height <= 0.0 {
             return Ok(None);
         }
-        let (content, mut dropped) = plain_text(self.text.as_deref().unwrap_or(""));
+        let (content, mut dropped) = plain_line(self.text.as_deref().unwrap_or(""));
         let rotation = self.start_degrees.unwrap_or(0.0).to_radians();
         let (halign, valign) = (self.halign.unwrap_or(0), self.valign.unwrap_or(0));
         let alignment = match (self.x1, self.y1) {

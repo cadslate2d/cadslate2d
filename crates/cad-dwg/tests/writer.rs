@@ -444,6 +444,44 @@ fn non_ascii_names_and_text_round_trip_in_every_version() {
     }
 }
 
+/// #430: a line break a DWG's length-counted text holds is read as a space,
+/// as a DXF's is, and reported; the DXF saved from the drawing it opens
+/// reads, and saves again as it was.
+#[test]
+fn a_line_break_in_dwg_text_keeps_the_dxf_saved_from_it_readable() {
+    use cad_core::Point2;
+    use cad_document::{Entity, TextEntity};
+    let drawing = Drawing::from_entities([Entity::Text(TextEntity::new(
+        Point2::new(0.0, 0.0),
+        1.0,
+        0.0,
+        "first\nsecond",
+    ))]);
+    let content = |drawing: &Drawing| {
+        drawing
+            .entities()
+            .find_map(|(_, e)| match e {
+                Entity::Text(t) => Some(t.content.clone()),
+                _ => None,
+            })
+            .expect("the text")
+    };
+    for version in VERSIONS {
+        let opened = cad_dwg::import(&cad_dwg::export(&drawing, version).unwrap()).unwrap();
+        assert_eq!(content(&opened.drawing), "first second", "{version:?}");
+        assert_eq!(opened.report.with_dropped_properties, 1, "{version:?}");
+        let saved = cad_dxf::export_bytes(&opened.drawing);
+        let reopened = cad_dxf::import(&saved)
+            .unwrap_or_else(|e| panic!("{version:?}: the DXF saved from it is refused: {e}"));
+        assert_eq!(content(&reopened.drawing), "first second", "{version:?}");
+        assert_eq!(
+            cad_dxf::export_bytes(&reopened.drawing),
+            saved,
+            "{version:?}: saved again, the same file"
+        );
+    }
+}
+
 /// #429: a multileader read from a DWG keeps its colour and lineweight,
 /// stays in its group, and leaves its space's draw order as it was — its
 /// common groups go before its subclass marker, where a file has them.
