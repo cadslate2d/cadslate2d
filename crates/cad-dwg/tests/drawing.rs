@@ -24,6 +24,9 @@ const WRITER_LOSSES: &[(&str, &str)] = &[
     // The writer leaves a style's block scale at 1 (LibreDWG reads the
     // same), so the Balloon style's 1.5 is the DXF's alone.
     ("ezdxf-r2010-multileaders", "name: \"Balloon\""),
+    // A DWG holds no current multileader style (#431): "Callout" is the
+    // DXF's alone.
+    ("ezdxf-r2010-multileaders", "current multileader style"),
 ];
 
 #[test]

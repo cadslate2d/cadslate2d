@@ -132,7 +132,8 @@ pub fn export(drawing: &Drawing, version: Version) -> Result<Vec<u8>, WriteError
 /// line, for the host to warn with before the export; empty when the file
 /// holds the drawing whole. A spline is by its control points or by its
 /// fit points (§20.4.40): one given by control data of its own and fit
-/// points too keeps the control data, which is its geometry.
+/// points too keeps the control data, which is its geometry. A current
+/// multileader style but Standard is not held at all (#431).
 pub fn export_losses(drawing: &Drawing, _version: Version) -> Vec<String> {
     let splines = drawing
         .entities()
@@ -154,6 +155,18 @@ pub fn export_losses(drawing: &Drawing, _version: Version) -> Vec<String> {
         })
         .count();
     let mut losses = Vec::new();
+    // No DWG header of AC1015 to AC1021 holds the current multileader
+    // style (§9; nor does acadrust's): one but Standard opens as Standard
+    // (#431).
+    let current = drawing.settings().current_mleader_style;
+    if current != cad_document::MLeaderStyleId::FIRST
+        && let Some(style) = drawing.mleader_styles().get(current)
+    {
+        losses.push(format!(
+            "The current multileader style \"{}\" is not kept: a DWG does not hold it, and the drawing opens with Standard current",
+            style.name
+        ));
+    }
     if splines > 0 {
         losses.push(format!(
             "{splines} spline{} with control points of their own also carry fit points, which a DWG cannot hold beside them (the control points are kept)",
