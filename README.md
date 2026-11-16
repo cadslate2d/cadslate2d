@@ -68,7 +68,7 @@ Rust compiled to WebAssembly owns all CAD state — entities, commands, selectio
 
 ## Status
 
-Version 0.2.22. Milestones M0 to M25 are complete: the classic drafting set, DXF and DWG, layouts and plotting, the AI assistant with its five levels of requests — drafting, parts and constraints, floor plans, views and sections, composed sheets. What remains needs a person: a check on real GPUs and in WebKit, and of the files in AutoCAD and a desktop PDF viewer ([M15](https://github.com/cadslate2d/cadslate2d/milestone/16)). See the [milestones](https://github.com/cadslate2d/cadslate2d/milestones) and [issues](https://github.com/cadslate2d/cadslate2d/issues).
+Version 0.2.22. Milestones M0 to M25 are complete: the classic drafting set, DXF and DWG, layouts and plotting, the AI assistant with its five levels of requests — drafting, parts and constraints, floor plans, views and sections, composed sheets — and the requests it should answer with a question rather than a guess. M26, answers checked against their requests, has one issue left (#364). What remains needs a person: a check on real GPUs and in WebKit, and of the files in AutoCAD and a desktop PDF viewer ([M15](https://github.com/cadslate2d/cadslate2d/milestone/16)). See the [milestones](https://github.com/cadslate2d/cadslate2d/milestones) and [issues](https://github.com/cadslate2d/cadslate2d/issues).
 
 ## Contributing
 
