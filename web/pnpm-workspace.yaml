@@ -2,8 +2,11 @@
 # has been published for two weeks (in minutes): long enough for a
 # malicious or broken release to be found and pulled before it reaches us.
 minimumReleaseAge: 20160
-# Exceptions, each an exact version, taken knowingly before its two weeks:
-# eslint 10.13.0 (published 2026-10-16), merged by the maintainer on
-# 2026-10-26 (#308). Remove the line once that date is two weeks past.
-minimumReleaseAgeExclude:
-  - eslint@10.13.0
+# Exceptions, each an exact version, taken knowingly before its two weeks,
+# go under `minimumReleaseAgeExclude:` with the date each may come out.
+
+# Versions forced on what depends on them: minimatch before 11.0.1 has a
+# denial of service through glob parts (GHSA-g3hv-75wg-m249, Dependabot
+# alert #9); ESLint's config arrays ask for 10.
+overrides:
+  "minimatch@>=7.0.0 <11.0.1": 11.0.1
