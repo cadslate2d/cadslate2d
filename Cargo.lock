@@ -142,7 +142,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "cad-benchmarks"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "cad-commands",
  "cad-core",
@@ -155,7 +155,7 @@ dependencies = [
 
 [[package]]
 name = "cad-commands"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "cad-core",
  "cad-document",
@@ -169,14 +169,14 @@ dependencies = [
 
 [[package]]
 name = "cad-core"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "cad-document"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "cad-core",
  "cad-geometry",
@@ -187,7 +187,7 @@ dependencies = [
 
 [[package]]
 name = "cad-dwg"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "acadrust",
  "cad-core",
@@ -198,7 +198,7 @@ dependencies = [
 
 [[package]]
 name = "cad-dxf"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "cad-core",
  "cad-document",
@@ -207,7 +207,7 @@ dependencies = [
 
 [[package]]
 name = "cad-geometry"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "cad-core",
  "proptest",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "cad-input"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "cad-core",
  "proptest",
@@ -224,7 +224,7 @@ dependencies = [
 
 [[package]]
 name = "cad-intent"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "cad-core",
  "cad-intent",
@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "cad-layout"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "cad-core",
  "proptest",
@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "cad-plot"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "cad-commands",
  "cad-core",
@@ -258,7 +258,7 @@ dependencies = [
 
 [[package]]
 name = "cad-render"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "cad-commands",
  "cad-core",
@@ -269,7 +269,7 @@ dependencies = [
 
 [[package]]
 name = "cad-text"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "cad-core",
  "proptest",
@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "cad-wasm"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "cad-commands",
  "cad-core",

@@ -749,9 +749,16 @@ impl Check {
                         if of.is_some() {
                             return Err(self.refuse("of", Reason::Unwanted));
                         }
-                        // The principal view looks from the front.
-                        if looking.is_some() {
-                            return Err(self.refuse("looking", Reason::Unwanted));
+                        // The principal view looks from the front: a model
+                        // saying so says nothing wrong (version 26), and
+                        // one saying otherwise is told why (#358).
+                        if looking.is_some_and(|l| l != crate::ViewLooking::FromFront) {
+                            return Err(self.refuse(
+                                "looking",
+                                Reason::Said(
+                                    "is `from_front` or left out for the principal view, which is the front: a view from a side, above, below, or behind is `projected` beside it, or `free`",
+                                ),
+                            ));
                         }
                     }
                     // A free view or a section may say where it looks from,

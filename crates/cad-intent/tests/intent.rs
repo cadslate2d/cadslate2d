@@ -585,9 +585,9 @@ fn what_is_refused_says_where_and_why() {
         IntentError::Json { .. }
     ));
     assert!(matches!(
-        parse(r#"{"version": 26, "operations": []}"#).unwrap_err(),
+        parse(r#"{"version": 27, "operations": []}"#).unwrap_err(),
         IntentError::Version {
-            found: 26,
+            found: 27,
             expected: VERSION
         }
     ));
@@ -631,7 +631,7 @@ fn what_is_refused_says_where_and_why() {
 fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../test-data/intent/schema-v25.json"
+        "/../../test-data/intent/schema-v26.json"
     );
     let generated = serde_json::to_string_pretty(&schema()).unwrap() + "\n";
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
@@ -643,7 +643,7 @@ fn the_schema_is_the_recorded_one_or_the_version_is_bumped() {
         "the schema changed: bump cad_intent::VERSION, re-record with UPDATE_SNAPSHOTS=1, and name the file after the new version"
     );
     assert!(generated.contains(r#""version""#));
-    assert_eq!(VERSION, 25);
+    assert_eq!(VERSION, 26);
 }
 
 /// #367: a chain with fewer than two points to dimension, compiled
@@ -753,6 +753,44 @@ fn the_selection_word_and_an_intent_serialise_as_the_document_says() {
     };
     assert_eq!(
         serde_json::to_string(&intent).unwrap(),
-        r#"{"version":25,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
+        r#"{"version":26,"operations":[{"op":"move","targets":"selection","displacement":[1.0,2.0]}]}"#
     );
+}
+
+/// A model writes `looking` `from_front` on the principal view, which is
+/// what the principal view is: read as it means (version 26). Refused, it
+/// took the `looking` out of every view, the projected ones too, and put
+/// it back, and ran out of asks (#358). Any other `looking` there is
+/// refused, saying what the principal view is.
+#[test]
+fn the_principal_view_may_say_it_looks_from_the_front() {
+    let views = |principal_looking: &str| {
+        document(&format!(
+            r#"{{"op": "title_block", "paper": "A3", "scale": 1, "title": "X", "at": [0, 0]}},
+               {{"op": "view", "id": "front", "placed": "principal"{principal_looking}, "operations": [
+                 {{"op": "rectangle", "corner": [0, 0], "opposite": [40, 20]}}]}},
+               {{"op": "view", "id": "left", "placed": "projected", "of": "front", "looking": "from_left", "operations": [
+                 {{"op": "rectangle", "corner": [-10, 0], "opposite": [0, 20]}}]}}"#
+        ))
+    };
+    let said = parse(&views(r#", "looking": "from_front""#)).unwrap();
+    let unsaid = parse(&views("")).unwrap();
+    assert_eq!(
+        format!("{:?}", compile(&said)),
+        format!("{:?}", compile(&unsaid)),
+        "saying the principal view looks from the front changes nothing"
+    );
+    match parse(&views(r#", "looking": "from_left""#)).unwrap_err() {
+        IntentError::Invalid {
+            field: "looking",
+            reason: reason @ Reason::Said(_),
+            ..
+        } => assert!(
+            reason
+                .to_string()
+                .contains("principal view, which is the front"),
+            "{reason}"
+        ),
+        other => panic!("{other:?}"),
+    }
 }

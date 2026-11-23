@@ -637,7 +637,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Where a projected view looks from."
+              "description": "Where the view looks from: a projected view's, required; a\nsection's or a free view's, which gives its datums their axes; a\nprincipal view's only `from_front`, as it always does."
             },
             "of": {
               "description": "The view a projected view is beside.",
@@ -3527,7 +3527,7 @@
       "type": "string"
     },
     "ViewLooking": {
-      "description": "Where a view looks at the object from: a projected view from a side,\nabove, below, or behind; a section or a free view from any of those or\nthe front (version 22), which gives its datums their axes.",
+      "description": "Where a view looks at the object from: a projected view from a side,\nabove, below, or behind; a section or a free view from any of those or\nthe front (version 22), which gives its datums their axes; the principal\nview from the front, said or not (version 26).",
       "enum": [
         "from_front",
         "from_left",

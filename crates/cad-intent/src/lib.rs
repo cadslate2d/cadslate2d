@@ -31,7 +31,7 @@ pub mod testing;
 
 /// The version of the document this crate writes and reads. Bumped when
 /// the schema changes.
-pub const VERSION: u32 = 25;
+pub const VERSION: u32 = 26;
 
 /// The versions this crate reads: each a subset of the next, so a
 /// document of an earlier one is read as it was meant. Version 2 added
@@ -52,9 +52,10 @@ pub const VERSION: u32 = 25;
 /// (#358), version 23 `segments` and a layer's `lineweight` (#358),
 /// version 24 a view's `scale` as written, "1:20" (#358), version 25 a
 /// stair's `id`, shared by every view of one stair, its cut `across` the
-/// flights, and `walls` with their thickness and openings (#358).
-pub const READS: [u32; 25] = [
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+/// flights, and `walls` with their thickness and openings (#358), version
+/// 26 a principal view `looking` `from_front` (#358).
+pub const READS: [u32; 26] = [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
 ];
 
 /// A point, `[x, y]`, in the document's units.
@@ -495,7 +496,9 @@ pub enum Operation {
         /// The view a projected view is beside.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         of: Option<String>,
-        /// Where a projected view looks from.
+        /// Where the view looks from: a projected view's, required; a
+        /// section's or a free view's, which gives its datums their axes; a
+        /// principal view's only `from_front`, as it always does.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         looking: Option<ViewLooking>,
         /// A free view's own scale, paper to real: 2 for a detail at 2:1.
@@ -1294,7 +1297,8 @@ pub struct SectionCut {
 
 /// Where a view looks at the object from: a projected view from a side,
 /// above, below, or behind; a section or a free view from any of those or
-/// the front (version 22), which gives its datums their axes.
+/// the front (version 22), which gives its datums their axes; the principal
+/// view from the front, said or not (version 26).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
