@@ -32,15 +32,30 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 | M23 — AI Plans and Billing | Complete and closed in Stripe's test mode (its review is in the service's repository): Free and Pro, bought, managed, and cancelled through Stripe, the service enforcing what each allows; the account and the way to Pro in the app (#289). Going live — production, Stripe's live mode, a real payment, the terms read by a lawyer — needs the maintainer, and is in the service's repository. |
 | M24 — General-Purpose Drawings | Complete and closed ([review](reviews/m24-exit-review.md)): isometric drafting, a plan's elevations and sections, a part's orthographic and section views, title blocks, and staircases — 2D views drawn by generators from descriptions, nothing 3D kept ([ADR-0040](adr/0040-general-purpose-drawings.md), accepted); by command and through the AI, at a new corpus level, L4. |
 | M25 — Composed Sheets | Complete and closed ([review](reviews/m25-exit-review.md)): sheets composed by operations that place and tie their parts — views aligned by projection, datums shared across them, details at their own scale, sections marked, a bill of materials and balloons, chains and notes — while the model draws inside each view, and the engine's review asks it again ([ADR-0041](adr/0041-composed-sheets.md), accepted after two reviews); a new corpus level, L5, judged four ways. |
-| M26 — Checked Answers | Open: an AI answer held to the request it answers, checked item by item, and shown with how it was checked. Done: a sheet's requirements checked and the trail shown under each proposal (#363), and a corpus level, L6, of requests whose right answer is a question or a flagged conflict (#365). The instructions as a core and domain packs chosen per request (#364, [ADR-0037](adr/0037-ai-input-method.md)) are in the service; the issue stays open for the maintainer's decision on what the requirement check costs against what it scores. |
+| M26 — Checked Answers | Complete and closed ([review](reviews/m26-exit-review.md)): an AI answer held to the request it answers — a sheet's requirements checked item by item and the trail shown under each proposal (#362, #363) — the instructions as a core and packs chosen per request, measured against one prompt of every pack (#364, [ADR-0037](adr/0037-ai-input-method.md)), and a corpus level, L6, of requests whose right answer is a question or a flagged conflict (#365). |
 
 ## What is planned next
 
-Filed on 2026-10-18 and 2026-10-19. What remains needs a person.
+Filed on 2026-10-18 and 2026-10-19, and since. The open-source release needs a person; a drawing from a sketch or a scanned plan (#366) is the next milestone, to be planned with the maintainer before it is filed.
 
 | Milestone | What | Epic |
 | --- | --- | --- |
+| A drawing from a sketch | A photo of a hand sketch or a scanned plan made into an editable drawing: the image sent only with the user's consent to that request, the model answering with an intent document as for words, reviewed and checked as any answer. Larger than M26, and not yet broken into issues. | #366 |
 | Open Source Release | The main repository public under a licence decided by ADR (§44), with a trademark, a contributor agreement, audited history, dependencies, and assets, and the service kept private. Done before the repository goes public; independent of the milestones above. | #291 |
+
+## M26, Checked Answers
+
+An AI answer held to the request it answers and shown with how it was checked, after StructureClaw's traceable, artifact-checked workflow (arXiv 2607.14896). Filed on 2026-10-29.
+
+### Order of work
+
+1. **Requirements checked** (#362): the model writes the request's measurable requirements beside its document; the engine checks each on the drawn sheet, and an unmet one goes back to the model.
+2. **The trail** (#363): under each proposal, what was read from the request, each requirement met or not, why the model was asked again, where it still departs.
+3. **Domain packs** (#364): a core of instructions every request gets and packs chosen per request — trusses, isometric drawing, parts, buildings, sheets. Measured live against one prompt of every pack: the same score and cost, answers a third faster.
+4. **Questions** (#365): L6, requests whose right answer is a question or a flagged conflict, judged by what the reply must say.
+5. **The exit**: `web/e2e/m26-scenario.spec.ts` and [the review](reviews/m26-exit-review.md).
+
+M26 is closed.
 
 ## M25, Composed Sheets
 

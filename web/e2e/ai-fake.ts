@@ -49,6 +49,15 @@ const recorded: ReadonlyMap<string, Answer> = new Map(
     }),
 );
 
+/**
+ * The corpus's recorded answer to `prompt`, as the stand-in serves it: for
+ * a test that adds what the real service would say of it, such as how it
+ * was checked (#363).
+ */
+export function recordedAnswer(prompt: string): Answer | undefined {
+  return recorded.get(prompt);
+}
+
 export interface Interpreted {
   prompt: string;
   unit?: string;
