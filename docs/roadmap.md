@@ -36,11 +36,11 @@ The plan of record is the set of GitHub milestones and issues, in number order. 
 
 ## What is planned next
 
-Filed on 2026-10-18 and 2026-10-19, and since. The open-source release needs a person; a drawing from a sketch or a scanned plan (#366) is the next milestone, to be planned with the maintainer before it is filed.
+Filed on 2026-10-18 and 2026-10-19, and since. The open-source release needs a person. M27 was planned with the maintainer on 2026-11-24; its ADR waits on a spike and their review.
 
 | Milestone | What | Epic |
 | --- | --- | --- |
-| A drawing from a sketch | A photo of a hand sketch or a scanned plan made into an editable drawing: the image sent only with the user's consent to that request, the model answering with an intent document as for words, reviewed and checked as any answer. Larger than M26, and not yet broken into issues. | #366 |
+| M27 — Drawings from Images | An image in the drawing as an underlay — attached, placed, saved in its DXF, plotted — and an image with an AI request: a photo of a hand sketch, a scanned plan, or a PDF page drawn to the sizes it writes, previewed over the image, the image sent only with consent and never stored by the service ([ADR-0042](adr/0042-drawings-from-images.md), Proposed). Order of work: the ADR and a spike (#523), the image entity and a fourth instance kind (#524), the commands (#525), DXF (#526), plotting (#527), PDF pages (#528), the AI's attachment and `underlay` (#529), L7 (#530), the exit (#531). | #366 |
 | Open Source Release | The main repository public under a licence decided by ADR (§44), with a trademark, a contributor agreement, audited history, dependencies, and assets, and the service kept private. Done before the repository goes public; independent of the milestones above. | #291 |
 
 ## M26, Checked Answers
