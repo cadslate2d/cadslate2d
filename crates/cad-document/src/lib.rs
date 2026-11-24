@@ -104,7 +104,7 @@ pub use mleader::{
 };
 pub use mtext::LINE_SPACING;
 pub use named_view::{NamedView, NamedViewChange, NamedViewId, NamedViewTable};
-pub use names::{FORBIDDEN, NameError, Named, check_name, same_name};
+pub use names::{FORBIDDEN, NameError, Named, check_name, name_from_file, same_name};
 pub use point::{PointEntity, PointStyle, PointStyleError};
 pub use properties::{Color, EntityRecord, Linetype, Lineweight, Properties};
 pub use revision::Revision;

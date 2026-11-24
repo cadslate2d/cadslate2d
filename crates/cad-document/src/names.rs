@@ -33,6 +33,26 @@ pub fn check_name(name: &str) -> Result<(), NameError> {
     }
 }
 
+/// A row's name from a file's (#222, #525): the file's name without its
+/// extension, each character a name may not hold made `_`, trimmed; `None`
+/// when that is not a name.
+pub fn name_from_file(file_name: &str) -> Option<String> {
+    let last = file_name.rsplit(['/', '\\']).next().unwrap_or(file_name);
+    let stem = last.rsplit_once('.').map_or(last, |(stem, _)| stem);
+    let name: String = stem
+        .chars()
+        .map(|c| {
+            if FORBIDDEN.contains(&c) || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let name = name.trim().to_owned();
+    check_name(&name).is_ok().then_some(name)
+}
+
 /// Whether two names are the same name: case does not count.
 pub fn same_name(a: &str, b: &str) -> bool {
     a.to_lowercase() == b.to_lowercase()
@@ -122,6 +142,24 @@ mod tests {
         assert_eq!(messages[3], "A linetype name cannot contain \"*\".");
         assert_eq!(messages[1], "A layer name can have at most 255 characters.");
         assert!(messages.iter().all(|message| message.ends_with('.')));
+    }
+
+    #[test]
+    fn a_files_name_names_a_row_without_its_extension_or_what_a_name_cannot_hold() {
+        assert_eq!(
+            name_from_file("Site plan.png").as_deref(),
+            Some("Site plan")
+        );
+        assert_eq!(
+            name_from_file("C:\\scans\\a|b.jpeg").as_deref(),
+            Some("a_b")
+        );
+        assert_eq!(name_from_file("chair.v2.dxf").as_deref(), Some("chair.v2"));
+        assert_eq!(
+            name_from_file("noextension").as_deref(),
+            Some("noextension")
+        );
+        assert_eq!(name_from_file(" .png"), None);
     }
 
     #[test]

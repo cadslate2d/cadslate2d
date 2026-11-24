@@ -1,8 +1,10 @@
-// Images (ADR-0042, #524, #526, #527): a DXF holding a picture — copied
-// into the file by our writer — opens with the picture under the lines
-// drawn over it, its quarters where the picture has them; faded, it is
-// paler; the file is written back with the image and its copy; and a plot
-// embeds the picture, compressed as it is held.
+// Images (ADR-0042, #524–#527): a DXF holding a picture — copied into the
+// file by our writer — opens with the picture under the lines drawn over
+// it, its quarters where the picture has them; faded, it is paler; the
+// file is written back with the image and its copy; a plot embeds the
+// picture, compressed as it is held; and IMAGEATTACH places a PNG the
+// browser decodes and the host makes again, under a line drawn over it,
+// each undone in turn.
 import { readFileSync } from "node:fs";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
@@ -98,4 +100,40 @@ test("a faded picture is drawn paler, toward the canvas", async ({ page, browser
   await expect.poll(() => around(page, canvas, -120, 90, fadedRed)).toBeGreaterThan(20);
   expect(await around(page, canvas, -120, 90, red)).toBe(0);
   if (browserName === "chromium") await matches(page, canvas, "image-faded.png");
+});
+
+test("IMAGEATTACH places a PNG under what is drawn over it, and undo takes each away", async ({
+  page,
+}) => {
+  const canvas = await openApp(page);
+  // The test picture: 16 × 12, red above blue on the left.
+  await chooseFile(page, () => enter(page, "IAT"), {
+    name: "quarters.png",
+    mimeType: "image/png",
+    buffer: readFileSync(new URL("../../test-data/images/quarters.png", import.meta.url)),
+  });
+  await expect(prompt(page)).toHaveText("Specify insertion point:");
+  await expect(logLines(page).last()).toHaveText('"quarters": 16 × 12 pixels, PNG.');
+  await enter(page, "0,0", "640", "0");
+  await expect(logLines(page).last()).toHaveText(
+    'Attached "quarters", 16 × 12 pixels, 640.0000 across.',
+  );
+  await enter(page, "ZOOM", "E");
+  await page.mouse.move(5, 5);
+  await expect.poll(() => around(page, canvas, -120, 90, red)).toBeGreaterThan(20);
+  expect(await around(page, canvas, -120, -90, blue)).toBeGreaterThan(20);
+
+  // A line over it, then each undone in turn: the line, then the picture.
+  const drawn = async () => {
+    const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    return [entities(file.text, "IMAGE").length, entities(file.text, "LINE").length];
+  };
+  await enter(page, "L", "0,0", "640,480", "");
+  expect(await drawn()).toEqual([1, 1]);
+  await enter(page, "U");
+  expect(await drawn()).toEqual([1, 0]);
+  expect(await around(page, canvas, -120, 90, red)).toBeGreaterThan(20);
+  await enter(page, "U");
+  expect(await drawn()).toEqual([0, 0]);
+  await expect.poll(() => around(page, canvas, -120, 90, red)).toBe(0);
 });

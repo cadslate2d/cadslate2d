@@ -42,6 +42,7 @@ mod grips;
 mod groups;
 mod hatch;
 mod housekeeping;
+mod images;
 mod inquiry;
 mod intent;
 mod isometric;

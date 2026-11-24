@@ -511,6 +511,7 @@ impl CadSession {
             Some(HostRequest::WriteBlock) => 7,
             Some(HostRequest::NewDrawing) => 8,
             Some(HostRequest::OpenBrief) => 9,
+            Some(HostRequest::ImageFile) => 10,
         }
     }
 
@@ -574,6 +575,15 @@ impl CadSession {
                 .session
                 .notify(format!("Cannot insert {name}: {error}.")),
         };
+        self.report(dirty)
+    }
+
+    /// The picture the host made for `IMAGEATTACH` or `IMAGE Reload`
+    /// (ADR-0042 §3, #525) — a JPEG or an opaque PNG, at most the longest
+    /// side the host is set to — and the name of the file it came from.
+    /// Bytes the engine does not take as a picture are said in the log.
+    pub fn attach_picture(&mut self, bytes: &[u8], name: &str) -> u32 {
+        let dirty = self.session.attach_picture(name, bytes.to_vec());
         self.report(dirty)
     }
 

@@ -19,6 +19,7 @@ import type {
 import { parseSettings, saveTypesFor } from "./host-services";
 import { PAUSE, SELECTION } from "./macro";
 import type { HostServices, PickedFile, Settings, SettingsStore, Theme } from "./host-services";
+import type { DecodedPicture, PictureDecoder } from "./pictures";
 
 beforeAll(loadEngineForTests);
 
@@ -138,10 +139,72 @@ class FakeSettings implements SettingsStore {
   }
 }
 
+/** A JPEG's start and frame header, `width` × `height` in colour: all the engine reads of one. */
+function jpegHeader(width: number, height: number): Uint8Array {
+  return new Uint8Array([
+    0xff,
+    0xd8,
+    0xff,
+    0xe0,
+    0x00,
+    0x04,
+    0x4a,
+    0x46,
+    0xff,
+    0xc0,
+    0x00,
+    0x0b,
+    8,
+    height >> 8,
+    height & 0xff,
+    width >> 8,
+    width & 0xff,
+    3,
+    1,
+    0x11,
+    0,
+  ]);
+}
+
+/**
+ * The browser's decoder, faked: a picture of `size`, in `grey` or colour,
+ * whatever the bytes. What it is asked to draw is what the host decided.
+ */
+class FakeDecoder implements PictureDecoder {
+  size: [number, number] = [4000, 3000];
+  grey = false;
+  refusal: Error | undefined;
+  /** What it was asked for: pixels for a PNG, or a JPEG, at a size. */
+  asked: string[] = [];
+
+  decode(): Promise<DecodedPicture> {
+    if (this.refusal) return Promise.reject(this.refusal);
+    const [width, height] = this.size;
+    return Promise.resolve({
+      width,
+      height,
+      pixels: (w: number, h: number) => {
+        this.asked.push(`pixels ${w} × ${h}`);
+        const data = new Uint8ClampedArray(w * h * 4);
+        for (let i = 0; i < w * h; i += 1) {
+          data.set(this.grey ? [90, 90, 90, 255] : [200, 30, (i * 7) % 256, 255], i * 4);
+        }
+        return data;
+      },
+      jpeg: (w: number, h: number) => {
+        this.asked.push(`JPEG ${w} × ${h}`);
+        return Promise.resolve(jpegHeader(w, h));
+      },
+      close: () => undefined,
+    });
+  }
+}
+
 class FakeHost implements HostServices {
   readonly autosave = new FakeAutosave();
   readonly files = new FakeFiles();
   readonly settings = new FakeSettings();
+  readonly pictures = new FakeDecoder();
   themes: Theme[] = [];
   confirmAnswer = true;
   confirmations: string[] = [];
@@ -1211,6 +1274,77 @@ describe("settings", () => {
 });
 
 // #187: PLOT makes a PDF of model space and offers it under the drawing's name.
+describe("pictures (ADR-0042 §3, #525)", () => {
+  const PNG_START = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+  test("a photograph is made a JPEG at most 2,048 pixels on its long side, and placed", async () => {
+    const { app, host, tick, enter } = harness();
+    host.files.fileToPick = { name: "site photo.heic", bytes: new Uint8Array([0, 0, 0, 24]) };
+    enter("IAT");
+    await tick();
+    expect(host.pictures.asked).toEqual(["JPEG 2048 × 1536"]);
+    const log = () => app.ui.getSnapshot().log;
+    expect(log().at(-1)).toBe('"site photo": 2048 × 1536 pixels, JPEG.');
+    expect(app.ui.getSnapshot().prompt).toBe("Specify insertion point:");
+    enter("0,0", "", "");
+    expect(log().at(-1)).toBe('Attached "site photo", 2048 × 1536 pixels, 2048.0000 across.');
+  });
+
+  test("a lossless picture is made an opaque PNG, grey where it is grey, and a small one is not enlarged", async () => {
+    const { app, host, enter } = harness();
+    host.pictures.size = [300, 200];
+    host.pictures.grey = true;
+    host.files.fileToPick = { name: "scan.png", bytes: PNG_START };
+    enter("IAT");
+    // The PNG is compressed by the browser's deflate: a few turns of the loop.
+    await vi.waitFor(() =>
+      expect(app.ui.getSnapshot().log.at(-1)).toBe('"scan": 300 × 200 pixels, PNG.'),
+    );
+    expect(host.pictures.asked).toEqual(["pixels 300 × 200"]);
+    app.key(KeyAction.Escape);
+    // Tall, and in colour: the long side is the height.
+    host.pictures.size = [1000, 5000];
+    host.pictures.grey = false;
+    enter("IAT");
+    await vi.waitFor(() =>
+      expect(app.ui.getSnapshot().log.at(-1)).toBe('"scan": 410 × 2048 pixels, PNG.'),
+    );
+    expect(host.pictures.asked.at(-1)).toBe("pixels 410 × 2048");
+  });
+
+  test("the longest side is a setting, kept, and held within what the engine takes", async () => {
+    const { app, host, tick, enter } = harness();
+    await app.start();
+    app.setPictureSide(1024);
+    expect(host.settings.kept.pictureSide).toBe(1024);
+    host.files.fileToPick = { name: "photo.jpg", bytes: jpegHeader(10, 10) };
+    enter("IAT");
+    await tick();
+    expect(host.pictures.asked).toEqual(["JPEG 1024 × 768"]);
+    app.key(KeyAction.Escape);
+    app.setPictureSide(100_000);
+    enter("IAT");
+    await tick();
+    expect(host.pictures.asked.at(-1)).toBe("JPEG 4000 × 3000");
+    expect(parseSettings('{"pictureSide":1536}')).toEqual({ pictureSide: 1536 });
+  });
+
+  test("no picture chosen gives up, and one the browser cannot read says why", async () => {
+    const { app, host, tick, enter } = harness();
+    enter("IAT");
+    await tick();
+    expect(app.ui.getSnapshot().prompt).toBe("Command:");
+    host.files.fileToPick = { name: "odd.xyz", bytes: new Uint8Array([1, 2, 3]) };
+    host.pictures.refusal = new Error("the browser cannot read it as a picture");
+    enter("IAT");
+    await tick();
+    expect(app.ui.getSnapshot().prompt).toBe("Command:");
+    expect(app.ui.getSnapshot().log.at(-1)).toBe(
+      "The picture could not be attached: the browser cannot read it as a picture.",
+    );
+  });
+});
+
 describe("plot", () => {
   test("PLOT saves a PDF named after the drawing", async () => {
     const { app, host, tick, enter } = harness();

@@ -1539,6 +1539,24 @@ impl Session {
         })) | Dirty::UI
     }
 
+    /// A picture the host made for the command waiting for one (ADR-0042
+    /// §3, #525), named after its file: given to the command as its input.
+    /// Bytes the engine does not take as a picture — the host claiming
+    /// what they are not — are said in the log, and the command cancelled.
+    pub fn attach_picture(&mut self, file_name: &str, bytes: Vec<u8>) -> Dirty {
+        if self.active.is_none() {
+            return Dirty::NONE;
+        }
+        let name = cad_document::name_from_file(file_name).unwrap_or_else(|| "picture".to_owned());
+        match cad_document::ImageDef::new(name, bytes) {
+            Ok(picture) => self.feed(CommandInput::Picture(picture)) | Dirty::UI,
+            Err(error) => {
+                self.log.push(error.explain());
+                self.cancel_active()
+            }
+        }
+    }
+
     /// The drawing `WBLOCK` made and its file name, once (#222).
     pub fn take_block_file(&mut self) -> Option<(String, Drawing)> {
         self.block_file.take()

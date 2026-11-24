@@ -2431,7 +2431,7 @@ impl<'a> Reader<'a> {
                     .get(&def)
                     .copied()
                     .unwrap_or(image.pixels);
-                *image = crate::image::fitted(image.clone(), size[0], size[1]);
+                *image = image.refitted([size[0], size[1]]);
                 image.def = def;
             }
             Entity::BlockRef(reference) => {

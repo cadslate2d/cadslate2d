@@ -34,6 +34,9 @@ pub enum CommandInput {
     Accept,
     /// A drawing the host read from a file the command asked for (#222).
     File(FileDrawing),
+    /// A picture the host made for the command that asked for one
+    /// (ADR-0042 §3, #525), checked and named after its file.
+    Picture(cad_document::ImageDef),
 }
 
 /// A drawing read from a file, and the file's name (#222). Shared, as the

@@ -86,19 +86,6 @@ pub(crate) fn read(raw: &[(i32, String)]) -> Result<Read, &'static str> {
     })
 }
 
-/// An image read before its definition, its pixel size made the
-/// definition's: the frame kept where the file put it.
-pub(crate) fn fitted(mut image: ImageEntity, width: u32, height: u32) -> ImageEntity {
-    if image.pixels != [width, height] {
-        let across = image.across();
-        let up = image.up();
-        image.u = across * (1.0 / f64::from(width));
-        image.v = up * (1.0 / f64::from(height));
-        image.pixels = [width, height];
-    }
-    image
-}
-
 /// The bytes of our copy of a picture: the 310 chunks of the XRECORD, as
 /// hexadecimal, at most `most` of them — `MOST_BYTES`, what a definition
 /// holds, from a file; `None` when a chunk is not hexadecimal or there are
@@ -247,7 +234,7 @@ mod tests {
     #[test]
     fn a_definition_of_another_size_keeps_the_frame() {
         let image = read(&ezdxf()).unwrap().image;
-        let fitted = fitted(image.clone(), 128, 96);
+        let fitted = image.refitted([128, 96]);
         assert_eq!(fitted.pixels, [128, 96]);
         assert!((fitted.across() - image.across()).length() < 1e-9);
         assert!((fitted.up() - image.up()).length() < 1e-9);

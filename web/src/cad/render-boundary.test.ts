@@ -29,6 +29,8 @@ describe("WASM API surface", () => {
       "accept_proposal",
       // #260: what a request to the AI may carry, whole, shown before the user consents to send it.
       "ai_context",
+      // #525: a picture the host made, its bytes whole, handed to the command waiting for it.
+      "attach_picture",
       "dismiss_import_report",
       // A double click, one event: on a text, the engine edits it.
       "double_click",

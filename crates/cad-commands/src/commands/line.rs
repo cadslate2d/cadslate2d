@@ -100,7 +100,8 @@ impl Command for LineCommand {
             | CommandInput::Angle(_)
             | CommandInput::Text(_)
             | CommandInput::Pick { .. }
-            | CommandInput::File(_) => {}
+            | CommandInput::File(_)
+            | CommandInput::Picture(_) => {}
         }
         Step::Continue
     }

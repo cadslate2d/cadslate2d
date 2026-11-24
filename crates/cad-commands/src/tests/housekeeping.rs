@@ -210,7 +210,7 @@ fn purge_sweeps_the_unused_rows_as_one_undo_and_a_question_only_tells() {
     h.enter("PURGE");
     assert_eq!(
         h.prompt(),
-        "Enter type of unused objects to purge or [Blocks/Dimstyles/LAyers/LTypes/STyles/All/?] <All>:"
+        "Enter type of unused objects to purge or [Blocks/Dimstyles/Images/LAyers/LTypes/STyles/All/?] <All>:"
     );
     h.enter("?");
     assert_eq!(

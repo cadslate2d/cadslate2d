@@ -20,21 +20,22 @@ use crate::commands::{
     ElevationCommand, EllipseCommand, EraseCommand, ExplodeCommand, ExportCommand, FLANGE,
     FindCommand, FloorPlanCommand, Form, GeneratorCommand, Geom, GeomConstraintCommand,
     GridCommand, GroupCommand, HOLE_PATTERN, HatchCommand, HatchEditCommand, IdCommand,
-    InsertCommand, IsoplaneCommand, JoinCommand, LayIsoCommand, LayUnisoCommand, LayerAllCommand,
-    LayerCommand, LayerMergeCommand, LayerPickCommand, LayerStateCommand, LayoutCommand,
-    LeaderCommand, LengthenCommand, LineCommand, LinetypeCommand, ListCommand, LtscaleCommand,
-    LweightCommand, MLeaderCommand, MLeaderEditCommand, MLeaderStyleCommand, MTextCommand,
-    MatchpropCommand, MeasureCommand, MembersCommand, MirrorCommand, ModelCommand, MspaceCommand,
-    MviewCommand, NewCommand, NotesCommand, OffsetCommand, OpenCommand, OpeningCommand,
-    OpeningKind, OsnapCommand, OverkillCommand, PLATE, PanCommand, ParametersCommand,
-    PartViewsCommand, PasteClipCommand, PeditCommand, PickStyleCommand, PlineCommand, PlotCommand,
-    PointCommand, PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand,
-    QdimCommand, QselectCommand, RayCommand, RectangCommand, RedoCommand, RenameCommand,
-    RevCloudCommand, SLOT, SaveCommand, SelectCommand, SettingsCommand, SheetLayoutCommand,
-    SketchCommand, SnapCommand, SplineCommand, SplineEditCommand, StairCommand, StretchCommand,
-    StyleCommand, TanArcCommand, TextCommand, TextEditCommand, TextToFrontCommand,
-    TitleBlockCommand, TransformCommand, UndoCommand, UngroupCommand, UnitsCommand, ViewCommand,
-    ViewFrameCommand, WBlockCommand, WallsCommand, WipeoutCommand, XLineCommand, ZoomCommand,
+    ImageAdjustCommand, ImageAttachCommand, ImageCommand, ImageFrameCommand, InsertCommand,
+    IsoplaneCommand, JoinCommand, LayIsoCommand, LayUnisoCommand, LayerAllCommand, LayerCommand,
+    LayerMergeCommand, LayerPickCommand, LayerStateCommand, LayoutCommand, LeaderCommand,
+    LengthenCommand, LineCommand, LinetypeCommand, ListCommand, LtscaleCommand, LweightCommand,
+    MLeaderCommand, MLeaderEditCommand, MLeaderStyleCommand, MTextCommand, MatchpropCommand,
+    MeasureCommand, MembersCommand, MirrorCommand, ModelCommand, MspaceCommand, MviewCommand,
+    NewCommand, NotesCommand, OffsetCommand, OpenCommand, OpeningCommand, OpeningKind,
+    OsnapCommand, OverkillCommand, PLATE, PanCommand, ParametersCommand, PartViewsCommand,
+    PasteClipCommand, PeditCommand, PickStyleCommand, PlineCommand, PlotCommand, PointCommand,
+    PolarAngleCommand, PolygonCommand, PspaceCommand, PtypeCommand, PurgeCommand, QdimCommand,
+    QselectCommand, RayCommand, RectangCommand, RedoCommand, RenameCommand, RevCloudCommand, SLOT,
+    SaveCommand, SelectCommand, SettingsCommand, SheetLayoutCommand, SketchCommand, SnapCommand,
+    SplineCommand, SplineEditCommand, StairCommand, StretchCommand, StyleCommand, TanArcCommand,
+    TextCommand, TextEditCommand, TextToFrontCommand, TitleBlockCommand, TransformCommand,
+    UndoCommand, UngroupCommand, UnitsCommand, ViewCommand, ViewFrameCommand, WBlockCommand,
+    WallsCommand, WipeoutCommand, XLineCommand, ZoomCommand,
 };
 use crate::session::select_keywords;
 
@@ -112,7 +113,7 @@ impl CommandRegistry {
 
 /// The commands that ship with CadSlate2D: each name, its aliases, and
 /// how it is made.
-fn standard() -> [(&'static str, &'static [&'static str], CommandFactory); 182] {
+fn standard() -> [(&'static str, &'static [&'static str], CommandFactory); 186] {
     [
         ("XLINE", &["XL"], || Box::new(XLineCommand::new())),
         ("RAY", &[], || Box::new(RayCommand::new())),
@@ -387,6 +388,14 @@ fn standard() -> [(&'static str, &'static [&'static str], CommandFactory); 182] 
         ("DRAWORDER", &["DR"], || Box::new(DrawOrderCommand::new())),
         ("TEXTTOFRONT", &[], || Box::new(TextToFrontCommand)),
         ("WIPEOUT", &[], || Box::new(WipeoutCommand::new())),
+        ("IMAGEATTACH", &["IAT"], || {
+            Box::new(ImageAttachCommand::new())
+        }),
+        ("IMAGE", &["IM"], || Box::new(ImageCommand::new())),
+        ("IMAGEADJUST", &["IAD"], || {
+            Box::new(ImageAdjustCommand::new())
+        }),
+        ("IMAGEFRAME", &[], || Box::<ImageFrameCommand>::default()),
         ("GROUP", &["G"], || Box::new(GroupCommand::new())),
         ("UNGROUP", &[], || Box::new(UngroupCommand)),
         ("PICKSTYLE", &[], || Box::new(PickStyleCommand::new())),

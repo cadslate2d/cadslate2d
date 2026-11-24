@@ -138,4 +138,9 @@ pub enum HostRequest {
     /// Replace the drawing with an empty one (#245), once the user agrees
     /// to lose what has not been saved, through `Session::new_drawing`.
     NewDrawing,
+    /// Let the user pick a picture, make it as ADR-0042 §3 says — at most
+    /// the longest side the host is set to, a JPEG or an opaque PNG — and
+    /// hand its bytes to `Session::attach_picture` (#525); none, and the
+    /// command gives up.
+    ImageFile,
 }

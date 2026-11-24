@@ -118,6 +118,8 @@ const INSERT: Menu = {
   items: [
     command("&Block...", "INSERT"),
     command("&File as Block...", { command: "INSERT", steps: ["~"] }),
+    // A picture under the drawing (ADR-0042, #525).
+    command("&Raster Image Reference...", "IMAGEATTACH"),
     SEPARATOR,
     cascade("&Layout", [command("&New Layout", { command: "LAYOUT", steps: ["N"] })]),
     // A sheet's border and title block (#340).
@@ -315,6 +317,12 @@ const MODIFY: Menu = {
       command("&Multileader", "MLEADEREDIT"),
       command("&Attribute...", "ATTEDIT"),
       command("&Text...", "TEXTEDIT"),
+      cascade("&Image", [
+        command("&Adjust...", "IMAGEADJUST"),
+        command("Frame &On", { command: "IMAGEFRAME", steps: ["1"] }),
+        command("Frame O&ff", { command: "IMAGEFRAME", steps: ["0"] }),
+        command("Image &List", "IMAGE"),
+      ]),
     ]),
     SEPARATOR,
     command("&Erase", "ERASE"),

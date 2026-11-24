@@ -325,25 +325,10 @@ impl InsertCommand {
     /// its model's objects, with the rows they refer to brought in by name.
     /// A block of that name already here is the one placed.
     fn from_file(ctx: &mut CommandContext<'_>, file: &crate::FileDrawing) -> Option<BlockId> {
-        let stem = file
-            .name
-            .rsplit_once('.')
-            .map_or(file.name.as_str(), |(stem, _)| stem);
-        let name: String = stem
-            .chars()
-            .map(|c| {
-                if cad_document::FORBIDDEN.contains(&c) || c.is_control() {
-                    '_'
-                } else {
-                    c
-                }
-            })
-            .collect();
-        let name = name.trim().to_owned();
-        if check_name(&name).is_err() {
+        let Some(name) = cad_document::name_from_file(&file.name) else {
             ctx.message(format!("\"{}\" cannot name a block.", file.name));
             return None;
-        }
+        };
         if let Some(block) = find(ctx, &name) {
             ctx.message(format!("Block \"{name}\" is already defined: placing it."));
             return Some(block);

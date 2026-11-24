@@ -591,6 +591,8 @@ pub struct PurgeScope {
     pub layers: bool,
     pub linetypes: bool,
     pub text_styles: bool,
+    /// Picture definitions no image shows (ADR-0042, #525).
+    pub image_defs: bool,
 }
 
 impl PurgeScope {
@@ -600,6 +602,7 @@ impl PurgeScope {
         layers: true,
         linetypes: true,
         text_styles: true,
+        image_defs: true,
     };
     pub const NONE: Self = Self {
         blocks: false,
@@ -607,6 +610,7 @@ impl PurgeScope {
         layers: false,
         linetypes: false,
         text_styles: false,
+        image_defs: false,
     };
 }
 
@@ -618,6 +622,7 @@ pub struct Purged {
     pub layers: Vec<String>,
     pub linetypes: Vec<String>,
     pub text_styles: Vec<String>,
+    pub image_defs: Vec<String>,
 }
 
 impl Purged {
@@ -627,6 +632,7 @@ impl Purged {
             + self.layers.len()
             + self.linetypes.len()
             + self.text_styles.len()
+            + self.image_defs.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -2528,6 +2534,118 @@ impl TransactionBuilder<'_> {
         Ok(())
     }
 
+    /// The definition of `picture` (#525): the drawing's own when it holds
+    /// the same picture already — by fingerprint, then byte for byte; a
+    /// missing one by name and size — and
+    /// otherwise `picture` added, under its name or, where that is taken,
+    /// as `name (2)`, `name (3)`, …: a picture attached, inserted, or
+    /// pasted twice is held once.
+    pub fn picture(&mut self, picture: ImageDef) -> Result<ImageDefId, TransactionError> {
+        let added = self.others().filter_map(|change| match change {
+            Change::ImageDef(TableChange::Insert { id, .. }) => Some(*id),
+            _ => None,
+        });
+        let same = self
+            .drawing
+            .image_defs
+            .iter()
+            .map(|(id, _)| id)
+            .chain(added)
+            .filter_map(|id| self.image_def_now(id).map(|row| (id, row)))
+            .find(|(_, mine)| {
+                if picture.is_missing() {
+                    // A file named and not held: the same name and size.
+                    mine.is_missing()
+                        && same_name(&mine.name, &picture.name)
+                        && [mine.width, mine.height] == [picture.width, picture.height]
+                } else {
+                    mine.digest == picture.digest && mine.bytes == picture.bytes
+                }
+            })
+            .map(|(id, _)| id);
+        if let Some(mine) = same {
+            return Ok(mine);
+        }
+        let name = picture.name.clone();
+        let mut row = picture;
+        let mut n = 1;
+        loop {
+            match self.add_image_def(row.clone()) {
+                Ok(mine) => return Ok(mine),
+                Err(TransactionError::DuplicateImageDefName(_)) => {
+                    n += 1;
+                    row.name = format!("{name} ({n})");
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    /// The images that show definition `id`, as they will be once this
+    /// transaction commits, in any space.
+    fn images_of(&self, id: ImageDefId) -> Vec<(EntityId, crate::ImageEntity)> {
+        let ids: Vec<EntityId> = self
+            .drawing
+            .entities()
+            .map(|(entity_id, _)| entity_id)
+            .chain(self.changes.iter().filter_map(|change| match change {
+                Change::Entity(EntityChange::Insert { id, .. }) => Some(*id),
+                _ => None,
+            }))
+            .collect();
+        let mut seen = HashSet::new();
+        ids.into_iter()
+            .filter(|entity_id| seen.insert(*entity_id))
+            .filter_map(|entity_id| match &*self.record_now(entity_id)?.entity {
+                Entity::Image(image) if image.def == id => Some((entity_id, image.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Reloads definition `id` with `picture` (ADR-0042 §4, #525): it keeps
+    /// its name, and each image of it keeps its frame, showing the new
+    /// picture at whatever size it is. A picture of another size is refused
+    /// while a block holds an image of it, whose frame a block's
+    /// definition would have to change for.
+    pub fn reload_image_def(
+        &mut self,
+        id: ImageDefId,
+        picture: ImageDef,
+    ) -> Result<(), TransactionError> {
+        let before = self.existing_image_def(id)?;
+        let pixels = [picture.width, picture.height];
+        let in_a_block = self.blocks_use(
+            |record| matches!(&*record.entity, Entity::Image(image) if image.def == id),
+        );
+        if pixels != [before.width, before.height] && in_a_block {
+            return Err(TransactionError::ImageSizeMismatch(id));
+        }
+        let def = ImageDef {
+            name: before.name,
+            ..picture
+        };
+        self.replace_image_def(id, def)?;
+        for (entity_id, image) in self.images_of(id) {
+            if image.pixels != pixels {
+                self.replace(entity_id, Entity::Image(image.refitted(pixels)))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Detaches definition `id` (#525): every image of it removed, then the
+    /// definition; how many images went. Refused while a block holds one.
+    pub fn detach_image_def(&mut self, id: ImageDefId) -> Result<usize, TransactionError> {
+        self.existing_image_def(id)?;
+        let images = self.images_of(id);
+        for (entity_id, _) in &images {
+            self.remove(*entity_id)?;
+        }
+        self.remove_image_def(id)?;
+        Ok(images.len())
+    }
+
     /// Removes an image definition no image shows.
     pub fn remove_image_def(&mut self, id: ImageDefId) -> Result<(), TransactionError> {
         let row = self.existing_image_def(id)?;
@@ -3152,6 +3270,20 @@ impl TransactionBuilder<'_> {
                 }
                 if purged.blocks.len() == before {
                     break;
+                }
+            }
+        }
+        // After the blocks: an image in a block purged is gone with it.
+        if scope.image_defs {
+            let candidates: Vec<(ImageDefId, String)> = self
+                .drawing
+                .image_defs
+                .iter()
+                .filter_map(|(id, _)| self.image_def_now(id).map(|row| (id, row.name.clone())))
+                .collect();
+            for (id, name) in candidates {
+                if self.remove_image_def(id).is_ok() {
+                    purged.image_defs.push(name);
                 }
             }
         }
@@ -8132,6 +8264,96 @@ mod tests {
         assert_eq!(drawing.image_defs().find("plan"), None);
     }
 
+    /// #525: a picture attached twice is held once, another under a taken
+    /// name is `name (2)`; reloaded at another size, each image keeps its
+    /// frame; detached, its images go with it, as one undo; purged, a
+    /// definition no image shows goes, after the blocks that held one.
+    #[test]
+    fn pictures_are_held_once_reloaded_in_their_frames_detached_and_purged() {
+        use crate::image_def::tests::png;
+        use crate::{Block, EntityRecord, ImageDef, ImageEntity};
+        let mut drawing = Drawing::new();
+        let plan = ImageDef::new("plan", png(64, 48, 2)).unwrap();
+        let other = ImageDef::new("plan", png(32, 24, 0)).unwrap();
+        let mut tx = drawing.transaction();
+        let id = tx.picture(plan.clone()).unwrap();
+        assert_eq!(tx.picture(plan.clone()).unwrap(), id, "the same picture");
+        let second = tx.picture(other.clone()).unwrap();
+        assert_ne!(second, id);
+        let image = ImageEntity::placed(id, Point2::ORIGIN, 640.0, [64, 48]).unwrap();
+        let first = tx.insert(Entity::Image(image.clone())).unwrap();
+        let again = tx
+            .insert(Entity::Image(ImageEntity {
+                insertion: Point2::new(1000.0, 0.0),
+                ..image.clone()
+            }))
+            .unwrap();
+        tx.commit();
+        assert_eq!(drawing.image_defs().get(second).unwrap().name, "plan (2)");
+
+        // Reloaded with a picture of another size: the frames stay.
+        let mut tx = drawing.transaction();
+        tx.reload_image_def(id, ImageDef::new("new", png(128, 96, 2)).unwrap())
+            .unwrap();
+        tx.commit();
+        let reloaded = drawing.image_defs().get(id).unwrap();
+        assert_eq!((reloaded.name.as_str(), reloaded.width), ("plan", 128));
+        let Some(Entity::Image(shown)) = drawing.entity(first) else {
+            panic!("the image");
+        };
+        assert_eq!(shown.pixels, [128, 96]);
+        assert!((shown.across() - image.across()).length() < 1e-9);
+        assert!((shown.up() - image.up()).length() < 1e-9);
+        drawing.undo();
+        assert_eq!(drawing.image_defs().get(id).unwrap().width, 64);
+
+        // Detached: both images and the definition, one undo.
+        let mut tx = drawing.transaction();
+        assert_eq!(tx.detach_image_def(id), Ok(2));
+        tx.commit();
+        assert!(!drawing.image_defs().contains(id));
+        assert!(drawing.entity(first).is_none() && drawing.entity(again).is_none());
+        drawing.undo();
+        assert!(drawing.image_defs().contains(id) && drawing.entity(again).is_some());
+
+        // A block holding an image of it: detaching it, or reloading it at
+        // another size, is refused; at the same size it is not.
+        let mut tx = drawing.transaction();
+        tx.define_block(Block::new(
+            "Framed",
+            Point2::ORIGIN,
+            vec![EntityRecord::new(
+                Entity::Image(image.clone()),
+                Properties::default(),
+            )],
+        ))
+        .unwrap();
+        tx.commit();
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.detach_image_def(id),
+            Err(TransactionError::ImageDefInUse(id))
+        );
+        assert_eq!(
+            tx.reload_image_def(id, ImageDef::new("x", png(10, 10, 2)).unwrap()),
+            Err(TransactionError::ImageSizeMismatch(id))
+        );
+        tx.reload_image_def(id, ImageDef::new("x", png(64, 48, 0)).unwrap())
+            .unwrap();
+        drop(tx);
+
+        // Purged: the picture nothing shows goes; the block's, once the
+        // block is purged with it.
+        let mut tx = drawing.transaction();
+        tx.remove(first).unwrap();
+        tx.remove(again).unwrap();
+        let purged = tx.purge(PurgeScope::ALL);
+        tx.commit();
+        assert_eq!(purged.blocks, ["Framed"]);
+        assert_eq!(purged.image_defs, ["plan", "plan (2)"]);
+        assert_eq!(drawing.image_defs().len(), 0);
+    }
+
     #[test]
     fn named_views_are_checked_and_go_with_their_layout() {
         let mut drawing = Drawing::new();
@@ -8578,6 +8800,8 @@ mod tests {
         AddImage(u8, u16),
         RenameImageDef(usize, u8),
         RemoveImageDef(usize),
+        ReloadImageDef(usize, u16),
+        DetachImageDef(usize),
         Undo,
         Redo,
     }
@@ -8689,6 +8913,8 @@ mod tests {
             1 => (0..4u8, 1..300u16).prop_map(|(n, width)| Op::AddImage(n, width)),
             1 => (any::<usize>(), 0..4u8).prop_map(|(i, n)| Op::RenameImageDef(i, n)),
             1 => any::<usize>().prop_map(Op::RemoveImageDef),
+            1 => (any::<usize>(), 1..300u16).prop_map(|(i, width)| Op::ReloadImageDef(i, width)),
+            1 => any::<usize>().prop_map(Op::DetachImageDef),
             1 => (any::<usize>(), any::<usize>()).prop_map(|(from, into)| Op::MergeLayer(from, into)),
             1 => any::<usize>().prop_map(Op::DeleteLayer),
             1 => (0..4u8).prop_map(Op::AddMLeaderStyle),
@@ -9344,6 +9570,43 @@ mod tests {
                         prop_assert_eq!(drawing.image_defs().contains(id), shown);
                     }
                     Op::RemoveImageDef(_) => {}
+                    // #525: reloaded at any size, every image of it shows
+                    // the new picture in its old frame — unless a block
+                    // holds one and the size changes.
+                    Op::ReloadImageDef(pick, width) if !drawing.image_defs().is_empty() => {
+                        let defs: Vec<ImageDefId> = drawing.image_defs().iter().map(|(id, _)| id).collect();
+                        let id = defs[pick % defs.len()];
+                        let height = u32::from(width) / 3 + 1;
+                        let picture = ImageDef::new("any", crate::image_def::tests::png(u32::from(width), height, 0)).unwrap();
+                        let before = drawing.image_defs().get(id).unwrap().clone();
+                        let in_block = drawing.blocks().iter().any(|(_, block)| block.entities.iter().any(|r| r.entity.refers_to(TableRow::Image(id))));
+                        let resized = [before.width, before.height] != [u32::from(width), height];
+                        let mut tx = drawing.transaction();
+                        let reloaded = tx.reload_image_def(id, picture);
+                        prop_assert_eq!(reloaded.is_err(), in_block && resized);
+                        tx.commit();
+                        if reloaded.is_ok() {
+                            prop_assert_eq!(&drawing.image_defs().get(id).unwrap().name, &before.name);
+                            for (_, entity) in drawing.entities() {
+                                if let Entity::Image(image) = entity && image.def == id {
+                                    prop_assert_eq!(image.pixels, [u32::from(width), height]);
+                                }
+                            }
+                        }
+                    }
+                    Op::ReloadImageDef(..) => {}
+                    Op::DetachImageDef(pick) if !drawing.image_defs().is_empty() => {
+                        let defs: Vec<ImageDefId> = drawing.image_defs().iter().map(|(id, _)| id).collect();
+                        let id = defs[pick % defs.len()];
+                        let in_block = drawing.blocks().iter().any(|(_, block)| block.entities.iter().any(|r| r.entity.refers_to(TableRow::Image(id))));
+                        let mut tx = drawing.transaction();
+                        let detached = tx.detach_image_def(id);
+                        prop_assert_eq!(detached.is_err(), in_block);
+                        tx.commit();
+                        prop_assert_eq!(drawing.image_defs().contains(id), in_block);
+                        prop_assert!(in_block || !drawing.entities().any(|(_, e)| e.refers_to(TableRow::Image(id))));
+                    }
+                    Op::DetachImageDef(_) => {}
                     Op::WipeoutFrame(shown) => {
                         let mut tx = drawing.transaction();
                         tx.set_wipeout_frame(shown);

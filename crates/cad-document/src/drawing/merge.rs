@@ -147,34 +147,12 @@ impl TransactionBuilder<'_> {
         if let Some(mine) = rows.images.get(&id) {
             return Ok(*mine);
         }
-        let mut row = source
+        let row = source
             .image_defs()
             .get(id)
             .cloned()
             .ok_or(TransactionError::UnknownImageDef(id))?;
-        let same = self
-            .drawing
-            .image_defs
-            .iter()
-            .find(|(_, mine)| mine.digest == row.digest && mine.bytes == row.bytes)
-            .map(|(mine, _)| mine);
-        let mine = match same {
-            Some(mine) => mine,
-            None => {
-                let name = row.name.clone();
-                let mut n = 1;
-                loop {
-                    match self.add_image_def(row.clone()) {
-                        Ok(mine) => break mine,
-                        Err(TransactionError::DuplicateImageDefName(_)) => {
-                            n += 1;
-                            row.name = format!("{name} ({n})");
-                        }
-                        Err(error) => return Err(error),
-                    }
-                }
-            }
-        };
+        let mine = self.picture(row)?;
         rows.images.insert(id, mine);
         Ok(mine)
     }

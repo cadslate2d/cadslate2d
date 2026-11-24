@@ -18,6 +18,13 @@ import {
   type Settings,
   type Theme,
 } from "./host-services";
+import {
+  PICTURE_ACCEPT,
+  PICTURE_SIDE,
+  PICTURE_SIDE_MAX,
+  PICTURE_SIDE_MIN,
+  makePicture,
+} from "./pictures";
 import { UiStore } from "./ui-store";
 
 const RENDER_FLAGS = Dirty.Scene | Dirty.Overlay | Dirty.View;
@@ -34,7 +41,14 @@ const FILE_REFUSED: Record<HostRequest, string> = {
   [HostRequest.WriteBlock]: "The block was not written",
   [HostRequest.NewDrawing]: "A new drawing could not be started",
   [HostRequest.OpenBrief]: "The brief could not be read",
+  [HostRequest.ImageFile]: "The picture could not be attached",
 };
+
+/** A longest side for pictures the engine holds: a whole number of pixels within the bounds. */
+function pictureSideWithin(pixels: number): number {
+  const whole = Number.isFinite(pixels) ? Math.round(pixels) : PICTURE_SIDE;
+  return Math.min(PICTURE_SIDE_MAX, Math.max(PICTURE_SIDE_MIN, whole));
+}
 
 /** Why the browser refused, in its own words, without a full stop of its own. */
 function refusal(error: unknown): string {
@@ -103,6 +117,8 @@ export interface SettingsSnapshot {
   readonly open: boolean;
   readonly theme: Theme;
   readonly autosaveDelayMs: number;
+  /** The longest side a picture is made at, in pixels (ADR-0042 §3). */
+  readonly pictureSide: number;
 }
 
 /** The settings as the panel shows them (#186): an external store React subscribes to, like the UI state. */
@@ -177,6 +193,7 @@ export class CadApp {
       open: false,
       theme: "dark",
       autosaveDelayMs: this.#autosaveDelay,
+      pictureSide: PICTURE_SIDE,
     });
     this.loop = new FrameLoop(
       (sample) => {
@@ -362,7 +379,11 @@ export class CadApp {
     this.#autosaveDelay = kept.autosaveDelayMs ?? this.#autosaveDelay;
     // The page first: whoever hears of the new theme reads its colours there.
     this.#host.applyTheme(theme);
-    this.settings.set({ theme, autosaveDelayMs: this.#autosaveDelay });
+    this.settings.set({
+      theme,
+      autosaveDelayMs: this.#autosaveDelay,
+      pictureSide: pictureSideWithin(kept.pictureSide ?? PICTURE_SIDE),
+    });
     if (!this.#failed) {
       const dirty = this.engine.restoreSettings(
         kept.toggles ?? current.toggles,
@@ -384,6 +405,7 @@ export class CadApp {
       aliases: ui.userAliases,
       autosaveDelayMs: shell.autosaveDelayMs,
       theme: shell.theme,
+      pictureSide: shell.pictureSide,
     };
   }
 
@@ -397,7 +419,8 @@ export class CadApp {
       current.unit === kept.unit &&
       current.aliases === kept.aliases &&
       current.autosaveDelayMs === kept.autosaveDelayMs &&
-      current.theme === kept.theme;
+      current.theme === kept.theme &&
+      current.pictureSide === kept.pictureSide;
     if (same) return;
     this.#keptSettings = current;
     this.#host.settings.save(current);
@@ -424,6 +447,17 @@ export class CadApp {
     const delay = Math.max(100, Math.round(ms));
     this.#autosaveDelay = delay;
     this.settings.set({ autosaveDelayMs: delay });
+    this.#keepSettings();
+  }
+
+  /**
+   * The longest side a picture is made at (ADR-0042 §3). Kept as typed, so
+   * the field can be typed into; held within what the engine takes when a
+   * picture is made.
+   */
+  setPictureSide(pixels: number): void {
+    if (!Number.isFinite(pixels) || pixels <= 0) return;
+    this.settings.set({ pictureSide: Math.round(pixels) });
     this.#keepSettings();
   }
 
@@ -615,6 +649,8 @@ export class CadApp {
         return this.#newDrawing();
       case HostRequest.OpenBrief:
         return this.#openBrief();
+      case HostRequest.ImageFile:
+        return this.#attachPicture();
       case HostRequest.None:
         return;
     }
@@ -641,6 +677,34 @@ export class CadApp {
         ? this.engine.submitText(new TextDecoder().decode(file.bytes))
         : this.engine.key(KeyAction.Escape),
     );
+    this.ui.refresh(this.engine);
+  }
+
+  /**
+   * IMAGEATTACH's or IMAGE Reload's picture (ADR-0042 §3, #525): picked,
+   * made — at most the longest side the settings say, a JPEG or an opaque
+   * PNG — and handed to the waiting command; none, and it gives up. One the
+   * browser cannot read gives up too, and the log says why.
+   */
+  async #attachPicture(): Promise<void> {
+    const file = await this.#host.files.open(PICTURE_ACCEPT);
+    const giveUp = () => {
+      this.loop.invalidate(this.engine.key(KeyAction.Escape));
+      this.ui.refresh(this.engine);
+    };
+    if (!file) return giveUp();
+    let picture;
+    try {
+      picture = await makePicture(
+        file,
+        this.#host.pictures,
+        pictureSideWithin(this.settings.getSnapshot().pictureSide),
+      );
+    } catch (error) {
+      giveUp();
+      throw error;
+    }
+    this.loop.invalidate(this.engine.attachPicture(picture.bytes, picture.name));
     this.ui.refresh(this.engine);
   }
 

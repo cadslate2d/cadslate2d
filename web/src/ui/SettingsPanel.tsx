@@ -6,6 +6,7 @@
 import { useSyncExternalStore } from "react";
 import type { CadApp } from "../app/cad-app";
 import type { Theme } from "../app/host-services";
+import { PICTURE_SIDE_MAX, PICTURE_SIDE_MIN } from "../app/pictures";
 import { TOGGLES } from "../app/toggles";
 
 /** The units UNITS knows, as its keywords and the suffix the state reports. */
@@ -59,6 +60,24 @@ export function SettingsPanel({ app }: { app: CadApp }) {
           onChange={(event) => {
             const seconds = Number(event.target.value);
             if (Number.isFinite(seconds)) app.setAutosaveDelay(seconds * 1000);
+          }}
+        />
+
+        <label className="settings__label" htmlFor="settings-picture-side">
+          Pictures at most (pixels)
+        </label>
+        <input
+          id="settings-picture-side"
+          className="settings__field"
+          type="number"
+          min={PICTURE_SIDE_MIN}
+          max={PICTURE_SIDE_MAX}
+          step={256}
+          value={settings.pictureSide}
+          title="The longest side a picture is made at when it is attached"
+          onChange={(event) => {
+            const pixels = Number(event.target.value);
+            if (Number.isFinite(pixels) && pixels > 0) app.setPictureSide(pixels);
           }}
         />
 

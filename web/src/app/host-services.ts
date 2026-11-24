@@ -3,6 +3,8 @@
 // without a browser (dependency inversion).
 
 import { DOCUMENT_FORMATS, type DocumentFormat } from "../cad/engine";
+import { browserPictureDecoder } from "../renderer/picture-decoder";
+import type { PictureDecoder } from "./pictures";
 
 /** A file the browser can find again: its name, and its handle when the browser gives one. */
 export interface FileTarget {
@@ -83,6 +85,8 @@ export interface Settings {
   /** How long after the last change the drawing is kept. */
   readonly autosaveDelayMs: number;
   readonly theme: Theme;
+  /** The longest side, in pixels, a picture is made at (ADR-0042 §3). */
+  readonly pictureSide: number;
 }
 
 /** Where the settings are kept: all of them, or nothing yet. */
@@ -99,6 +103,8 @@ export interface HostServices {
   readonly autosave: AutosaveStore;
   /** Where the settings are kept. */
   readonly settings: SettingsStore;
+  /** What reads a picture the user picks (ADR-0042 §3). */
+  readonly pictures: PictureDecoder;
   /** Gives the document its theme; the renderer reads the palette again afterwards. */
   applyTheme(theme: Theme): void;
   /** Loads the page afresh: a new engine, and the kept drawing offered back. */
@@ -171,10 +177,19 @@ const PDF_TYPES = [{ description: "PDF plot", accept: { "application/pdf": [".pd
 const BRIEF_TYPES = [
   { description: "Floor-plan brief", accept: { "application/json": [".json"] } },
 ];
+const PICTURE_TYPES: FilePickerAcceptType[] = [
+  {
+    description: "Pictures",
+    accept: {
+      "image/*": [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".heic", ".avif"],
+    },
+  },
+];
 
-/** What the open picker offers for an `accept` list: a brief, or drawings. */
+/** What the open picker offers for an `accept` list: a brief, a picture, or drawings. */
 function openTypesFor(accept: string): FilePickerAcceptType[] {
-  return accept.includes(".json") ? BRIEF_TYPES : DRAWING_TYPES;
+  if (accept.includes(".json")) return BRIEF_TYPES;
+  return accept.includes("image/") ? PICTURE_TYPES : DRAWING_TYPES;
 }
 
 /**
@@ -347,6 +362,8 @@ export function parseSettings(text: string | null): Partial<Settings> {
   if (typeof record.autosaveDelayMs === "number" && record.autosaveDelayMs >= 0)
     settings.autosaveDelayMs = record.autosaveDelayMs;
   if (record.theme === "dark" || record.theme === "light") settings.theme = record.theme;
+  if (typeof record.pictureSide === "number" && Number.isFinite(record.pictureSide))
+    settings.pictureSide = record.pictureSide;
   return settings as Partial<Settings>;
 }
 
@@ -380,6 +397,7 @@ export const browserHost: HostServices = {
 
   autosave: indexedDbAutosave,
   settings: localStorageSettings,
+  pictures: browserPictureDecoder,
   applyTheme(theme) {
     document.documentElement.dataset.theme = theme;
   },

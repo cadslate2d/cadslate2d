@@ -77,6 +77,7 @@ export const HostRequest = {
   WriteBlock: 7,
   NewDrawing: 8,
   OpenBrief: 9,
+  ImageFile: 10,
 } as const;
 export type HostRequest = (typeof HostRequest)[keyof typeof HostRequest];
 
@@ -678,6 +679,14 @@ export class CadEngine {
   /** File › New (#245): an empty, untitled drawing in place of this one. */
   newDrawing(): number {
     return this.#session.new_drawing();
+  }
+
+  /**
+   * The picture the host made for IMAGEATTACH or IMAGE Reload (#525): a JPEG
+   * or an opaque PNG, handed to the waiting command with its file's name.
+   */
+  attachPicture(bytes: Uint8Array, name: string): number {
+    return this.#session.attach_picture(bytes, name);
   }
 
   /** The file INSERT asked for (#222), read and handed to the waiting command. */

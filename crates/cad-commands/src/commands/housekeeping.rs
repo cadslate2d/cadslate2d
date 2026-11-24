@@ -273,9 +273,12 @@ const DIMSTYLES: Keyword = Keyword::new("Dimstyles");
 const LAYERS: Keyword = Keyword::new("LAyers");
 const LTYPES: Keyword = Keyword::new("LTypes");
 const STYLES: Keyword = Keyword::new("STyles");
+const IMAGES: Keyword = Keyword::new("Images");
 const EVERYTHING: Keyword = Keyword::new("All");
 const LIST: Keyword = Keyword::new("?");
-const PURGEABLE: [Keyword; 7] = [BLOCKS, DIMSTYLES, LAYERS, LTYPES, STYLES, EVERYTHING, LIST];
+const PURGEABLE: [Keyword; 8] = [
+    BLOCKS, DIMSTYLES, IMAGES, LAYERS, LTYPES, STYLES, EVERYTHING, LIST,
+];
 
 /// `PURGE` (`PU`): every unused row of one table, or of all, swept out
 /// as one change; `?` says what would go.
@@ -300,6 +303,7 @@ fn describe_purged(purged: &Purged) -> String {
         part(&purged.layers, "layer", "layers"),
         part(&purged.linetypes, "linetype", "linetypes"),
         part(&purged.text_styles, "text style", "text styles"),
+        part(&purged.image_defs, "image", "images"),
     ]
     .into_iter()
     .flatten()
@@ -327,6 +331,10 @@ fn scope_of(keyword: Keyword) -> PurgeScope {
         },
         STYLES => PurgeScope {
             text_styles: true,
+            ..PurgeScope::NONE
+        },
+        IMAGES => PurgeScope {
+            image_defs: true,
             ..PurgeScope::NONE
         },
         _ => PurgeScope::ALL,

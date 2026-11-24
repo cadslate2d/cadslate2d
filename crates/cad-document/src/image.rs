@@ -107,6 +107,18 @@ impl ImageEntity {
         )
     }
 
+    /// The same frame showing a picture of `pixels` pixels: a definition
+    /// read or reloaded at another size keeps where the image is.
+    pub fn refitted(&self, pixels: [u32; 2]) -> Self {
+        let mut image = self.clone();
+        if image.pixels != pixels && pixels[0] > 0 && pixels[1] > 0 {
+            image.u = self.across() * (1.0 / f64::from(pixels[0]));
+            image.v = self.up() * (1.0 / f64::from(pixels[1]));
+            image.pixels = pixels;
+        }
+        image
+    }
+
     /// Whether it can be drawn: finite, covering an area, of some pixels,
     /// faded no more than allowed.
     pub fn check(&self) -> Result<(), ImageError> {
