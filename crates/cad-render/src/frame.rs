@@ -748,7 +748,8 @@ pub fn walk_entity(entity: &Entity, tables: Tables<'_>, sink: &mut impl Geometry
                 sink.segment(edge.start, edge.end, 0.0);
             }
         }
-        // An image is its picture (ADR-0042), then its frame when shown.
+        // An image is its picture (ADR-0042), then its frame when the
+        // drawing shows frames (IMAGEFRAME).
         Entity::Image(image) => {
             sink.image(&ImageQuad {
                 corner: image.insertion,
@@ -757,7 +758,7 @@ pub fn walk_entity(entity: &Entity, tables: Tables<'_>, sink: &mut impl Geometry
                 def: image.def.raw(),
                 fade: image.fade,
             });
-            if image.frame {
+            if tables.image_frame {
                 let mut distance = 0.0;
                 for edge in image.edges() {
                     sink.segment(edge.start, edge.end, distance);

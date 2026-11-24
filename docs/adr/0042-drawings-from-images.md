@@ -44,8 +44,9 @@ An **image definition** is a row of a new table, changed in transactions like ev
 An **image** entity (`Entity::Image`) refers to its definition by row and places it:
 - an insertion point, the image's lower-left corner;
 - `u` and `v` vectors, one pixel's width and height in drawing units, so any affine `transformed` maps it;
-- a fade, 0–100 %, as AutoCAD's;
-- whether its frame is drawn.
+- a fade, 0–100 %, as AutoCAD's.
+
+Whether frames are drawn is the drawing's setting, `IMAGEFRAME`, as DXF keeps it (as built, #526).
 
 **Its geometry is its frame.** `Entity::primitives` gives the four edges, so selection, picking, snapping to its corners, bounds, MOVE, ROTATE, SCALE, MIRROR, ALIGN, grips, and DRAWORDER work without a case of their own. The pixels are not geometry: nothing snaps to what the picture shows. Its record holds its layer and tier like any other (ADR-0013, ADR-0032).
 
@@ -174,6 +175,7 @@ If the model reads written sizes reliably but places poorly, §7 stands, with th
 ## As built
 
 - **#524.** The image entity carries its picture's size in pixels, as DXF's `IMAGE` does (group 13), beside its corner and pixel vectors: its geometry needs no table, so bounds, picking, snapping, and transforms read it alone, and a transaction refuses an image whose size is not its definition's (`ImageSizeMismatch`). A definition is checked against its own bytes — a PNG of opaque 8-bit grey or colour, not interlaced, or a JPEG of one or three components, at most 8,192 pixels each way and 16 MB — and named by a 64-bit FNV-1a fingerprint, no security measure. Objects brought in from another drawing bring their pictures by fingerprint: the same picture is the drawing's own, another under a taken name comes in as `name (2)`. An image's grips are its corners and centre: a corner scales the picture about the opposite one, its proportions kept. STRETCH holds an image by its insertion point. On screen, pictures are a layer of their own in the adapter, drawn one quad per picture with its corner and edges as uniforms rather than as an instanced run: pictures are few, and each has its own texture. PURGE of a definition no image shows comes with the `IMAGE` command's Detach (#525).
+- **#526.** DXF holds no frame per image: `IMAGEFRAME` is the drawing's, in `RASTERVARIABLES`, so the image's frame is a drawing setting, `image_frame`, beside `wipeout_frame`, and §6's `IMAGEFRAME` sets it. A picture is named by its entry in `ACAD_IMAGE_DICT`; our copy in `CADSLATE_IMAGES` is an XRECORD per held picture, keyed by its name and naming its `IMAGEDEF` by handle (340), its bytes in 310 chunks of 127, read at most `MOST_BYTES`. A picture a file names and does not hold is a *missing* definition: its name and size, no bytes. The open report says so as a notice, not a loss — the drawing never had it — and the adapter draws it as a light grey ground in its frame until IMAGE Reload (#525). DWG: not read (an image in a DWG is counted with the kinds the reader does not decode, as before) and not written: a drawing with images is written without them, and `export_losses` names them first.
 
 ## Alternatives considered
 

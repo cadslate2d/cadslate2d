@@ -12,6 +12,8 @@
 //! every transform, and its grips are a closed four-edge outline's; the
 //! picture is not geometry, and nothing snaps to what it shows. Its fill —
 //! the picture — is drawn beneath strokes in its record's tier (§2).
+//! Whether its frame is drawn is the drawing's setting, `IMAGEFRAME`, as
+//! in DXF.
 
 use std::fmt;
 
@@ -38,8 +40,6 @@ pub struct ImageEntity {
     pub pixels: [u32; 2],
     /// How faded it is drawn, 0–[`MOST_FADE`] percent.
     pub fade: u8,
-    /// Whether its frame is drawn.
-    pub frame: bool,
 }
 
 /// Why an image cannot be placed so.
@@ -70,7 +70,7 @@ impl std::error::Error for ImageError {}
 
 impl ImageEntity {
     /// An image of `def`, `pixels` in size, its lower-left corner at
-    /// `insertion`, a pixel `u` across and `v` up; unfaded, framed.
+    /// `insertion`, a pixel `u` across and `v` up; unfaded.
     pub fn new(
         def: ImageDefId,
         insertion: Point2,
@@ -85,7 +85,6 @@ impl ImageEntity {
             v,
             pixels,
             fade: 0,
-            frame: true,
         };
         image.check()?;
         Ok(image)

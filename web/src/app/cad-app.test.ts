@@ -228,6 +228,37 @@ describe("autosave and recovery", () => {
     expect(timers).toHaveLength(0);
   });
 
+  // ADR-0042 §4: an image's picture is copied into the DXF, so the
+  // autosave keeps it, and a reload brings it back whole.
+  test("an image and its picture are kept through the autosave and a reload", async () => {
+    const fixture = await readFile(
+      new URL("../../../test-data/dxf/valid/image-embedded.dxf", import.meta.url),
+    );
+    const first = harness();
+    first.host.files.fileToPick = { name: "pattern.dxf", bytes: new Uint8Array(fixture) };
+    first.enter("OPEN");
+    await first.tick();
+    first.enter("L", "0,0", "10,10", "");
+    await first.tick();
+    await first.elapse();
+    const kept = first.decode(first.host.autosave.record) ?? "";
+    expect(kept).toContain("\nIMAGE\n");
+    expect(kept).toContain("CADSLATE_IMAGES");
+
+    const second = harness();
+    second.host.autosave.record = first.host.autosave.record;
+    await second.app.start();
+    second.app.recover();
+    await second.tick();
+    const images = second.engine.readScene((frame) => (frame.images?.length ?? 0) / 6);
+    expect(images).toBe(1);
+    // The picture is there, not missing: its bytes, a PNG.
+    const sources = second.engine.readScene((frame) => Array.from(frame.imageSources ?? []));
+    expect(sources).toHaveLength(6);
+    const bytes = second.engine.readScene((frame) => frame.imageBytes?.(sources[0] ?? 0));
+    expect(Array.from(bytes?.slice(0, 4) ?? [])).toEqual([0x89, 0x50, 0x4e, 0x47]);
+  });
+
   test("exporting keeps the drawing as exported, so a reload has nothing to recover", async () => {
     const { host, tick, elapse, enter, decode } = harness();
     enter("L", "0,0", "100,50", "", "DXFOUT");

@@ -374,7 +374,12 @@ pub(crate) fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, St
                 row("Fade", format!("{}%", image.fade)),
                 row(
                     "Frame",
-                    if image.frame { "shown" } else { "hidden" }.to_owned(),
+                    if drawing.settings().image_frame {
+                        "shown"
+                    } else {
+                        "hidden"
+                    }
+                    .to_owned(),
                 ),
             ]
         }

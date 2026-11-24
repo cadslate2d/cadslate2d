@@ -13,6 +13,7 @@ Small clipped screenshots that end-to-end tests compare against (`toHaveScreensh
 | `joins-dashed.png` | `web/e2e/strokes.spec.ts` | A Dashed polyline at `LTSCALE` 20 turning three corners, 170×110 CSS pixels: the pattern runs on through each vertex, and a dash that turns a corner is two capsules meeting there |
 | `hatch-dots.png` | `web/e2e/strokes.spec.ts` | DOTS at scale 4 in a 140×80 rectangle, 160×100 CSS pixels: each dot a segment of no length, drawn as one round cap |
 | `joins-selected.png` | `web/e2e/strokes.spec.ts` | The joins polyline at 0.70 mm selected: the highlight over it and its vertex grips |
+| `image-under-lines.png`, `image-faded.png` | `web/e2e/images.spec.ts` | A 64 × 48 picture of four coloured quarters, opened from `image-embedded.dxf` and fitted to the view, under the rectangle, diagonal, and circle drawn over it; and the same picture faded halfway toward the canvas, 200×140 CSS pixels (ADR-0042) |
 
 Rules:
 

@@ -124,10 +124,44 @@ impl ImageDef {
         })
     }
 
+    /// A definition whose picture is not in the drawing (ADR-0042 §4): a
+    /// file another program named, which the browser cannot open by path.
+    /// It keeps its name and size, and has no bytes until it is reloaded;
+    /// its images show their frames and no picture.
+    pub fn missing(
+        name: impl Into<String>,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, ImageDefError> {
+        let name = name.into();
+        check_name(&name).map_err(ImageDefError::BadName)?;
+        if width == 0 || height == 0 || width > MOST_PIXELS || height > MOST_PIXELS {
+            return Err(ImageDefError::BadSize { width, height });
+        }
+        Ok(Self {
+            name,
+            format: ImageFormat::Png,
+            width,
+            height,
+            bytes: Arc::from([]),
+            digest: 0,
+        })
+    }
+
+    /// Whether its picture is not in the drawing.
+    pub fn is_missing(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
     /// Whether it is what its bytes say: the definition [`Self::new`] makes
-    /// of them, with its name. A row built otherwise is refused.
+    /// of them, with its name — or, missing its picture, what
+    /// [`Self::missing`] makes. A row built otherwise is refused.
     pub fn check(&self) -> Result<(), ImageDefError> {
-        let made = Self::new(self.name.clone(), Arc::clone(&self.bytes))?;
+        let made = if self.is_missing() {
+            Self::missing(self.name.clone(), self.width, self.height)?
+        } else {
+            Self::new(self.name.clone(), Arc::clone(&self.bytes))?
+        };
         if made != *self {
             return Err(ImageDefError::Unsupported(
                 "described otherwise than its bytes",
@@ -332,6 +366,16 @@ pub(crate) mod tests {
             ImageDef::new("x", vec![0; MOST_BYTES + 1]).unwrap_err(),
             ImageDefError::TooLarge(MOST_BYTES + 1)
         );
+    }
+
+    #[test]
+    fn a_missing_picture_keeps_its_name_and_size() {
+        let def = ImageDef::missing("site.tif", 1200, 800).unwrap();
+        assert!(def.is_missing());
+        assert_eq!((def.width, def.height, def.digest), (1200, 800, 0));
+        def.check().unwrap();
+        assert!(ImageDef::missing("x", 0, 10).is_err());
+        assert!(ImageDef::missing("", 10, 10).is_err());
     }
 
     #[test]

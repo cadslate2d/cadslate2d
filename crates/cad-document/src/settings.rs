@@ -44,6 +44,10 @@ pub struct DrawingSettings {
     /// `WIPEOUTVARIABLES`; #226). On by default, as in the classic
     /// programs: a frameless wipeout is hard to find.
     pub wipeout_frame: bool,
+    /// Whether images show their frames (`IMAGEFRAME`; DXF
+    /// `RASTERVARIABLES`; ADR-0042). On by default, as in the classic
+    /// programs.
+    pub image_frame: bool,
 }
 
 impl DrawingSettings {
@@ -67,6 +71,7 @@ impl Default for DrawingSettings {
             unit: None,
             point_style: PointStyle::default(),
             wipeout_frame: true,
+            image_frame: true,
         }
     }
 }
@@ -121,6 +126,7 @@ mod tests {
                 unit: Some(LengthUnit::Metres),
                 point_style: PointStyle::new(35, 4.0),
                 wipeout_frame: false,
+                image_frame: false,
             },
         };
         assert_eq!(change.inverse().before, change.after);

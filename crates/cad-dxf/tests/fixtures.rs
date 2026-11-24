@@ -169,6 +169,7 @@ fn the_matrix_names_only_tests_and_fixtures_that_exist() {
         "src/export.rs",
         "src/report.rs",
         "src/wipeout.rs",
+        "src/image.rs",
         "src/text_codes.rs",
         "tests/fixtures.rs",
         // The drawing order's tiers, which the reader and the writer share.
@@ -3343,4 +3344,125 @@ fn characters_of_the_code_page_are_written_as_themselves() {
     assert_eq!(cad_dxf::code_page(&export(&first.drawing)), bytes);
     let again = cad_dxf::import(&bytes).unwrap();
     assert_eq!(words(&again.drawing), words(&first.drawing));
+}
+
+/// The images of a drawing, in file order.
+fn images(drawing: &Drawing) -> Vec<cad_document::ImageEntity> {
+    in_file_order(drawing)
+        .into_iter()
+        .filter_map(|entity| match entity {
+            Entity::Image(image) => Some(image),
+            _ => None,
+        })
+        .collect()
+}
+
+/// ADR-0042 §4: an image another program wrote names its picture by a
+/// file the DXF does not hold. It is read with its corner, its pixel
+/// vectors, and its size, its definition named by its entry in
+/// `ACAD_IMAGE_DICT` and missing its picture, which the report says; and it
+/// is written back naming the same file, with no copy.
+#[test]
+fn an_image_naming_a_file_outside_the_dxf_is_read_with_its_picture_missing() {
+    let read = load("valid", "ezdxf-r2010-image.dxf").unwrap();
+    let drawing = &read.drawing;
+    let images = images(drawing);
+    assert_eq!(images.len(), 1);
+    let image = &images[0];
+    assert_eq!(image.insertion, Point2::new(10.0, 20.0));
+    assert_eq!(image.pixels, [64, 48]);
+    assert!((image.across() - Vec2::new(640.0, 0.0)).length() < 1e-9);
+    assert!((image.up() - Vec2::new(0.0, 480.0)).length() < 1e-9);
+    let def = drawing.image_defs().get(image.def).unwrap();
+    assert_eq!(def.name, "plan.png");
+    assert!(def.is_missing());
+    assert_eq!((def.width, def.height), (64, 48));
+    // Said, and no loss: the drawing never had the picture.
+    assert_eq!(read.report.missing_pictures, 1);
+    assert!(
+        read.report
+            .summary()
+            .iter()
+            .any(|line| line.starts_with("1 picture not in the file")),
+        "{:?}",
+        read.report.summary()
+    );
+    assert!(
+        read.report.losses().is_empty(),
+        "{:?}",
+        read.report.losses()
+    );
+    assert_eq!(lines(drawing).len(), 1, "the line beside it");
+    let text = export(drawing);
+    assert!(text.contains("\nIMAGEDEF\n"));
+    assert!(text.contains("\n  1\nplan.png\n"));
+    assert!(
+        !text.contains("CADSLATE_IMAGES"),
+        "no copy of a picture it has not got"
+    );
+    let again = import(text.as_bytes()).unwrap();
+    let def_again = again.drawing.image_defs().iter().next().unwrap().1.clone();
+    assert!(def_again.is_missing());
+    assert_eq!(export(&again.drawing), text);
+}
+
+/// ADR-0042 §4: a DXF from CadSlate2D is whole in one file — the picture's
+/// bytes copied into `CADSLATE_IMAGES` and read back the same, the image
+/// over them, and the file written again byte for byte.
+#[test]
+fn an_image_and_its_copied_picture_come_back_from_our_own_dxf() {
+    let read = load("valid", "image-embedded.dxf").unwrap();
+    let drawing = &read.drawing;
+    assert!(
+        read.report.losses().is_empty(),
+        "{:?}",
+        read.report.losses()
+    );
+    let images = images(drawing);
+    assert_eq!(images.len(), 1);
+    let def = drawing.image_defs().get(images[0].def).unwrap();
+    assert_eq!(def.name, "pattern");
+    assert!(!def.is_missing());
+    assert_eq!(
+        (def.format, def.width, def.height),
+        (cad_document::ImageFormat::Png, 64, 48)
+    );
+    assert!(def.bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+    assert_eq!(def.digest, cad_document::fingerprint(&def.bytes));
+    assert_eq!(images[0].across(), Vec2::new(640.0, 0.0));
+    assert_eq!(lines(drawing).len(), 5, "the frame and diagonal over it");
+    let text = export(drawing);
+    let again = import(text.as_bytes()).unwrap();
+    let def_again = again.drawing.image_defs().iter().next().unwrap().1.clone();
+    assert_eq!(def_again.bytes, def.bytes);
+    assert_eq!(export(&again.drawing), text);
+}
+
+/// ADR-0042: IMAGEFRAME is the drawing's, kept in the raster variables;
+/// hidden, it is written and read back hidden, images or none.
+#[test]
+fn whether_image_frames_are_shown_is_kept() {
+    let mut drawing = load("valid", "image-embedded.dxf").unwrap().drawing;
+    assert!(drawing.settings().image_frame);
+    let mut tx = drawing.transaction();
+    tx.set_image_frame(false);
+    tx.commit();
+    let text = export(&drawing);
+    let again = import(text.as_bytes()).unwrap().drawing;
+    assert!(!again.settings().image_frame);
+    let mut empty = Drawing::new();
+    let mut tx = empty.transaction();
+    tx.set_image_frame(false);
+    tx.commit();
+    let text = export(&empty);
+    assert!(text.contains("\nRASTERVARIABLES\n"));
+    assert!(
+        !import(text.as_bytes())
+            .unwrap()
+            .drawing
+            .settings()
+            .image_frame
+    );
+    // Shown, with no image, the file has none of it.
+    assert!(!export(&Drawing::new()).contains("RASTERVARIABLES"));
 }

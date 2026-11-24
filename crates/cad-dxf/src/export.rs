@@ -18,12 +18,12 @@ use cad_core::{Aabb, EntityId, LengthUnit, Point2, Vec2};
 use cad_document::{
     ArcEntity, AttributeDefinitionEntity, Axis, BlockId, BlockReferenceEntity, BlockTable,
     CircleEntity, Color, Constraint, DimStyle, DimStyleId, DimensionEntity, Drawing,
-    DrawingSettings, EllipseEntity, Entity, EntityRecord, Group, HatchEntity, HatchStyle,
-    Justification, Kind, Layer, LayerState, Layout, LayoutArea, LayoutId, LayoutPlot, LayoutTable,
-    LeaderEntity, LineEntity, Linetype, LinetypeDef, LinetypeTable, Lineweight, MLeaderContent,
-    MLeaderEntity, MLeaderStyle, MLeaderStyleId, MTextEntity, Measure, Part, PointEntity,
-    PolylineEntity, Properties, Reference, Revision, SplineEntity, TextEntity, TextStyle,
-    TextStyleId, TextStyleTable, Touch, ViewportEntity, WipeoutEntity, draw_order,
+    DrawingSettings, EllipseEntity, Entity, EntityRecord, Group, HatchEntity, HatchStyle, ImageDef,
+    ImageDefId, ImageEntity, Justification, Kind, Layer, LayerState, Layout, LayoutArea, LayoutId,
+    LayoutPlot, LayoutTable, LeaderEntity, LineEntity, Linetype, LinetypeDef, LinetypeTable,
+    Lineweight, MLeaderContent, MLeaderEntity, MLeaderStyle, MLeaderStyleId, MTextEntity, Measure,
+    Part, PointEntity, PolylineEntity, Properties, Reference, Revision, SplineEntity, TextEntity,
+    TextStyle, TextStyleId, TextStyleTable, Touch, ViewportEntity, WipeoutEntity, draw_order,
 };
 
 use crate::import::{Record, Section};
@@ -245,6 +245,34 @@ impl MLeaderStyleHandles {
 }
 
 /// Whether the drawing holds a wipeout, in any space.
+/// Where a drawing's pictures go (ADR-0042 §4): the image dictionary
+/// (`ACAD_IMAGE_DICT`), the raster variables (`ACAD_IMAGE_VARS`), the
+/// dictionary of our copies (`CADSLATE_IMAGES`), and per definition its
+/// IMAGEDEF and its copy's XRECORD; and each image's IMAGEDEF_REACTOR,
+/// taken as the image is written, with the image it reacts to.
+struct ImageHandles {
+    dictionary: Handle,
+    variables: Handle,
+    copies: Handle,
+    defs: Vec<(ImageDefId, Handle, Handle)>,
+    reactors: Vec<(ImageDefId, Handle, Handle)>,
+}
+
+impl ImageHandles {
+    fn of(&self, id: ImageDefId) -> Option<Handle> {
+        self.defs
+            .iter()
+            .find(|(def, ..)| *def == id)
+            .map(|(_, handle, _)| *handle)
+    }
+}
+
+/// Whether the drawing writes raster variables: images to frame, or their
+/// frames hidden.
+fn has_image_variables(drawing: &Drawing) -> bool {
+    !drawing.image_defs().is_empty() || !drawing.settings().image_frame
+}
+
 fn has_wipeouts(drawing: &Drawing) -> bool {
     drawing
         .entities()
@@ -417,6 +445,19 @@ impl Export {
                 .map(|(id, _)| (id, handles.take()))
                 .collect(),
         });
+        // The pictures' objects, before any image names its definition
+        // (ADR-0042).
+        let images = has_image_variables(drawing).then(|| ImageHandles {
+            dictionary: handles.take(),
+            variables: handles.take(),
+            copies: handles.take(),
+            defs: drawing
+                .image_defs()
+                .iter()
+                .map(|(id, _)| (id, handles.take(), handles.take()))
+                .collect(),
+            reactors: Vec::new(),
+        });
         // A handle per group, taken before any entity is written, so a
         // member can name its group among its reactors (#358).
         let group_handles: Vec<Handle> = drawing.groups().iter().map(|_| handles.take()).collect();
@@ -443,6 +484,7 @@ impl Export {
             row_handles: HashMap::new(),
             layer_states: None,
             mleader_styles,
+            images,
             block_record_handles: drawing
                 .blocks()
                 .iter()
@@ -576,6 +618,7 @@ impl Export {
             row_handles: HashMap::new(),
             layer_states: None,
             mleader_styles: self.body.mleader_styles.take(),
+            images: None,
             block_record_handles: HashMap::new(),
         };
         header.section("HEADER", |w| w.header(drawing, self.body.handles.seed()));
@@ -688,6 +731,9 @@ struct Writer {
     /// Each block's BLOCK_RECORD, which a multileader's block note and a
     /// style's default block name it by (#241).
     block_record_handles: HashMap<BlockId, Handle>,
+    /// Where the pictures go, when the drawing has images or hides their
+    /// frames (ADR-0042).
+    images: Option<ImageHandles>,
 }
 
 /// Every dimension, with its properties, in the order their DIMENSION
@@ -1453,9 +1499,23 @@ impl Writer {
     }
 
     fn record(&mut self, record: &EntityRecord, owner: Handle, drawing: &Drawing) {
-        // An image is written as IMAGE with its definition by #526
-        // (ADR-0042 §4); until then no command makes one.
-        if let Entity::Image(_) = &*record.entity {
+        // An image names its definition and a reactor of its own, so it
+        // takes its handle before the reactor's (ADR-0042 §4).
+        if let Entity::Image(image) = &*record.entity {
+            let layer = drawing
+                .layers()
+                .get(record.properties.layer)
+                .map_or(Layer::ZERO, |layer| layer.name.as_str());
+            let handle = self.handles.take();
+            self.entity_with(
+                handle,
+                "IMAGE",
+                owner,
+                layer,
+                &record.properties,
+                drawing.linetypes(),
+            );
+            self.image(image, handle);
             return;
         }
         let layer = drawing
@@ -2014,6 +2074,45 @@ impl Writer {
         }
     }
 
+    /// An IMAGE (ADR-0042 §4): its corner, one pixel's vectors, its size
+    /// in pixels, its definition, shown whole and unclipped, its fade, and
+    /// its reactor.
+    fn image(&mut self, image: &ImageEntity, handle: Handle) {
+        let reactor = self.handles.take();
+        let def = self
+            .images
+            .as_mut()
+            .map(|images| {
+                images.reactors.push((image.def, reactor, handle));
+                images.of(image.def).unwrap_or(Handle::NONE)
+            })
+            .unwrap_or(Handle::NONE);
+        let [width, height] = image.pixels.map(f64::from);
+        self.group(100, "AcDbRasterImage");
+        self.int(90, 0);
+        self.point(10, image.insertion);
+        self.point(11, Point2::ORIGIN + image.u);
+        self.point(12, Point2::ORIGIN + image.v);
+        self.real(13, width);
+        self.real(23, height);
+        self.handle(340, def);
+        // Shown, and shown when not aligned with the screen.
+        self.int(70, 3);
+        self.int(280, 0);
+        self.int(281, 50);
+        self.int(282, 50);
+        self.int(283, i64::from(image.fade));
+        self.handle(360, reactor);
+        // The whole picture, a rectangle by two corners.
+        self.int(71, 1);
+        self.int(91, 2);
+        self.real(14, -0.5);
+        self.real(24, -0.5);
+        self.real(14, width - 0.5);
+        self.real(24, height - 0.5);
+        self.int(290, 0);
+    }
+
     fn line(&mut self, line: &LineEntity) {
         self.group(100, "AcDbLine");
         self.point(10, line.start);
@@ -2293,6 +2392,27 @@ impl Writer {
         }
         self.group(3, "ACAD_PLOTSTYLENAME");
         self.handle(350, structure.plot_styles);
+        if let Some(images) = &self.images {
+            let (dictionary, variables, copies) =
+                (images.dictionary, images.variables, images.copies);
+            let any = !images.defs.is_empty();
+            if any {
+                self.group(3, "ACAD_IMAGE_DICT");
+                self.handle(350, dictionary);
+            }
+            self.group(3, "ACAD_IMAGE_VARS");
+            self.handle(350, variables);
+            // Our copies of the pictures: other readers pass them over.
+            if any
+                && drawing
+                    .image_defs()
+                    .iter()
+                    .any(|(_, def)| !def.is_missing())
+            {
+                self.group(3, crate::image::IMAGES_DICTIONARY);
+                self.handle(350, copies);
+            }
+        }
         if let Some(handle) = wipeout_variables {
             self.group(3, "ACAD_WIPEOUT_VARS");
             self.handle(350, handle);
@@ -2400,12 +2520,100 @@ impl Writer {
         if let Some(handle) = constraints {
             self.constraint_objects(handle, structure.root, drawing);
         }
+        self.image_objects(structure.root, drawing);
         if let Some(handle) = wipeout_variables {
             self.group(0, "WIPEOUTVARIABLES");
             self.handle(5, handle);
             self.handle(330, structure.root);
             self.group(100, "AcDbWipeoutVariables");
             self.int(70, i64::from(drawing.settings().wipeout_frame));
+        }
+    }
+
+    /// The pictures' objects (ADR-0042 §4): `ACAD_IMAGE_DICT` naming each
+    /// IMAGEDEF, which names its file by the picture's name and lists its
+    /// reactors; each image's IMAGEDEF_REACTOR; the raster variables
+    /// (IMAGEFRAME); and `CADSLATE_IMAGES`, an XRECORD per picture in the
+    /// drawing holding a copy of its bytes.
+    fn image_objects(&mut self, root: Handle, drawing: &Drawing) {
+        let Some(images) = self.images.take() else {
+            return;
+        };
+        let defs: Vec<(Handle, Handle, &ImageDef)> = images
+            .defs
+            .iter()
+            .filter_map(|(id, def, copy)| Some((*def, *copy, drawing.image_defs().get(*id)?)))
+            .collect();
+        if !defs.is_empty() {
+            self.dictionary(images.dictionary, root);
+            for (handle, _, def) in &defs {
+                self.group(3, &def.name);
+                self.handle(350, *handle);
+            }
+            for (id, handle, _) in &images.defs {
+                let Some(def) = drawing.image_defs().get(*id) else {
+                    continue;
+                };
+                self.group(0, "IMAGEDEF");
+                self.handle(5, *handle);
+                self.group(102, "{ACAD_REACTORS");
+                self.handle(330, images.dictionary);
+                for (_, reactor, _) in images.reactors.iter().filter(|(of, ..)| of == id) {
+                    self.handle(330, *reactor);
+                }
+                self.group(102, "}");
+                self.handle(330, images.dictionary);
+                self.group(100, "AcDbRasterImageDef");
+                self.int(90, 0);
+                self.group(1, &image_file_name(def));
+                self.real(10, f64::from(def.width));
+                self.real(20, f64::from(def.height));
+                self.real(11, 1.0);
+                self.real(21, 1.0);
+                self.int(280, i64::from(!def.is_missing()));
+                self.int(281, 0);
+            }
+            for (_, reactor, image) in &images.reactors {
+                self.group(0, "IMAGEDEF_REACTOR");
+                self.handle(5, *reactor);
+                self.handle(330, *image);
+                self.group(100, "AcDbRasterImageDefReactor");
+                self.int(90, 2);
+                self.handle(330, *image);
+            }
+        }
+        self.group(0, "RASTERVARIABLES");
+        self.handle(5, images.variables);
+        self.handle(330, root);
+        self.group(100, "AcDbRasterVariables");
+        self.int(90, 0);
+        self.int(70, i64::from(drawing.settings().image_frame));
+        self.int(71, 1);
+        self.int(72, 3);
+        if defs.iter().any(|(_, _, def)| !def.is_missing()) {
+            self.dictionary(images.copies, root);
+            // By the picture's name, which no two share.
+            for (_, copy, def) in &defs {
+                if !def.is_missing() {
+                    self.group(3, &def.name);
+                    self.handle(350, *copy);
+                }
+            }
+            for (handle, copy, def) in &defs {
+                if def.is_missing() {
+                    continue;
+                }
+                self.group(0, "XRECORD");
+                self.handle(5, *copy);
+                self.handle(330, images.copies);
+                self.group(100, "AcDbXrecord");
+                self.int(280, 1);
+                self.handle(340, *handle);
+                self.int(90, def.bytes.len() as i64);
+                for chunk in crate::image::chunks(&def.bytes) {
+                    self.group(310, &chunk);
+                }
+            }
         }
     }
 
@@ -2553,7 +2761,22 @@ impl Writer {
     /// holds (#226): a wipeout and its variables.
     fn classes(&mut self, drawing: &Drawing) {
         let wipeouts = has_wipeouts(drawing) || !drawing.settings().wipeout_frame;
+        let images = !drawing.image_defs().is_empty();
         let classes = [
+            (
+                has_image_variables(drawing),
+                ["RASTERVARIABLES", "AcDbRasterVariables", "ISM"],
+                0,
+                false,
+            ),
+            (images, ["IMAGE", "AcDbRasterImage", "ISM"], 127, true),
+            (images, ["IMAGEDEF", "AcDbRasterImageDef", "ISM"], 0, false),
+            (
+                images,
+                ["IMAGEDEF_REACTOR", "AcDbRasterImageDefReactor", "ISM"],
+                1,
+                false,
+            ),
             (
                 wipeouts,
                 ["WIPEOUTVARIABLES", "AcDbWipeoutVariables", "WipeOut"],
@@ -3481,6 +3704,7 @@ mod tests {
                 unit: None,
                 point_style: cad_document::PointStyle::new(35, 2.5),
                 wipeout_frame: true,
+                image_frame: true,
                 current_mleader_style: MLeaderStyleId::FIRST,
             })
             .unwrap()
@@ -4265,5 +4489,20 @@ mod record_tests {
             again.report.summary(),
             import(text.as_bytes()).unwrap().report.summary()
         );
+    }
+}
+
+/// The file a picture's IMAGEDEF names (1): its name, with the extension of
+/// its format unless the name ends in one.
+fn image_file_name(def: &ImageDef) -> String {
+    let lower = def.name.to_lowercase();
+    let extensions: &[&str] = match def.format {
+        cad_document::ImageFormat::Png => &[".png"],
+        cad_document::ImageFormat::Jpeg => &[".jpg", ".jpeg"],
+    };
+    if def.is_missing() || extensions.iter().any(|e| lower.ends_with(e)) {
+        def.name.clone()
+    } else {
+        format!("{}.{}", def.name, def.format.extension())
     }
 }

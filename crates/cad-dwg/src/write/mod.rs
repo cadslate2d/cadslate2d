@@ -125,7 +125,47 @@ pub struct BlockPlacement {
 /// Writes a drawing as a DWG file of `version`: AC1015 (AutoCAD 2000),
 /// AC1018 (2004), or AC1021 (2007).
 pub fn export(drawing: &Drawing, version: Version) -> Result<Vec<u8>, WriteError> {
-    write_records(&cad_dxf::export_records(drawing), version)
+    write_records(&cad_dxf::export_records(&without_images(drawing)), version)
+}
+
+/// The drawing a DWG holds (ADR-0042 §4): this writer does not carry
+/// images yet, so a drawing with any is written without them — its images,
+/// in every space and block, their pictures, and the frame setting — and
+/// [`export_losses`] says so first.
+fn without_images(drawing: &Drawing) -> std::borrow::Cow<'_, Drawing> {
+    use cad_document::Entity;
+    if drawing.image_defs().is_empty() && drawing.settings().image_frame {
+        return std::borrow::Cow::Borrowed(drawing);
+    }
+    let mut copy = drawing.clone();
+    let mut tx = copy.transaction();
+    for (id, record) in drawing.records() {
+        if matches!(&*record.entity, Entity::Image(_)) {
+            let _ = tx.remove(id);
+        }
+    }
+    for (id, block) in drawing.blocks().iter() {
+        if block
+            .entities
+            .iter()
+            .any(|r| matches!(&*r.entity, Entity::Image(_)))
+        {
+            let records = block
+                .entities
+                .iter()
+                .filter(|r| !matches!(&*r.entity, Entity::Image(_)))
+                .cloned()
+                .collect();
+            let kept = cad_document::Block::new(block.name.clone(), block.base, records);
+            let _ = tx.redefine_block(id, kept);
+        }
+    }
+    for (id, _) in drawing.image_defs().iter() {
+        let _ = tx.remove_image_def(id);
+    }
+    tx.set_image_frame(true);
+    tx.commit();
+    std::borrow::Cow::Owned(copy)
 }
 
 /// What a DWG of `version` will not include of `drawing` (#319), line by
@@ -174,6 +214,18 @@ pub fn export_losses(drawing: &Drawing, _version: Version) -> Vec<String> {
         losses.push(format!(
             "{splines} spline{} with control points of their own also carry fit points, which a DWG cannot hold beside them (the control points are kept)",
             if splines == 1 { "" } else { "s" }
+        ));
+    }
+    // This writer does not carry images yet (ADR-0042 §4).
+    let images = drawing
+        .records()
+        .filter(|(_, record)| matches!(&*record.entity, cad_document::Entity::Image(_)))
+        .count();
+    if images > 0 {
+        losses.push(format!(
+            "{images} image{} {} not written: a DWG from this program holds no images yet; save as DXF to keep them",
+            if images == 1 { "" } else { "s" },
+            if images == 1 { "is" } else { "are" }
         ));
     }
     losses

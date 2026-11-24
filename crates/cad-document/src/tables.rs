@@ -30,6 +30,8 @@ pub struct Tables<'a> {
     /// Whether a wipeout's frame is drawn (#226): a setting, as the point
     /// style is.
     pub wipeout_frame: bool,
+    /// Whether an image's frame is drawn (ADR-0042).
+    pub image_frame: bool,
 }
 
 impl<'a> Tables<'a> {
@@ -46,6 +48,7 @@ impl<'a> Tables<'a> {
             mleader_styles: MLEADER_STYLES.get_or_init(initial_mleader_styles),
             point_style: PointStyle::default(),
             wipeout_frame: true,
+            image_frame: true,
         }
     }
 
@@ -58,6 +61,7 @@ impl<'a> Tables<'a> {
             mleader_styles: Tables::none().mleader_styles,
             point_style: PointStyle::default(),
             wipeout_frame: true,
+            image_frame: true,
         }
     }
 

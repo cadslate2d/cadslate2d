@@ -189,6 +189,9 @@ pub struct DrawingParts {
     pub mleader_styles: Vec<MLeaderStyle>,
     pub blocks: Vec<Block>,
     pub layouts: Vec<Layout>,
+    /// The pictures its images show (ADR-0042), before the blocks and
+    /// entities that hold images.
+    pub image_defs: Vec<ImageDef>,
     pub entities: Vec<(Entity, Properties, LayoutId)>,
 }
 
@@ -734,7 +737,8 @@ impl Drawing {
         layouts: impl IntoIterator<Item = Layout>,
         entities: impl IntoIterator<Item = (Entity, Properties, LayoutId)>,
     ) -> Result<Self, TransactionError> {
-        let mut drawing = Self::with_rows(layers, linetypes, text_styles, dim_styles, [], blocks)?;
+        let mut drawing =
+            Self::with_rows(layers, linetypes, text_styles, dim_styles, [], [], blocks)?;
         drawing.place(layouts, entities)?;
         Ok(drawing)
     }
@@ -752,6 +756,7 @@ impl Drawing {
             mleader_styles,
             blocks,
             layouts,
+            image_defs,
             entities,
         } = parts;
         let mut drawing = Self::with_rows(
@@ -760,6 +765,7 @@ impl Drawing {
             text_styles,
             dim_styles,
             mleader_styles,
+            image_defs,
             blocks,
         )?;
         drawing.place(layouts, entities)?;
@@ -813,7 +819,8 @@ impl Drawing {
         blocks: impl IntoIterator<Item = Block>,
         entities: impl IntoIterator<Item = (Entity, Properties)>,
     ) -> Result<Self, TransactionError> {
-        let mut drawing = Self::with_rows(layers, linetypes, text_styles, dim_styles, [], blocks)?;
+        let mut drawing =
+            Self::with_rows(layers, linetypes, text_styles, dim_styles, [], [], blocks)?;
         for (entity, properties) in entities {
             Self::check_record(&drawing, &entity, &properties)?;
             let id = drawing.ids.allocate();
@@ -833,6 +840,7 @@ impl Drawing {
         text_styles: impl IntoIterator<Item = TextStyle>,
         dim_styles: impl IntoIterator<Item = DimStyle>,
         mleader_styles: impl IntoIterator<Item = MLeaderStyle>,
+        image_defs: impl IntoIterator<Item = ImageDef>,
         blocks: impl IntoIterator<Item = Block>,
     ) -> Result<Self, TransactionError> {
         let mut drawing = Self::new();
@@ -946,6 +954,18 @@ impl Drawing {
                 .layers
                 .apply(&TableChange::Insert { id, row: layer });
         }
+        // The pictures images show (ADR-0042), before the blocks that may
+        // hold images.
+        for def in image_defs {
+            def.check().map_err(TransactionError::BadImageDef)?;
+            if let Some(taken) = drawing.image_defs.find(&def.name) {
+                return Err(TransactionError::DuplicateImageDefName(taken));
+            }
+            let id = drawing.image_defs.allocate();
+            drawing
+                .image_defs
+                .apply(&TableChange::Insert { id, row: def });
+        }
         // Every block goes in before any is checked: a definition may
         // place a block the file defines after it.
         for block in blocks {
@@ -1045,6 +1065,7 @@ impl Drawing {
             mleader_styles: &self.mleader_styles,
             point_style: self.settings.point_style,
             wipeout_frame: self.settings.wipeout_frame,
+            image_frame: self.settings.image_frame,
         };
         self.unbounded = self
             .entities
@@ -1535,6 +1556,7 @@ impl Drawing {
             mleader_styles: &self.mleader_styles,
             point_style: self.settings.point_style,
             wipeout_frame: self.settings.wipeout_frame,
+            image_frame: self.settings.image_frame,
         }
     }
 
@@ -1608,6 +1630,7 @@ impl Drawing {
         tx.set_unit(settings.unit);
         tx.set_point_style(settings.point_style)?;
         tx.set_wipeout_frame(settings.wipeout_frame);
+        tx.set_image_frame(settings.image_frame);
         tx.set_current_mleader_style(settings.current_mleader_style)?;
         tx.commit();
         self.history = History::default();
@@ -1769,7 +1792,8 @@ impl Drawing {
                 // whether frames are shown every wipeout (#226).
                 Change::Settings(change) => {
                     let restyled = change.before.point_style != change.after.point_style
-                        || change.before.wipeout_frame != change.after.wipeout_frame;
+                        || change.before.wipeout_frame != change.after.wipeout_frame
+                        || change.before.image_frame != change.after.image_frame;
                     everything |= restyled;
                     restyled
                 }
@@ -1918,6 +1942,7 @@ impl Drawing {
                                     mleader_styles: &self.mleader_styles,
                                     point_style: self.settings.point_style,
                                     wipeout_frame: self.settings.wipeout_frame,
+                                    image_frame: self.settings.image_frame,
                                 };
                                 self.index.update(entity_id, entity.bounds(tables));
                             }
@@ -3549,6 +3574,15 @@ impl TransactionBuilder<'_> {
     pub fn set_wipeout_frame(&mut self, shown: bool) {
         self.set_settings(DrawingSettings {
             wipeout_frame: shown,
+            ..self.settings_now()
+        });
+    }
+
+    /// Shows or hides every image's frame (ADR-0042): one change, however
+    /// many images there are.
+    pub fn set_image_frame(&mut self, shown: bool) {
+        self.set_settings(DrawingSettings {
+            image_frame: shown,
             ..self.settings_now()
         });
     }
@@ -6743,6 +6777,7 @@ mod tests {
             unit: Some(LengthUnit::Millimetres),
             point_style: PointStyle::new(3, 2.0),
             wipeout_frame: false,
+            image_frame: false,
         };
         let drawing = drawing.with_settings(settings).unwrap();
         assert_eq!(drawing.settings(), settings);
@@ -9312,8 +9347,10 @@ mod tests {
                     Op::WipeoutFrame(shown) => {
                         let mut tx = drawing.transaction();
                         tx.set_wipeout_frame(shown);
+                        tx.set_image_frame(!shown);
                         tx.commit();
                         prop_assert_eq!(drawing.settings().wipeout_frame, shown);
+                        prop_assert_eq!(drawing.settings().image_frame, !shown);
                     }
                     Op::CreateOnTop(x) => {
                         let top = drawing.top_order();

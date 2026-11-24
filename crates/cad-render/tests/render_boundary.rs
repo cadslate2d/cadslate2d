@@ -1642,17 +1642,18 @@ fn an_image_is_committed_as_one_picture_and_its_frame() {
     assert_eq!(cache.scene(h.session.drawing()).revision(), revision);
     assert!(cache.take_dirty().is_empty());
 
-    // Faded, and its frame hidden: its picture's run, and the frame gone.
+    // Faded, and frames hidden: its picture's run, and the frame gone.
     let mut changed = match h.session.drawing().entity(id).unwrap() {
         cad_document::Entity::Image(image) => image.clone(),
         _ => unreachable!(),
     };
     changed.fade = 50;
-    changed.frame = false;
     let mut drawing = h.session.drawing().clone();
     let mut tx = drawing.transaction();
     tx.replace(id, cad_document::Entity::Image(changed))
         .unwrap();
+    // Frames hidden, for every image: the drawing's setting (IMAGEFRAME).
+    tx.set_image_frame(false);
     tx.commit();
     let mut cache = SceneCache::new();
     let scene = cache.scene(&drawing);

@@ -153,13 +153,17 @@ const READER_LOSSES: &[(&str, &str)] = &[
 ];
 
 /// Keeps the lines of what `export_losses` does not name for `drawing`: a
-/// current multileader style it says is lost (#431) is not compared, and
-/// one it does not say is lost is.
+/// current multileader style it says is lost (#431) is not compared, nor
+/// images it says are not written (ADR-0042 §4), and what it does not say
+/// is lost is.
 fn reported(drawing: &Drawing, version: Version) -> impl Fn(&String) -> bool {
-    let style_lost = cad_dwg::export_losses(drawing, version)
-        .iter()
-        .any(|loss| loss.contains("multileader style"));
-    move |line: &String| !(style_lost && line.starts_with("current multileader style"))
+    let losses = cad_dwg::export_losses(drawing, version);
+    let style_lost = losses.iter().any(|loss| loss.contains("multileader style"));
+    let images_lost = losses.iter().any(|loss| loss.contains("holds no images"));
+    move |line: &String| {
+        !(style_lost && line.starts_with("current multileader style"))
+            && !(images_lost && line.starts_with("entity Image("))
+    }
 }
 
 /// Keeps the lines no loss listed for `name` touches.
@@ -582,4 +586,34 @@ fn a_multileader_keeps_its_properties_group_and_space_s_draw_order() {
         let back = cad_dwg::import(&bytes).unwrap().drawing;
         assert_eq!(described(&back), expected, "{version:?}");
     }
+}
+
+/// ADR-0042 §4: this writer does not carry images yet. A drawing with one
+/// is written without it — the file still opens — and the loss is named
+/// before the export.
+#[test]
+fn an_image_is_named_lost_and_left_out_of_a_dwg() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../test-data/dxf/valid/image-embedded.dxf"
+    );
+    let drawing = cad_dxf::import(&std::fs::read(path).unwrap())
+        .unwrap()
+        .drawing;
+    let losses = cad_dwg::export_losses(&drawing, Version::R2000);
+    assert!(
+        losses
+            .iter()
+            .any(|loss| loss.starts_with("1 image is not written")),
+        "{losses:?}"
+    );
+    let dwg = cad_dwg::export(&drawing, Version::R2000).unwrap();
+    let back = cad_dwg::import(&dwg).unwrap().drawing;
+    assert!(back.image_defs().is_empty());
+    assert!(
+        !back
+            .entities()
+            .any(|(_, e)| matches!(e, cad_document::Entity::Image(_)))
+    );
+    assert_eq!(back.len(), drawing.len() - 1, "everything but the image");
 }

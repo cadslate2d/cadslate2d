@@ -27,6 +27,12 @@ pub struct ImportReport {
     pub construction_lines: usize,
     /// Wipeouts (#226).
     pub wipeouts: usize,
+    /// Images (ADR-0042), their pictures in the file or not.
+    pub images: usize,
+    /// Pictures the file names and does not hold (ADR-0042 §4): files
+    /// another program kept beside the DXF. Not a loss — the drawing never
+    /// had them — but said, so the user can reload them.
+    pub missing_pictures: usize,
     /// Multileaders (#240).
     pub mleaders: usize,
     /// Multileader styles besides `Standard` in the drawing after the
@@ -165,6 +171,7 @@ impl ImportReport {
                 "construction lines",
             ),
             (self.wipeouts, "wipeout", "wipeouts"),
+            (self.images, "image", "images"),
             (self.mleaders, "multileader", "multileaders"),
         ];
         let imported: Vec<String> = kinds
@@ -254,6 +261,12 @@ impl ImportReport {
         }
         lines.extend(self.formatting_line());
         lines.extend(self.dropped_line());
+        if self.missing_pictures > 0 {
+            lines.push(format!(
+                "{} not in the file: the images show their frames until reloaded (IMAGE Reload).",
+                counted(self.missing_pictures, "picture", "pictures")
+            ));
+        }
         if let Some(unit) = self.unit {
             lines.push(format!("Drawing unit: {}.", unit.name()));
         }

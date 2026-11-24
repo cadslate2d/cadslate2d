@@ -117,20 +117,30 @@ interface Picture {
   texture: WebGLTexture | undefined;
 }
 
+/** A missing picture's ground, or one not decoded yet: a light grey. */
+const PLACEHOLDER = new Uint8Array([224, 224, 224, 255]);
+
 /**
  * The textures of the drawing's pictures, by fingerprint (ADR-0042 §2). A
- * picture whose bytes have not been decoded yet draws nothing; when one is
- * ready, `onReady` asks for a frame.
+ * picture missing from the drawing (§4), or not decoded yet, is drawn as a
+ * light grey ground in its frame; when one is ready, `onReady` asks for a
+ * frame.
  */
 export class ImageTextures {
   readonly #gl: WebGL2RenderingContext;
   readonly #byDigest = new Map<string, Picture>();
+  readonly #placeholder: WebGLTexture;
   /** The digest each definition shows. */
   #digests = new Map<number, string>();
   onReady: (() => void) | undefined;
 
   constructor(gl: WebGL2RenderingContext) {
     this.#gl = gl;
+    this.#placeholder = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.#placeholder);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, PLACEHOLDER);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
   }
 
   /**
@@ -160,10 +170,11 @@ export class ImageTextures {
     this.#digests = digests;
   }
 
-  /** The texture of `definition`, once it is decoded. */
-  texture(definition: number): WebGLTexture | undefined {
+  /** The texture of `definition`, once it is decoded; the placeholder until then, or for good when it is missing. */
+  texture(definition: number): WebGLTexture {
     const digest = this.#digests.get(definition);
-    return digest === undefined ? undefined : this.#byDigest.get(digest)?.texture;
+    const texture = digest === undefined ? undefined : this.#byDigest.get(digest)?.texture;
+    return texture ?? this.#placeholder;
   }
 
   async #decode(picture: Picture, bytes: Uint8Array, type: string): Promise<void> {
@@ -200,6 +211,7 @@ export class ImageTextures {
       if (picture.texture) this.#gl.deleteTexture(picture.texture);
     }
     this.#byDigest.clear();
+    this.#gl.deleteTexture(this.#placeholder);
   }
 }
 
@@ -222,7 +234,7 @@ export class ImageLayer {
 
   /**
    * Draws the pictures `[first, count]` under `transform` (four floats at
-   * `at`). A picture not decoded yet is skipped. Returns the draw calls.
+   * `at`). Returns the draw calls.
    */
   draw(
     gl: WebGL2RenderingContext,
@@ -241,7 +253,6 @@ export class ImageLayer {
     let drawCalls = 0;
     for (let index = first; index < first + count; index += 1) {
       const texture = textures.texture(this.#words[index * WORDS_PER_IMAGE] ?? 0);
-      if (!texture) continue;
       const f = index * FLOATS_PER_IMAGE;
       const image = this.#images;
       gl.uniform2f(uniforms.corner, image[f] ?? 0, image[f + 1] ?? 0);

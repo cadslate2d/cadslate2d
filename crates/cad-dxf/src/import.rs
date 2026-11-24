@@ -503,6 +503,8 @@ struct Pending {
     handle: Option<String>,
     /// Group 340 of a LEADER: the handle of its MTEXT note.
     annotation: Option<String>,
+    /// Group 340 of an IMAGE: the handle of its IMAGEDEF (ADR-0042).
+    image_def: Option<String>,
 }
 
 impl Default for Pending {
@@ -520,6 +522,7 @@ impl Default for Pending {
             paper: false,
             handle: None,
             annotation: None,
+            image_def: None,
         }
     }
 }
@@ -836,8 +839,16 @@ struct Reader<'a> {
     /// Whether wipeouts show their frames, when the file says
     /// (`WIPEOUTVARIABLES`, 70; #226).
     wipeout_frame: Option<bool>,
+    /// IMAGEFRAME, from the raster variables (ADR-0042).
+    image_frame: Option<bool>,
     /// XRECORD objects as the file held them: a layer state is one (#228).
     xrecords: Vec<Vec<RawGroup>>,
+    /// The file's IMAGEDEF objects, in file order (ADR-0042).
+    image_def_records: Vec<Vec<RawGroup>>,
+    /// Each IMAGEDEF's handle to the definition it became.
+    image_def_ids: HashMap<String, cad_document::ImageDefId>,
+    /// Each definition's size in pixels, for the images that show it.
+    image_def_sizes: HashMap<cad_document::ImageDefId, [u32; 2]>,
     /// LAYER and LTYPE rows' names by their handles, upper case, which a
     /// layer state names them by (#228).
     row_names: HashMap<String, String>,
@@ -988,7 +999,11 @@ impl<'a> Reader<'a> {
             entry_names: HashMap::new(),
             sort_tables: Vec::new(),
             wipeout_frame: None,
+            image_frame: None,
             xrecords: Vec::new(),
+            image_def_records: Vec::new(),
+            image_def_ids: HashMap::new(),
+            image_def_sizes: HashMap::new(),
             row_names: HashMap::new(),
             views: Vec::new(),
             mleader_style_records: Vec::new(),
@@ -1161,7 +1176,14 @@ impl<'a> Reader<'a> {
             // rows, whose handles name the layouts' blocks.
             let keep_raw = matches!(
                 record.value,
-                "HATCH" | "SPLINE" | "WIPEOUT" | "LAYOUT" | "BLOCK_RECORD" | "VIEW" | "MULTILEADER"
+                "HATCH"
+                    | "SPLINE"
+                    | "WIPEOUT"
+                    | "IMAGE"
+                    | "LAYOUT"
+                    | "BLOCK_RECORD"
+                    | "VIEW"
+                    | "MULTILEADER"
             ) || matches!(self.open_block, Some(OpenBlock::Paper(_)))
                 || (matches!(context, RecordContext::Objects)
                     && matches!(
@@ -1170,6 +1192,8 @@ impl<'a> Reader<'a> {
                             | "GROUP"
                             | "SORTENTSTABLE"
                             | "WIPEOUTVARIABLES"
+                            | "IMAGEDEF"
+                            | "RASTERVARIABLES"
                             | "XRECORD"
                             | "MLEADERSTYLE"
                     ));
@@ -1245,6 +1269,12 @@ impl<'a> Reader<'a> {
                 ("WIPEOUTVARIABLES", Some(raw)) => {
                     self.wipeout_frame = crate::spline::Groups(raw).int(70).map(|frame| frame != 0);
                 }
+                // IMAGEFRAME (ADR-0042): 0 hidden, 1 shown, 2 shown but
+                // not plotted, which is shown here.
+                ("RASTERVARIABLES", Some(raw)) => {
+                    self.image_frame = crate::spline::Groups(raw).int(70).map(|frame| frame != 0);
+                }
+                ("IMAGEDEF", Some(raw)) => self.image_def_records.push(raw.clone()),
                 // Each entry: its name (3), then the handle it names (350,
                 // or 360 for one the dictionary owns).
                 ("DICTIONARY", Some(raw)) => {
@@ -1416,6 +1446,20 @@ impl<'a> Reader<'a> {
             }
             (_, "MULTILEADER") if entities => self.mleader(body)?,
             (_, "HATCH") if entities => self.hatch(body)?,
+            // An image (ADR-0042), its definition resolved once the
+            // objects are read.
+            (_, "IMAGE") if entities => match body.raw.as_deref().map(crate::image::read) {
+                Some(Ok(read)) => {
+                    for key in read.dropped {
+                        self.report.count_unsupported(key);
+                    }
+                    let mut pending = body.pending();
+                    pending.image_def = Some(read.def);
+                    self.push(Entity::Image(read.image), pending)?;
+                }
+                Some(Err(key)) => self.report.count_unsupported(key),
+                None => self.report.count_unsupported(INVALID),
+            },
             (_, "WIPEOUT") if entities => match body.raw.as_deref().map(crate::wipeout::read) {
                 Some(Ok(wipeout)) => self.import(Entity::Wipeout(wipeout), body)?,
                 Some(Err(key)) => self.report.count_unsupported(key),
@@ -2260,8 +2304,7 @@ impl<'a> Reader<'a> {
                     Entity::Leader(_) => self.report.leaders += 1,
                     Entity::XLine(_) | Entity::Ray(_) => self.report.construction_lines += 1,
                     Entity::Wipeout(_) => self.report.wipeouts += 1,
-                    // Read as IMAGE by #526 (ADR-0042 §4).
-                    Entity::Image(_) => {}
+                    Entity::Image(_) => self.report.images += 1,
                     Entity::MLeader(_) => self.report.mleaders += 1,
                 }
                 match &mut self.open_block {
@@ -2371,6 +2414,25 @@ impl<'a> Reader<'a> {
                         }
                     }
                 }
+            }
+            // An image's definition, by the handle of its IMAGEDEF; its
+            // pixel size made the definition's (ADR-0042).
+            Entity::Image(image) => {
+                let def = pending
+                    .image_def
+                    .as_deref()
+                    .and_then(|handle| self.image_def_ids.get(handle).copied());
+                let Some(def) = def else {
+                    self.report.count_unsupported(crate::image::UNDEFINED);
+                    return None;
+                };
+                let size = self
+                    .image_def_sizes
+                    .get(&def)
+                    .copied()
+                    .unwrap_or(image.pixels);
+                *image = crate::image::fitted(image.clone(), size[0], size[1]);
+                image.def = def;
             }
             Entity::BlockRef(reference) => {
                 let block = pending
@@ -2593,6 +2655,94 @@ impl<'a> Reader<'a> {
             .collect()
     }
 
+    /// The file's pictures (ADR-0042 §4), in the order of their IMAGEDEF
+    /// objects: each named by its entry in `ACAD_IMAGE_DICT`, or by its
+    /// file's name; its bytes our copy in `CADSLATE_IMAGES`, or none — a
+    /// picture another program names by its file, which is reported
+    /// missing. Each IMAGEDEF's handle is kept, for the images to find it.
+    fn image_defs(&mut self) -> Vec<cad_document::ImageDef> {
+        use cad_document::ImageDef;
+        let copies = self
+            .entry_names
+            .iter()
+            .find(|(_, name)| name.eq_ignore_ascii_case(crate::image::IMAGES_DICTIONARY))
+            .map(|(handle, _)| handle.clone());
+        let mut defs: Vec<ImageDef> = Vec::new();
+        for raw in std::mem::take(&mut self.image_def_records) {
+            let groups = crate::spline::Groups(&raw);
+            let value = |code: i32| {
+                raw.iter()
+                    .find(|(c, _)| *c == code)
+                    .map(|(_, v)| v.trim().to_owned())
+            };
+            let Some(handle) = value(5).map(|h| h.to_uppercase()) else {
+                continue;
+            };
+            let size = groups.points(10).first().copied();
+            let pixel = |v: f64| {
+                (v.is_finite() && v >= 1.0 && v <= f64::from(u32::MAX)).then(|| v.round() as u32)
+            };
+            let Some([width, height]) = size.and_then(|s| Some([pixel(s.x)?, pixel(s.y)?])) else {
+                self.report.count_unsupported(crate::image::UNREADABLE);
+                continue;
+            };
+            let file = value(1).unwrap_or_default();
+            let named = self.entry_names.get(&handle).cloned();
+            let base = named
+                .filter(|name| cad_document::check_name(name).is_ok())
+                .unwrap_or_else(|| crate::image::file_name(&file).to_owned());
+            let base = if cad_document::check_name(&base).is_ok() {
+                base
+            } else {
+                "image".to_owned()
+            };
+            // A name another picture has: the next free one.
+            let mut name = base.clone();
+            let mut n = 1;
+            while defs.iter().any(|d| d.name.eq_ignore_ascii_case(&name)) {
+                n += 1;
+                name = format!("{base} ({n})");
+            }
+            let copy = copies.as_ref().and_then(|dictionary| {
+                self.xrecords.iter().find(|x| {
+                    let of = |code: i32| {
+                        x.iter()
+                            .find(|(c, _)| *c == code)
+                            .map(|(_, v)| v.trim().to_uppercase())
+                    };
+                    of(330).as_deref() == Some(dictionary.as_str())
+                        && of(340).as_deref() == Some(handle.as_str())
+                })
+            });
+            // Our copy, read; else the picture is missing, and said so.
+            let copied = copy.map(|x| crate::image::copied_bytes(x, cad_document::MOST_BYTES));
+            let had_copy = copied.is_some();
+            let read = match copied {
+                Some(Some(bytes)) => ImageDef::new(name.clone(), bytes).ok(),
+                _ => None,
+            };
+            let def = match read {
+                Some(def) => def,
+                None => {
+                    if had_copy {
+                        self.report.count_unsupported(crate::image::UNREADABLE);
+                    } else {
+                        self.report.missing_pictures += 1;
+                    }
+                    match ImageDef::missing(name, width, height) {
+                        Ok(def) => def,
+                        Err(_) => continue,
+                    }
+                }
+            };
+            let id = cad_document::ImageDefId::from_raw(defs.len() as u32 + 1);
+            self.image_def_sizes.insert(id, [def.width, def.height]);
+            self.image_def_ids.insert(handle, id);
+            defs.push(def);
+        }
+        defs
+    }
+
     /// The layer states the file keeps (#228): each XRECORD of the
     /// `ACAD_LAYERSTATES` dictionary, named by its entry there. A state's
     /// layers are named by handle (330) or by name (8), each followed by
@@ -2797,6 +2947,9 @@ impl<'a> Reader<'a> {
     fn finish(mut self) -> Result<Import, DxfError> {
         // The multileader styles first: the multileaders name them.
         let mleader_styles = self.mleader_styles()?;
+        // The pictures before the blocks and entities whose images show
+        // them (ADR-0042).
+        let image_defs = self.image_defs();
         // The file's layers first: their linetypes may make rows that
         // entities then use.
         let mut layers: Vec<Layer> = Vec::with_capacity(self.tables.layers.len());
@@ -2893,6 +3046,7 @@ impl<'a> Reader<'a> {
             mleader_styles,
             blocks,
             layouts,
+            image_defs,
             entities,
         })
         .map_err(|error| DxfError::Tables(error.to_string()))?;
@@ -3019,6 +3173,7 @@ impl<'a> Reader<'a> {
             unit: self.report.unit,
             point_style: self.point_style(),
             wipeout_frame: self.wipeout_frame.unwrap_or(true),
+            image_frame: self.image_frame.unwrap_or(true),
             current_mleader_style: self
                 .header
                 .current_mleader_style
@@ -3319,6 +3474,7 @@ impl RecordBody {
         Pending {
             handle: self.handle.clone(),
             annotation: self.annotation.clone(),
+            image_def: None,
             layer: self.layer.clone().unwrap_or_else(|| Layer::ZERO.to_owned()),
             color: color.unwrap_or(Color::ByLayer),
             linetype: self

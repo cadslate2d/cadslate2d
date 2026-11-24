@@ -16,6 +16,7 @@
 mod error;
 mod export;
 mod hatch;
+mod image;
 mod import;
 mod mleader;
 mod properties;
