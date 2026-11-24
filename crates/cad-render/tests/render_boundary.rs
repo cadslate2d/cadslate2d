@@ -326,8 +326,9 @@ fn regions_tile_the_buffers_and_an_ordinary_drawing_is_one() {
             scene.frame().segment_count(),
             scene.frame().arc_count(),
             scene.frame().triangle_count(),
+            scene.frame().image_count(),
         ];
-        assert_eq!(regions[0].first, [0, 0, 0], "{name}");
+        assert_eq!(regions[0].first, [0, 0, 0, 0], "{name}");
         assert_eq!(regions[0].count, counts, "{name}");
     }
     // A drawing spanning ten million units: two regions, tiling each kind.
@@ -361,12 +362,13 @@ fn regions_tile_the_buffers_and_an_ordinary_drawing_is_one() {
     let scene = cache.scene(h.session.drawing());
     let regions = scene.regions();
     assert_eq!(regions.len(), 2);
-    assert_eq!(regions[0].first, [0, 0, 0]);
+    assert_eq!(regions[0].first, [0, 0, 0, 0]);
     assert_eq!(regions[1].first, regions[0].count);
     let counts = [
         scene.frame().segment_count(),
         scene.frame().arc_count(),
         scene.frame().triangle_count(),
+        scene.frame().image_count(),
     ];
     let totals: Vec<u32> = regions[0]
         .count
@@ -375,7 +377,7 @@ fn regions_tile_the_buffers_and_an_ordinary_drawing_is_one() {
         .map(|(a, b)| a + b)
         .collect();
     assert_eq!(totals, counts);
-    assert_eq!(regions[1].count, [1, 1, 0], "the far line and circle");
+    assert_eq!(regions[1].count, [1, 1, 0, 0], "the far line and circle");
     assert!(
         regions[1]
             .origin
@@ -418,6 +420,7 @@ fn an_edit_repacks_one_chunk_and_reports_the_ranges_it_changed() {
             (InstanceKind::Segments, 0, before.segment_count()),
             (InstanceKind::Arcs, 0, 0),
             (InstanceKind::Triangles, 0, 0),
+            (InstanceKind::Images, 0, 0),
         ],
         "the first build is everything"
     );
@@ -462,7 +465,7 @@ fn an_edit_repacks_one_chunk_and_reports_the_ranges_it_changed() {
     h.enter_all(&["LAYER", "OFF", "other", ""]);
     let count = cache.scene(h.session.drawing()).frame().segment_count();
     let ranges = cache.take_dirty();
-    assert_eq!(ranges.len(), 3);
+    assert_eq!(ranges.len(), 4, "a range per kind");
     assert_eq!((ranges[0].first, ranges[0].count), (0, count), "everything");
 }
 
@@ -563,7 +566,7 @@ fn zooming_far_in_on_a_curve_uploads_nothing_committed() {
     assert_eq!(cache.scene(h.session.drawing()).revision(), revision);
     assert_eq!(cache.build_count(), 1);
     assert!(
-        cache.take_dirty().len() <= 3,
+        cache.take_dirty().len() <= 4,
         "the first build's ranges, and no more"
     );
 }
@@ -1273,8 +1276,8 @@ fn a_layouts_scene_is_the_model_through_its_viewports_and_the_paper_over_it() {
     let regions = scene.regions();
     assert_eq!(regions.len(), 2, "{regions:?}");
     assert!(!regions[0].paper && regions[1].paper);
-    assert_eq!(regions[0].count, [4, 0, 0], "the model's rectangle");
-    assert_eq!(regions[1].count, [9, 0, 0], "two frames and a line");
+    assert_eq!(regions[0].count, [4, 0, 0, 0], "the model's rectangle");
+    assert_eq!(regions[1].count, [9, 0, 0, 0], "two frames and a line");
     let model_bytes = scene.frame().segments()[..16].to_vec();
     cache.take_dirty();
 
@@ -1293,7 +1296,7 @@ fn a_layouts_scene_is_the_model_through_its_viewports_and_the_paper_over_it() {
     let regions = scene.regions();
     let segments = scene.frame().segments().to_vec();
     assert_eq!(cache.partial_build_count(), 1);
-    assert_eq!(regions[1].count, [9, 0, 0]);
+    assert_eq!(regions[1].count, [9, 0, 0, 0]);
     assert_eq!(
         &segments[..16],
         &model_bytes[..],
@@ -1561,4 +1564,115 @@ fn the_curves_by_size_match_the_arcs_the_scene_draws() {
             ),
         }
     }
+}
+
+/// A PNG's signature and header: all a definition reads of it.
+fn png(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    bytes.extend_from_slice(&13u32.to_be_bytes());
+    bytes.extend_from_slice(b"IHDR");
+    bytes.extend_from_slice(&width.to_be_bytes());
+    bytes.extend_from_slice(&height.to_be_bytes());
+    bytes.extend_from_slice(&[8, 2, 0, 0, 0, 0, 0, 0, 0]);
+    bytes
+}
+
+/// A drawing holding one picture, 64 × 48 pixels, shown 640 wide with its
+/// lower-left corner at (10, 20), in tier 3.
+fn with_an_image() -> (Harness, cad_core::EntityId, cad_document::ImageDefId) {
+    use cad_document::{Drawing, Entity, ImageDef, ImageEntity};
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    let def = tx
+        .add_image_def(ImageDef::new("plan", png(64, 48)).unwrap())
+        .unwrap();
+    let image = ImageEntity::placed(def, p(10.0, 20.0), 640.0, [64, 48]).unwrap();
+    let id = tx.insert(Entity::Image(image)).unwrap();
+    tx.commit();
+    let mut tx = drawing.transaction();
+    tx.set_order(id, 3).unwrap();
+    tx.commit();
+    let mut h = Harness::new();
+    h.session.open_drawing(
+        drawing,
+        "image.dxf",
+        cad_commands::FileFormat::Dxf,
+        vec![],
+        vec![],
+    );
+    (h, id, def)
+}
+
+/// ADR-0042 §2: an image is committed as one picture — its corner and
+/// edges, its definition and fade — beneath its frame's four strokes, its
+/// tier in its style word; an edit to it reports an image range; the
+/// pointer, pan, and zoom change nothing.
+#[test]
+fn an_image_is_committed_as_one_picture_and_its_frame() {
+    let (mut h, id, def) = with_an_image();
+    let mut cache = SceneCache::new();
+    let scene = cache.scene(h.session.drawing()).clone();
+    let frame = scene.frame();
+    assert_eq!(frame.image_count(), 1);
+    assert_eq!(frame.images().len(), PackedFrame::FLOATS_PER_IMAGE);
+    let origin = frame.origin();
+    let [x, y, ax, ay, bx, by] = <[f32; 6]>::try_from(frame.images()).unwrap();
+    assert_eq!(
+        (f64::from(x) + origin.x, f64::from(y) + origin.y),
+        (10.0, 20.0),
+        "its lower-left corner"
+    );
+    assert_eq!((ax, ay, bx, by), (640.0, 0.0, 0.0, 480.0), "its edges");
+    assert_eq!(frame.image_words(), [def.raw(), 0], "its picture, unfaded");
+    assert_eq!(frame.segment_count(), 4, "its frame");
+    assert_eq!(scene.image_styles().len(), 1);
+    assert_eq!(
+        scene.image_styles()[0] >> RenderScene::ORDER_SHIFT,
+        3,
+        "its tier"
+    );
+    assert_eq!(scene.regions()[0].count, [4, 0, 0, 1]);
+    cache.take_dirty();
+
+    // The pointer, pan, and zoom: nothing.
+    let revision = scene.revision();
+    h.move_to(300.0, 300.0);
+    h.session
+        .wheel(ScreenPoint::new(400.0, 300.0), -240.0, Modifiers::NONE);
+    assert_eq!(cache.scene(h.session.drawing()).revision(), revision);
+    assert!(cache.take_dirty().is_empty());
+
+    // Faded, and its frame hidden: its picture's run, and the frame gone.
+    let mut changed = match h.session.drawing().entity(id).unwrap() {
+        cad_document::Entity::Image(image) => image.clone(),
+        _ => unreachable!(),
+    };
+    changed.fade = 50;
+    changed.frame = false;
+    let mut drawing = h.session.drawing().clone();
+    let mut tx = drawing.transaction();
+    tx.replace(id, cad_document::Entity::Image(changed))
+        .unwrap();
+    tx.commit();
+    let mut cache = SceneCache::new();
+    let scene = cache.scene(&drawing);
+    assert_eq!(scene.frame().image_words(), [def.raw(), 50]);
+    assert_eq!(scene.frame().segment_count(), 0, "no frame");
+}
+
+/// ADR-0042 §2: a preview shows the picture in the overlay; a highlight
+/// outlines it, so it never hides what it is over.
+#[test]
+fn an_image_is_previewed_as_its_picture_and_highlighted_as_its_frame() {
+    let (h, id, _) = with_an_image();
+    let entity = h.session.drawing().entity(id).unwrap().clone();
+    let tables = h.session.drawing().tables();
+    let mut preview = PackedFrame::default();
+    preview.push_entity(StyleRole::Preview, &entity, tables);
+    assert_eq!(preview.image_count(), 1);
+    assert_eq!(preview.image_batches()[0].style, StyleRole::Preview);
+    let mut highlight = PackedFrame::default();
+    highlight.push_entity(StyleRole::Selection, &entity, tables);
+    assert_eq!(highlight.image_count(), 0);
+    assert_eq!(highlight.segment_count(), 8, "outlined, and its frame");
 }

@@ -24,7 +24,7 @@
 //! All buffers are stored exactly as they cross the WASM boundary, so
 //! handing a frame to JavaScript needs no conversion and no allocation.
 
-use cad_core::{Aabb, Point2};
+use cad_core::{Aabb, Point2, Vec2};
 use cad_document::{
     Entity, HatchEntity, HatchStyle, PolylineEntity, Properties, Tables, WipeoutEntity,
 };
@@ -127,6 +127,40 @@ pub struct PackedFrame {
     triangles: Vec<f32>,
     /// `style, first, count` per triangle batch.
     triangle_batch_words: Vec<u32>,
+    /// `x, y, ax, ay, bx, by` per image instance (ADR-0042 §2): its
+    /// lower-left corner, then its bottom and left edges as vectors.
+    images: Vec<f32>,
+    /// `definition, fade` per image instance.
+    image_words: Vec<u32>,
+    /// `style, first, count` per image batch.
+    image_batch_words: Vec<u32>,
+}
+
+/// A picture on the page: what [`GeometrySink::image`] receives.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImageQuad {
+    /// Its lower-left corner.
+    pub corner: Point2,
+    /// Its bottom edge.
+    pub across: Vec2,
+    /// Its left edge.
+    pub up: Vec2,
+    /// The definition it shows, by its raw ID.
+    pub def: u32,
+    /// How faded, 0–100 percent.
+    pub fade: u8,
+}
+
+impl ImageQuad {
+    /// Its corners: lower-left, lower-right, upper-right, upper-left.
+    pub fn corners(&self) -> [Point2; 4] {
+        [
+            self.corner,
+            self.corner + self.across,
+            self.corner + self.across + self.up,
+            self.corner + self.up,
+        ]
+    }
 }
 
 /// Appends one instance to a batch list, extending the last batch when the
@@ -170,6 +204,9 @@ impl PackedFrame {
     /// Per arc in [`Self::arc_distances`]: the distance and the direction.
     pub const FLOATS_PER_ARC_DISTANCE: usize = 2;
     pub const FLOATS_PER_TRIANGLE: usize = 6;
+    pub const FLOATS_PER_IMAGE: usize = 6;
+    /// Per image in [`Self::image_words`]: the definition and the fade.
+    pub const WORDS_PER_IMAGE: usize = 2;
 
     /// Empties the frame and sets a new origin. Buffer capacity is kept, so
     /// rebuilding a frame of similar size does not allocate.
@@ -183,6 +220,9 @@ impl PackedFrame {
         self.arc_distances.clear();
         self.triangles.clear();
         self.triangle_batch_words.clear();
+        self.images.clear();
+        self.image_words.clear();
+        self.image_batch_words.clear();
     }
 
     /// The `f64` world position that segment coordinates are relative to.
@@ -194,9 +234,11 @@ impl PackedFrame {
     }
 
     /// The box, in offsets from the origin, around every instance pushed
-    /// since the counts were `segments`, `arcs`, `triangles`: how far the
-    /// geometry reaches from the origin (#188). `None` when nothing was.
-    pub(crate) fn offsets_since(&self, segments: u32, arcs: u32, triangles: u32) -> Option<Aabb> {
+    /// since the counts were `counts` — segments, arcs, triangles, images:
+    /// how far the geometry reaches from the origin (#188). `None` when
+    /// nothing was.
+    pub(crate) fn offsets_since(&self, counts: [u32; 4]) -> Option<Aabb> {
+        let [segments, arcs, triangles, images] = counts;
         let mut bounds: Option<Aabb> = None;
         let mut take = |x: f32, y: f32| {
             let point = Point2::new(f64::from(x), f64::from(y));
@@ -222,13 +264,22 @@ impl PackedFrame {
             take(*x1, *y1);
             take(*x2, *y2);
         }
+        let (images, _) = self.images[images as usize * Self::FLOATS_PER_IMAGE..]
+            .as_chunks::<{ Self::FLOATS_PER_IMAGE }>();
+        for [x, y, ax, ay, bx, by] in images {
+            take(*x, *y);
+            take(x + ax, y + ay);
+            take(x + ax + bx, y + ay + by);
+            take(x + bx, y + by);
+        }
         bounds
     }
 
-    /// Drops every instance pushed since the counts were `segments`,
-    /// `arcs`, `triangles`, batches included: to pack a chunk again
-    /// against another origin (#188).
-    pub(crate) fn truncate_to(&mut self, segments: u32, arcs: u32, triangles: u32) {
+    /// Drops every instance pushed since the counts were `counts` —
+    /// segments, arcs, triangles, images — batches included: to pack a
+    /// chunk again against another origin (#188).
+    pub(crate) fn truncate_to(&mut self, counts: [u32; 4]) {
+        let [segments, arcs, triangles, images] = counts;
         self.segments
             .truncate(segments as usize * Self::FLOATS_PER_SEGMENT);
         self.segment_distances.truncate(segments as usize);
@@ -240,6 +291,11 @@ impl PackedFrame {
         self.triangles
             .truncate(triangles as usize * Self::FLOATS_PER_TRIANGLE);
         truncate_batches(&mut self.triangle_batch_words, triangles);
+        self.images
+            .truncate(images as usize * Self::FLOATS_PER_IMAGE);
+        self.image_words
+            .truncate(images as usize * Self::WORDS_PER_IMAGE);
+        truncate_batches(&mut self.image_batch_words, images);
     }
 
     pub fn origin(&self) -> Point2 {
@@ -303,6 +359,30 @@ impl PackedFrame {
         decode_batches(&self.triangle_batch_words)
     }
 
+    /// Flat `x, y, ax, ay, bx, by` per image instance.
+    pub fn images(&self) -> &[f32] {
+        &self.images
+    }
+
+    pub fn image_count(&self) -> u32 {
+        (self.images.len() / Self::FLOATS_PER_IMAGE) as u32
+    }
+
+    /// Flat `definition, fade` per image instance.
+    pub fn image_words(&self) -> &[u32] {
+        &self.image_words
+    }
+
+    /// Flat `style, first, count` per image batch.
+    pub fn image_batch_words(&self) -> &[u32] {
+        &self.image_batch_words
+    }
+
+    /// The image batches, decoded.
+    pub fn image_batches(&self) -> Vec<DrawBatch> {
+        decode_batches(&self.image_batch_words)
+    }
+
     /// Per segment instance, the distance along its entity's path at its
     /// start, in drawing units (ADR-0015).
     pub fn segment_distances(&self) -> &[f32] {
@@ -338,6 +418,14 @@ impl PackedFrame {
         &mut self.triangles
     }
 
+    pub(crate) fn images_mut(&mut self) -> &mut Vec<f32> {
+        &mut self.images
+    }
+
+    pub(crate) fn image_words_mut(&mut self) -> &mut Vec<u32> {
+        &mut self.image_words
+    }
+
     /// Replaces every batch with one of `style` over all the instances of
     /// each kind there are.
     pub(crate) fn batch_everything(&mut self, style: StyleRole) {
@@ -351,6 +439,7 @@ impl PackedFrame {
         self.batch_words = one(self.segment_count());
         self.arc_batch_words = one(self.arc_count());
         self.triangle_batch_words = one(self.triangle_count());
+        self.image_batch_words = one(self.image_count());
     }
 
     /// Appends one segment at the start of its path. Consecutive segments
@@ -385,6 +474,23 @@ impl PackedFrame {
             self.triangles.extend([at.x as f32, at.y as f32]);
         }
         extend_batches(&mut self.triangle_batch_words, style, first);
+    }
+
+    /// Appends one picture (ADR-0042 §2). Consecutive images of the same
+    /// style share a batch.
+    pub fn push_image(&mut self, style: StyleRole, image: &ImageQuad) {
+        let first = self.image_count();
+        let at = image.corner - self.origin;
+        self.images.extend([
+            at.x as f32,
+            at.y as f32,
+            image.across.x as f32,
+            image.across.y as f32,
+            image.up.x as f32,
+            image.up.y as f32,
+        ]);
+        self.image_words.extend([image.def, u32::from(image.fade)]);
+        extend_batches(&mut self.image_batch_words, style, first);
     }
 
     /// Appends one arc instance at the start of its path, run
@@ -445,6 +551,14 @@ pub trait GeometrySink {
             self.triangle(triangle);
         }
     }
+    /// A picture (ADR-0042 §2), which a sink that draws no pictures
+    /// outlines.
+    fn image(&mut self, image: &ImageQuad) {
+        let c = image.corners();
+        for i in 0..4 {
+            self.segment(c[i], c[(i + 1) % 4], 0.0);
+        }
+    }
 }
 
 /// A frame receiving one entity's geometry under one style.
@@ -479,6 +593,22 @@ impl GeometrySink for Styled<'_> {
         } else {
             for edge in wipeout.edges() {
                 self.segment(edge.start, edge.end, 0.0);
+            }
+        }
+    }
+
+    /// The committed scene, a preview, and a proposal show the picture; a
+    /// highlight outlines it, as it outlines a mask.
+    fn image(&mut self, image: &ImageQuad) {
+        if matches!(
+            self.style,
+            StyleRole::Entity | StyleRole::Preview | StyleRole::Proposal
+        ) {
+            self.frame.push_image(self.style, image);
+        } else {
+            let c = image.corners();
+            for i in 0..4 {
+                self.segment(c[i], c[(i + 1) % 4], 0.0);
             }
         }
     }
@@ -616,6 +746,23 @@ pub fn walk_entity(entity: &Entity, tables: Tables<'_>, sink: &mut impl Geometry
         Entity::Viewport(viewport) => {
             for edge in viewport.edges() {
                 sink.segment(edge.start, edge.end, 0.0);
+            }
+        }
+        // An image is its picture (ADR-0042), then its frame when shown.
+        Entity::Image(image) => {
+            sink.image(&ImageQuad {
+                corner: image.insertion,
+                across: image.across(),
+                up: image.up(),
+                def: image.def.raw(),
+                fade: image.fade,
+            });
+            if image.frame {
+                let mut distance = 0.0;
+                for edge in image.edges() {
+                    sink.segment(edge.start, edge.end, distance);
+                    distance += edge.length();
+                }
             }
         }
         // A wipeout is its mask, then its frame when the drawing shows

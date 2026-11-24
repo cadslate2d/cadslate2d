@@ -26,6 +26,8 @@ mod hatch;
 mod hatch_pattern;
 mod history;
 mod id_alloc;
+mod image;
+mod image_def;
 mod joining;
 pub mod kept;
 mod layer;
@@ -82,6 +84,11 @@ pub use group::{Group, GroupChange, GroupId, GroupTable};
 pub use hatch::{HatchEntity, HatchError, HatchStyle, MAX_PATTERN_PIECES, swatch};
 pub use hatch_pattern::{
     HatchPattern, PatternSyntax, hatch_pattern, hatch_patterns, parse_patterns,
+};
+pub use image::{ImageEntity, ImageError, MOST_FADE};
+pub use image_def::{
+    ImageDef, ImageDefChange, ImageDefError, ImageDefId, ImageDefTable, ImageFormat, MOST_BYTES,
+    MOST_PIXELS, fingerprint,
 };
 pub use joining::{JoinError, Joined, close_into_circle, join};
 pub use kept::{RawEntity, RawGroup};

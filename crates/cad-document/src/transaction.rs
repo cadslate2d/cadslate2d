@@ -10,6 +10,7 @@ use crate::block::BlockChange;
 use crate::constraint::ConstraintChange;
 use crate::dim_style::DimStyleChange;
 use crate::group::GroupChange;
+use crate::image_def::ImageDefChange;
 use crate::layer::LayerChange;
 use crate::layer_state::LayerStateChange;
 use crate::layout::LayoutChange;
@@ -82,6 +83,8 @@ pub enum Change {
     LayerState(LayerStateChange),
     View(NamedViewChange),
     MLeaderStyle(MLeaderStyleChange),
+    /// An image definition added, removed, or replaced (ADR-0042).
+    ImageDef(ImageDefChange),
     Settings(SettingsChange),
 }
 
@@ -103,6 +106,7 @@ impl Change {
             Change::LayerState(change) => change.is_identity(),
             Change::View(change) => change.is_identity(),
             Change::MLeaderStyle(change) => change.is_identity(),
+            Change::ImageDef(change) => change.is_identity(),
             Change::Settings(change) => change.before == change.after,
         }
     }
@@ -121,6 +125,7 @@ impl Change {
             Change::LayerState(change) => Change::LayerState(change.inverse()),
             Change::View(change) => Change::View(change.inverse()),
             Change::MLeaderStyle(change) => Change::MLeaderStyle(change.inverse()),
+            Change::ImageDef(change) => Change::ImageDef(change.inverse()),
             Change::Settings(change) => Change::Settings(change.inverse()),
         }
     }
@@ -280,6 +285,7 @@ mod tests {
                 Change::LayerState(_) => "layer state",
                 Change::View(_) => "view",
                 Change::MLeaderStyle(_) => "multileader style",
+                Change::ImageDef(_) => "image definition",
                 Change::Settings(_) => "settings",
             })
             .collect();

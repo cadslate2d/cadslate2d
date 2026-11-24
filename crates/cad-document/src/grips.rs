@@ -13,6 +13,7 @@
 //! | Block reference | Insertion | moves the reference |
 //! | Viewport | Vertex at each corner, then Center | a corner resizes the frame about the opposite one; the centre moves it |
 //! | Wipeout | one Vertex per corner | moves that corner |
+//! | Image | Vertex at each corner, then Center | a corner scales the picture about the opposite one, its proportions kept; the centre moves it |
 //! | Multileader | a Vertex per leader point, then the landing | moves that point |
 //!
 //! Arc grips follow the familiar *stretch* behaviour (ADR-0010): an arc is
@@ -166,6 +167,15 @@ impl Entity {
                 .iter()
                 .map(|vertex| grip(GripKind::Vertex, *vertex))
                 .collect(),
+            Entity::Image(image) => {
+                let corners = image.corners();
+                let centre = corners[0] + (corners[2] - corners[0]) * 0.5;
+                corners
+                    .into_iter()
+                    .map(|corner| grip(GripKind::Vertex, corner))
+                    .chain(std::iter::once(grip(GripKind::Center, centre)))
+                    .collect()
+            }
             Entity::Dimension(dimension) => {
                 let measured = dimension.measure.points().len();
                 dimension
@@ -339,6 +349,25 @@ impl Entity {
                     .filter(|moved| moved.vertices.len() == wipeout.vertices.len())
                     .map(Entity::from)
             }
+            Entity::Image(image) => {
+                let corners = image.corners();
+                if index == 4 {
+                    let centre = corners[0] + (corners[2] - corners[0]) * 0.5;
+                    let moved =
+                        image.transformed(&cad_geometry::Transform::translation(to - centre));
+                    return Some(moved.into());
+                }
+                // A corner scales the picture about the opposite corner by
+                // how far along their diagonal it is dragged: the picture
+                // keeps its proportions.
+                let corner = *corners.get(index)?;
+                let opposite = corners[(index + 2) % 4];
+                let diagonal = corner - opposite;
+                let factor = (to - opposite).dot(diagonal) / diagonal.dot(diagonal);
+                let scaled =
+                    image.transformed(&cad_geometry::Transform::scaling(opposite, factor)?);
+                scaled.check().ok().map(|()| scaled.into())
+            }
             Entity::XLine(line) => (index == 0).then(|| XLineEntity { base: to, ..*line }.into()),
             Entity::Ray(ray) => (index == 0).then(|| RayEntity { start: to, ..*ray }.into()),
             Entity::Text(text) => (index == 0).then(|| {
@@ -421,7 +450,7 @@ impl Entity {
             Entity::Circle(_) => index == 0,
             Entity::Arc(_) => index == 3,
             Entity::Ellipse(entity) => index == if entity.ellipse().is_full() { 0 } else { 2 },
-            Entity::Viewport(_) => index == 4,
+            Entity::Viewport(_) | Entity::Image(_) => index == 4,
             Entity::Point(_)
             | Entity::Text(_)
             | Entity::MText(_)

@@ -7,10 +7,12 @@ import {
   FLOATS_PER_SEGMENT,
   FLOATS_PER_TRIANGLE,
   StyleRole,
+  REGION_PAPER_WORD,
   WORDS_PER_REGION,
   dirtyRanges,
   scenePlan,
   type ClipTransform,
+  FLOATS_PER_TRANSFORM,
   type FrameBuffers,
   type SceneViewports,
   type StyleTables,
@@ -25,6 +27,7 @@ import {
   FAR_CURVE_SHADER_FACTOR,
 } from "./arc-shaders";
 import { FILL_FRAGMENT_SHADER, FILL_VERTEX_SHADER } from "./fill-shaders";
+import { ImageLayer, ImageProgram, ImageTextures } from "./image-layer";
 import { InstanceLayer, type InstanceLayout, type StrokeUniforms } from "./instance-layer";
 import { patternTexels } from "./linetypes";
 import { linkProgram } from "./program";
@@ -69,6 +72,8 @@ class FrameLayers {
   readonly fills: InstanceLayer;
   readonly segments: InstanceLayer;
   readonly arcs: InstanceLayer;
+  /** Pictures (ADR-0042), drawn after the fills and before the strokes. */
+  readonly images = new ImageLayer();
   /**
    * The committed scene's regions (#188): the run of each kind drawn under
    * each of its transforms. Absent for the overlay, drawn whole under one.
@@ -112,6 +117,9 @@ class FrameLayers {
       frame.arcDistances,
       ranges(DirtyKind.Arcs),
     );
+    if (frame.images && frame.imageWords) {
+      this.images.upload(frame.images, frame.imageWords, frame.imageStyles);
+    }
     return fills + segments + arcs;
   }
 
@@ -135,7 +143,7 @@ function regionRuns(
   const runs: (readonly [number, number])[] = [];
   for (let offset = 0; offset < regions.length; offset += WORDS_PER_REGION) {
     const at = offset + kind * 2;
-    const isPaper = (regions[offset + 6] ?? 0) === 1;
+    const isPaper = (regions[offset + REGION_PAPER_WORD] ?? 0) === 1;
     runs.push([regions[at] ?? 0, isPaper === paper ? (regions[at + 1] ?? 0) : 0]);
   }
   return runs;
@@ -158,7 +166,15 @@ interface GpuResources {
   readonly styles: WebGLTexture;
   /** The linetype patterns the styles name: three float texels per pattern (ADR-0015). */
   readonly patterns: WebGLTexture;
+  /** Pictures (ADR-0042): their program, and their textures by fingerprint. */
+  readonly images: ImageProgram;
+  readonly textures: ImageTextures;
 }
+
+/** The texture unit pictures are drawn from: after the style and pattern tables. */
+const IMAGE_UNIT = 2;
+/** How opaque a picture being placed or proposed is drawn. */
+const PREVIEW_IMAGE_ALPHA = 0.6;
 
 export class WebGlRenderer implements FrameSink {
   readonly stats: RendererStats = {
@@ -173,6 +189,8 @@ export class WebGlRenderer implements FrameSink {
 
   /** Called after a lost context is restored; the host should request a frame. */
   onContextRestored: (() => void) | undefined;
+  /** Called when a picture's texture is ready to draw; the host should request a frame. */
+  onImageReady: (() => void) | undefined;
 
   readonly #canvas: HTMLCanvasElement;
   readonly #gl: WebGL2RenderingContext;
@@ -194,6 +212,7 @@ export class WebGlRenderer implements FrameSink {
     this.#gl = gl;
     this.#palette = palette;
     this.#resources = createResources(gl);
+    this.#resources.textures.onReady = () => this.onImageReady?.();
 
     canvas.addEventListener("webglcontextlost", this.#onContextLost);
     canvas.addEventListener("webglcontextrestored", this.#onContextRestored);
@@ -222,6 +241,9 @@ export class WebGlRenderer implements FrameSink {
     // The GPU holds the previous scene: the ranges that changed suffice.
     const partial = this.#sceneRevision !== undefined && frame.dirty !== undefined;
     this.stats.bufferReallocations += this.#resources.scene.upload(frame, partial);
+    if (frame.imageSources && frame.imageBytes) {
+      this.#resources.textures.update(frame.imageSources, frame.imageBytes);
+    }
     this.#sceneRevision = revision;
     this.stats.sceneUploads += 1;
     if (partial) this.stats.scenePartialUploads += 1;
@@ -347,7 +369,7 @@ export class WebGlRenderer implements FrameSink {
         // The overlay: its batches under the one transform, in no order
         // but its own.
         gl.disable(gl.DEPTH_TEST);
-        for (const [pipeline, layer] of kinds) {
+        for (const [pipeline, layer, kind] of kinds) {
           this.#usePipeline(pipeline);
           this.stats.drawCalls += layer.draw(
             pipeline.uniforms,
@@ -356,6 +378,15 @@ export class WebGlRenderer implements FrameSink {
             this.#devicePixelRatio,
             include,
           );
+          // A picture being placed or proposed, faint, over the fills.
+          if (kind === DirtyKind.Triangles && include(StyleRole.Preview)) {
+            this.#drawImages(
+              layers.images,
+              transform,
+              [[0, layers.images.count]],
+              PREVIEW_IMAGE_ALPHA,
+            );
+          }
         }
         continue;
       }
@@ -386,6 +417,14 @@ export class WebGlRenderer implements FrameSink {
               stroke,
               this.#devicePixelRatio,
             );
+            if (kind === DirtyKind.Triangles) {
+              this.#drawImages(
+                layers.images,
+                transforms,
+                regionRuns(regions, DirtyKind.Images, false),
+                1,
+              );
+            }
           }
         }
         gl.disable(gl.SCISSOR_TEST);
@@ -403,11 +442,52 @@ export class WebGlRenderer implements FrameSink {
           stroke,
           this.#devicePixelRatio,
         );
+        if (kind === DirtyKind.Triangles) {
+          this.#drawImages(
+            layers.images,
+            transform,
+            regionRuns(regions, DirtyKind.Images, onPaper),
+            1,
+          );
+        }
       }
     }
     gl.depthMask(true);
     gl.disable(gl.DEPTH_TEST);
     this.stats.frames += 1;
+  }
+
+  /**
+   * Draws the pictures of each run `[first, count]` under the transform of
+   * its region (ADR-0042 §2): after the fills, writing depth as they do,
+   * from their own texture unit, which it leaves as it found it.
+   */
+  #drawImages(
+    layer: ImageLayer,
+    transforms: ClipTransform,
+    runs: readonly (readonly [number, number])[],
+    alpha: number,
+  ): void {
+    if (runs.every(([, count]) => count === 0)) return;
+    const gl = this.#gl;
+    const { images, textures } = this.#resources;
+    gl.activeTexture(gl.TEXTURE0 + IMAGE_UNIT);
+    images.begin(gl, IMAGE_UNIT, this.#palette.background);
+    runs.forEach(([first, count], region) => {
+      if (count === 0) return;
+      this.stats.drawCalls += layer.draw(
+        gl,
+        images,
+        textures,
+        transforms,
+        region * FLOATS_PER_TRANSFORM,
+        first,
+        count,
+        alpha,
+      );
+    });
+    gl.bindVertexArray(null);
+    gl.activeTexture(gl.TEXTURE0);
   }
 
   /** Limits drawing to a rectangle given in clip space. */
@@ -435,9 +515,11 @@ export class WebGlRenderer implements FrameSink {
   dispose(): void {
     this.#canvas.removeEventListener("webglcontextlost", this.#onContextLost);
     this.#canvas.removeEventListener("webglcontextrestored", this.#onContextRestored);
-    const { pipelines, quad, scene, overlay, styles, patterns } = this.#resources;
+    const { pipelines, quad, scene, overlay, styles, patterns, images, textures } = this.#resources;
     scene.dispose();
     overlay.dispose();
+    textures.dispose();
+    images.dispose(this.#gl);
     this.#gl.deleteTexture(styles);
     this.#gl.deleteTexture(patterns);
     this.#gl.deleteBuffer(quad);
@@ -473,6 +555,7 @@ export class WebGlRenderer implements FrameSink {
     // Every GPU object died with the context: rebuild, and forget the uploaded
     // revision so the next frame re-uploads from the current scene.
     this.#resources = createResources(this.#gl);
+    this.#resources.textures.onReady = () => this.onImageReady?.();
     this.#sceneRevision = undefined;
     this.#styleRevision = undefined;
     this.onContextRestored?.();
@@ -579,5 +662,7 @@ function createResources(gl: WebGL2RenderingContext): GpuResources {
     overlay: new FrameLayers(gl, pipelines, gl.DYNAMIC_DRAW, false),
     styles,
     patterns,
+    images: new ImageProgram(gl),
+    textures: new ImageTextures(gl),
   };
 }

@@ -12,7 +12,7 @@ use cad_document::{Drawing, Entity, Properties};
 use crate::Selection;
 
 /// The kinds an entity can be, in the order they are listed.
-const KINDS: [(&str, &str); 19] = [
+const KINDS: [(&str, &str); 20] = [
     ("line", "lines"),
     ("circle", "circles"),
     ("arc", "arcs"),
@@ -32,6 +32,7 @@ const KINDS: [(&str, &str); 19] = [
     ("ray", "rays"),
     ("wipeout", "wipeouts"),
     ("multileader", "multileaders"),
+    ("image", "images"),
 ];
 
 /// The kind named by `name` — singular or plural, any case — if any.
@@ -68,6 +69,7 @@ pub(crate) fn kind_index(entity: &Entity) -> usize {
         Entity::Ray(_) => 16,
         Entity::Wipeout(_) => 17,
         Entity::MLeader(_) => 18,
+        Entity::Image(_) => 19,
     }
 }
 
@@ -353,6 +355,29 @@ pub(crate) fn geometry_of(entity: &Entity, drawing: &Drawing) -> Vec<(String, St
                 .to_owned(),
             ),
         ],
+        Entity::Image(image) => {
+            let def = drawing.image_defs().get(image.def);
+            let size = |v: cad_core::Vec2| number(v.length());
+            vec![
+                row(
+                    "Picture",
+                    def.map_or("(missing)", |d| d.name.as_str()).to_owned(),
+                ),
+                row(
+                    "Pixels",
+                    format!("{} × {}", image.pixels[0], image.pixels[1]),
+                ),
+                row("Insertion", point(image.insertion)),
+                row("Width", size(image.across())),
+                row("Height", size(image.up())),
+                row("Rotation", direction(image.u.y.atan2(image.u.x))),
+                row("Fade", format!("{}%", image.fade)),
+                row(
+                    "Frame",
+                    if image.frame { "shown" } else { "hidden" }.to_owned(),
+                ),
+            ]
+        }
         Entity::XLine(line) => vec![
             row("Base point", point(line.base)),
             row("Angle", direction(line.direction.y.atan2(line.direction.x))),

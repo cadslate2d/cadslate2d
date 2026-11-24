@@ -2260,6 +2260,8 @@ impl<'a> Reader<'a> {
                     Entity::Leader(_) => self.report.leaders += 1,
                     Entity::XLine(_) | Entity::Ray(_) => self.report.construction_lines += 1,
                     Entity::Wipeout(_) => self.report.wipeouts += 1,
+                    // Read as IMAGE by #526 (ADR-0042 §4).
+                    Entity::Image(_) => {}
                     Entity::MLeader(_) => self.report.mleaders += 1,
                 }
                 match &mut self.open_block {

@@ -14,6 +14,7 @@ import {
   wasmMemory,
   type FrameBuffers,
   scenePlan,
+  REGION_PAPER_WORD,
   WORDS_PER_REGION,
 } from "./engine";
 import { loadEngineForTests } from "./test-support";
@@ -147,6 +148,7 @@ describe("commands", () => {
         [DirtyKind.Segments, 0, 2],
         [DirtyKind.Arcs, 0, 0],
         [DirtyKind.Triangles, 0, 0],
+        [DirtyKind.Images, 0, 0],
       ].flat(),
     );
     expect(cad.readScene((frame) => Array.from(frame.dirty ?? []))).toEqual([]);
@@ -548,11 +550,11 @@ describe("paper space", () => {
     const regions = cad.readScene((frame) => Array.from(frame.regions ?? []));
     const regionCount = regions.length / WORDS_PER_REGION;
     expect(regionCount).toBe(2);
-    expect(regions[6]).toBe(0);
-    expect(regions[13]).toBe(1);
+    expect(regions[REGION_PAPER_WORD]).toBe(0);
+    expect(regions[WORDS_PER_REGION + REGION_PAPER_WORD]).toBe(1);
     // The model's one polyline: four segments; the paper's: two frames and a line.
     expect(regions.slice(0, 2)).toEqual([0, 4]);
-    expect(regions.slice(7, 9)).toEqual([4, 9]);
+    expect(regions.slice(WORDS_PER_REGION, WORDS_PER_REGION + 2)).toEqual([4, 9]);
     expect(cad.sceneTransform()).toHaveLength(4 * regionCount);
     const viewports = cad.sceneViewports();
     expect(viewports).toHaveLength(1 + 2 * (4 + 4 * regionCount));
@@ -584,7 +586,7 @@ describe("paper space", () => {
     const regionCount = regions.length / WORDS_PER_REGION;
     expect(scenePlan(cad.sceneViewports(), regionCount)).toEqual({ onPaper: true, viewports: [] });
     // The paper's line is in a region flagged paper, which is what is drawn.
-    expect(regions[WORDS_PER_REGION * (regionCount - 1) + 6]).toBe(1);
+    expect(regions[WORDS_PER_REGION * (regionCount - 1) + REGION_PAPER_WORD]).toBe(1);
     // A viewport made and erased: paper again, with none.
     enter(cad, "MVIEW", "20,20", "220,220");
     expect(scenePlan(cad.sceneViewports(), regionCount).viewports).toHaveLength(1);

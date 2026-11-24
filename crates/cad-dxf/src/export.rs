@@ -1453,6 +1453,11 @@ impl Writer {
     }
 
     fn record(&mut self, record: &EntityRecord, owner: Handle, drawing: &Drawing) {
+        // An image is written as IMAGE with its definition by #526
+        // (ADR-0042 §4); until then no command makes one.
+        if let Entity::Image(_) = &*record.entity {
+            return;
+        }
         let layer = drawing
             .layers()
             .get(record.properties.layer)
@@ -1477,6 +1482,7 @@ impl Writer {
             Entity::Ray(_) => "RAY",
             Entity::Wipeout(_) => "WIPEOUT",
             Entity::MLeader(_) => "MULTILEADER",
+            Entity::Image(_) => "IMAGE",
         };
         self.entity(kind, owner, layer, &record.properties, drawing.linetypes());
         match &*record.entity {
@@ -1515,6 +1521,8 @@ impl Writer {
             }
             Entity::Wipeout(wipeout) => self.wipeout(wipeout),
             Entity::MLeader(mleader) => self.mleader(mleader, drawing),
+            // Returned before: see above.
+            Entity::Image(_) => {}
         }
     }
 

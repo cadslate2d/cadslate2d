@@ -870,8 +870,9 @@ impl CadSession {
 
     /// The runs of committed instances drawn under each transform of
     /// `scene_transform` (#188): `segment_first, segment_count, arc_first,
-    /// arc_count, triangle_first, triangle_count` per region, in instances.
-    /// Changes with the scene; read it with the scene buffers. Owned.
+    /// arc_count, triangle_first, triangle_count, image_first,
+    /// image_count, paper` per region, in instances (ADR-0042). Changes
+    /// with the scene; read it with the scene buffers. Owned.
     pub fn scene_regions(&mut self) -> Uint32Array {
         let words: Vec<u32> = self
             .scene()
@@ -885,6 +886,8 @@ impl CadSession {
                     region.count[1],
                     region.first[2],
                     region.count[2],
+                    region.first[3],
+                    region.count[3],
                     u32::from(region.paper),
                 ]
             })
@@ -971,9 +974,66 @@ impl CadSession {
         u32_view(self.scene().triangle_styles())
     }
 
+    /// Committed image instances (ADR-0042 §2): `x, y, ax, ay, bx, by` per
+    /// picture — its lower-left corner relative to the scene origin, then
+    /// its bottom and left edges. A view into WASM memory — consume before
+    /// the next call.
+    pub fn scene_images(&mut self) -> Float32Array {
+        f32_view(self.scene().frame().images())
+    }
+
+    /// `definition, fade` per committed image instance: the picture it
+    /// shows, by the ID `image_sources` lists, and how faded, 0–100. A
+    /// view into WASM memory — consume before the next call.
+    pub fn scene_image_words(&mut self) -> Uint32Array {
+        u32_view(self.scene().frame().image_words())
+    }
+
+    /// One style word per committed image instance: its tier in the high
+    /// half. A view into WASM memory — consume before the next call.
+    pub fn scene_image_styles(&mut self) -> Uint32Array {
+        u32_view(self.scene().image_styles())
+    }
+
+    /// The drawing's pictures (ADR-0042 §2): `definition, digest_low,
+    /// digest_high, width, height, format` per picture — format 0 PNG, 1
+    /// JPEG. The adapter keeps a texture per digest and asks for the bytes
+    /// of a picture it does not have, once. Read it when the scene changes.
+    /// Owned.
+    pub fn image_sources(&self) -> Uint32Array {
+        let words: Vec<u32> = self
+            .session
+            .drawing()
+            .image_defs()
+            .iter()
+            .flat_map(|(id, def)| {
+                [
+                    id.raw(),
+                    def.digest as u32,
+                    (def.digest >> 32) as u32,
+                    def.width,
+                    def.height,
+                    u32::from(def.format == cad_document::ImageFormat::Jpeg),
+                ]
+            })
+            .collect();
+        Uint32Array::from(words.as_slice())
+    }
+
+    /// The encoded bytes of picture `definition`, to decode once and keep
+    /// as a texture; empty when there is none. Owned.
+    pub fn image_bytes(&self, definition: u32) -> Uint8Array {
+        let drawing = self.session.drawing();
+        let id = cad_document::ImageDefId::from_raw(definition);
+        drawing.image_defs().get(id).map_or_else(
+            || Uint8Array::new_with_length(0),
+            |def| Uint8Array::from(&def.bytes[..]),
+        )
+    }
+
     /// Which committed instances changed since this was last called
     /// (ADR-0022): `kind, first, count` per range, kind 0 segments, 1 arcs,
-    /// 2 triangles, in instance units. After a whole rebuild, one range
+    /// 2 triangles, 3 images, in instance units. After a whole rebuild, one range
     /// per kind over everything. Read it before the scene buffers of the
     /// same frame and upload those ranges with `bufferSubData`; or the
     /// whole buffers, when the GPU holds no scene yet. Owned: safe to keep.
@@ -999,6 +1059,28 @@ impl CadSession {
     pub fn overlay_triangle_batches(&mut self) -> Uint32Array {
         self.sync_overlay();
         u32_view(self.overlay.frame().triangle_batch_words())
+    }
+
+    /// Transient image instances (ADR-0042): a picture being placed or
+    /// proposed. The layout of `scene_images`. A view into WASM memory —
+    /// consume before the next call.
+    pub fn overlay_images(&mut self) -> Float32Array {
+        self.sync_overlay();
+        f32_view(self.overlay.frame().images())
+    }
+
+    /// `definition, fade` per transient image instance. A view into WASM
+    /// memory — consume before the next call.
+    pub fn overlay_image_words(&mut self) -> Uint32Array {
+        self.sync_overlay();
+        u32_view(self.overlay.frame().image_words())
+    }
+
+    /// Transient image batches. A view into WASM memory — consume before
+    /// the next call.
+    pub fn overlay_image_batches(&mut self) -> Uint32Array {
+        self.sync_overlay();
+        u32_view(self.overlay.frame().image_batch_words())
     }
 
     /// Clip transform for the overlay frame, a copy.

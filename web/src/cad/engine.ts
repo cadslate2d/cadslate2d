@@ -353,10 +353,31 @@ export interface FrameBuffers {
    * An owned copy.
    */
   readonly regions?: Uint32Array;
+  /**
+   * `x, y, ax, ay, bx, by` per picture (ADR-0042 §2): its lower-left
+   * corner relative to the frame origin, then its bottom and left edges.
+   */
+  readonly images?: Float32Array;
+  /** `definition, fade` per picture: what it shows, and how faded, 0–100. */
+  readonly imageWords?: Uint32Array;
+  /** One style word per committed picture: its tier in the high half. */
+  readonly imageStyles?: Uint32Array;
+  /** `style, first, count` per overlay picture batch. */
+  readonly imageBatches?: Uint32Array;
+  /**
+   * The drawing's pictures: `definition, digest_low, digest_high, width,
+   * height, format` per picture. Only the committed scene has them. An
+   * owned copy.
+   */
+  readonly imageSources?: Uint32Array;
+  /** The encoded bytes of a picture, to decode once. An owned copy. */
+  readonly imageBytes?: (definition: number) => Uint8Array;
 }
 
-/** Words per scene region: first and count for segments, arcs, and triangles, then the paper flag. */
-export const WORDS_PER_REGION = 7;
+/** Words per scene region: first and count for segments, arcs, triangles, and images, then the paper flag. */
+export const WORDS_PER_REGION = 9;
+/** Where in a region the paper flag is: after the first and count of each kind. */
+export const REGION_PAPER_WORD = 8;
 
 /**
  * The viewports of the layout shown (#193): empty on the model; on a layout
@@ -424,6 +445,8 @@ export const DirtyKind = {
   Segments: 0,
   Arcs: 1,
   Triangles: 2,
+  /** Pictures (ADR-0042). */
+  Images: 3,
 } as const;
 export type DirtyKind = (typeof DirtyKind)[keyof typeof DirtyKind];
 
@@ -788,6 +811,11 @@ export class CadEngine {
       triangleStyles: this.#session.scene_triangle_styles(),
       segmentDistances: this.#session.scene_segment_distances(),
       arcDistances: this.#session.scene_arc_distances(),
+      images: this.#session.scene_images(),
+      imageWords: this.#session.scene_image_words(),
+      imageStyles: this.#session.scene_image_styles(),
+      imageSources: this.#session.image_sources(),
+      imageBytes: (definition) => this.#session.image_bytes(definition),
     });
   }
 
@@ -810,6 +838,9 @@ export class CadEngine {
       arcBatches: this.#session.overlay_arc_batches(),
       triangles: this.#session.overlay_triangles(),
       triangleBatches: this.#session.overlay_triangle_batches(),
+      images: this.#session.overlay_images(),
+      imageWords: this.#session.overlay_image_words(),
+      imageBatches: this.#session.overlay_image_batches(),
     });
   }
 

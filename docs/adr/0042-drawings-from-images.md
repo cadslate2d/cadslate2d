@@ -171,6 +171,10 @@ If the model reads written sizes reliably but places poorly, §7 stands, with th
 - **Placement is rough.** Run back over its image, a drawing lands from nearly on its plan to a tenth of the image's width away, by an `underlay` (`at`, `width`, `rotation`: 7–11% on the sketches) or by two marks (9–11%, and 5% on the PDF bracket). Hence the amended §7 and §8.
 - **Cost and time.** About $0.003 a request at the meter's prices, none of it served from the provider's cache, against $0.0004–0.0008 for a request in words. A median 17–19 s.
 
+## As built
+
+- **#524.** The image entity carries its picture's size in pixels, as DXF's `IMAGE` does (group 13), beside its corner and pixel vectors: its geometry needs no table, so bounds, picking, snapping, and transforms read it alone, and a transaction refuses an image whose size is not its definition's (`ImageSizeMismatch`). A definition is checked against its own bytes — a PNG of opaque 8-bit grey or colour, not interlaced, or a JPEG of one or three components, at most 8,192 pixels each way and 16 MB — and named by a 64-bit FNV-1a fingerprint, no security measure. Objects brought in from another drawing bring their pictures by fingerprint: the same picture is the drawing's own, another under a taken name comes in as `name (2)`. An image's grips are its corners and centre: a corner scales the picture about the opposite one, its proportions kept. STRETCH holds an image by its insertion point. On screen, pictures are a layer of their own in the adapter, drawn one quad per picture with its corner and edges as uniforms rather than as an instanced run: pictures are few, and each has its own texture. PURGE of a definition no image shows comes with the `IMAGE` command's Detach (#525).
+
 ## Alternatives considered
 
 - **The image in the AI panel only.** Simplest, and no engine change. Not chosen: the maintainer asked for the image in the drawing, and an underlay is how a drafter checks a traced drawing against its original.

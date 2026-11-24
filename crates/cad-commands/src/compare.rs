@@ -102,6 +102,7 @@ fn by_name(drawing: &Drawing, mut entity: Entity) -> String {
             TableRef::DimStyle(id) => named(drawing.dim_styles(), id, |r| &r.name),
             TableRef::MLeaderStyle(id) => named(drawing.mleader_styles(), id, |r| &r.name),
             TableRef::Block(id) => named(drawing.blocks(), id, |r| &r.name),
+            TableRef::Image(id) => named(drawing.image_defs(), id, |r| &r.name),
         })
         .collect();
     format!("{entity:?} {rows:?}")

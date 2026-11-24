@@ -36,6 +36,10 @@ describe("WASM API surface", () => {
       "export_losses",
       "history_next",
       "history_previous",
+      // ADR-0042: a picture's bytes, once per picture, to decode into a texture; and the list of
+      // the drawing's pictures by fingerprint, read with the scene.
+      "image_bytes",
+      "image_sources",
       // #222: a file INSERT asked for, read whole and handed over in one call.
       "insert_dxf",
       "invoke",
@@ -51,6 +55,10 @@ describe("WASM API surface", () => {
       "overlay_arc_batches",
       "overlay_arcs",
       "overlay_batches",
+      // ADR-0042: a picture being placed or proposed, its batches and words, one buffer each.
+      "overlay_image_batches",
+      "overlay_image_words",
+      "overlay_images",
       "overlay_segments",
       "overlay_transform",
       // ADR-0021: the fill of a hatch being previewed or highlighted, as triangles, one buffer each.
@@ -82,6 +90,10 @@ describe("WASM API surface", () => {
       "scene_batches",
       // ADR-0022: which instances changed since the last frame, as one buffer of ranges.
       "scene_dirty_ranges",
+      // ADR-0042: the committed pictures, their definition and fade, and one style word each.
+      "scene_image_styles",
+      "scene_image_words",
+      "scene_images",
       // ADR-0015: the linetype patterns the style table names, as one buffer.
       "scene_patterns",
       // #188: the runs of instances drawn under each region's transform, with the scene.

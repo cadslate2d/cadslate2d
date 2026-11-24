@@ -274,6 +274,7 @@ impl Entity {
             | Entity::Hatch(_)
             | Entity::Viewport(_)
             | Entity::Wipeout(_)
+            | Entity::Image(_)
             | Entity::Point(_)
             | Entity::Leader(_)
             | Entity::MLeader(_)
@@ -374,6 +375,8 @@ impl Entity {
             Entity::Leader(leader) => held(&leader.vertices),
             Entity::MLeader(mleader) => held(&mleader.points()),
             Entity::Wipeout(wipeout) => held(&wipeout.vertices),
+            // An image by its insertion point: it moves whole, or not at all.
+            Entity::Image(image) => held(&[image.insertion]),
         }
     }
 
@@ -495,6 +498,8 @@ impl Entity {
                 }
                 .into(),
             ),
+            // Held by one point, an image is never held in part.
+            Entity::Image(_) => Some(self.clone()),
             Entity::Wipeout(wipeout) => WipeoutEntity::new(
                 wipeout
                     .vertices
@@ -637,6 +642,7 @@ impl Entity {
             | Entity::Hatch(_)
             | Entity::Viewport(_)
             | Entity::Wipeout(_)
+            | Entity::Image(_)
             | Entity::Point(_)
             | Entity::Leader(_)
             | Entity::MLeader(_) => Err(BreakError::Unsupported(self.kind_name())),
@@ -704,6 +710,7 @@ impl Entity {
             | Entity::Hatch(_)
             | Entity::Viewport(_)
             | Entity::Wipeout(_)
+            | Entity::Image(_)
             | Entity::Point(_)
             | Entity::Leader(_)
             | Entity::MLeader(_) => Err(TrimError::Unsupported(self.kind_name())),
@@ -809,6 +816,7 @@ impl Entity {
             | Entity::Hatch(_)
             | Entity::Viewport(_)
             | Entity::Wipeout(_)
+            | Entity::Image(_)
             | Entity::Point(_)
             | Entity::Leader(_)
             | Entity::MLeader(_)
@@ -883,6 +891,7 @@ impl Entity {
             | Entity::Hatch(_)
             | Entity::Viewport(_)
             | Entity::Wipeout(_)
+            | Entity::Image(_)
             | Entity::Point(_)
             | Entity::Leader(_)
             | Entity::MLeader(_)
@@ -954,6 +963,7 @@ impl Entity {
             | Entity::Hatch(_)
             | Entity::Viewport(_)
             | Entity::Wipeout(_)
+            | Entity::Image(_)
             | Entity::Point(_)
             | Entity::Leader(_)
             | Entity::MLeader(_)
@@ -1073,6 +1083,7 @@ impl Entity {
             Entity::XLine(_) => "construction line",
             Entity::Ray(_) => "ray",
             Entity::Wipeout(_) => "wipeout",
+            Entity::Image(_) => "image",
         }
     }
 
@@ -1161,6 +1172,7 @@ impl Entity {
             | Entity::Hatch(_)
             | Entity::Viewport(_)
             | Entity::Wipeout(_)
+            | Entity::Image(_)
             | Entity::Point(_)
             | Entity::Leader(_)
             | Entity::MLeader(_) => Err(OffsetError::Unsupported(self.kind_name())),
@@ -1193,6 +1205,7 @@ impl Entity {
             | Entity::Hatch(_)
             | Entity::Viewport(_)
             | Entity::Wipeout(_)
+            | Entity::Image(_)
             | Entity::Point(_)
             | Entity::Leader(_)
             | Entity::MLeader(_) => {

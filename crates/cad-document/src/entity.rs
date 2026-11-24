@@ -476,6 +476,8 @@ pub enum Entity {
     /// Leaders from several places to one note, laid out by a multileader
     /// style (#240; ADR-0033).
     MLeader(MLeaderEntity),
+    /// A picture placed under the drawing (ADR-0042).
+    Image(crate::ImageEntity),
 }
 
 /// A row of a table an entity refers to: whether it is there, and whether
@@ -486,6 +488,8 @@ pub enum TableRow {
     DimStyle(crate::DimStyleId),
     MLeaderStyle(crate::MLeaderStyleId),
     Block(BlockId),
+    /// An image's picture (ADR-0042).
+    Image(crate::ImageDefId),
 }
 
 /// A row of a table an entity refers to, by its ID, to be replaced:
@@ -497,6 +501,7 @@ pub enum TableRef<'a> {
     DimStyle(&'a mut crate::DimStyleId),
     MLeaderStyle(&'a mut crate::MLeaderStyleId),
     Block(&'a mut BlockId),
+    Image(&'a mut crate::ImageDefId),
 }
 
 impl Entity {
@@ -522,6 +527,7 @@ impl Entity {
                 rows
             }
             Entity::BlockRef(reference) => vec![TableRow::Block(reference.block)],
+            Entity::Image(image) => vec![TableRow::Image(image.def)],
             Entity::Line(_)
             | Entity::Circle(_)
             | Entity::Arc(_)
@@ -561,6 +567,7 @@ impl Entity {
                 refs
             }
             Entity::BlockRef(reference) => vec![TableRef::Block(&mut reference.block)],
+            Entity::Image(image) => vec![TableRef::Image(&mut image.def)],
             Entity::Line(_)
             | Entity::Circle(_)
             | Entity::Arc(_)
@@ -612,6 +619,7 @@ impl Entity {
             Entity::XLine(line) => line.segment().bounds(),
             Entity::Ray(ray) => ray.segment().bounds(),
             Entity::Wipeout(wipeout) => wipeout.bounds(),
+            Entity::Image(image) => image.bounds(),
             Entity::MLeader(mleader) => mleader
                 .layout(tables.mleader_style(mleader.style), tables)
                 .bounds(),
@@ -634,6 +642,8 @@ impl Entity {
         match self {
             Entity::Hatch(hatch) => matches!(hatch.style, crate::HatchStyle::Solid),
             Entity::Wipeout(_) => true,
+            // A picture lies beneath strokes as a wipeout does (ADR-0042 §2).
+            Entity::Image(_) => true,
             Entity::Polyline(polyline) => polyline.width() > 0.0,
             _ => false,
         }
@@ -680,6 +690,7 @@ impl Entity {
             Entity::Ray(ray) => ray.distance_to(point),
             // A wipeout by its frame, as a closed polyline is.
             Entity::Wipeout(wipeout) => wipeout.distance_to(point),
+            Entity::Image(image) => image.distance_to(point),
             // By its lines, arrowheads, and note, as a leader is.
             Entity::MLeader(mleader) => mleader
                 .layout(tables.mleader_style(mleader.style), tables)
@@ -733,6 +744,7 @@ impl Entity {
             Entity::Ray(ray) => vec![Primitive::Segment(ray.segment())],
             // A wipeout's frame is a polygon: it snaps and cuts as one.
             Entity::Wipeout(wipeout) => wipeout.primitives(),
+            Entity::Image(image) => image.primitives(),
             Entity::BlockRef(reference) => tables
                 .blocks
                 .flatten(reference, crate::Properties::default())
@@ -822,7 +834,8 @@ impl Entity {
             | Entity::Ellipse(_)
             | Entity::Spline(_)
             | Entity::Polyline(_)
-            | Entity::Wipeout(_) => self.primitives(tables),
+            | Entity::Wipeout(_)
+            | Entity::Image(_) => self.primitives(tables),
             Entity::Text(text) => frame_edges(&text.frame()),
             Entity::MText(text) => frame_edges(&text.frame()),
             Entity::AttributeDefinition(definition) => frame_edges(&definition.as_text().frame()),
@@ -918,6 +931,7 @@ impl Entity {
                 .is_some_and(|text| text.frame().contains(point)),
             Entity::XLine(_) | Entity::Ray(_) => false,
             Entity::Wipeout(wipeout) => wipeout.contains(point),
+            Entity::Image(image) => image.contains(point),
             Entity::MLeader(mleader) => mleader
                 .layout(tables.mleader_style(mleader.style), tables)
                 .note_contains(point),
@@ -1009,6 +1023,7 @@ impl Entity {
             Entity::Point(point) => point.transformed(transform).into(),
             Entity::Leader(leader) => leader.transformed(transform).into(),
             Entity::Wipeout(wipeout) => wipeout.transformed(transform).into(),
+            Entity::Image(image) => image.transformed(transform).into(),
             Entity::MLeader(mleader) => mleader.transformed(transform).into(),
             Entity::XLine(line) => line.transformed(transform).into(),
             Entity::Ray(ray) => ray.transformed(transform).into(),
@@ -1100,6 +1115,12 @@ impl Entity {
 impl From<MLeaderEntity> for Entity {
     fn from(mleader: MLeaderEntity) -> Self {
         Entity::MLeader(mleader)
+    }
+}
+
+impl From<crate::ImageEntity> for Entity {
+    fn from(image: crate::ImageEntity) -> Self {
+        Entity::Image(image)
     }
 }
 
@@ -1359,6 +1380,17 @@ mod tests {
                 BlockReferenceEntity::new(BlockId::from_raw(9), p(0.0, 0.0), 1.0, 0.0).into(),
                 vec![TableRow::Block(BlockId::from_raw(9))],
             ),
+            (
+                crate::ImageEntity::placed(
+                    crate::ImageDefId::from_raw(10),
+                    p(0.0, 0.0),
+                    100.0,
+                    [64, 48],
+                )
+                .unwrap()
+                .into(),
+                vec![TableRow::Image(crate::ImageDefId::from_raw(10))],
+            ),
         ];
         let rewritten = |mut entity: Entity| -> Vec<TableRow> {
             entity
@@ -1369,6 +1401,7 @@ mod tests {
                     TableRef::DimStyle(id) => TableRow::DimStyle(*id),
                     TableRef::MLeaderStyle(id) => TableRow::MLeaderStyle(*id),
                     TableRef::Block(id) => TableRow::Block(*id),
+                    TableRef::Image(id) => TableRow::Image(*id),
                 })
                 .collect()
         };
@@ -1417,6 +1450,7 @@ mod tests {
             Entity::XLine(line) => vec![line.base, line.base + line.direction * 10.0],
             Entity::Ray(ray) => vec![ray.start, ray.start + ray.direction * 10.0],
             Entity::Wipeout(wipeout) => wipeout.vertices.clone(),
+            Entity::Image(image) => image.corners().to_vec(),
             Entity::MLeader(mleader) => mleader.points(),
         }
     }

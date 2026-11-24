@@ -64,6 +64,8 @@ export class CanvasController {
     this.#app = app;
     this.#renderer = new WebGlRenderer(canvas, documentPalette());
     this.#renderer.onContextRestored = () => app.loop.invalidate(Dirty.Scene);
+    // A picture decoded (ADR-0042): draw it.
+    this.#renderer.onImageReady = () => app.loop.invalidate(Dirty.Scene);
     publishDebugHandle({
       renderer: this.#renderer.stats,
       pointerRests: () => app.rests,

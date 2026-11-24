@@ -19,6 +19,7 @@ use crate::dimension::DimensionError;
 use crate::group::{Group, GroupId, GroupTable, initial_groups};
 use crate::history::History;
 use crate::id_alloc::EntityIdAllocator;
+use crate::image_def::{ImageDef, ImageDefError, ImageDefId, ImageDefTable, initial_image_defs};
 use crate::layer::{Layer, LayerId, LayerTable, initial_layers};
 use crate::layer_state::{
     LayerState, LayerStateId, LayerStateTable, SavedLayer, initial_layer_states,
@@ -95,6 +96,8 @@ pub struct Drawing {
     views: NamedViewTable,
     /// Multileader styles (#240).
     mleader_styles: MLeaderStyleTable,
+    /// The pictures images show (ADR-0042).
+    image_defs: ImageDefTable,
     /// Why transactions were not applied since the session last asked
     /// (ADR-0038): the edits the constraints refused.
     refusals: Vec<String>,
@@ -148,6 +151,7 @@ impl Clone for Drawing {
             layer_states: self.layer_states.clone(),
             views: self.views.clone(),
             mleader_styles: self.mleader_styles.clone(),
+            image_defs: self.image_defs.clone(),
             refusals: self.refusals.clone(),
             commits: self.commits,
         }
@@ -221,6 +225,20 @@ pub enum TransactionError {
     DuplicateViewName(NamedViewId),
     /// A view must show something: a finite centre and a positive size.
     BadView,
+    /// The image definition does not exist, in the drawing or after this
+    /// transaction (ADR-0042).
+    UnknownImageDef(ImageDefId),
+    /// The bytes are not a picture a definition holds, or its row is not
+    /// what its bytes are.
+    BadImageDef(ImageDefError),
+    /// This image definition already has the name, give or take its case.
+    DuplicateImageDefName(ImageDefId),
+    /// Images show this definition.
+    ImageDefInUse(ImageDefId),
+    /// An image covers nothing, or is faded more than allowed.
+    BadImage(crate::ImageError),
+    /// An image's pixel size is not its definition's.
+    ImageSizeMismatch(ImageDefId),
     /// The name cannot be a layer state's name.
     BadLayerStateName(NameError),
     /// This layer state already has the name, give or take its case.
@@ -376,6 +394,16 @@ impl fmt::Display for TransactionError {
             Self::BadViewName(error) => write!(f, "bad view name: {error:?}"),
             Self::DuplicateViewName(id) => write!(f, "view {id} already has that name"),
             Self::BadView => write!(f, "a view must show something"),
+            Self::UnknownImageDef(id) => write!(f, "image definition {id} does not exist"),
+            Self::BadImageDef(error) => write!(f, "{}", error.explain()),
+            Self::DuplicateImageDefName(id) => {
+                write!(f, "image definition {id} already has that name")
+            }
+            Self::ImageDefInUse(id) => write!(f, "image definition {id} is shown by images"),
+            Self::BadImage(error) => write!(f, "{error}"),
+            Self::ImageSizeMismatch(id) => {
+                write!(f, "an image's size in pixels is not its definition {id}'s")
+            }
             Self::BadLayerStateName(error) => write!(f, "bad layer state name: {error:?}"),
             Self::DuplicateLayerStateName(id) => {
                 write!(f, "layer state {id} already has that name")
@@ -545,6 +573,7 @@ fn largest_radius(entity: &Entity, tables: Tables<'_>) -> Option<f64> {
         | Entity::MText(_)
         | Entity::Viewport(_)
         | Entity::Wipeout(_)
+        | Entity::Image(_)
         | Entity::Leader(_)
         | Entity::XLine(_)
         | Entity::Ray(_) => None,
@@ -656,6 +685,7 @@ impl Drawing {
             layer_states: initial_layer_states(),
             views: initial_named_views(),
             mleader_styles: initial_mleader_styles(),
+            image_defs: initial_image_defs(),
             refusals: Vec::new(),
             commits: 0,
         }
@@ -972,7 +1002,20 @@ impl Drawing {
                 TableRow::Block(id) if !drawing.blocks.contains(id) => {
                     return Err(TransactionError::UnknownBlock(id));
                 }
+                TableRow::Image(id) if !drawing.image_defs.contains(id) => {
+                    return Err(TransactionError::UnknownImageDef(id));
+                }
                 _ => {}
+            }
+        }
+        if let Entity::Image(image) = entity {
+            image.check().map_err(TransactionError::BadImage)?;
+            let def = drawing
+                .image_defs
+                .get(image.def)
+                .ok_or(TransactionError::UnknownImageDef(image.def))?;
+            if image.pixels != [def.width, def.height] {
+                return Err(TransactionError::ImageSizeMismatch(image.def));
             }
         }
         match entity {
@@ -1220,6 +1263,26 @@ impl Drawing {
     /// The drawing's named views (#235), in the order they were saved.
     pub fn views(&self) -> &NamedViewTable {
         &self.views
+    }
+
+    /// The pictures the drawing's images show (ADR-0042).
+    pub fn image_defs(&self) -> &ImageDefTable {
+        &self.image_defs
+    }
+
+    /// Adds an image definition without history: the import path. A
+    /// refused one leaves the drawing as it was.
+    pub fn import_image_def(&mut self, def: ImageDef) -> Result<ImageDefId, TransactionError> {
+        let mut tx = self.transaction();
+        let id = tx.add_image_def(def)?;
+        let changes = std::mem::take(&mut tx.changes);
+        drop(tx);
+        for change in &changes {
+            if let Change::ImageDef(change) = change {
+                self.image_defs.apply(change);
+            }
+        }
+        Ok(id)
     }
 
     /// Adds a named view without history: the import path. A refused one
@@ -1725,6 +1788,10 @@ impl Drawing {
                 | Change::LayerState(_)
                 // Nor does a named view (#235).
                 | Change::View(_) => false,
+                // Another picture changes every image of it (ADR-0042); a
+                // definition added or removed shows nothing itself.
+                Change::ImageDef(TableChange::Replace { .. }) => true,
+                Change::ImageDef(_) => false,
                 // A multileader style changed, every multileader drawn by
                 // it (#240).
                 Change::MLeaderStyle(TableChange::Replace { .. }) => true,
@@ -1809,6 +1876,17 @@ impl Drawing {
                 Change::View(change) => {
                     self.views.apply(change);
                     report.tables_changed = true;
+                }
+                Change::ImageDef(change) => {
+                    self.image_defs.apply(change);
+                    report.tables_changed = true;
+                    // Another picture: every image of it is drawn afresh.
+                    // Its geometry is its own, so its index entry stays.
+                    if let TableChange::Replace { id, .. } = change {
+                        report
+                            .replaced
+                            .extend(self.dependents_of(TableRow::Image(*id)));
+                    }
                 }
                 Change::MLeaderStyle(change) => {
                     self.mleader_styles.apply(change);
@@ -2395,6 +2473,58 @@ impl TransactionBuilder<'_> {
     pub fn remove_view(&mut self, id: NamedViewId) -> Result<(), TransactionError> {
         let row = self.existing_view(id)?;
         self.push_other(Change::View(TableChange::Remove { id, row }));
+        Ok(())
+    }
+
+    /// Adds an image definition (ADR-0042): the picture it is, under a
+    /// name not taken.
+    pub fn add_image_def(&mut self, def: ImageDef) -> Result<ImageDefId, TransactionError> {
+        self.check_image_def(&def, None)?;
+        let id = self.drawing.image_defs.allocate();
+        self.push_other(Change::ImageDef(TableChange::Insert { id, row: def }));
+        Ok(id)
+    }
+
+    /// Replaces an image definition: renamed, or another picture of the
+    /// same size — one of another size changes its images' size, which is
+    /// the caller's to replace in the same transaction.
+    pub fn replace_image_def(
+        &mut self,
+        id: ImageDefId,
+        def: ImageDef,
+    ) -> Result<(), TransactionError> {
+        let before = self.existing_image_def(id)?;
+        self.check_image_def(&def, Some(id))?;
+        self.push_other(Change::ImageDef(TableChange::Replace {
+            id,
+            before,
+            after: def,
+        }));
+        Ok(())
+    }
+
+    /// Removes an image definition no image shows.
+    pub fn remove_image_def(&mut self, id: ImageDefId) -> Result<(), TransactionError> {
+        let row = self.existing_image_def(id)?;
+        let uses = |entity: &Entity| entity.refers_to(TableRow::Image(id));
+        let pending = self.changes.iter().any(|change| match change {
+            Change::Entity(EntityChange::Insert { record, .. }) => uses(&record.entity),
+            Change::Entity(EntityChange::Replace { after, .. }) => uses(&after.entity),
+            _ => false,
+        });
+        let removed = |entity_id: EntityId| {
+            self.changes.iter().any(|change| {
+                matches!(change, Change::Entity(EntityChange::Remove { id, .. }) if *id == entity_id)
+            })
+        };
+        let kept = self
+            .drawing
+            .entities()
+            .any(|(entity_id, entity)| uses(entity) && !removed(entity_id));
+        if pending || kept || self.blocks_use(|record| uses(&record.entity)) {
+            return Err(TransactionError::ImageDefInUse(id));
+        }
+        self.push_other(Change::ImageDef(TableChange::Remove { id, row }));
         Ok(())
     }
 
@@ -3250,6 +3380,7 @@ impl TransactionBuilder<'_> {
             | Change::LayerState(_)
             | Change::View(_)
             | Change::MLeaderStyle(_)
+            | Change::ImageDef(_)
             | Change::Settings(_) => false,
         });
         if pending
@@ -4085,6 +4216,45 @@ impl TransactionBuilder<'_> {
         }
     }
 
+    fn existing_image_def(&self, id: ImageDefId) -> Result<ImageDef, TransactionError> {
+        let changed = self
+            .others()
+            .any(|change| matches!(change, Change::ImageDef(change) if change.id() == id));
+        if changed {
+            return Err(TransactionError::UnknownImageDef(id));
+        }
+        self.drawing
+            .image_defs
+            .get(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownImageDef(id))
+    }
+
+    /// Refuses a definition that is not what its bytes are, and a name not
+    /// allowed or another definition's.
+    fn check_image_def(
+        &self,
+        def: &ImageDef,
+        except: Option<ImageDefId>,
+    ) -> Result<(), TransactionError> {
+        def.check().map_err(TransactionError::BadImageDef)?;
+        let added = self.others().filter_map(|change| match change {
+            Change::ImageDef(TableChange::Insert { id, row }) => Some((*id, row)),
+            Change::ImageDef(TableChange::Replace { id, after, .. }) => Some((*id, after)),
+            _ => None,
+        });
+        let taken = self
+            .drawing
+            .image_defs
+            .iter()
+            .chain(added)
+            .find(|(id, other)| Some(*id) != except && same_name(&other.name, &def.name));
+        match taken {
+            Some((id, _)) => Err(TransactionError::DuplicateImageDefName(id)),
+            None => Ok(()),
+        }
+    }
+
     fn existing_view(&self, id: NamedViewId) -> Result<NamedView, TransactionError> {
         let changed = self
             .others()
@@ -4254,6 +4424,20 @@ impl TransactionBuilder<'_> {
     }
 
     /// The text style `id` as it will be once this transaction commits.
+    /// An image definition as this transaction leaves it.
+    fn image_def_now(&self, id: ImageDefId) -> Option<&ImageDef> {
+        let change = self.others().find_map(|change| match change {
+            Change::ImageDef(change) if change.id() == id => Some(change),
+            _ => None,
+        });
+        match change {
+            Some(TableChange::Remove { .. }) => None,
+            Some(TableChange::Insert { row, .. }) => Some(row),
+            Some(TableChange::Replace { after, .. }) => Some(after),
+            None => self.drawing.image_defs.get(id),
+        }
+    }
+
     fn text_style_now(&self, id: TextStyleId) -> Option<&TextStyle> {
         let change = self.others().find_map(|change| match change {
             Change::TextStyle(change) if change.id() == id => Some(change),
@@ -4278,6 +4462,16 @@ impl TransactionBuilder<'_> {
             }
             // Points a multileader can be drawn from (#240).
             Entity::MLeader(mleader) => mleader.check().map_err(TransactionError::BadMLeader)?,
+            // An image of its definition's size (ADR-0042).
+            Entity::Image(image) => {
+                image.check().map_err(TransactionError::BadImage)?;
+                let def = self
+                    .image_def_now(image.def)
+                    .ok_or(TransactionError::UnknownImageDef(image.def))?;
+                if image.pixels != [def.width, def.height] {
+                    return Err(TransactionError::ImageSizeMismatch(image.def));
+                }
+            }
             _ => {}
         }
         for row in entity.table_refs() {
@@ -7820,6 +8014,89 @@ mod tests {
         );
     }
 
+    /// ADR-0042: a picture is a definition the drawing holds once, by a
+    /// name of its own; an image shows one, at its size, and covers an
+    /// area; a definition goes only when nothing shows it.
+    #[test]
+    fn image_definitions_are_checked_and_images_need_theirs() {
+        use crate::image_def::tests::png;
+        use crate::{ImageDef, ImageEntity};
+        let mut drawing = Drawing::new();
+        let def = ImageDef::new("plan", png(64, 48, 2)).unwrap();
+        let mut tx = drawing.transaction();
+        let id = tx.add_image_def(def.clone()).unwrap();
+        // The same name, in another case, is taken.
+        let mut again = def.clone();
+        again.name = "PLAN".into();
+        assert_eq!(
+            tx.add_image_def(again),
+            Err(TransactionError::DuplicateImageDefName(id))
+        );
+        // A row that is not what its bytes are.
+        let mut lying = def.clone();
+        lying.name = "other".into();
+        lying.width = 65;
+        assert!(matches!(
+            tx.add_image_def(lying),
+            Err(TransactionError::BadImageDef(_))
+        ));
+        // An image of it, at its size.
+        let image = ImageEntity::placed(id, Point2::ORIGIN, 64.0, [64, 48]).unwrap();
+        let shown = tx.insert(Entity::Image(image.clone())).unwrap();
+        // One of another size, or of a picture not there, or covering
+        // nothing, is refused.
+        let wrong = ImageEntity {
+            pixels: [32, 24],
+            ..image.clone()
+        };
+        assert_eq!(
+            tx.insert(Entity::Image(wrong)),
+            Err(TransactionError::ImageSizeMismatch(id))
+        );
+        let missing = ImageEntity {
+            def: ImageDefId::from_raw(99),
+            ..image.clone()
+        };
+        assert_eq!(
+            tx.insert(Entity::Image(missing)),
+            Err(TransactionError::UnknownImageDef(ImageDefId::from_raw(99)))
+        );
+        let flat = ImageEntity {
+            v: image.u,
+            ..image.clone()
+        };
+        assert_eq!(
+            tx.insert(Entity::Image(flat)),
+            Err(TransactionError::BadImage(crate::ImageError::NoArea))
+        );
+        tx.commit();
+        assert_eq!(drawing.image_defs().len(), 1);
+        // Shown, it stays; removed with its image, it goes, and comes back
+        // with it on undo.
+        let mut tx = drawing.transaction();
+        assert_eq!(
+            tx.remove_image_def(id),
+            Err(TransactionError::ImageDefInUse(id))
+        );
+        tx.commit();
+        let mut tx = drawing.transaction();
+        tx.remove(shown).unwrap();
+        tx.remove_image_def(id).unwrap();
+        tx.commit();
+        assert!(!drawing.image_defs().contains(id));
+        drawing.undo();
+        assert!(drawing.image_defs().contains(id));
+        assert!(drawing.entity(shown).is_some());
+        // Renamed, the image still shows it.
+        let mut tx = drawing.transaction();
+        let mut renamed = def;
+        renamed.name = "site".into();
+        tx.replace_image_def(id, renamed).unwrap();
+        tx.commit();
+        assert_eq!(drawing.image_defs().get(id).unwrap().name, "site");
+        assert_eq!(drawing.image_defs().find("plan"), None);
+    }
+
     #[test]
     fn named_views_are_checked_and_go_with_their_layout() {
         let mut drawing = Drawing::new();
@@ -8260,6 +8537,12 @@ mod tests {
         CreateMLeader(f64, usize),
         DeleteLayer(usize),
         DeleteView(usize),
+        /// A picture defined and an image of it placed; a definition
+        /// renamed, or removed — refused while an image shows it
+        /// (ADR-0042).
+        AddImage(u8, u16),
+        RenameImageDef(usize, u8),
+        RemoveImageDef(usize),
         Undo,
         Redo,
     }
@@ -8368,6 +8651,9 @@ mod tests {
             1 => any::<usize>().prop_map(Op::DeleteState),
             1 => (0..4u8, any::<usize>(), -1.0..50.0f64).prop_map(|(n, space, size)| Op::SaveView(n, space, size)),
             1 => any::<usize>().prop_map(Op::DeleteView),
+            1 => (0..4u8, 1..300u16).prop_map(|(n, width)| Op::AddImage(n, width)),
+            1 => (any::<usize>(), 0..4u8).prop_map(|(i, n)| Op::RenameImageDef(i, n)),
+            1 => any::<usize>().prop_map(Op::RemoveImageDef),
             1 => (any::<usize>(), any::<usize>()).prop_map(|(from, into)| Op::MergeLayer(from, into)),
             1 => any::<usize>().prop_map(Op::DeleteLayer),
             1 => (0..4u8).prop_map(Op::AddMLeaderStyle),
@@ -8404,7 +8690,11 @@ mod tests {
         Vec<(LayoutId, Layout)>,
         // The rows that relate entities: groups and constraints (a tuple
         // of more than twelve has no `Debug`).
-        (Vec<(GroupId, Group)>, Vec<(ConstraintId, Constraint)>),
+        (
+            Vec<(GroupId, Group)>,
+            Vec<(ConstraintId, Constraint)>,
+            Vec<(ImageDefId, ImageDef)>,
+        ),
         Vec<(LayerStateId, LayerState)>,
         Vec<(NamedViewId, NamedView)>,
         Vec<(MLeaderStyleId, MLeaderStyle)>,
@@ -8474,6 +8764,11 @@ mod tests {
                     .constraints()
                     .iter()
                     .map(|(id, constraint)| (id, constraint.clone()))
+                    .collect(),
+                drawing
+                    .image_defs()
+                    .iter()
+                    .map(|(id, def)| (id, def.clone()))
                     .collect(),
             ),
             drawing
@@ -8965,6 +9260,55 @@ mod tests {
                         tx.commit();
                     }
                     Op::DeleteView(_) => {}
+                    Op::AddImage(n, width) => {
+                        let name = format!("img{n}");
+                        let height = u32::from(width) / 2 + 1;
+                        let bytes = crate::image_def::tests::png(u32::from(width), height, 2);
+                        let def = ImageDef::new(name.clone(), bytes).unwrap();
+                        let taken = drawing.image_defs().find(&name).is_some();
+                        let mut tx = drawing.transaction();
+                        match tx.add_image_def(def) {
+                            Ok(id) => {
+                                prop_assert!(!taken);
+                                let image = crate::ImageEntity::placed(
+                                    id,
+                                    Point2::new(f64::from(n), 0.0),
+                                    f64::from(width),
+                                    [u32::from(width), height],
+                                )
+                                .unwrap();
+                                tx.insert(Entity::Image(image)).unwrap();
+                            }
+                            Err(error) => {
+                                prop_assert!(taken);
+                                prop_assert!(matches!(error, TransactionError::DuplicateImageDefName(_)));
+                            }
+                        }
+                        tx.commit();
+                    }
+                    Op::RenameImageDef(pick, n) if !drawing.image_defs().is_empty() => {
+                        let defs: Vec<ImageDefId> = drawing.image_defs().iter().map(|(id, _)| id).collect();
+                        let id = defs[pick % defs.len()];
+                        let mut def = drawing.image_defs().get(id).unwrap().clone();
+                        def.name = format!("img{n}");
+                        let taken = drawing.image_defs().iter().any(|(other, row)| other != id && same_name(&row.name, &def.name));
+                        let mut tx = drawing.transaction();
+                        prop_assert_eq!(tx.replace_image_def(id, def).is_err(), taken);
+                        tx.commit();
+                    }
+                    Op::RenameImageDef(..) => {}
+                    Op::RemoveImageDef(pick) if !drawing.image_defs().is_empty() => {
+                        let defs: Vec<ImageDefId> = drawing.image_defs().iter().map(|(id, _)| id).collect();
+                        let id = defs[pick % defs.len()];
+                        let shown = drawing.entities().any(|(_, e)| e.refers_to(TableRow::Image(id)))
+                            || drawing.blocks().iter().any(|(_, block)| block.entities.iter().any(|r| r.entity.refers_to(TableRow::Image(id))));
+                        let mut tx = drawing.transaction();
+                        let removed = tx.remove_image_def(id);
+                        prop_assert_eq!(removed.is_err(), shown);
+                        tx.commit();
+                        prop_assert_eq!(drawing.image_defs().contains(id), shown);
+                    }
+                    Op::RemoveImageDef(_) => {}
                     Op::WipeoutFrame(shown) => {
                         let mut tx = drawing.transaction();
                         tx.set_wipeout_frame(shown);
@@ -9346,6 +9690,16 @@ mod tests {
                     }
                 }
                 prop_assert!(drawing.mleader_styles().contains(drawing.settings().current_mleader_style));
+                // Every image shows a picture the drawing has, of its size
+                // (ADR-0042).
+                for (id, entity) in drawing.entities() {
+                    if let Entity::Image(image) = entity {
+                        let def = drawing.image_defs().get(image.def);
+                        prop_assert!(def.is_some(), "image {} shows a picture that is gone", id);
+                        let def = def.unwrap();
+                        prop_assert_eq!(image.pixels, [def.width, def.height]);
+                    }
+                }
                 // Every named view is of a space the drawing has (#235).
                 for (id, view) in drawing.views().iter() {
                     prop_assert!(drawing.layouts().contains(view.space), "view {} is of a space that is gone", id);

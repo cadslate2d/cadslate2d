@@ -25,6 +25,7 @@ struct Rows {
     dim_styles: HashMap<DimStyleId, DimStyleId>,
     mleader_styles: HashMap<MLeaderStyleId, MLeaderStyleId>,
     blocks: HashMap<BlockId, BlockId>,
+    images: HashMap<crate::ImageDefId, crate::ImageDefId>,
 }
 
 impl TransactionBuilder<'_> {
@@ -72,6 +73,7 @@ impl TransactionBuilder<'_> {
                 TableRef::DimStyle(id) => *id = self.bring_dim_style(source, *id, rows)?,
                 TableRef::MLeaderStyle(id) => *id = self.bring_mleader_style(source, *id, rows)?,
                 TableRef::Block(id) => *id = self.bring_block(source, *id, rows)?,
+                TableRef::Image(id) => *id = self.bring_image_def(source, *id, rows)?,
             }
         }
         Ok(entity)
@@ -131,6 +133,50 @@ impl TransactionBuilder<'_> {
         };
         rows.linetypes.insert(id, mine);
         Ok(Linetype::Named(mine))
+    }
+
+    /// An image's picture as this drawing's (ADR-0042): the same picture,
+    /// found by its fingerprint, if the drawing has it; else added, under a
+    /// name of its own — never another picture that has the name.
+    fn bring_image_def(
+        &mut self,
+        source: &Drawing,
+        id: crate::ImageDefId,
+        rows: &mut Rows,
+    ) -> Result<crate::ImageDefId, TransactionError> {
+        if let Some(mine) = rows.images.get(&id) {
+            return Ok(*mine);
+        }
+        let mut row = source
+            .image_defs()
+            .get(id)
+            .cloned()
+            .ok_or(TransactionError::UnknownImageDef(id))?;
+        let same = self
+            .drawing
+            .image_defs
+            .iter()
+            .find(|(_, mine)| mine.digest == row.digest && mine.bytes == row.bytes)
+            .map(|(mine, _)| mine);
+        let mine = match same {
+            Some(mine) => mine,
+            None => {
+                let name = row.name.clone();
+                let mut n = 1;
+                loop {
+                    match self.add_image_def(row.clone()) {
+                        Ok(mine) => break mine,
+                        Err(TransactionError::DuplicateImageDefName(_)) => {
+                            n += 1;
+                            row.name = format!("{name} ({n})");
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+            }
+        };
+        rows.images.insert(id, mine);
+        Ok(mine)
     }
 
     fn bring_text_style(
@@ -323,6 +369,60 @@ mod tests {
             .records()
             .map(|(_, record)| record.clone())
             .collect()
+    }
+
+    /// ADR-0042: an image comes in with its picture, found by its
+    /// fingerprint where the drawing has it already, else added under a
+    /// name of its own — never another picture that has the name.
+    #[test]
+    fn an_image_brings_its_picture_and_never_takes_another_of_its_name() {
+        use crate::image_def::tests::png;
+        use crate::{ImageDef, ImageEntity};
+        let picture = |name: &str, width: u32| ImageDef::new(name, png(width, 10, 2)).unwrap();
+        let with_image = |def: ImageDef| {
+            let mut drawing = Drawing::new();
+            let mut tx = drawing.transaction();
+            let id = tx.add_image_def(def.clone()).unwrap();
+            let image =
+                ImageEntity::placed(id, Point2::ORIGIN, 10.0, [def.width, def.height]).unwrap();
+            tx.insert(Entity::Image(image)).unwrap();
+            tx.commit();
+            drawing
+        };
+        let source = with_image(picture("plan", 20));
+        // The target has the same picture, under another name: it is used.
+        let mut same = with_image(picture("mine", 20));
+        let mut tx = same.transaction();
+        let brought = tx.bring_in(&source, &records(&source)).unwrap();
+        drop(tx);
+        let Entity::Image(image) = &*brought[0].entity else {
+            panic!()
+        };
+        assert_eq!(same.image_defs().get(image.def).unwrap().name, "mine");
+        // The target has another picture called `plan`: the one brought in
+        // comes under a name of its own.
+        let mut other = with_image(picture("plan", 30));
+        let mut tx = other.transaction();
+        let brought = tx.bring_in(&source, &records(&source)).unwrap();
+        for record in &brought {
+            tx.insert_with((*record.entity).clone(), record.properties)
+                .unwrap();
+        }
+        tx.commit();
+        let names: Vec<String> = other
+            .image_defs()
+            .iter()
+            .map(|(_, d)| d.name.clone())
+            .collect();
+        assert_eq!(names, ["plan", "plan (2)"]);
+        let widths: Vec<u32> = other
+            .entities()
+            .filter_map(|(_, e)| match e {
+                Entity::Image(i) => Some(i.pixels[0]),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(widths, [30, 20]);
     }
 
     #[test]

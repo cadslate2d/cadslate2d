@@ -37,6 +37,8 @@ pub enum InstanceKind {
     Segments = 0,
     Arcs = 1,
     Triangles = 2,
+    /// Pictures (ADR-0042 §2).
+    Images = 3,
 }
 
 /// A run of instances of one kind that changed since the last take.
@@ -53,6 +55,14 @@ struct ChunkCounts {
     segments: u32,
     arcs: u32,
     triangles: u32,
+    images: u32,
+}
+
+impl ChunkCounts {
+    /// The counts in the order of [`InstanceKind`].
+    fn array(self) -> [u32; 4] {
+        [self.segments, self.arcs, self.triangles, self.images]
+    }
 }
 
 /// One chunk as packed: its counts, and the origin its instances are
@@ -106,9 +116,9 @@ pub fn viewport_view(paper: &View, viewport: &ViewportEntity) -> View {
 pub struct SceneRegion {
     pub origin: Point2,
     /// The first instance of each kind, in the order of [`InstanceKind`].
-    pub first: [u32; 3],
+    pub first: [u32; 4],
     /// How many instances of each kind.
-    pub count: [u32; 3],
+    pub count: [u32; 4],
     /// The layout's own entities, drawn under the paper's view, as
     /// against the model's, drawn through each viewport (#193).
     pub paper: bool,
@@ -135,6 +145,8 @@ pub struct RenderScene {
     arc_styles: Vec<u32>,
     /// The style word of each triangle instance, in instance order.
     triangle_styles: Vec<u32>,
+    /// The style word of each image instance, in instance order.
+    image_styles: Vec<u32>,
     /// What each style index stands for; appended to, never reordered, so
     /// an index stays what it was across repacks.
     properties: Vec<Look>,
@@ -208,6 +220,7 @@ impl RenderScene {
             segment_styles: Vec::new(),
             arc_styles: Vec::new(),
             triangle_styles: Vec::new(),
+            image_styles: Vec::new(),
             properties: Vec::new(),
             style_indices: HashMap::new(),
             style_revision: drawing.revision(),
@@ -226,13 +239,9 @@ impl RenderScene {
     /// no chunks is one empty region at the frame's origin.
     pub fn regions(&self) -> Vec<SceneRegion> {
         let mut regions: Vec<SceneRegion> = Vec::new();
-        let mut first = [0u32; 3];
+        let mut first = [0u32; 4];
         for chunk in &self.chunks {
-            let count = [
-                chunk.counts.segments,
-                chunk.counts.arcs,
-                chunk.counts.triangles,
-            ];
+            let count = chunk.counts.array();
             match regions.last_mut() {
                 Some(region) if region.origin == chunk.origin && region.paper == chunk.paper => {
                     for (total, added) in region.count.iter_mut().zip(count) {
@@ -253,8 +262,8 @@ impl RenderScene {
         if regions.is_empty() {
             regions.push(SceneRegion {
                 origin: self.frame.origin(),
-                first: [0; 3],
-                count: [0; 3],
+                first: [0; 4],
+                count: [0; 4],
                 paper: false,
             });
         }
@@ -281,9 +290,7 @@ impl RenderScene {
         self.frame.set_origin(first);
         self.pack_chunk_into_frame(drawing, chunk);
         let mut origin = first;
-        let offsets = self
-            .frame
-            .offsets_since(before.segments, before.arcs, before.triangles);
+        let offsets = self.frame.offsets_since(before.array());
         if let Some(offsets) = offsets {
             let extents = Aabb::from_points(
                 first + (offsets.min() - Point2::ORIGIN),
@@ -295,11 +302,11 @@ impl RenderScene {
                     .copied()
                     .find(|candidate| Self::within_reach(*candidate, &extents))
                     .unwrap_or_else(|| extents.center());
-                self.frame
-                    .truncate_to(before.segments, before.arcs, before.triangles);
+                self.frame.truncate_to(before.array());
                 self.segment_styles.truncate(before.segments as usize);
                 self.arc_styles.truncate(before.arcs as usize);
                 self.triangle_styles.truncate(before.triangles as usize);
+                self.image_styles.truncate(before.images as usize);
                 self.frame.set_origin(origin);
                 self.pack_chunk_into_frame(drawing, chunk);
             }
@@ -310,6 +317,7 @@ impl RenderScene {
                 segments: after.segments - before.segments,
                 arcs: after.arcs - before.arcs,
                 triangles: after.triangles - before.triangles,
+                images: after.images - before.images,
             },
             origin,
             paper: chunk >= self.model_chunks,
@@ -362,6 +370,12 @@ impl RenderScene {
         &self.triangle_styles
     }
 
+    /// One style word per image instance (ADR-0042 §2): its tier, which
+    /// the adapter draws as depth; a picture takes no colour of the row.
+    pub fn image_styles(&self) -> &[u32] {
+        &self.image_styles
+    }
+
     /// Identifies the style table: the drawing revision it was resolved at.
     /// TypeScript re-uploads the table only when this value changes.
     pub fn style_revision(&self) -> Revision {
@@ -410,6 +424,7 @@ impl RenderScene {
                 whole(InstanceKind::Segments, self.frame.segment_count()),
                 whole(InstanceKind::Arcs, self.frame.arc_count()),
                 whole(InstanceKind::Triangles, self.frame.triangle_count()),
+                whole(InstanceKind::Images, self.frame.image_count()),
             ]
         } else {
             self.dirty.clone()
@@ -432,6 +447,7 @@ impl RenderScene {
         self.segment_styles.clear();
         self.arc_styles.clear();
         self.triangle_styles.clear();
+        self.image_styles.clear();
         self.properties.clear();
         self.style_indices.clear();
         self.chunks.clear();
@@ -506,6 +522,7 @@ impl RenderScene {
                     segments: sum.segments + chunk.counts.segments,
                     arcs: sum.arcs + chunk.counts.arcs,
                     triangles: sum.triangles + chunk.counts.triangles,
+                    images: sum.images + chunk.counts.images,
                 });
             let splice = |into: &mut Vec<f32>, from: &[f32], per: usize, at: u32, old: u32| {
                 let start = at as usize * per;
@@ -571,6 +588,25 @@ impl RenderScene {
                 offset.triangles,
                 old.triangles,
             );
+            splice(
+                self.frame.images_mut(),
+                scratch.frame.images(),
+                PackedFrame::FLOATS_PER_IMAGE,
+                offset.images,
+                old.images,
+            );
+            let words = PackedFrame::WORDS_PER_IMAGE;
+            let start = offset.images as usize * words;
+            self.frame.image_words_mut().splice(
+                start..start + old.images as usize * words,
+                scratch.frame.image_words().iter().copied(),
+            );
+            splice_styles(
+                &mut self.image_styles,
+                &scratch.image_styles,
+                offset.images,
+                old.images,
+            );
             self.chunks[chunk] = Chunk {
                 counts: new,
                 origin,
@@ -607,6 +643,13 @@ impl RenderScene {
                 new.triangles,
                 totals.triangles,
             );
+            note(
+                InstanceKind::Images,
+                offset.images,
+                old.images,
+                new.images,
+                totals.images,
+            );
         }
         self.frame.batch_everything(StyleRole::Entity);
     }
@@ -623,6 +666,7 @@ impl RenderScene {
             segment_styles: Vec::new(),
             arc_styles: Vec::new(),
             triangle_styles: Vec::new(),
+            image_styles: Vec::new(),
             properties: std::mem::take(&mut self.properties),
             style_indices: std::mem::take(&mut self.style_indices),
             style_revision: self.style_revision,
@@ -639,6 +683,7 @@ impl RenderScene {
             segments: self.frame.segment_count(),
             arcs: self.frame.arc_count(),
             triangles: self.frame.triangle_count(),
+            images: self.frame.image_count(),
         }
     }
 
@@ -725,6 +770,10 @@ impl RenderScene {
         self.triangle_styles.extend(std::iter::repeat_n(
             fill,
             added(before.triangles, after.triangles),
+        ));
+        self.image_styles.extend(std::iter::repeat_n(
+            style,
+            added(before.images, after.images),
         ));
     }
 
@@ -1353,11 +1402,11 @@ mod tests {
         let scene = cache.scene(&drawing);
         let regions = scene.regions();
         assert_eq!(regions.len(), 2, "{regions:?}");
-        assert_eq!(regions[0].first, [0, 0, 0]);
+        assert_eq!(regions[0].first, [0, 0, 0, 0]);
         let near_count = CHUNK_IDS as u32 - 1;
-        assert_eq!(regions[0].count, [near_count, 0, 0]);
-        assert_eq!(regions[1].first, [near_count, 0, 0]);
-        assert_eq!(regions[1].count, [2, 0, 0]);
+        assert_eq!(regions[0].count, [near_count, 0, 0, 0]);
+        assert_eq!(regions[1].first, [near_count, 0, 0, 0]);
+        assert_eq!(regions[1].count, [2, 0, 0, 0]);
         // The far chunk's origin is its own extents' centre, read off the
         // offsets packed from the near origin — a unit or so out at 10⁷,
         // which does not matter: what matters is how far the geometry is
@@ -1396,11 +1445,11 @@ mod tests {
         let drawing = Drawing::from_entities(many);
         let regions = SceneCache::new().scene(&drawing).regions();
         assert_eq!(regions.len(), 1);
-        assert_eq!(regions[0].count, [CHUNK_IDS as u32 * 3, 0, 0]);
+        assert_eq!(regions[0].count, [CHUNK_IDS as u32 * 3, 0, 0, 0]);
         // A scene with nothing in it is one empty region.
         let regions = SceneCache::new().scene(&Drawing::new()).regions();
         assert_eq!(regions.len(), 1);
-        assert_eq!(regions[0].count, [0, 0, 0]);
+        assert_eq!(regions[0].count, [0, 0, 0, 0]);
     }
 
     /// #188: an edit keeps a chunk's origin while its geometry stays within
@@ -1514,12 +1563,12 @@ mod tests {
         let regions = cache.scene_in(&drawing, sheet).regions();
         assert_eq!(
             regions[0].count,
-            [1, 0, 0],
+            [1, 0, 0, 0],
             "the paper's line, now the model's"
         );
         assert_eq!(
             regions[1].count,
-            [5, 0, 0],
+            [5, 0, 0, 0],
             "the frame, and the model's line"
         );
     }
@@ -1560,7 +1609,7 @@ mod tests {
         let regions = model.regions();
         assert_eq!(regions.len(), 1);
         assert!(!regions[0].paper);
-        assert_eq!(regions[0].count, [1, 0, 0], "the model's line alone");
+        assert_eq!(regions[0].count, [1, 0, 0, 0], "the model's line alone");
 
         let paper = cache.scene_in(&drawing, sheet);
         assert_eq!(paper.space(), sheet);
@@ -1569,15 +1618,19 @@ mod tests {
         assert_eq!(cache.build_count(), 2, "a change of space rebuilds");
         assert_eq!(regions.len(), 2, "{regions:?}");
         assert!(!regions[0].paper && regions[1].paper);
-        assert_eq!(regions[0].count, [1, 0, 0], "the model's line");
+        assert_eq!(regions[0].count, [1, 0, 0, 0], "the model's line");
         assert_eq!(
             regions[1].count,
-            [5, 0, 0],
+            [5, 0, 0, 0],
             "the viewport's frame and the line"
         );
-        assert_eq!(regions[1].first, [1, 0, 0]);
+        assert_eq!(regions[1].first, [1, 0, 0, 0]);
         let ranges = cache.take_dirty();
-        assert_eq!(ranges.len(), 3, "everything, after a rebuild");
+        assert_eq!(
+            ranges.len(),
+            4,
+            "everything, after a rebuild: a range per kind"
+        );
 
         // A line drawn on the paper re-packs the paper's chunk; the model's
         // instances stay where they were.
@@ -1592,7 +1645,7 @@ mod tests {
         let regions = paper.regions();
         let segments = paper.frame().segments().to_vec();
         assert_eq!(cache.partial_build_count(), 1);
-        assert_eq!(regions[1].count, [6, 0, 0]);
+        assert_eq!(regions[1].count, [6, 0, 0, 0]);
         assert_eq!(&segments[..4], &before[..4], "the model's line, untouched");
         let ranges = cache.take_dirty();
         assert_eq!(ranges.len(), 1);
