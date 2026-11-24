@@ -1,12 +1,12 @@
 # ADR-0042: An image is an underlay in the drawing, and a request may carry one
 
-**Status:** Proposed (2026-11-24). Asked for on 2026-11-24 ("Plan #366"). The maintainer chose:
+**Status:** Accepted (2026-11-24, by the maintainer: "Accept, proceed"), after its spike. Asked for on 2026-11-24 ("Plan #366"). The maintainer chose:
 - photos, scans, and PDF pages as inputs;
 - the image kept in the drawing as an underlay;
 - the image never stored by the service;
 - reading an image on the service's paid plan (the service's repository).
 
-The spike (§9, #523) ran the same day: the model reads written sizes and asks where none is written, and places the image only roughly. §7 and §8 are amended to that, as §9 foresaw. Not to be built on until the maintainer accepts it. The service's half is cadslate2d/cadslate2d-ai-service#33.
+The spike (§9, #523) ran the same day: the model reads written sizes and asks where none is written, and places the image only roughly. §7 and §8 are amended to that, as §9 foresaw. The service's half is cadslate2d/cadslate2d-ai-service#33.
 
 **Date:** 2026-11-24  
 **Issue:** #523 · **Epic:** #366, milestone M27  

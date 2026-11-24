@@ -31,7 +31,7 @@ All twelve are passed through `host.py` first: at most 2,048 pixels on the long 
 
 ## How it was asked
 
-The tool is `service/examples/image_spike.rs` on the AI service's branch `spike-images`: round 1 at 0598736, round 2 at 0770713. Each request is asked as follows:
+The tool is `service/examples/image_spike.rs` in the AI service's repository, kept by the tag `spike-0042`: round 1 at 0598736, round 2 at 0770713. Each request is asked as follows:
 - **Instructions:** the service's, chosen for the request (`instructions_for`), plus a paragraph on images. Take sizes from what is written, never the pixels. Ask where nothing is written. Draw to the overall size where chains disagree, and say so.
 - **The message:** the request's own words, then the image's pixel size, then the image, at the provider's high detail.
 - **The reply schema:** the service's, plus the placement:
