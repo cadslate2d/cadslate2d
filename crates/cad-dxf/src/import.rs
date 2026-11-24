@@ -216,7 +216,7 @@ pub fn import_records(
         // its code page lacks — a DWG before R2007 writes them, as AutoCAD
         // does — read as the character, as the file's text is (#428).
         for (_, value) in &mut record.groups {
-            if let std::borrow::Cow::Owned(decoded) = unescaped(value, |c| !c.is_control()) {
+            if let std::borrow::Cow::Owned(decoded) = unescaped(value, read_as_character) {
                 *value = decoded;
             }
         }
@@ -285,19 +285,30 @@ pub fn import_with_limits(bytes: &[u8], limits: &ImportLimits) -> Result<Import,
 /// The file's text. A file of 2007 or later is UTF-8; an earlier one is in
 /// its code page — Windows-1252 in practice — with every other character
 /// written `\U+XXXX` (#358). Bytes that are not UTF-8 are read as
-/// Windows-1252, and each escape as the character it stands for. An escape
-/// for a control character is left as it is, so no line is split.
+/// Windows-1252, and each escape as the character it stands for, as
+/// [`read_as_character`] says.
 fn decoded(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
     let text = match std::str::from_utf8(bytes) {
         Ok(text) => std::borrow::Cow::Borrowed(text),
         Err(_) => std::borrow::Cow::Owned(bytes.iter().map(|&b| windows_1252(b)).collect()),
     };
     match text {
-        std::borrow::Cow::Borrowed(text) => unescaped(text, |c| !c.is_control()),
+        std::borrow::Cow::Borrowed(text) => unescaped(text, read_as_character),
         std::borrow::Cow::Owned(text) => {
-            std::borrow::Cow::Owned(unescaped(&text, |c| !c.is_control()).into_owned())
+            std::borrow::Cow::Owned(unescaped(&text, read_as_character).into_owned())
         }
     }
+}
+
+/// Whether a `\U+XXXX` escape of `c` is read as `c`: all but an ASCII
+/// control character, which is left as written so no line is split — the
+/// writer never escapes one, writing a space (#430). A C1 control, 0x80
+/// to 0x9F, splits no line: the writer escapes it, as it does every
+/// character outside ASCII, and a byte of the code page reads as one, so
+/// it is read as itself, or a file would save again with its escape
+/// escaped.
+pub(crate) fn read_as_character(c: char) -> bool {
+    !c.is_ascii_control()
 }
 
 /// `text` with each `\U+XXXX` escape of a character `decode` takes written
@@ -2422,7 +2433,17 @@ impl<'a> Reader<'a> {
             {
                 continue;
             }
-            let block_record_handle = after(330).unwrap_or_default().to_uppercase();
+            let mut block_record_handle = after(330).unwrap_or_default().to_uppercase();
+            // A block record is one layout's. A LAYOUT naming the one an
+            // earlier LAYOUT named — in a file pieced together from others
+            // — has none, and is written with a paper block of its own
+            // rather than a second block of the same name.
+            if kept
+                .iter()
+                .any(|(_, layout, _)| layout.block_record_handle == block_record_handle)
+            {
+                block_record_handle.clear();
+            }
             let block_name = self
                 .block_record_names
                 .get(&block_record_handle)
@@ -5597,8 +5618,20 @@ mod tests {
     fn code_page_bytes_and_unicode_escapes_read_as_their_characters() {
         assert_eq!(decoded(b"caf\xe9 \x96 2 m\xb2"), "café – 2 m²");
         assert_eq!(decoded(b"A\\U+2014B \\U+2192"), "A—B →");
-        // Not an escape, or one for a control character: left as written.
+        // Not an escape, or one for an ASCII control character: left as
+        // written, so no line is split.
         assert_eq!(decoded(b"\\U+12 \\U+000A"), "\\U+12 \\U+000A");
+        assert_eq!(
+            decoded(b"\\U+0000 \\U+000D \\U+007F"),
+            "\\U+0000 \\U+000D \\U+007F"
+        );
+        // A C1 control splits no line, and is what the writer escapes and
+        // a byte of the code page reads as: the character.
+        assert_eq!(
+            decoded(b"\\U+0080\\U+0081 \\U+008D\\U+009F"),
+            "\u{80}\u{81} \u{8D}\u{9F}"
+        );
+        assert_eq!(decoded(b"a\x81b \\U+0081"), "a\u{81}b \u{81}");
         assert_eq!(decoded("plain ²".as_bytes()), "plain ²");
         // A backslash written as an escape is read once, not again with
         // the words after it (#394).

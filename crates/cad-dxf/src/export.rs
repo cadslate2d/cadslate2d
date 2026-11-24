@@ -1329,7 +1329,13 @@ impl Writer {
                 }
                 for (entity, handle) in layout.kept_entities.iter().zip(&sheet.kept) {
                     w.group(0, &entity.kind);
-                    w.kept_groups(&entity.groups, *handle, sheet.record, &structure.remap);
+                    w.kept_groups(
+                        &entity.groups,
+                        *handle,
+                        sheet.record,
+                        None,
+                        &structure.remap,
+                    );
                 }
             });
             self.paper = false;
@@ -2350,7 +2356,13 @@ impl Writer {
             } else {
                 self.group(0, "LAYOUT");
                 let groups = layout_groups_as_now(&layout.kept, layout);
-                self.kept_groups(&groups, sheet.layout, structure.layouts, &structure.remap);
+                self.kept_groups(
+                    &groups,
+                    sheet.layout,
+                    structure.layouts,
+                    Some(sheet.record),
+                    &structure.remap,
+                );
             }
         }
 
@@ -2589,30 +2601,42 @@ impl Writer {
     /// A kept record's groups (#184), as the file held them, with its own
     /// handle (5) and owner (the first 330) made those of this file and
     /// every other handle it names mapped to the record it names here —
-    /// or to nothing, when that was not kept.
+    /// or to nothing, when that was not kept. A LAYOUT's block record —
+    /// the first 330 of its `AcDbLayout` subclass, where the reader finds
+    /// it — is `block_record`, the one written for its sheet, whatever the
+    /// file's named: two layouts a file gave one record have one each.
     fn kept_groups(
         &mut self,
         groups: &[(i32, String)],
         own: Handle,
         owner: Handle,
+        block_record: Option<Handle>,
         remap: &HashMap<String, Handle>,
     ) {
+        let block_record = block_record.and_then(|record| {
+            let start = groups
+                .iter()
+                .position(|(code, value)| *code == 100 && value.trim() == "AcDbLayout")?;
+            let at = groups[start..].iter().position(|(code, _)| *code == 330)?;
+            Some((start + at, record))
+        });
         let mut owner_written = false;
-        for (code, value) in groups {
-            match *code {
-                5 => self.handle(5, own),
-                330 if !owner_written => {
+        for (index, (code, value)) in groups.iter().enumerate() {
+            match (*code, block_record) {
+                (330, Some((at, record))) if at == index => self.handle(330, record),
+                (5, _) => self.handle(5, own),
+                (330, _) if !owner_written => {
                     owner_written = true;
                     self.handle(330, owner);
                 }
-                code if is_handle_reference(code) => {
+                (code, _) if is_handle_reference(code) => {
                     let old = value.trim().to_uppercase();
                     match self.viewport_links.get(&old).or_else(|| remap.get(&old)) {
                         Some(handle) => self.handle(code, *handle),
                         None => self.group(code, "0"),
                     }
                 }
-                code => self.group(code, value),
+                (code, _) => self.group(code, value),
             }
         }
     }
@@ -3882,7 +3906,10 @@ mod tests {
         // Read back, each is the text it was escaped from.
         let original = "Größe ⌀ 𝄞 \\U+0041";
         assert_eq!(
-            crate::import::unescaped(&unicode(&escaped(original)), |c| !c.is_control()),
+            crate::import::unescaped(
+                &unicode(&escaped(original)),
+                crate::import::read_as_character
+            ),
             original
         );
     }

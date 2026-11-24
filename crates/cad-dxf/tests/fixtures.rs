@@ -229,6 +229,37 @@ fn text_keeps_the_spaces_at_its_ends() {
     assert_eq!(contents, vec!["  two  spaces  ", "Bold and italic"]);
 }
 
+/// A fuzzer finding: a C1 control in a paragraph — a byte 0x81 of a
+/// Windows-1252 file, or an escape for one — was written as `\U+0081`
+/// and read back as those seven characters, whose `\U` the MTEXT codes
+/// then dropped, so the file saved again said `+0081`. Read as the
+/// character, it saves again as it was.
+#[test]
+fn a_c1_control_in_a_paragraph_is_read_and_saved_as_itself() {
+    let first = load("valid", "mtext-c1-controls.dxf").unwrap();
+    let contents = |drawing: &Drawing| -> Vec<String> {
+        paragraphs(drawing)
+            .into_iter()
+            .map(|text| text.content)
+            .collect()
+    };
+    let expected = ["Byte a\u{81}b, café", "Escape c\u{8D}d \u{9F}"];
+    assert_eq!(contents(&first.drawing), expected);
+    let written = export(&first.drawing);
+    assert!(
+        written.contains("\nByte a\\U+0081b, caf\\U+00E9\n"),
+        "{written}"
+    );
+    assert!(
+        written.contains("\nEscape c\\U+008Dd \\U+009F\n"),
+        "{written}"
+    );
+    let again = import(written.as_bytes()).unwrap();
+    assert_eq!(contents(&again.drawing), expected);
+    assert_eq!(again.report.formatting_dropped, 0);
+    assert_eq!(export(&again.drawing), written);
+}
+
 /// A fuzzer finding (#177): a pattern line placed at y = 1e20, so far from
 /// the region against its spacing that the pattern's lines could not be
 /// told apart, and the walk over them never ended. The hatch is reported
@@ -434,6 +465,108 @@ fn layouts_are_kept_through_a_round_trip() {
     assert!(back.report.losses().is_empty());
     assert_eq!(back.drawing.shown_in(one).count(), 2);
     assert_eq!(export(&back.drawing), text, "stable on the second pass");
+}
+
+/// A fuzzer finding: two LAYOUT objects of a file pieced together from
+/// others named one block record. Both were written naming the record of
+/// the last, so read again they shared its block, and the file saved
+/// once more called both `*Paper_Space0`. The record is the first
+/// layout's; the second has a paper block of its own, and every LAYOUT
+/// written names the record that names it.
+#[test]
+fn two_layouts_naming_one_block_record_are_written_with_one_each() {
+    let first = load("valid", "layouts-sharing-a-block-record.dxf").unwrap();
+    let blocks = |drawing: &Drawing| -> Vec<(String, String, usize)> {
+        drawing
+            .layouts()
+            .iter()
+            .skip(1)
+            .map(|(id, layout)| {
+                let held = drawing.shown_in(id).count();
+                (layout.name.clone(), layout.block_name.clone(), held)
+            })
+            .collect()
+    };
+    let owned = |name: &str, block: &str, held| (name.to_owned(), block.to_owned(), held);
+    // Layout2 names Layout1's record; Layout2's own block, which no
+    // LAYOUT names now, is a layout of its own.
+    assert_eq!(
+        blocks(&first.drawing),
+        [
+            owned("Layout1", "*Paper_Space", 2),
+            owned("Layout2", "", 0),
+            owned("Layout3", "*Paper_Space0", 1),
+        ]
+    );
+
+    let text = export(&first.drawing);
+    // Each record: its kind, and its groups as (code, value).
+    let mut records: Vec<(&str, Vec<(&str, &str)>)> = Vec::new();
+    for pair in text.lines().collect::<Vec<_>>().chunks(2) {
+        match (pair[0].trim(), pair[1]) {
+            ("0", kind) => records.push((kind, Vec::new())),
+            group => records.last_mut().unwrap().1.push(group),
+        }
+    }
+    let value = |record: &[(&str, &str)], wanted: &str| {
+        record
+            .iter()
+            .find(|(code, _)| *code == wanted)
+            .map(|(_, value)| value.to_string())
+    };
+    let block_records: Vec<(String, String, String)> = records
+        .iter()
+        .filter(|(kind, _)| *kind == "BLOCK_RECORD")
+        .filter_map(|(_, record)| {
+            Some((
+                value(record, "5")?,
+                value(record, "2")?,
+                value(record, "340")?,
+            ))
+        })
+        .filter(|(_, name, _)| name.starts_with("*Paper_Space"))
+        .collect();
+    let mut names: Vec<&str> = block_records
+        .iter()
+        .map(|(_, name, _)| name.as_str())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, ["*Paper_Space", "*Paper_Space0", "*Paper_Space1"]);
+    let layouts: Vec<(String, String, String)> = records
+        .iter()
+        .filter(|(kind, _)| *kind == "LAYOUT")
+        .filter_map(|(_, record)| {
+            let start = record
+                .iter()
+                .position(|group| *group == ("100", "AcDbLayout"))?;
+            let layout = &record[start..];
+            Some((
+                value(record, "5")?,
+                value(layout, "1")?,
+                value(layout, "330")?,
+            ))
+        })
+        .filter(|(_, name, _)| name != "Model")
+        .collect();
+    assert_eq!(layouts.len(), 3, "{layouts:?}");
+    for (handle, name, record) in &layouts {
+        let (_, block, back) = block_records
+            .iter()
+            .find(|(own, _, _)| own == record)
+            .unwrap_or_else(|| panic!("{name} names a paper record"));
+        assert_eq!(back, handle, "{name}'s record {block} names it back");
+    }
+
+    let again = import(text.as_bytes()).unwrap();
+    assert_eq!(
+        blocks(&again.drawing),
+        [
+            owned("Layout1", "*Paper_Space", 2),
+            owned("Layout2", "*Paper_Space1", 0),
+            owned("Layout3", "*Paper_Space0", 1),
+        ]
+    );
+    assert_eq!(export(&again.drawing), text, "stable on the second pass");
 }
 
 /// #191: a layout made in the drawing is written with a paper block and a
