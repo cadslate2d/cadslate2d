@@ -15,8 +15,9 @@ export const PICTURE_SIDE = 2048;
 export const PICTURE_SIDE_MIN = 256;
 export const PICTURE_SIDE_MAX = 8192;
 
-/** What the file picker offers: any picture the browser may read. */
-export const PICTURE_ACCEPT = "image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp,.heic,.avif";
+/** What the file picker offers: any picture the browser may read, and PDFs (#528). */
+export const PICTURE_ACCEPT =
+  "image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp,.heic,.avif,application/pdf,.pdf";
 
 /** A picture the browser decoded: its size, and it drawn at another. */
 export interface DecodedPicture {
@@ -34,6 +35,65 @@ export interface DecodedPicture {
 export interface PictureDecoder {
   /** Decodes `bytes`; rejects when the browser cannot read them as a picture. */
   decode(bytes: Uint8Array): Promise<DecodedPicture>;
+}
+
+/**
+ * A PDF the browser opened (#528): how many pages it has, and a page drawn
+ * over white with its long side the pixels asked for.
+ */
+export interface PdfDocument {
+  readonly pages: number;
+  /** Page `number`, from 1, its long side `side` pixels. */
+  page(number: number, side: number): Promise<DecodedPicture>;
+  /** Lets go of the document. */
+  close(): void;
+}
+
+/** pdf.js, behind an interface so the host's rules are tested without it. */
+export interface PdfReader {
+  /** Opens the PDF `bytes` hold; rejects, saying why, when the browser cannot. */
+  open(bytes: Uint8Array): Promise<PdfDocument>;
+}
+
+/** Whether `bytes` are a PDF: its header in the first kilobyte, as readers allow. */
+export function isPdf(bytes: Uint8Array): boolean {
+  const head = new TextDecoder("latin1").decode(bytes.subarray(0, 1024));
+  return head.includes("%PDF-");
+}
+
+/**
+ * The name a PDF's page is attached under: the file's, and the page's
+ * number when there is more than one — `plans page 2.pdf`, which the engine
+ * names `plans page 2`.
+ */
+export function pageFileName(fileName: string, page: number, pages: number): string {
+  if (pages === 1) return fileName;
+  const stem = fileName.replace(/\.pdf$/i, "");
+  return `${stem} page ${page}.pdf`;
+}
+
+/**
+ * Page `page` of `pdf` as a picture for the engine (ADR-0042 §3): drawn at
+ * `side` pixels on its long side — a page is drawn at the resolution the
+ * bound allows, enlarged or not — and written as an opaque PNG, as a page
+ * is most often a drawing, whose lines a JPEG would blur.
+ */
+export async function makePagePicture(
+  pdf: PdfDocument,
+  fileName: string,
+  page: number,
+  side: number,
+): Promise<MadePicture> {
+  const decoded = await pdf.page(page, side);
+  try {
+    const { width, height } = decoded;
+    return {
+      name: pageFileName(fileName, page, pdf.pages),
+      bytes: await encodePng(decoded.pixels(width, height), width, height),
+    };
+  } finally {
+    decoded.close();
+  }
 }
 
 /** A picture made for the engine: its file's name and its bytes, a JPEG or an opaque PNG. */

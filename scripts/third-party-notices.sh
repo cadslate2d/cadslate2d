@@ -2,8 +2,9 @@
 # The third-party notices shipped with the build (#296, ADR-0035):
 # web/public/third-party-notices.txt — every Rust crate the WebAssembly
 # core contains and every JavaScript package the bundle contains, each
-# with its licence text, and the Hershey font's acknowledgements, which
-# its terms require to travel with the font data.
+# with its licence text; the decoders pdf.js fetches from beside the page;
+# and the Hershey font's acknowledgements, which its terms require to
+# travel with the font data.
 #
 #   scripts/third-party-notices.sh          writes the file
 #   scripts/third-party-notices.sh --check  fails when it is out of date
@@ -33,6 +34,22 @@ trap 'rm -f "$tmp"' EXIT
   echo "################################################################################"
   echo
   python3 scripts/third-party-notices.py
+  echo "################################################################################"
+  echo "# pdf.js's decoders, shipped beside the page as pdfjs/ (#528)"
+  echo "################################################################################"
+  echo
+  echo "pdf.js fetches these WebAssembly decoders only for a PDF that needs one:"
+  echo "jbig2.wasm (PDFium's JBIG2 decoder), openjpeg.wasm (OpenJPEG), and"
+  echo "qcms_bg.wasm (qcms), each built by the pdf.js project, whose own terms"
+  echo "for each build follow its library's."
+  echo
+  for name in JBIG2 PDFJS_JBIG2 OPENJPEG PDFJS_OPENJPEG QCMS PDFJS_QCMS; do
+    echo "================================================================================"
+    echo "LICENSE_$name"
+    echo "--------------------------------------------------------------------------------"
+    sed -e 's/[[:space:]]*$//' "web/node_modules/pdfjs-dist/wasm/LICENSE_$name"
+    echo
+  done
   echo "################################################################################"
   echo "# Rust crates in the WebAssembly core"
   echo "################################################################################"

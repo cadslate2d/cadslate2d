@@ -25,7 +25,7 @@ Type anywhere on the page. The command line, the menus of the classic workspace,
 - **Modify** with the classic set: move, copy, rotate, scale, mirror, stretch, offset, trim, extend, fillet, chamfer, break, join, array, align, explode, lengthen, and more; what each does to each kind of object is in [`docs/modify-matrix.md`](docs/modify-matrix.md).
 - **Organise** with layers and layer states, colours, linetypes, lineweights, blocks with attributes, groups, and draw order.
 - **Annotate** with text styles, every kind of dimension and dimension chains, leaders and multileaders, hatches with patterns, wipeouts, and tables and notes on a sheet.
-- **Trace over pictures**: attach a photo or a scan as an image beneath the drawing, place it, fade it, and align it to what you draw.
+- **Trace over pictures**: attach a photo, a scan, or a page of a PDF as an image beneath the drawing, place it, fade it, and align it to what you draw.
 - **Constrain** geometry — parallel, perpendicular, tangent, equal, a length, a diameter — and make parts that stay consistent when a parameter changes.
 - **Generate** floor plans from a brief, a plan's elevations and sections, a part's orthographic views, staircases, title blocks, and composed sheets.
 - **Lay out** sheets with viewports in paper space, and **plot** to PDF.

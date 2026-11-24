@@ -27,7 +27,7 @@ test("PURGE removes the unused rows of a file and RENAME renames a layer, both s
   await page.getByRole("button", { name: "Dismiss the import report" }).click();
   await enter(page, "PURGE");
   await expect(prompt(page)).toHaveText(
-    "Enter type of unused objects to purge or [Blocks/Dimstyles/LAyers/LTypes/STyles/All/?] <All>:",
+    "Enter type of unused objects to purge or [Blocks/Dimstyles/Images/LAyers/LTypes/STyles/All/?] <All>:",
   );
   await enter(page, "?");
   await expect(logLines(page).last()).toHaveText("Unused: 1 layer (Defpoints).");

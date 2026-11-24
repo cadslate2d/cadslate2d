@@ -23,7 +23,11 @@ import {
   PICTURE_SIDE,
   PICTURE_SIDE_MAX,
   PICTURE_SIDE_MIN,
+  isPdf,
+  makePagePicture,
   makePicture,
+  type MadePicture,
+  type PdfDocument,
 } from "./pictures";
 import { UiStore } from "./ui-store";
 
@@ -43,6 +47,9 @@ const FILE_REFUSED: Record<HostRequest, string> = {
   [HostRequest.OpenBrief]: "The brief could not be read",
   [HostRequest.ImageFile]: "The picture could not be attached",
 };
+
+/** The long side of a page's thumbnail in the page dialog, in pixels. */
+const THUMBNAIL_SIDE = 240;
 
 /** A longest side for pictures the engine holds: a whole number of pixels within the bounds. */
 function pictureSideWithin(pixels: number): number {
@@ -183,6 +190,9 @@ export class CadApp {
   #rests: PointerRests = { count: 0, at: undefined };
   /** Where the pointer was last moved to, in canvas pixels. */
   #pointerAt: { x: number; y: number } | undefined;
+  /** The PDF whose page the user is choosing (#528), and what hears the choice. */
+  #pageChoice:
+    { pdf: PdfDocument; name: string; answer: (page: number | undefined) => void } | undefined;
 
   constructor(engine: CadEngine, options: CadAppOptions = {}) {
     this.engine = engine;
@@ -693,19 +703,101 @@ export class CadApp {
       this.ui.refresh(this.engine);
     };
     if (!file) return giveUp();
-    let picture;
+    const side = pictureSideWithin(this.settings.getSnapshot().pictureSide);
+    let picture: MadePicture | undefined;
     try {
-      picture = await makePicture(
-        file,
-        this.#host.pictures,
-        pictureSideWithin(this.settings.getSnapshot().pictureSide),
-      );
+      picture = isPdf(file.bytes)
+        ? await this.#pagePicture(file.name, file.bytes, side)
+        : await makePicture(file, this.#host.pictures, side);
     } catch (error) {
       giveUp();
       throw error;
     }
+    if (!picture) return giveUp();
     this.loop.invalidate(this.engine.attachPicture(picture.bytes, picture.name));
     this.ui.refresh(this.engine);
+  }
+
+  /**
+   * A page of the PDF `bytes` hold as a picture (ADR-0042 §3, #528): the
+   * one page there is, or the one the user picks; none when they do not.
+   */
+  async #pagePicture(
+    name: string,
+    bytes: Uint8Array,
+    side: number,
+  ): Promise<MadePicture | undefined> {
+    const pdf = await this.#host.pdf.open(bytes);
+    try {
+      const page = pdf.pages === 1 ? 1 : await this.#choosePage(pdf, name);
+      return page === undefined ? undefined : await makePagePicture(pdf, name, page, side);
+    } finally {
+      pdf.close();
+    }
+  }
+
+  /** The page the user picks of `pdf`, in the page dialog; none when they cancel. */
+  #choosePage(pdf: PdfDocument, name: string): Promise<number | undefined> {
+    return new Promise((answer) => {
+      this.#pageChoice = { pdf, name, answer };
+      this.ui.setPdfPages({ name, pages: pdf.pages, page: 1, thumbnail: undefined });
+      void this.#drawThumbnail(1);
+    });
+  }
+
+  /** The thumbnail of `page` in the page dialog, once drawn, if it is still the page shown. */
+  async #drawThumbnail(page: number): Promise<void> {
+    const choice = this.#pageChoice;
+    if (!choice || typeof URL.createObjectURL !== "function") return;
+    let url: string | undefined;
+    try {
+      const drawn = await choice.pdf.page(page, THUMBNAIL_SIDE);
+      try {
+        const bytes = await drawn.jpeg(drawn.width, drawn.height);
+        url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/jpeg" }));
+      } finally {
+        drawn.close();
+      }
+    } catch {
+      return; // No thumbnail: the page can still be chosen by its number.
+    }
+    const shown = this.ui.getSnapshot().pdfPages;
+    if (this.#pageChoice !== choice || !shown || shown.page !== page) {
+      URL.revokeObjectURL(url);
+      return;
+    }
+    if (shown.thumbnail) URL.revokeObjectURL(shown.thumbnail);
+    this.ui.setPdfPages({ ...shown, thumbnail: url });
+  }
+
+  /** Shows page `page` in the page dialog (#528), within the document's pages. */
+  showPdfPage(page: number): void {
+    const shown = this.ui.getSnapshot().pdfPages;
+    if (!shown || !Number.isFinite(page)) return;
+    const within = Math.min(shown.pages, Math.max(1, Math.round(page)));
+    if (within === shown.page) return;
+    if (shown.thumbnail) URL.revokeObjectURL(shown.thumbnail);
+    this.ui.setPdfPages({ ...shown, page: within, thumbnail: undefined });
+    void this.#drawThumbnail(within);
+  }
+
+  /** Attaches the page the dialog shows (#528). */
+  choosePdfPage(): void {
+    this.#endPageChoice(this.ui.getSnapshot().pdfPages?.page);
+  }
+
+  /** Attaches no page: the command waiting for one gives up. */
+  cancelPdfPage(): void {
+    this.#endPageChoice(undefined);
+  }
+
+  #endPageChoice(page: number | undefined): void {
+    const choice = this.#pageChoice;
+    this.#pageChoice = undefined;
+    const shown = this.ui.getSnapshot().pdfPages;
+    if (shown?.thumbnail) URL.revokeObjectURL(shown.thumbnail);
+    this.ui.setPdfPages(undefined);
+    choice?.answer(page);
   }
 
   /** WBLOCK's file (#222): saved where the user chooses. */

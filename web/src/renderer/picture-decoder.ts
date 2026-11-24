@@ -5,14 +5,14 @@
 // (DESIGN §12.1); the rules of what is made are the host's
 // (`app/pictures.ts`).
 
-import type { PictureDecoder } from "../app/pictures";
+import type { DecodedPicture, PictureDecoder } from "../app/pictures";
 
 /** How good a JPEG the host writes, 0 to 1. */
 const JPEG_QUALITY = 0.9;
 
 /** A canvas `width` × `height` holding `source` drawn over white. */
 function drawn(
-  source: ImageBitmap,
+  source: CanvasImageSource,
   width: number,
   height: number,
 ): OffscreenCanvas | HTMLCanvasElement {
@@ -42,6 +42,33 @@ async function jpegOf(canvas: OffscreenCanvas | HTMLCanvasElement): Promise<Uint
   return new Uint8Array(await blob.arrayBuffer());
 }
 
+/**
+ * `source`, `width` × `height`, as the host's picture: drawn at the size
+ * asked for, over white, as pixels or as a JPEG; `close` lets it go. A
+ * picture from a file and a page of a PDF alike (#528).
+ */
+export function pictureOf(
+  source: CanvasImageSource,
+  width: number,
+  height: number,
+  close: () => void,
+): DecodedPicture {
+  return {
+    width,
+    height,
+    pixels(w, h) {
+      const canvas = drawn(source, w, h);
+      const context = canvas.getContext("2d") as
+        OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
+      return context.getImageData(0, 0, w, h).data;
+    },
+    jpeg(w, h) {
+      return jpegOf(drawn(source, w, h));
+    },
+    close,
+  };
+}
+
 /** The browser's decoder: `createImageBitmap`, upright as the camera held it, drawn on a canvas. */
 export const browserPictureDecoder: PictureDecoder = {
   async decode(bytes) {
@@ -50,24 +77,9 @@ export const browserPictureDecoder: PictureDecoder = {
       bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)]), {
         imageOrientation: "from-image",
       });
-    } catch {
-      throw new Error("the browser cannot read it as a picture");
+    } catch (error) {
+      throw new Error("the browser cannot read it as a picture", { cause: error });
     }
-    return {
-      width: bitmap.width,
-      height: bitmap.height,
-      pixels(width, height) {
-        const canvas = drawn(bitmap, width, height);
-        const context = canvas.getContext("2d") as
-          OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
-        return context.getImageData(0, 0, width, height).data;
-      },
-      jpeg(width, height) {
-        return jpegOf(drawn(bitmap, width, height));
-      },
-      close() {
-        bitmap.close();
-      },
-    };
+    return pictureOf(bitmap, bitmap.width, bitmap.height, () => bitmap.close());
   },
 };

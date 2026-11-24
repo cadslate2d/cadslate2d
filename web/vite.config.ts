@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import react from "@vitejs/plugin-react";
 import { loadEnv, type Plugin } from "vite";
 import { defineConfig } from "vitest/config";
@@ -35,11 +36,36 @@ function contentSecurityPolicy(service: string | undefined): Plugin {
   };
 }
 
+/**
+ * pdf.js's decoders of scanned images — JBIG2 and JPEG 2000 — and of colour
+ * profiles (#528), copied beside the page as `pdfjs/`, where
+ * src/renderer/pdf-reader.ts tells pdf.js to find them: fetched by pdf.js's
+ * worker only for a PDF that needs one. Under their own names, as pdf.js
+ * asks for them by name.
+ */
+function pdfjsDecoders(): Plugin {
+  const files = ["jbig2.wasm", "openjpeg.wasm", "qcms_bg.wasm"];
+  return {
+    name: "pdfjs-decoders",
+    apply: "build",
+    generateBundle() {
+      for (const name of files) {
+        this.emitFile({
+          type: "asset",
+          fileName: `pdfjs/${name}`,
+          source: readFileSync(new URL(`node_modules/pdfjs-dist/wasm/${name}`, import.meta.url)),
+        });
+      }
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => ({
   // Relative base so the static bundle works from any path (ADR-0004).
   base: "./",
   plugins: [
     react(),
+    pdfjsDecoders(),
     contentSecurityPolicy(loadEnv(mode, process.cwd(), "VITE_").VITE_AI_SERVICE_URL),
   ],
   build: { target: "es2022" },

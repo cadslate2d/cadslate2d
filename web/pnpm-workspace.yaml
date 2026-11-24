@@ -10,3 +10,8 @@ minimumReleaseAge: 20160
 # alert #9); ESLint's config arrays ask for 10.
 overrides:
   "minimatch@>=7.0.0 <11.0.1": 11.0.1
+
+# pdf.js's optional canvas is a native module for Node; the browser draws
+# on its own canvas (#528), so it is never installed.
+ignoredOptionalDependencies:
+  - "@napi-rs/canvas"

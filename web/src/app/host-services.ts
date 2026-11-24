@@ -3,8 +3,9 @@
 // without a browser (dependency inversion).
 
 import { DOCUMENT_FORMATS, type DocumentFormat } from "../cad/engine";
+import { browserPdfReader } from "../renderer/pdf-reader";
 import { browserPictureDecoder } from "../renderer/picture-decoder";
-import type { PictureDecoder } from "./pictures";
+import type { PdfReader, PictureDecoder } from "./pictures";
 
 /** A file the browser can find again: its name, and its handle when the browser gives one. */
 export interface FileTarget {
@@ -105,6 +106,8 @@ export interface HostServices {
   readonly settings: SettingsStore;
   /** What reads a picture the user picks (ADR-0042 §3). */
   readonly pictures: PictureDecoder;
+  /** What reads a PDF the user picks, a page of which becomes a picture (#528). */
+  readonly pdf: PdfReader;
   /** Gives the document its theme; the renderer reads the palette again afterwards. */
   applyTheme(theme: Theme): void;
   /** Loads the page afresh: a new engine, and the kept drawing offered back. */
@@ -182,6 +185,7 @@ const PICTURE_TYPES: FilePickerAcceptType[] = [
     description: "Pictures",
     accept: {
       "image/*": [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".heic", ".avif"],
+      "application/pdf": [".pdf"],
     },
   },
 ];
@@ -398,6 +402,7 @@ export const browserHost: HostServices = {
   autosave: indexedDbAutosave,
   settings: localStorageSettings,
   pictures: browserPictureDecoder,
+  pdf: browserPdfReader,
   applyTheme(theme) {
     document.documentElement.dataset.theme = theme;
   },

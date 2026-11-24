@@ -4,6 +4,7 @@ import { CadEngine, KeyAction, coreVersion, loadEngine } from "../cad/engine";
 import { CanvasView } from "./CanvasView";
 import { CommandLine } from "./CommandLine";
 import { ExportWarning } from "./ExportWarning";
+import { PdfPageDialog } from "./PdfPageDialog";
 import { Failure } from "./Failure";
 import { Header } from "./Header";
 import { ImportReport } from "./ImportReport";
@@ -210,6 +211,7 @@ export function App() {
       <ShortcutMenu app={core.app} onAction={act} />
       <ImportReport app={core.app} />
       <ExportWarning app={core.app} />
+      <PdfPageDialog app={core.app} />
       <Recovery app={core.app} />
       <Failure app={core.app} />
       {about && <About version={core.version} onClose={() => setAbout(false)} />}

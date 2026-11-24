@@ -26,6 +26,7 @@
     "bench:main-thread": "playwright test --config playwright.bench.config.ts main-thread"
   },
   "dependencies": {
+    "pdfjs-dist": "6.5.438",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },

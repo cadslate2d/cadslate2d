@@ -24,6 +24,15 @@ export interface Failure {
 /** Log lines kept for display. Older lines scroll out. */
 export const LOG_LINES_KEPT = 200;
 
+/** The page of a PDF the user is choosing (#528): the file, how many pages, which one, and a small picture of it once drawn. */
+export interface PdfPages {
+  readonly name: string;
+  readonly pages: number;
+  readonly page: number;
+  /** A URL of the page drawn small, or none yet. */
+  readonly thumbnail: string | undefined;
+}
+
 export interface UiSnapshot {
   readonly prompt: string;
   readonly command: string | undefined;
@@ -68,6 +77,8 @@ export interface UiSnapshot {
   readonly importReport: ImportReport | undefined;
   /** The losses an export the user asked for would have; the warning dialog shows them. */
   readonly exportWarning: readonly string[] | undefined;
+  /** The PDF whose page the user is choosing to attach (#528), while they choose. */
+  readonly pdfPages: PdfPages | undefined;
   /** A drawing kept in the browser that no file holds, offered on start. */
   readonly recovery: Recovery | undefined;
   /** The engine has stopped; the dialog says so and offers a reload. */
@@ -131,6 +142,7 @@ const INITIAL: UiSnapshot = {
   through: false,
   importReport: undefined,
   exportWarning: undefined,
+  pdfPages: undefined,
   recovery: undefined,
   failure: undefined,
   layers: [],
@@ -147,6 +159,7 @@ export class UiStore {
   #snapshot: UiSnapshot = INITIAL;
   #logSeen = 0;
   #exportWarning: readonly string[] | undefined;
+  #pdfPages: PdfPages | undefined;
   #recovery: Recovery | undefined;
   #failure: Failure | undefined;
   readonly #listeners = new Set<() => void>();
@@ -168,6 +181,13 @@ export class UiStore {
   setExportWarning(losses: readonly string[] | undefined): void {
     this.#exportWarning = losses;
     this.#snapshot = { ...this.#snapshot, exportWarning: losses };
+    this.#listeners.forEach((listener) => listener());
+  }
+
+  /** Shows the page choice of a PDF, as it now stands, or hides it. */
+  setPdfPages(choice: PdfPages | undefined): void {
+    this.#pdfPages = choice;
+    this.#snapshot = { ...this.#snapshot, pdfPages: choice };
     this.#listeners.forEach((listener) => listener());
   }
 
@@ -222,6 +242,7 @@ export class UiStore {
       through: state.through,
       importReport: state.importReport,
       exportWarning: this.#exportWarning,
+      pdfPages: this.#pdfPages,
       recovery: this.#recovery,
       failure: this.#failure,
       layers: state.layers,

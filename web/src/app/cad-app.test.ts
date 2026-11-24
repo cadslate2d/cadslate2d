@@ -19,7 +19,7 @@ import type {
 import { parseSettings, saveTypesFor } from "./host-services";
 import { PAUSE, SELECTION } from "./macro";
 import type { HostServices, PickedFile, Settings, SettingsStore, Theme } from "./host-services";
-import type { DecodedPicture, PictureDecoder } from "./pictures";
+import type { DecodedPicture, PdfDocument, PdfReader, PictureDecoder } from "./pictures";
 
 beforeAll(loadEngineForTests);
 
@@ -200,11 +200,51 @@ class FakeDecoder implements PictureDecoder {
   }
 }
 
+/**
+ * pdf.js, faked: a document of `pages` pages, each drawn a flat colour of
+ * its own at the size asked. What it was asked to draw is what the host
+ * decided.
+ */
+class FakePdf implements PdfReader {
+  pages = 2;
+  refusal: Error | undefined;
+  asked: string[] = [];
+  closed = 0;
+
+  open(): Promise<PdfDocument> {
+    if (this.refusal) return Promise.reject(this.refusal);
+    const pages = this.pages;
+    return Promise.resolve({
+      pages,
+      page: (number: number, side: number) => {
+        this.asked.push(`page ${number} at ${side}`);
+        // A landscape A-size page: √2 to 1.
+        const [width, height] = [side, Math.round(side / Math.SQRT2)];
+        return Promise.resolve({
+          width,
+          height,
+          pixels: (w: number, h: number) => {
+            const data = new Uint8ClampedArray(w * h * 4);
+            for (let i = 0; i < w * h; i += 1) data.set([number * 60, 20, 200, 255], i * 4);
+            return data;
+          },
+          jpeg: (w: number, h: number) => Promise.resolve(jpegHeader(w, h)),
+          close: () => undefined,
+        });
+      },
+      close: () => {
+        this.closed += 1;
+      },
+    });
+  }
+}
+
 class FakeHost implements HostServices {
   readonly autosave = new FakeAutosave();
   readonly files = new FakeFiles();
   readonly settings = new FakeSettings();
   readonly pictures = new FakeDecoder();
+  readonly pdf = new FakePdf();
   themes: Theme[] = [];
   confirmAnswer = true;
   confirmations: string[] = [];
@@ -1341,6 +1381,68 @@ describe("pictures (ADR-0042 §3, #525)", () => {
     expect(app.ui.getSnapshot().prompt).toBe("Command:");
     expect(app.ui.getSnapshot().log.at(-1)).toBe(
       "The picture could not be attached: the browser cannot read it as a picture.",
+    );
+  });
+});
+
+describe("PDF pages (ADR-0042 §3, #528)", () => {
+  const PDF = new TextEncoder().encode("%PDF-1.4\n%fake\n");
+
+  test("the page picked of a PDF is drawn 2,048 pixels on its long side and attached as a PNG", async () => {
+    const { app, host, tick, enter } = harness();
+    host.files.fileToPick = { name: "plans.pdf", bytes: PDF };
+    enter("IAT");
+    await vi.waitFor(() => expect(app.ui.getSnapshot().pdfPages).toBeDefined());
+    expect(app.ui.getSnapshot().pdfPages).toMatchObject({ name: "plans.pdf", pages: 2, page: 1 });
+    // Pages beyond the document are not offered.
+    app.showPdfPage(5);
+    expect(app.ui.getSnapshot().pdfPages?.page).toBe(2);
+    app.showPdfPage(0);
+    expect(app.ui.getSnapshot().pdfPages?.page).toBe(1);
+    app.showPdfPage(2);
+    await tick();
+    app.choosePdfPage();
+    expect(app.ui.getSnapshot().pdfPages).toBeUndefined();
+    await vi.waitFor(() =>
+      expect(app.ui.getSnapshot().log.at(-1)).toBe('"plans page 2": 2048 × 1448 pixels, PNG.'),
+    );
+    expect(host.pdf.asked.at(-1)).toBe("page 2 at 2048");
+    expect(host.pdf.closed).toBe(1);
+    expect(app.ui.getSnapshot().prompt).toBe("Specify insertion point:");
+    enter("0,0", "", "");
+    expect(app.ui.getSnapshot().log.at(-1)).toBe(
+      'Attached "plans page 2", 2048 × 1448 pixels, 2048.0000 across.',
+    );
+  });
+
+  test("a one-page PDF asks for no page, and the setting bounds it", async () => {
+    const { app, host, enter } = harness();
+    await app.start();
+    app.setPictureSide(1024);
+    host.pdf.pages = 1;
+    host.files.fileToPick = { name: "site.pdf", bytes: PDF };
+    enter("IAT");
+    await vi.waitFor(() =>
+      expect(app.ui.getSnapshot().log.at(-1)).toBe('"site": 1024 × 724 pixels, PNG.'),
+    );
+    expect(host.pdf.asked).toEqual(["page 1 at 1024"]);
+  });
+
+  test("a page not chosen gives up, and a PDF the browser cannot read says why", async () => {
+    const { app, host, tick, enter } = harness();
+    host.files.fileToPick = { name: "plans.pdf", bytes: PDF };
+    enter("IAT");
+    await vi.waitFor(() => expect(app.ui.getSnapshot().pdfPages).toBeDefined());
+    app.cancelPdfPage();
+    await tick();
+    expect(app.ui.getSnapshot().prompt).toBe("Command:");
+    expect(host.pdf.closed).toBe(1);
+    host.pdf.refusal = new Error("the PDF is protected by a password");
+    enter("IAT");
+    await tick();
+    expect(app.ui.getSnapshot().prompt).toBe("Command:");
+    expect(app.ui.getSnapshot().log.at(-1)).toBe(
+      "The picture could not be attached: the PDF is protected by a password.",
     );
   });
 });

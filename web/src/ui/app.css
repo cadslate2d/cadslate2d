@@ -267,6 +267,45 @@ body {
   border-color: var(--color-accent);
 }
 
+/* The page of a PDF to attach (#528): the page drawn small beside its number. */
+.pdf-page__body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
+
+.pdf-page__thumbnail {
+  display: grid;
+  place-items: center;
+  width: 240px;
+  height: 240px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-raised);
+}
+
+.pdf-page__thumbnail img {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.pdf-page__drawing {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.pdf-page__pager {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pdf-page__number {
+  width: 5em;
+}
+
 .settings__note {
   margin: 0 0 var(--space-3);
   color: var(--color-text-muted);
