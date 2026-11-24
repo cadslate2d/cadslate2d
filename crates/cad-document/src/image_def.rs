@@ -110,7 +110,7 @@ impl ImageDef {
         if bytes.len() > MOST_BYTES {
             return Err(ImageDefError::TooLarge(bytes.len()));
         }
-        let (format, width, height) = header(&bytes)?;
+        let (format, width, height, _) = header(&bytes)?;
         if width == 0 || height == 0 || width > MOST_PIXELS || height > MOST_PIXELS {
             return Err(ImageDefError::BadSize { width, height });
         }
@@ -146,6 +146,42 @@ impl ImageDef {
             bytes: Arc::from([]),
             digest: 0,
         })
+    }
+
+    /// How many colour components a pixel of its picture has: 1, grey, or
+    /// 3, colour; `None` when its picture is missing.
+    pub fn components(&self) -> Option<u8> {
+        header(&self.bytes)
+            .ok()
+            .map(|(_, _, _, components)| components)
+    }
+
+    /// A PNG's compressed samples (ADR-0042 §5): the data of its `IDAT`
+    /// chunks, in order — one zlib stream of rows, each led by its filter
+    /// byte, which a PDF reader takes as it is. `None` for a JPEG, a missing
+    /// picture, or a PNG whose chunks do not hold together.
+    pub fn png_samples(&self) -> Option<Vec<u8>> {
+        if self.format != ImageFormat::Png || self.is_missing() {
+            return None;
+        }
+        let mut samples = Vec::new();
+        let mut at = 8;
+        loop {
+            let length = self.bytes.get(at..at + 4)?;
+            let length = u32::from_be_bytes([length[0], length[1], length[2], length[3]]);
+            let kind = self.bytes.get(at + 4..at + 8)?;
+            let data = self
+                .bytes
+                .get(at + 8..(at + 8).checked_add(usize::try_from(length).ok()?)?)?;
+            match kind {
+                b"IDAT" => samples.extend_from_slice(data),
+                b"IEND" => break,
+                _ => {}
+            }
+            // The data, then its CRC.
+            at += 12 + data.len();
+        }
+        (!samples.is_empty()).then_some(samples)
     }
 
     /// Whether its picture is not in the drawing.
@@ -198,9 +234,9 @@ pub fn fingerprint(bytes: &[u8]) -> u64 {
     hash
 }
 
-/// The format and pixel size `bytes` say they are, refused unless they are
-/// a picture the host makes.
-fn header(bytes: &[u8]) -> Result<(ImageFormat, u32, u32), ImageDefError> {
+/// The format, pixel size, and colour components `bytes` say they are,
+/// refused unless they are a picture the host makes.
+fn header(bytes: &[u8]) -> Result<(ImageFormat, u32, u32, u8), ImageDefError> {
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
     if bytes.starts_with(PNG) {
         // The first chunk is IHDR: width, height, bit depth, colour type,
@@ -216,15 +252,16 @@ fn header(bytes: &[u8]) -> Result<(ImageFormat, u32, u32), ImageDefError> {
         if depth != 8 {
             return Err(ImageDefError::Unsupported("a PNG not of 8 bits a sample"));
         }
-        match colour {
-            0 | 2 => {}
+        let components = match colour {
+            0 => 1,
+            2 => 3,
             3 => return Err(ImageDefError::Unsupported("a PNG with a palette")),
             _ => return Err(ImageDefError::Unsupported("a PNG with transparency")),
-        }
+        };
         if interlace != 0 {
             return Err(ImageDefError::Unsupported("an interlaced PNG"));
         }
-        return Ok((ImageFormat::Png, width, height));
+        return Ok((ImageFormat::Png, width, height, components));
     }
     if bytes.starts_with(&[0xFF, 0xD8]) {
         // Markers to the first start of frame: its precision, height,
@@ -251,7 +288,7 @@ fn header(bytes: &[u8]) -> Result<(ImageFormat, u32, u32), ImageDefError> {
                 let height = u32::from(u16::from_be_bytes([frame[1], frame[2]]));
                 let width = u32::from(u16::from_be_bytes([frame[3], frame[4]]));
                 return match frame[5] {
-                    1 | 3 => Ok((ImageFormat::Jpeg, width, height)),
+                    components @ (1 | 3) => Ok((ImageFormat::Jpeg, width, height, components)),
                     _ => Err(ImageDefError::Unsupported("a JPEG neither grey nor colour")),
                 };
             }
@@ -385,6 +422,44 @@ pub(crate) mod tests {
         assert!(def.check().is_err());
     }
 
+    #[test]
+    fn a_pictures_components_and_compressed_samples_are_read() {
+        let def = |name: &str, bytes: &[u8]| ImageDef::new(name, bytes.to_vec()).unwrap();
+        let colour = def(
+            "q.png",
+            include_bytes!("../../../test-data/images/quarters.png"),
+        );
+        let grey = def(
+            "g.png",
+            include_bytes!("../../../test-data/images/quarters-grey.png"),
+        );
+        let photo = def(
+            "q.jpg",
+            include_bytes!("../../../test-data/images/quarters.jpg"),
+        );
+        let grey_photo = def(
+            "g.jpg",
+            include_bytes!("../../../test-data/images/quarters-grey.jpg"),
+        );
+        assert_eq!(colour.components(), Some(3));
+        assert_eq!(grey.components(), Some(1));
+        assert_eq!(photo.components(), Some(3));
+        assert_eq!(grey_photo.components(), Some(1));
+        // A zlib stream: its header byte for deflate, then its check.
+        let samples = colour.png_samples().unwrap();
+        assert_eq!(samples[0] & 0x0F, 8);
+        assert_eq!((u16::from(samples[0]) << 8 | u16::from(samples[1])) % 31, 0);
+        assert!(grey.png_samples().is_some());
+        assert_eq!(photo.png_samples(), None);
+        // A header with no data after it, and a missing picture.
+        assert_eq!(
+            ImageDef::new("h", png(4, 4, 2)).unwrap().png_samples(),
+            None
+        );
+        let missing = ImageDef::missing("m", 4, 4).unwrap();
+        assert_eq!((missing.components(), missing.png_samples()), (None, None));
+    }
+
     proptest::proptest! {
         /// Any bytes at all: a definition or a refusal, never a panic.
         #[test]
@@ -392,7 +467,13 @@ pub(crate) mod tests {
             let _ = ImageDef::new("x", bytes.clone());
             let mut png_start = b"\x89PNG\r\n\x1a\n".to_vec();
             png_start.extend(&bytes);
-            let _ = ImageDef::new("x", png_start);
+            if let Ok(def) = ImageDef::new("x", png_start) {
+                let _ = (def.components(), def.png_samples());
+            }
+            // A real header, then anything: chunks that may not hold together.
+            let mut chunks = png(4, 4, 2);
+            chunks.extend(&bytes);
+            let _ = ImageDef::new("x", chunks).unwrap().png_samples();
             let mut jpeg_start = vec![0xFF, 0xD8];
             jpeg_start.extend(&bytes);
             let _ = ImageDef::new("x", jpeg_start);

@@ -1,7 +1,8 @@
-// Images (ADR-0042, #524, #526): a DXF holding a picture — copied into the
-// file by our writer — opens with the picture under the lines drawn over
-// it, its quarters where the picture has them; faded, it is paler; and the
-// file is written back with the image and its copy.
+// Images (ADR-0042, #524, #526, #527): a DXF holding a picture — copied
+// into the file by our writer — opens with the picture under the lines
+// drawn over it, its quarters where the picture has them; faded, it is
+// paler; the file is written back with the image and its copy; and a plot
+// embeds the picture, compressed as it is held.
 import { readFileSync } from "node:fs";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
@@ -75,6 +76,20 @@ test("a picture in a DXF is drawn under the lines over it, the right way up", as
   const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
   expect(entities(file.text, "IMAGE")).toHaveLength(1);
   expect(file.text).toContain("CADSLATE_IMAGES");
+
+  // Plotted, the page draws the picture, embedded once: the PNG's
+  // compressed samples, ASCII on the way, decoded by the reader.
+  await enter(page, "PLOT");
+  const pdf = await downloadFrom(page, () => enter(page, "A4", "E", "Fit", "Y", "C"));
+  expect(pdf.text.startsWith("%PDF-1.4\n")).toBe(true);
+  expect(pdf.text).toMatch(/\/XObject << \/Im\d+ 5 0 R >>/);
+  expect(pdf.text).toContain(
+    "/Subtype /Image /Width 64 /Height 48 /ColorSpace /DeviceRGB /BitsPerComponent 8 " +
+      "/Filter [/ASCII85Decode /FlateDecode] " +
+      "/DecodeParms [null << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns 64 >>]",
+  );
+  expect(pdf.text).toMatch(/ cm\n\/Im\d+ Do\nQ\n/);
+  expect(pdf.text.endsWith("%%EOF\n")).toBe(true);
 });
 
 test("a faded picture is drawn paler, toward the canvas", async ({ page, browserName }) => {

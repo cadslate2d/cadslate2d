@@ -9,22 +9,26 @@
 //! what prints is what is drawn — lines and arcs, a text's strokes, a
 //! dimension's layout, a hatch's fill and pattern — with the entity's
 //! resolved colour, lineweight, and linetype. Fonts are not embedded: text
-//! is its strokes, as on screen (ADR-0016).
+//! is its strokes, as on screen (ADR-0016). A picture is embedded as it is
+//! held (ADR-0042 §5): a JPEG's bytes, a PNG's compressed samples, each an
+//! image of the page's resources that the reader decodes.
 //!
 //! The writer produces PDF 1.4 as ASCII, one page, one content stream,
-//! uncompressed: a reader needs nothing beyond the basic operators.
+//! uncompressed: a reader needs nothing beyond the basic operators, and a
+//! picture's bytes are in base 85 (`ASCII85Decode`).
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use cad_commands::{PlotArea, PlotScale, PlotSettings};
 use cad_core::tolerance::LinearTolerance;
 use cad_core::{Aabb, EntityId, Point2, Vec2};
 use cad_document::{
-    Drawing, Entity, HatchEntity, Layout, LayoutArea, LayoutId, Linetype, LinetypeId, Paint,
-    Properties, ViewportEntity, Weight, WipeoutEntity, draw_order,
+    Drawing, Entity, HatchEntity, ImageDef, ImageDefId, ImageFormat, Layout, LayoutArea, LayoutId,
+    Linetype, LinetypeId, Paint, Properties, ViewportEntity, Weight, WipeoutEntity, draw_order,
 };
 use cad_geometry::{Arc, Primitive};
-use cad_render::{GeometrySink, drawn_continuous, viewports_shown, walk_entity};
+use cad_render::{GeometrySink, ImageQuad, drawn_continuous, viewports_shown, walk_entity};
 
 /// PDF points per millimetre: a point is 1/72 of an inch.
 pub const POINTS_PER_MM: f64 = 72.0 / 25.4;
@@ -304,8 +308,8 @@ pub fn plot_pdf(drawing: &Drawing, settings: &PlotSettings) -> String {
 /// model through its viewports (#194).
 pub fn plot_pdf_in(drawing: &Drawing, space: LayoutId, settings: &PlotSettings) -> String {
     let page = Page::in_space(drawing, space, settings);
-    let content = content(drawing, space, settings, &page);
-    pdf_file(&page, &content)
+    let (content, pictures) = content(drawing, space, settings, &page);
+    pdf_file(&page, &content, &pictures)
 }
 
 /// The resolved look of one part: what the scene resolves to a style row.
@@ -359,8 +363,13 @@ fn look_of(
 /// layout, for each viewport that is on, the model's entities through it,
 /// inside a clip to its frame; then the paper's entities at the page's
 /// placement over them all, as the screen draws them (#413) — a viewport
-/// itself draws nothing.
-fn content(drawing: &Drawing, space: LayoutId, settings: &PlotSettings, page: &Page) -> String {
+/// itself draws nothing. With it, the pictures the stream draws.
+fn content(
+    drawing: &Drawing,
+    space: LayoutId,
+    settings: &PlotSettings,
+    page: &Page,
+) -> (String, Pictures) {
     let mut out = String::new();
     // Round caps and joins meet at vertices as they do on screen.
     out.push_str("q\n1 J\n1 j\n");
@@ -369,6 +378,7 @@ fn content(drawing: &Drawing, space: LayoutId, settings: &PlotSettings, page: &P
         drawing,
         settings,
         current: None,
+        pictures: Pictures::default(),
     };
     let ids = painted(drawing, drawing.shown_in(space).map(|(id, _)| id));
     // The windows the screen draws the model through, by its one rule.
@@ -400,7 +410,7 @@ fn content(drawing: &Drawing, space: LayoutId, settings: &PlotSettings, page: &P
     // The paper's own objects lie over every viewport.
     painter.space(&mut out, &ids, page.placement(), page.area);
     out.push_str("Q\n");
-    out
+    (out, painter.pictures)
 }
 
 /// The entities in the order they are painted, first beneath: the
@@ -439,6 +449,8 @@ struct Painter<'a> {
     settings: &'a PlotSettings,
     /// The look the stream is set to, if any.
     current: Option<Look>,
+    /// The pictures drawn so far.
+    pictures: Pictures,
 }
 
 impl Painter<'_> {
@@ -449,11 +461,13 @@ impl Painter<'_> {
         let drawing = self.drawing;
         let tier_of = |id: &EntityId| drawing.record(*id).map_or(0, |record| record.order);
         // A tier at a time (ADR-0032), as the screen draws it: every fill of
-        // the tier — a block's, a multileader note's — beneath every stroke
-        // of it (#412). Each part is walked once; what it fills and what it
-        // strokes are painted in two passes.
+        // the tier — a block's, a multileader note's — beneath every
+        // picture of it, and those beneath every stroke (#412, ADR-0042).
+        // Each part is walked once; what it fills, shows, and strokes are
+        // painted in three passes.
         for tier in ids.chunk_by(|a, b| tier_of(a) == tier_of(b)) {
             let mut fills: Vec<(Look, String)> = Vec::new();
+            let mut shown = String::new();
             let mut strokes: Vec<(Look, String)> = Vec::new();
             for id in tier {
                 let Some(entity) = drawing.entity(*id) else {
@@ -486,6 +500,16 @@ impl Painter<'_> {
                     if let Some(piece) = construction {
                         sink.segment(piece.start, piece.end, 0.0);
                     }
+                    // A picture the page cannot hold — missing — is its
+                    // frame, as on screen.
+                    for image in std::mem::take(&mut sink.images) {
+                        match self.pictures.name(drawing, image.def) {
+                            Some(name) => {
+                                shown.push_str(&self.pictures.paint(&placement, &image, name));
+                            }
+                            None => sink.outline(&image),
+                        }
+                    }
                     let (filled, stroked) = sink.take();
                     if !filled.is_empty() {
                         fills.push((look.clone(), filled));
@@ -495,7 +519,13 @@ impl Painter<'_> {
                     }
                 }
             }
-            for (look, paths) in fills.into_iter().chain(strokes) {
+            for (look, paths) in fills {
+                self.set_look(out, look);
+                out.push_str(&paths);
+            }
+            // A picture keeps the look: it is drawn inside `q` … `Q`.
+            out.push_str(&shown);
+            for (look, paths) in strokes {
                 self.set_look(out, look);
                 out.push_str(&paths);
             }
@@ -538,6 +568,8 @@ struct PageSink {
     /// Wipeouts' masks, in the paper's white, emitted before the strokes
     /// they came with — a wipeout's frame — so as not to cover them.
     masks: Vec<String>,
+    /// The pictures the walk handed it, for the painter to embed.
+    images: Vec<ImageQuad>,
 }
 
 impl PageSink {
@@ -548,6 +580,16 @@ impl PageSink {
             current: None,
             fills: Vec::new(),
             masks: Vec::new(),
+            images: Vec::new(),
+        }
+    }
+
+    /// A picture's frame, stroked: what the page shows of one it cannot
+    /// hold.
+    fn outline(&mut self, image: &ImageQuad) {
+        let corners = image.corners();
+        for (i, corner) in corners.iter().enumerate() {
+            self.segment(*corner, corners[(i + 1) % 4], 0.0);
         }
     }
 
@@ -696,6 +738,10 @@ impl GeometrySink for PageSink {
         self.masks.push(mask);
     }
 
+    fn image(&mut self, image: &ImageQuad) {
+        self.images.push(*image);
+    }
+
     /// A solid hatch is its loops, filled by the even-odd rule: one path,
     /// no seams between triangles.
     fn hatch_fill(&mut self, hatch: &HatchEntity) {
@@ -708,6 +754,181 @@ impl GeometrySink for PageSink {
             self.fills.push(fill);
         }
     }
+}
+
+/// The pictures a plot embeds (ADR-0042 §5): each definition drawn once
+/// an image of the page's resources, made the first time it is drawn, and
+/// each fade drawn a graphics state of them.
+#[derive(Default)]
+struct Pictures {
+    /// By the definition's raw ID: its image, or `None` when the page
+    /// cannot hold its picture.
+    images: BTreeMap<u32, Option<Picture>>,
+    /// The fades drawn, in percent.
+    fades: BTreeSet<u8>,
+}
+
+/// One embedded picture: an image XObject.
+struct Picture {
+    /// Its dictionary, up to `/Length`.
+    dictionary: String,
+    /// Its bytes in base 85, ended by `~>`.
+    data: String,
+}
+
+impl Pictures {
+    /// The resource name of the picture of definition `def`, made the first
+    /// time it is asked for; `None` when it is missing.
+    fn name(&mut self, drawing: &Drawing, def: u32) -> Option<String> {
+        self.images
+            .entry(def)
+            .or_insert_with(|| {
+                drawing
+                    .image_defs()
+                    .get(ImageDefId::from_raw(def))
+                    .and_then(picture)
+            })
+            .as_ref()
+            .map(|_| image_name(def))
+    }
+
+    /// The stream drawing `image`, called `name`, at `placement`: the unit
+    /// square the reader maps a picture to made its frame on the page —
+    /// lower-left corner, bottom edge, left edge, the picture's first row
+    /// at the top, as on screen — then, faded, painted over in the paper's
+    /// white at the fade's opacity. The frame is the picture's edge, so
+    /// nothing outside it is drawn.
+    fn paint(&mut self, placement: &Placement, image: &ImageQuad, name: String) -> String {
+        let corner = placement.map(image.corner);
+        let across = placement.map(image.corner + image.across) - corner;
+        let up = placement.map(image.corner + image.up) - corner;
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "q\n{} {} {} {} {} {} cm\n/{name} Do",
+            num(across.x),
+            num(across.y),
+            num(up.x),
+            num(up.y),
+            num(corner.x),
+            num(corner.y)
+        );
+        if image.fade > 0 {
+            self.fades.insert(image.fade);
+            let _ = writeln!(out, "/{} gs 1 1 1 rg 0 0 1 1 re f", fade_name(image.fade));
+        }
+        out.push_str("Q\n");
+        out
+    }
+
+    /// The pictures embedded, by their resource names.
+    fn embedded(&self) -> impl Iterator<Item = (String, &Picture)> {
+        self.images
+            .iter()
+            .filter_map(|(def, picture)| Some((image_name(*def), picture.as_ref()?)))
+    }
+
+    /// The page's resources: its images, by object number from `first`, and
+    /// its fades.
+    fn resources(&self, first: usize) -> String {
+        let mut out = String::from("<<");
+        let images: Vec<String> = self
+            .embedded()
+            .enumerate()
+            .map(|(i, (name, _))| format!("/{name} {} 0 R", first + i))
+            .collect();
+        if !images.is_empty() {
+            let _ = write!(out, " /XObject << {} >>", images.join(" "));
+        }
+        if !self.fades.is_empty() {
+            let fades: Vec<String> = self
+                .fades
+                .iter()
+                .map(|fade| {
+                    format!(
+                        "/{} << /ca {} >>",
+                        fade_name(*fade),
+                        num(f64::from(*fade) / 100.0)
+                    )
+                })
+                .collect();
+            let _ = write!(out, " /ExtGState << {} >>", fades.join(" "));
+        }
+        out.push_str(" >>");
+        out
+    }
+}
+
+fn image_name(def: u32) -> String {
+    format!("Im{def}")
+}
+
+fn fade_name(fade: u8) -> String {
+    format!("Fade{fade}")
+}
+
+/// The image a definition is embedded as: a JPEG's bytes as they are
+/// (`DCTDecode`), a PNG's compressed samples with the predictor its rows
+/// are filtered by (`FlateDecode`, `Predictor 15`), neither decoded here;
+/// `None` when its picture is missing.
+fn picture(def: &ImageDef) -> Option<Picture> {
+    let colours = match def.components()? {
+        1 => ("/DeviceGray", 1),
+        _ => ("/DeviceRGB", 3),
+    };
+    let (filter, parameters, data) = match def.format {
+        ImageFormat::Jpeg => ("/DCTDecode", String::new(), ascii85(&def.bytes)),
+        ImageFormat::Png => (
+            "/FlateDecode",
+            format!(
+                " /DecodeParms [null << /Predictor 15 /Colors {} /BitsPerComponent 8 /Columns {} >>]",
+                colours.1, def.width
+            ),
+            ascii85(&def.png_samples()?),
+        ),
+    };
+    Some(Picture {
+        dictionary: format!(
+            "<< /Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace {} /BitsPerComponent 8 /Filter [/ASCII85Decode {filter}]{parameters}",
+            def.width, def.height, colours.0
+        ),
+        data,
+    })
+}
+
+/// `bytes` in base 85, as PDF's `ASCII85Decode` reads them: four bytes to
+/// five characters from `!`, a group of four zeros `z`, the last group's
+/// `n` bytes `n + 1` characters, in lines of 75, ended by `~>`.
+pub fn ascii85(bytes: &[u8]) -> String {
+    const LINE: usize = 75;
+    let mut out = String::with_capacity(bytes.len() / 4 * 5 + bytes.len() / 60 + 8);
+    let mut column = 0;
+    for group in bytes.chunks(4) {
+        let mut word = [0u8; 4];
+        word[..group.len()].copy_from_slice(group);
+        let mut value = u32::from_be_bytes(word);
+        let mut digits = [0u8; 5];
+        let count = if group.len() == 4 && value == 0 {
+            digits[0] = b'z';
+            1
+        } else {
+            for digit in digits.iter_mut().rev() {
+                *digit = b'!' + (value % 85) as u8;
+                value /= 85;
+            }
+            group.len() + 1
+        };
+        for digit in &digits[..count] {
+            out.push(char::from(*digit));
+            column += 1;
+            if column == LINE {
+                out.push('\n');
+                column = 0;
+            }
+        }
+    }
+    out.push_str("~>");
+    out
 }
 
 /// A number as PDF reads it: at most three decimals, no exponent, no
@@ -725,9 +946,9 @@ pub fn num(value: f64) -> String {
 }
 
 /// The file around the content: a catalog, the page tree, the page, the
-/// stream, and the information, with a cross-reference table that
-/// points at each.
-fn pdf_file(page: &Page, content: &str) -> String {
+/// stream, the pictures it draws, and the information, with a
+/// cross-reference table that points at each.
+fn pdf_file(page: &Page, content: &str, pictures: &Pictures) -> String {
     let mut out = String::from("%PDF-1.4\n");
     let mut offsets = Vec::new();
     let mut object = |out: &mut String, body: &str| {
@@ -740,9 +961,11 @@ fn pdf_file(page: &Page, content: &str) -> String {
     object(
         &mut out,
         &format!(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] /Contents 4 0 R /Resources << >> >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] /Contents 4 0 R /Resources {} >>",
             num(page.width),
-            num(page.height)
+            num(page.height),
+            // The pictures follow the content stream, object 4.
+            pictures.resources(5)
         ),
     );
     object(
@@ -752,6 +975,17 @@ fn pdf_file(page: &Page, content: &str) -> String {
             content.len()
         ),
     );
+    for (_, picture) in pictures.embedded() {
+        object(
+            &mut out,
+            &format!(
+                "{} /Length {} >>\nstream\n{}\nendstream",
+                picture.dictionary,
+                picture.data.len(),
+                picture.data
+            ),
+        );
+    }
     object(&mut out, "<< /Producer (CadSlate2D) >>");
     let xref = out.len();
     let _ = writeln!(out, "xref\n0 {}\n0000000000 65535 f ", offsets.len() + 1);

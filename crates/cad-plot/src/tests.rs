@@ -119,6 +119,10 @@ struct Ops {
     dashes: Vec<Vec<f64>>,
     strokes: Vec<[f64; 3]>,
     operators: Vec<String>,
+    /// Each picture drawn (`Do`): the corners of the unit square the
+    /// matrix set before it (`cm`) maps it to — lower-left, lower-right,
+    /// upper-right, upper-left.
+    pictures: Vec<[Point2; 4]>,
 }
 
 fn parse(content: &str) -> Ops {
@@ -126,6 +130,7 @@ fn parse(content: &str) -> Ops {
     let mut stack: Vec<f64> = Vec::new();
     let mut array: Option<Vec<f64>> = None;
     let mut current = Point2::ORIGIN;
+    let mut matrix: Option<[f64; 6]> = None;
     for token in content.split_whitespace() {
         if let Some(rest) = token.strip_prefix('[') {
             let (rest, closed) = match rest.strip_suffix(']') {
@@ -181,6 +186,15 @@ fn parse(content: &str) -> Ops {
                 }
                 current = end;
             }
+            "cm" => matrix = Some([stack[0], stack[1], stack[2], stack[3], stack[4], stack[5]]),
+            "Do" => {
+                let [a, b, c, d, e, f] = matrix.expect("a picture placed by its matrix");
+                let at = |x: f64, y: f64| p(a * x + c * y + e, b * x + d * y + f);
+                let corners = [at(0.0, 0.0), at(1.0, 0.0), at(1.0, 1.0), at(0.0, 1.0)];
+                ops.points.extend(corners);
+                ops.pictures.push(corners);
+            }
+            "Q" => matrix = None,
             "w" => ops.widths.push(stack[0]),
             "RG" => ops.strokes.push([stack[0], stack[1], stack[2]]),
             _ => {}
@@ -556,6 +570,14 @@ fn every_entity_kind_lands_on_the_page() {
 #[test]
 fn the_cross_reference_table_points_at_every_object() {
     let pdf = plot_pdf(&everything(), &settings());
+    cross_referenced(&pdf, 5);
+}
+
+/// That `pdf`'s cross-reference table points at each of its `objects`,
+/// numbered from 1, its content stream's length is what it says, and it
+/// is ASCII throughout.
+fn cross_referenced(pdf: &str, objects: usize) {
+    let head = format!("xref\n0 {}\n", objects + 1);
     let xref_at: usize = pdf
         .rsplit("startxref\n")
         .next()
@@ -565,9 +587,9 @@ fn the_cross_reference_table_points_at_every_object() {
         .unwrap()
         .parse()
         .unwrap();
-    assert!(pdf[xref_at..].starts_with("xref\n0 6\n"));
-    let table = &pdf[xref_at + "xref\n0 6\n".len()..];
-    for (index, entry) in table.lines().take(6).enumerate() {
+    assert!(pdf[xref_at..].starts_with(&head));
+    let table = &pdf[xref_at + head.len()..];
+    for (index, entry) in table.lines().take(objects + 1).enumerate() {
         let offset: usize = entry[..10].parse().unwrap();
         if index == 0 {
             assert_eq!(entry, "0000000000 65535 f ");
@@ -587,7 +609,7 @@ fn the_cross_reference_table_points_at_every_object() {
         .unwrap()
         .parse()
         .unwrap();
-    assert_eq!(content_of(&pdf).len(), length);
+    assert_eq!(content_of(pdf).len(), length);
     assert!(
         pdf.is_ascii(),
         "ASCII throughout: a text file to any reader"
@@ -1016,9 +1038,26 @@ proptest! {
     #[test]
     fn every_primitive_lands_inside_the_page(
         entities in prop::collection::vec(any_entity(), 1..8),
+        pictures in prop::collection::vec(
+            (-500.0..500.0, -500.0..500.0, 0.5..20.0, 0.0..TAU, any::<bool>(), 0u8..=100),
+            0..3,
+        ),
         paper in prop::sample::select(Paper::ALL.to_vec()),
     ) {
-        let drawing = Drawing::from_entities(entities);
+        // And pictures (#527), placed, turned, mirrored, and faded: every
+        // corner of each is on the page.
+        let mut drawing = Drawing::from_entities(entities);
+        let mut tx = drawing.transaction();
+        let def = tx.add_image_def(picture("quarters.png")).unwrap();
+        for (x, y, size, angle, mirrored, fade) in pictures {
+            let u = Vec2::new(angle.cos(), angle.sin()) * size;
+            let v = Vec2::new(-u.y, u.x) * if mirrored { -1.0 } else { 1.0 };
+            let mut image =
+                cad_document::ImageEntity::new(def, p(x, y), u, v, [16, 12]).unwrap();
+            image.fade = fade;
+            tx.insert(Entity::Image(image)).unwrap();
+        }
+        tx.commit();
         let plot = PlotSettings { paper, ..settings() };
         let pdf = plot_pdf(&drawing, &plot);
         let page = media_box(&pdf);
@@ -1268,4 +1307,286 @@ fn a_tiers_fills_are_painted_beneath_its_strokes_whatever_holds_them() {
     tx.commit();
     let (fill, line_at) = order(&drawing);
     assert!(fill < line_at, "a note's fill is painted over the line");
+}
+
+/// The test pictures (`test-data/images/`): 16 × 12, red above blue on the
+/// left, green above yellow on the right.
+fn picture(name: &str) -> cad_document::ImageDef {
+    let bytes: &[u8] = match name {
+        "quarters.png" => include_bytes!("../../../test-data/images/quarters.png"),
+        "quarters-grey.png" => include_bytes!("../../../test-data/images/quarters-grey.png"),
+        "quarters.jpg" => include_bytes!("../../../test-data/images/quarters.jpg"),
+        "quarters-grey.jpg" => include_bytes!("../../../test-data/images/quarters-grey.jpg"),
+        _ => unreachable!("no picture {name}"),
+    };
+    cad_document::ImageDef::new(name, bytes.to_vec()).unwrap()
+}
+
+/// A drawing showing each of `defs` at ten units a pixel, side by side
+/// from the origin 250 apart, the second turned a quarter and the third
+/// mirrored, each kept clear of the others: their IDs and the images, in
+/// the order they were placed.
+fn pictured(
+    defs: Vec<cad_document::ImageDef>,
+) -> (
+    Drawing,
+    Vec<cad_document::ImageDefId>,
+    Vec<cad_document::ImageEntity>,
+) {
+    use cad_document::ImageEntity;
+    let mut drawing = Drawing::new();
+    let mut tx = drawing.transaction();
+    let mut ids = Vec::new();
+    let mut images = Vec::new();
+    for (i, def) in defs.into_iter().enumerate() {
+        let pixels = [def.width, def.height];
+        let id = tx.add_image_def(def).unwrap();
+        let size = 10.0;
+        // Turned, it reaches left as far as it is tall; mirrored, as wide.
+        let (u, v, reach) = match i % 3 {
+            0 => (Vec2::new(size, 0.0), Vec2::new(0.0, size), 0),
+            1 => (Vec2::new(0.0, size), Vec2::new(-size, 0.0), pixels[1]),
+            _ => (Vec2::new(-size, 0.0), Vec2::new(0.0, size), pixels[0]),
+        };
+        let corner = p(250.0 * i as f64 + size * f64::from(reach), 0.0);
+        let image = ImageEntity::new(id, corner, u, v, pixels).unwrap();
+        tx.insert(Entity::Image(image.clone())).unwrap();
+        ids.push(id);
+        images.push(image);
+    }
+    tx.commit();
+    (drawing, ids, images)
+}
+
+/// `text` in base 85 decoded, as a reader's `ASCII85Decode` does.
+fn decode85(text: &str) -> Vec<u8> {
+    let text = text.strip_suffix("~>").expect("ended by ~>");
+    let mut bytes = Vec::new();
+    let mut group = Vec::new();
+    let flush = |group: &mut Vec<u8>, bytes: &mut Vec<u8>| {
+        let count = group.len();
+        if count == 0 {
+            return;
+        }
+        group.resize(5, b'u');
+        let value = group
+            .iter()
+            .fold(0u64, |value, digit| value * 85 + u64::from(digit - b'!'));
+        bytes.extend_from_slice(&(value as u32).to_be_bytes()[..count - 1]);
+        group.clear();
+    };
+    for c in text.bytes().filter(|c| !c.is_ascii_whitespace()) {
+        if c == b'z' {
+            assert!(group.is_empty(), "z only between groups");
+            bytes.extend_from_slice(&[0; 4]);
+            continue;
+        }
+        assert!((b'!'..=b'u').contains(&c), "{} is not base 85", c as char);
+        group.push(c);
+        if group.len() == 5 {
+            flush(&mut group, &mut bytes);
+        }
+    }
+    flush(&mut group, &mut bytes);
+    bytes
+}
+
+/// The dictionary and the decoded bytes of the picture `name` names in
+/// the page's resources.
+fn embedded(pdf: &str, name: &str) -> (String, Vec<u8>) {
+    let reference = format!("/{name} ");
+    let at = pdf.find(&reference).expect("named in the resources") + reference.len();
+    let number: usize = pdf[at..]
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let object = &pdf[pdf
+        .find(&format!("\n{number} 0 obj\n"))
+        .expect("its object")..];
+    let start = object.find("\nstream\n").unwrap();
+    let end = object.find("\nendstream").unwrap();
+    let data = &object[start + "\nstream\n".len()..end];
+    let dictionary = object[..start].to_owned();
+    let length: usize = dictionary
+        .split("/Length ")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(data.len(), length, "{name}'s length");
+    (dictionary, decode85(data))
+}
+
+#[test]
+fn base_85_is_what_a_reader_decodes() {
+    assert_eq!(ascii85(b""), "~>");
+    assert_eq!(ascii85(&[0, 0, 0, 0]), "z~>");
+    assert_eq!(ascii85(b"Man "), "9jqo^~>");
+    assert_eq!(ascii85(b"M"), "9`~>");
+    let bytes: Vec<u8> = (0..=255).cycle().take(1001).collect();
+    let text = ascii85(&bytes);
+    assert!(text.lines().all(|line| line.len() <= 75));
+    assert_eq!(decode85(&text), bytes);
+}
+
+/// #527 (ADR-0042 §5): each picture is embedded once as it is held — a
+/// JPEG's bytes for the reader's `DCTDecode`, a PNG's compressed samples
+/// for its `FlateDecode` with the PNG predictor — grey or colour, and
+/// drawn in its frame on the page, turned or mirrored as it is.
+#[test]
+fn a_picture_is_embedded_as_it_is_held_and_drawn_in_its_frame() {
+    let (drawing, ids, images) = pictured(vec![
+        picture("quarters.jpg"),
+        picture("quarters.png"),
+        picture("quarters-grey.png"),
+        picture("quarters-grey.jpg"),
+    ]);
+    let pdf = plot_pdf(&drawing, &settings());
+    // Four objects of the page, four pictures, and the information.
+    cross_referenced(&pdf, 9);
+    let ops = parse(content_of(&pdf));
+    let placement = Page::new(&drawing, &settings()).placement();
+    assert_eq!(ops.pictures.len(), 4);
+    for (image, drawn) in images.iter().zip(&ops.pictures) {
+        for (corner, on_page) in image.corners().iter().zip(drawn) {
+            assert!(
+                close(placement.map(*corner), *on_page),
+                "{corner:?} at {on_page:?}"
+            );
+        }
+    }
+    let defs = drawing.image_defs();
+    let held = |i: usize| defs.get(ids[i]).unwrap();
+    let (jpeg, bytes) = embedded(&pdf, &format!("Im{}", ids[0].raw()));
+    assert!(jpeg.contains(
+        "/Subtype /Image /Width 16 /Height 12 /ColorSpace /DeviceRGB /BitsPerComponent 8 \
+         /Filter [/ASCII85Decode /DCTDecode] /Length"
+    ));
+    assert_eq!(bytes, *held(0).bytes, "the JPEG as it is");
+    let (png, samples) = embedded(&pdf, &format!("Im{}", ids[1].raw()));
+    assert!(png.contains(
+        "/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter [/ASCII85Decode /FlateDecode] \
+         /DecodeParms [null << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns 16 >>]"
+    ));
+    assert_eq!(samples, held(1).png_samples().unwrap(), "the PNG's samples");
+    let (grey, _) = embedded(&pdf, &format!("Im{}", ids[2].raw()));
+    assert!(grey.contains("/ColorSpace /DeviceGray"));
+    assert!(grey.contains("/Colors 1 "));
+    let (grey_photo, bytes) = embedded(&pdf, &format!("Im{}", ids[3].raw()));
+    assert!(grey_photo.contains("/ColorSpace /DeviceGray"));
+    assert_eq!(bytes, *held(3).bytes);
+}
+
+/// A picture shown twice is embedded once; a faded one is painted over in
+/// the paper's white at the fade's opacity, inside its frame; a missing
+/// one is its frame, stroked, and nothing embedded.
+#[test]
+fn a_picture_is_embedded_once_faded_as_drawn_and_a_missing_one_is_its_frame() {
+    use cad_document::{ImageDef, ImageEntity};
+    let (mut drawing, ids, images) = pictured(vec![picture("quarters.png")]);
+    let mut tx = drawing.transaction();
+    let mut faded =
+        images[0].transformed(&cad_geometry::Transform::translation(Vec2::new(0.0, 200.0)));
+    faded.fade = 50;
+    tx.insert(Entity::Image(faded)).unwrap();
+    let missing = tx
+        .add_image_def(ImageDef::missing("site.tif", 16, 12).unwrap())
+        .unwrap();
+    let unseen = ImageEntity::new(
+        missing,
+        p(400.0, 0.0),
+        Vec2::new(10.0, 0.0),
+        Vec2::new(0.0, 10.0),
+        [16, 12],
+    )
+    .unwrap();
+    tx.insert(Entity::Image(unseen.clone())).unwrap();
+    tx.commit();
+    let pdf = plot_pdf(&drawing, &settings());
+    cross_referenced(&pdf, 6);
+    assert_eq!(
+        pdf.matches("/Subtype /Image").count(),
+        1,
+        "one picture, once"
+    );
+    assert!(pdf.contains(&format!("/XObject << /Im{} 5 0 R >>", ids[0].raw())));
+    assert!(pdf.contains("/ExtGState << /Fade50 << /ca 0.5 >> >>"));
+    let content = content_of(&pdf);
+    let ops = parse(content);
+    assert_eq!(ops.pictures.len(), 2);
+    assert_eq!(
+        content
+            .matches("/Fade50 gs 1 1 1 rg 0 0 1 1 re f\nQ\n")
+            .count(),
+        1
+    );
+    let placement = Page::new(&drawing, &settings()).placement();
+    for corner in unseen.corners() {
+        let at = placement.map(corner);
+        assert!(
+            ops.points.iter().any(|point| close(*point, at)),
+            "the frame at {at:?}"
+        );
+    }
+    assert!(content.contains("S\n"), "the frame stroked");
+}
+
+/// As on screen (ADR-0042 §2): within a tier a picture lies over the fills
+/// and under the strokes, and a higher tier's fill lies over it.
+#[test]
+fn a_picture_lies_over_its_tiers_fills_and_under_its_strokes() {
+    let (mut drawing, _, _) = pictured(vec![picture("quarters.png")]);
+    let square = HatchEntity::solid(vec![Path {
+        vertices: vec![p(0.0, 0.0), p(50.0, 0.0), p(50.0, 50.0), p(0.0, 50.0)],
+        bulges: vec![0.0; 4],
+        closed: true,
+    }]);
+    let mut tx = drawing.transaction();
+    tx.insert(line(0.0, 0.0, 160.0, 120.0)).unwrap();
+    let hatch = tx.insert(square.clone()).unwrap();
+    tx.commit();
+    let at = |content: &str, what: &str| content.find(what).unwrap_or_else(|| panic!("{what}"));
+    let content = content_of(&plot_pdf(&drawing, &settings())).to_owned();
+    let (fill, picture, stroke) = (
+        at(&content, "f*\n"),
+        at(&content, " Do\n"),
+        at(&content, "S\n"),
+    );
+    assert!(fill < picture && picture < stroke, "fill, picture, stroke");
+    let mut tx = drawing.transaction();
+    tx.set_order(hatch, 1).unwrap();
+    tx.commit();
+    let content = content_of(&plot_pdf(&drawing, &settings())).to_owned();
+    assert!(
+        at(&content, " Do\n") < at(&content, "f*\n"),
+        "the higher tier's fill over it"
+    );
+}
+
+/// Writes a plot of the test pictures to `target/plot-pictures.pdf`, for
+/// a reader to open: `cargo test -p cad-plot -- --ignored pictures`.
+#[test]
+#[ignore]
+fn the_sample_pictures_for_a_reader() {
+    let (mut drawing, _, images) = pictured(vec![
+        picture("quarters.jpg"),
+        picture("quarters.png"),
+        picture("quarters-grey.png"),
+    ]);
+    let mut tx = drawing.transaction();
+    let mut faded = images[0].transformed(&cad_geometry::Transform::translation(Vec2::new(
+        0.0, -200.0,
+    )));
+    faded.fade = 50;
+    tx.insert(Entity::Image(faded)).unwrap();
+    tx.commit();
+    let pdf = plot_pdf(&drawing, &settings());
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/plot-pictures.pdf");
+    std::fs::write(&path, pdf).unwrap();
 }
