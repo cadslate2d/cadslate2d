@@ -217,17 +217,32 @@ fn a_proxy_entity_and_an_unknown_class_are_reported_not_guessed() {
 /// so when any character beyond ASCII came from it. R2007 strings are
 /// UTF-16 and need no table. The drawings are written by the independent
 /// writer, as the fixtures are, from a DXF naming the code page.
+///
+/// The DXF holds its strings as bytes of that code page, as AutoCAD writes
+/// one before R2007, not as `\U+` escapes: since acadrust 0.6.8 an escape
+/// stays an escape through to the DWG, which every code page reads alike,
+/// and would leave the code page untested.
 #[test]
 fn strings_are_read_in_the_drawing_s_code_page() {
     use std::io::Cursor;
 
     use acadrust::{DwgWriter, DxfReader, DxfVersion};
 
-    let written = |code_page: &str, layer: &str, words: &str, version: DxfVersion| {
-        let dxf = format!(
-            "  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1015\n  9\n$DWGCODEPAGE\n  3\n{code_page}\n  0\nENDSEC\n  0\nSECTION\n  2\nTABLES\n  0\nTABLE\n  2\nLAYER\n 70\n1\n  0\nLAYER\n  2\n{layer}\n 70\n0\n 62\n7\n  6\nCONTINUOUS\n  0\nENDTAB\n  0\nENDSEC\n  0\nSECTION\n  2\nENTITIES\n  0\nTEXT\n  8\n{layer}\n 10\n0\n 20\n0\n 40\n1\n  1\n{words}\n  0\nENDSEC\n  0\nEOF\n"
-        );
-        let mut document = DxfReader::from_reader(Cursor::new(dxf.into_bytes()))
+    let written = |code_page: &str, layer: &[u8], words: &[u8], version: DxfVersion| {
+        let dxf = [
+            format!(
+                "  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1015\n  9\n$DWGCODEPAGE\n  3\n{code_page}\n  0\nENDSEC\n  0\nSECTION\n  2\nTABLES\n  0\nTABLE\n  2\nLAYER\n 70\n1\n  0\nLAYER\n  2\n"
+            )
+            .as_bytes(),
+            layer,
+            b"\n 70\n0\n 62\n7\n  6\nCONTINUOUS\n  0\nENDTAB\n  0\nENDSEC\n  0\nSECTION\n  2\nENTITIES\n  0\nTEXT\n  8\n",
+            layer,
+            b"\n 10\n0\n 20\n0\n 40\n1\n  1\n",
+            words,
+            b"\n  0\nENDSEC\n  0\nEOF\n",
+        ]
+        .concat();
+        let mut document = DxfReader::from_reader(Cursor::new(dxf))
             .and_then(|reader| reader.read())
             .unwrap();
         document.version = version;
@@ -253,12 +268,7 @@ fn strings_are_read_in_the_drawing_s_code_page() {
             .collect()
     };
     for version in [DxfVersion::AC1015, DxfVersion::AC1018, DxfVersion::AC1021] {
-        let western = written(
-            "ANSI_1252",
-            "El\\U+00E9trica",
-            "\\U+00D820 30\\U+00B0",
-            version,
-        );
+        let western = written("ANSI_1252", b"El\xE9trica", b"\xD820 30\xB0", version);
         assert_eq!(layers(&western), ["0", "Elétrica"], "{version:?}");
         assert_eq!(texts(&western), ["Ø20 30°"], "{version:?}");
         assert!(
@@ -269,7 +279,7 @@ fn strings_are_read_in_the_drawing_s_code_page() {
 
         // Cyrillic, in ANSI 1251: no table here, so before R2007 the
         // report says the characters may not be the ones written.
-        let cyrillic = written("ANSI_1251", "\\U+0416ena", "Zena", version);
+        let cyrillic = written("ANSI_1251", b"\xC6ena", b"Zena", version);
         let said = cyrillic.report.unsupported.get("(DWG-CODE-PAGE)").copied();
         if version == DxfVersion::AC1021 {
             assert_eq!(layers(&cyrillic), ["0", "Жena"]);
@@ -283,7 +293,7 @@ fn strings_are_read_in_the_drawing_s_code_page() {
             );
         }
         // ASCII is the same in every code page: nothing to say.
-        let plain = written("ANSI_1251", "Plain", "Words", version);
+        let plain = written("ANSI_1251", b"Plain", b"Words", version);
         assert_eq!(
             plain.report.unsupported.get("(DWG-CODE-PAGE)"),
             None,
