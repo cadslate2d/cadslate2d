@@ -5,7 +5,10 @@
 //! ai-eval ROOT                     replay: every case must pass (scripts/check.sh)
 //! ai-eval ROOT --recordings DIR    a live run, DIR/<level>.jsonl, against the
 //!                                  committed recordings as the baseline: a
-//!                                  language falling below it is a regression
+//!                                  language falling below it is a regression.
+//!                                  A case recorded more than once — the
+//!                                  nightly asks a miss again — passes on any
+//!                                  of its asks
 //!     [--json FILE] [--markdown FILE] [--prices INPUT,CACHED,OUTPUT]
 //! ```
 //!
@@ -111,6 +114,7 @@ fn main() -> ExitCode {
     });
     let mut reports = Vec::<Value>::new();
     let mut misses = String::new();
+    let mut again = String::new();
     let (mut missed, mut regressed) = (false, false);
     for level in &levels {
         let baseline = level.score(&read(
@@ -159,8 +163,32 @@ fn main() -> ExitCode {
         missed |= score.passed() < score.results.len();
         for result in score.misses() {
             let why = result.miss.as_deref().unwrap_or("");
-            println!("  miss {}: {why}", result.name);
-            let _ = writeln!(misses, "- `{}`: {}", result.name, why.replace('\n', " "));
+            let asks = match result.asks() {
+                1 => String::new(),
+                n => format!(" (missed on each of {n} asks)"),
+            };
+            println!("  miss {}{asks}: {why}", result.name);
+            let _ = writeln!(
+                misses,
+                "- `{}`{asks}: {}",
+                result.name,
+                why.replace('\n', " ")
+            );
+        }
+        for result in score.passed_again() {
+            let first = result.earlier.first().map_or("", String::as_str);
+            println!(
+                "  passed on ask {} {}: ask 1 missed: {first}",
+                result.asks(),
+                result.name
+            );
+            let _ = writeln!(
+                again,
+                "- `{}`: passed on ask {}; ask 1 missed: {}",
+                result.name,
+                result.asks(),
+                first.replace('\n', " ")
+            );
         }
         let tokens = score.tokens();
         let spent = cost(&score, options.prices);
@@ -185,6 +213,9 @@ fn main() -> ExitCode {
     }
     if !misses.is_empty() {
         let _ = write!(markdown, "\n### Misses\n\n{misses}");
+    }
+    if !again.is_empty() {
+        let _ = write!(markdown, "\n### Passed when asked again\n\n{again}");
     }
     if regressed {
         markdown.push_str("\n**A regression against the recorded baseline.**\n");

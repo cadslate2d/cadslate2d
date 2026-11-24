@@ -870,26 +870,51 @@ impl Corpus {
     }
 
     /// Scores the recordings in `recordings` (the AI service's JSON lines),
-    /// case by case.
+    /// case by case. A case recorded more than once — the nightly asks a
+    /// miss again, appending its answers — passes when any of its asks
+    /// does: a model that answers a little differently each time is judged
+    /// on whether it can, and a case broken misses every time.
     pub fn score(&self, recordings: &str) -> Score {
-        let recorded: BTreeMap<String, Value> = recordings
+        let mut recorded: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        for recording in recordings
             .lines()
             .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-            .filter_map(|recording| Some((recording["name"].as_str()?.to_owned(), recording)))
-            .collect();
+        {
+            if let Some(name) = recording["name"].as_str() {
+                recorded.entry(name.to_owned()).or_default().push(recording);
+            }
+        }
         let results = self
             .cases
             .iter()
             .map(|case| {
-                let recording = recorded.get(&case.name);
+                let asks = recorded.get(&case.name).map_or(&[][..], Vec::as_slice);
+                let mut spent = Tokens::default();
+                for ask in asks {
+                    spent += tokens(ask);
+                }
+                let mut reasons = Vec::new();
+                let mut passed = false;
+                for ask in asks {
+                    match judge(case, ask) {
+                        Ok(()) => {
+                            passed = true;
+                            break;
+                        }
+                        Err(why) => reasons.push(why),
+                    }
+                }
+                let miss = if passed {
+                    None
+                } else {
+                    Some(reasons.pop().unwrap_or_else(|| "not recorded".to_owned()))
+                };
                 CaseResult {
                     name: case.name.clone(),
                     language: case.language.clone(),
-                    miss: match recording {
-                        Some(recording) => judge(case, recording).err(),
-                        None => Some("not recorded".to_owned()),
-                    },
-                    tokens: recording.map(tokens).unwrap_or_default(),
+                    miss,
+                    earlier: reasons,
+                    tokens: spent,
                 }
             })
             .collect();
@@ -1433,9 +1458,24 @@ fn tokens(recording: &Value) -> Tokens {
 pub struct CaseResult {
     pub name: String,
     pub language: String,
-    /// Why it missed; `None` when it passed.
+    /// Why it missed; `None` when it passed. A case recorded more than once
+    /// — a live run asks a miss again — passes on any of its asks, and
+    /// misses only when it missed on every one, with the last one's reason.
     pub miss: Option<String>,
+    /// Why each ask before the last one judged missed, in order: empty for
+    /// a case asked once; for one that passed when asked again, what the
+    /// asks before that one came to.
+    pub earlier: Vec<String>,
+    /// Every ask's tokens.
     pub tokens: Tokens,
+}
+
+impl CaseResult {
+    /// How many times the case was judged: its asks up to the one that
+    /// passed, or all of them.
+    pub fn asks(&self) -> usize {
+        self.earlier.len() + 1
+    }
 }
 
 /// How a level did against one set of recordings.
@@ -1472,6 +1512,14 @@ impl Score {
 
     pub fn misses(&self) -> impl Iterator<Item = &CaseResult> {
         self.results.iter().filter(|r| r.miss.is_some())
+    }
+
+    /// The cases that passed only when asked again: not misses, but what a
+    /// user asking once would sometimes have got.
+    pub fn passed_again(&self) -> impl Iterator<Item = &CaseResult> {
+        self.results
+            .iter()
+            .filter(|r| r.miss.is_none() && !r.earlier.is_empty())
     }
 
     pub fn tokens(&self) -> Tokens {
@@ -1518,7 +1566,8 @@ impl Score {
                 json!({ "language": language, "passed": passed, "total": total })
             }).collect::<Vec<_>>(),
             "tokens": { "input": tokens.input, "cached_input": tokens.cached_input, "output": tokens.output },
-            "misses": self.misses().map(|r| json!({ "name": r.name, "why": r.miss })).collect::<Vec<_>>(),
+            "misses": self.misses().map(|r| json!({ "name": r.name, "why": r.miss, "asks": r.asks(), "earlier": r.earlier })).collect::<Vec<_>>(),
+            "passed_again": self.passed_again().map(|r| json!({ "name": r.name, "ask": r.asks(), "earlier": r.earlier })).collect::<Vec<_>>(),
         })
     }
 }

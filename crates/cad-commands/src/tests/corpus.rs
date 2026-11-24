@@ -271,6 +271,83 @@ fn options_are_judged_each_and_must_differ() {
     );
 }
 
+/// The nightly asks a miss again and appends the answer (AI service #15):
+/// a case recorded more than once passes on any ask, said with what the
+/// asks before it came to; one that missed on every ask misses with the
+/// last one's reason; every ask's tokens are spent. One stray miss among
+/// a level's few sheets is not a regression; a case that misses every
+/// time is.
+#[test]
+fn a_case_asked_again_passes_on_any_ask() {
+    let corpus = Corpus {
+        level: "test".to_owned(),
+        cases: Corpus::parse(
+            r#"{"name": "one", "lang": "en", "prompt": "A circle of radius 10 at the origin", "expected": [[{"op": "circle", "center": [0, 0], "radius": 10}]]}
+{"name": "two", "lang": "en", "prompt": "A circle of radius 20 at the origin", "expected": [[{"op": "circle", "center": [0, 0], "radius": 20}]]}"#,
+        )
+        .unwrap(),
+    };
+    let recording = |name: &str, radius: u32| {
+        let case = corpus.cases.iter().find(|case| case.name == name).unwrap();
+        let intent = serde_json::json!({"version": cad_intent::VERSION, "operations": [{"op": "circle", "center": [0, 0], "radius": radius}]});
+        let content = serde_json::json!({"reply": "Here it is.", "intent": intent});
+        serde_json::json!({"name": name, "request": crate::evaluation::request(case),
+            "raw": [{"content": content.to_string(), "usage": {"input": 10, "cached_input": 0, "output": 1}}]})
+        .to_string()
+    };
+    let result = |score: &crate::evaluation::Score, name: &str| {
+        score
+            .results
+            .iter()
+            .find(|r| r.name == name)
+            .unwrap()
+            .clone()
+    };
+    let lines = [
+        recording("one", 11),
+        recording("two", 21),
+        recording("one", 10),
+        recording("two", 22),
+        recording("two", 23),
+    ];
+    let score = corpus.score(&lines.join("\n"));
+    let one = result(&score, "one");
+    assert_eq!((one.miss.as_deref(), one.asks()), (None, 2));
+    assert!(one.earlier[0].starts_with("made"), "{:?}", one.earlier);
+    assert_eq!(one.tokens.input, 20);
+    let two = result(&score, "two");
+    assert_eq!(two.asks(), 3);
+    assert!(two.miss.as_deref().unwrap().contains("radius 23.00"));
+    assert!(two.earlier[0].contains("radius 21.00"));
+    assert_eq!(two.tokens.input, 30);
+    assert_eq!(score.passed(), 1);
+    let again: Vec<&str> = score.passed_again().map(|r| r.name.as_str()).collect();
+    assert_eq!(again, ["one"]);
+    let json = score.to_json();
+    assert_eq!(json["passed_again"][0]["ask"], 2);
+    assert_eq!(json["misses"][0]["asks"], 3);
+    // Asked once, a case is judged as it always was.
+    let once = corpus.score(&recording("one", 10));
+    assert_eq!(result(&once, "one").asks(), 1);
+    assert_eq!(result(&once, "two").miss.as_deref(), Some("not recorded"));
+    // Against a baseline that passed both, the level regresses only with
+    // the case that missed every time.
+    let baseline = corpus.score(&[recording("one", 10), recording("two", 20)].join("\n"));
+    assert_eq!(baseline.passed(), 2);
+    assert_eq!(score.regressions(&baseline).len(), 1);
+    let flaky = corpus.score(
+        &[
+            recording("one", 11),
+            recording("two", 21),
+            recording("one", 10),
+            recording("two", 20),
+        ]
+        .join("\n"),
+    );
+    assert!(flaky.regressions(&baseline).is_empty());
+    assert_eq!(flaky.passed_again().count(), 2);
+}
+
 /// A composed sheet is judged on four scores apart (ADR-0041 §9, #358):
 /// the example passes; each sheet that fails one score alone fails with
 /// that score's name.

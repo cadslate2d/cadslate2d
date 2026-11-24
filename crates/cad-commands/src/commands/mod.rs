@@ -86,7 +86,7 @@ mod mleaderstyle;
 mod modify;
 mod mtext;
 mod mview;
-mod notes;
+pub(crate) mod notes;
 mod offset;
 mod opening;
 mod osnap;

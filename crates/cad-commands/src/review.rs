@@ -6,7 +6,7 @@
 //! finding is a sentence a model can act on. Nothing here changes the
 //! drawing.
 
-use cad_core::{Aabb, EntityId, Point2};
+use cad_core::{Aabb, EntityId, Point2, Vec2};
 use cad_document::{Drawing, Entity};
 
 use crate::titleblock::GROUP;
@@ -56,6 +56,7 @@ pub fn review(drawing: &Drawing) -> Vec<String> {
     }
     findings.extend(overlapping_texts(&texts));
     findings.extend(structure(drawing));
+    findings.extend(dimensions_on_nothing(drawing));
     findings.extend(on_layer_zero(drawing));
     if let Some(sheet) = sheet(drawing, &boxed) {
         findings.extend(off_the_sheet(&sheet, &boxed));
@@ -570,6 +571,7 @@ fn review_unstated(
         // A hatch passed over is still the model's to put right (#358).
         Ok((session, ran)) => {
             let mut findings = review(session.drawing());
+            findings.extend(free_views_disagree(session.drawing(), intent));
             // A sheet larger than its views need, when the request named
             // none (#358): the U01 plan's 400 × 300 mm on A0 left most of
             // it empty. The smallest paper it composes on at its scale.
@@ -712,8 +714,19 @@ fn review_unstated(
                 (None, None) if room => " Not even A0 has room at this scale: choose a smaller scale, narrower notes, or fewer views.".to_owned(),
                 (None, None) => String::new(),
             };
+            // What the notes take, measured, where neither paper nor scale
+            // is the answer (AI service #15): the L-bracket's one-line note,
+            // 120 mm wide on the A4 its request fixed, left no room and
+            // composed at 110; another's notes took the room its bill of
+            // materials needed. Told the width that composes, or that the
+            // sheet composes without them, a model is not left to guess.
+            let notes = if room && fits.is_none() && scaled.is_none() {
+                notes_room(intent, |tried| run(tried).is_ok())
+            } else {
+                String::new()
+            };
             Some(vec![format!(
-                "The sheet could not be composed: {reason}.{advice}"
+                "The sheet could not be composed: {reason}.{advice}{notes}"
             )])
         }
         // So is what a view's own drawing refuses — a hatch with no closed
@@ -738,6 +751,167 @@ fn review_unstated(
         }
         Err(_) => None,
     }
+}
+
+/// The narrowest the notes are tried at, paper millimetres: a few words a
+/// line.
+const NARROWEST_NOTES: f64 = 40.0;
+
+/// How a sheet with no room composes by its notes: the widest width, in
+/// steps of ten paper millimetres below the widest they have, at which it
+/// does, every note no wider — or, at none, whether it does without them.
+/// Empty when it has no notes, or composes neither way.
+fn notes_room(
+    intent: &cad_intent::Intent,
+    composes: impl Fn(&cad_intent::Intent) -> bool,
+) -> String {
+    use cad_intent::Operation;
+    let widest = intent
+        .operations
+        .iter()
+        .filter_map(|op| match op {
+            Operation::Notes { width, .. } => Some(width.unwrap_or(crate::commands::notes::WIDTH)),
+            _ => None,
+        })
+        .fold(None, |most: Option<f64>, w| {
+            Some(most.map_or(w, |m| m.max(w)))
+        });
+    let Some(widest) = widest else {
+        return String::new();
+    };
+    let narrowed = |at: f64| {
+        let mut tried = intent.clone();
+        for op in &mut tried.operations {
+            if let Operation::Notes { width, .. } = op {
+                *width = Some(width.unwrap_or(crate::commands::notes::WIDTH).min(at));
+            }
+        }
+        tried
+    };
+    let mut at = ((widest - 1.0) / 10.0).floor() * 10.0;
+    while at >= NARROWEST_NOTES {
+        if composes(&narrowed(at)) {
+            return format!(
+                " With the notes no wider than {} mm it composes: give each `notes` a `width` of {} or less.",
+                number(at),
+                number(at)
+            );
+        }
+        at -= 10.0;
+    }
+    let mut without = intent.clone();
+    without
+        .operations
+        .retain(|op| !matches!(op, Operation::Notes { .. }));
+    if composes(&without) {
+        return " Without its notes the sheet composes, at any width they take: leave out notes the request does not ask for, and say in `reply` what they would have said.".to_owned();
+    }
+    String::new()
+}
+
+/// A view's outline: the box round its continuous lines — not its text,
+/// dimensions, fills, centre or hidden lines, balloons, or markers — which
+/// is the object as the view shows it.
+fn outline(drawing: &Drawing, sheet: &str, view: &crate::compose::ViewRecord) -> Option<Aabb> {
+    let tables = drawing.tables();
+    let name = crate::compose::view_group(sheet, &view.id);
+    let members = drawing
+        .groups()
+        .iter()
+        .find(|(_, g)| g.name == name)
+        .map(|(_, g)| g.members.clone())
+        .unwrap_or_default();
+    let skipped = [crate::compose::SECTION_LAYER, crate::bom::BALLOON_LAYER]
+        .map(|name| drawing.layers().find(name));
+    members
+        .iter()
+        .filter_map(|id| Some((drawing.entity(*id)?, drawing.record(*id)?)))
+        .filter(|(e, record)| {
+            let layer = drawing.layers().get(record.properties.layer);
+            let linetype = match record.properties.linetype {
+                cad_document::Linetype::ByLayer => {
+                    layer.map_or(cad_document::Linetype::CONTINUOUS, |l| l.linetype)
+                }
+                other => other,
+            };
+            !matches!(
+                e,
+                Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_) | Entity::Hatch(_)
+            ) && (linetype == cad_document::Linetype::ByBlock
+                || linetype == cad_document::Linetype::CONTINUOUS)
+                && !skipped.contains(&Some(record.properties.layer))
+        })
+        .map(|(e, _)| e.bounds(tables))
+        .reduce(|a, b| a.union(&b))
+}
+
+/// A free view that says where it looks from (#361) shows the object as a
+/// projected view from there would (AI service #15): MK-III's rear view, a
+/// free view looking from behind, stood on 130 while the front stood on 0,
+/// the armour 1820 tall from behind and 1950 from the front. Its outline
+/// spans the principal view's height (from a side or behind) or width
+/// (from above or below), as a projected view's spans its parent's. A
+/// section shows a cut, a view at a scale of its own a part, and neither
+/// is held to it.
+fn free_views_disagree(drawing: &Drawing, intent: &cad_intent::Intent) -> Vec<String> {
+    use cad_intent::ViewLooking;
+    let Some(sheet) = crate::compose::sheet_of(drawing) else {
+        return Vec::new();
+    };
+    let views = crate::compose::views_on(drawing, &sheet.group);
+    let Some(principal) = views
+        .iter()
+        .find(|v| v.role == cad_geometry::composition::Role::Principal)
+    else {
+        return Vec::new();
+    };
+    let Some(front) = outline(drawing, &sheet.group, principal) else {
+        return Vec::new();
+    };
+    let tolerance = 1e-6 * (area(&sheet.frame.border).sqrt() + 1.0);
+    let mut findings = Vec::new();
+    for view in &views {
+        if view.role != cad_geometry::composition::Role::Free
+            || view.section.is_some()
+            || view.ratio.is_some()
+            || !view.parts.is_empty()
+        {
+            continue;
+        }
+        let looking = intent.operations.iter().find_map(|op| match op {
+            cad_intent::Operation::View { id, looking, .. } if *id == view.id => *looking,
+            _ => None,
+        });
+        let (axis, from) = match looking {
+            Some(ViewLooking::FromBehind) => ("height", "behind"),
+            Some(ViewLooking::FromLeft) => ("height", "the left"),
+            Some(ViewLooking::FromRight) => ("height", "the right"),
+            Some(ViewLooking::FromAbove) => ("width", "above"),
+            Some(ViewLooking::FromBelow) => ("width", "below"),
+            _ => continue,
+        };
+        let Some(here) = outline(drawing, &sheet.group, view) else {
+            continue;
+        };
+        let span = |b: &Aabb| match axis {
+            "height" => b.max().y - b.min().y,
+            _ => b.max().x - b.min().x,
+        };
+        let (a, b) = (span(&here), span(&front));
+        if (a - b).abs() > 0.005 * a.max(b) + tolerance {
+            findings.push(format!(
+                "Views {} and {} disagree on the object's {axis}: {} in {} and {} in {}. A view looking from {from} shows the whole object, as {} as the principal view: draw both from the same positions.",
+                view.id,
+                principal.id,
+                number(a),
+                view.id,
+                number(b),
+                principal.id,
+                if axis == "height" { "tall" } else { "wide" },
+            ));
+        }
+    }
+    findings
 }
 
 /// What is wrong with a composed sheet's structure (ADR-0041 §7, #357):
@@ -831,31 +1005,7 @@ fn structure(drawing: &Drawing) -> Vec<String> {
     // or its width (from above or below) as its parent does: its outline —
     // not its text, dimensions, centre or hidden lines, balloons, or
     // markers — spans the same (#358).
-    let outline = |view: &crate::compose::ViewRecord| {
-        let members = group(&view_group(&sheet.group, &view.id)).unwrap_or_default();
-        let skipped = [crate::compose::SECTION_LAYER, crate::bom::BALLOON_LAYER]
-            .map(|name| drawing.layers().find(name));
-        members
-            .iter()
-            .filter_map(|id| Some((drawing.entity(*id)?, drawing.record(*id)?)))
-            .filter(|(e, record)| {
-                let layer = drawing.layers().get(record.properties.layer);
-                let linetype = match record.properties.linetype {
-                    cad_document::Linetype::ByLayer => {
-                        layer.map_or(cad_document::Linetype::CONTINUOUS, |l| l.linetype)
-                    }
-                    other => other,
-                };
-                !matches!(
-                    e,
-                    Entity::Text(_) | Entity::MText(_) | Entity::Dimension(_) | Entity::Hatch(_)
-                ) && (linetype == cad_document::Linetype::ByBlock
-                    || linetype == cad_document::Linetype::CONTINUOUS)
-                    && !skipped.contains(&Some(record.properties.layer))
-            })
-            .map(|(e, _)| e.bounds(tables))
-            .reduce(|a, b| a.union(&b))
-    };
+    let outline = |view: &crate::compose::ViewRecord| outline(drawing, &sheet.group, view);
     for view in &views {
         let Role::Projected { of, looking } = &view.role else {
             continue;
@@ -916,6 +1066,122 @@ fn structure(drawing: &Drawing) -> Vec<String> {
             findings.push(format!(
                 "A balloon names part {part}, which no bill of materials on the sheet has."
             ));
+        }
+    }
+    findings
+}
+
+/// How far, on paper, a dimension's end may be from what its view draws
+/// and still measure it, millimetres: half a millimetre, a pen's line.
+const ON_THE_DRAWING: f64 = 0.5;
+
+/// Dimensions that measure from nothing (AI service #15): the MK-III
+/// armour's overall height dimensioned from 0 to 1950 while its boots
+/// stood at 35, the figure 1915 tall and the dimension saying otherwise.
+/// A linear or aligned dimension reads the distance between its ends along
+/// its direction, so an end measures to whatever is at its level there: an
+/// end on nothing of its view, and at the level of no corner, edge, centre,
+/// or extreme of a curve the view draws, reads a size the drawing does not
+/// have. One measured from between a figure's feet, at the level of their
+/// soles, reads true.
+fn dimensions_on_nothing(drawing: &Drawing) -> Vec<String> {
+    use crate::compose::{sheet_of, view_group, views_on};
+    use cad_geometry::Primitive;
+    let Some(sheet) = sheet_of(drawing) else {
+        return Vec::new();
+    };
+    let tables = drawing.tables();
+    let unit = sheet.frame.units_per_mm;
+    let tolerance = ON_THE_DRAWING * unit;
+    let mut findings = Vec::new();
+    for view in views_on(drawing, &sheet.group) {
+        let name = view_group(&sheet.group, &view.id);
+        let Some((_, group)) = drawing.groups().iter().find(|(_, g)| g.name == name) else {
+            continue;
+        };
+        let entities: Vec<&Entity> = group
+            .members
+            .iter()
+            .filter_map(|id| drawing.entity(*id))
+            .collect();
+        let drawn: Vec<&Entity> = entities
+            .iter()
+            .copied()
+            .filter(|e| {
+                !matches!(
+                    e,
+                    Entity::Text(_)
+                        | Entity::MText(_)
+                        | Entity::Dimension(_)
+                        | Entity::Hatch(_)
+                        | Entity::Leader(_)
+                )
+            })
+            .collect();
+        if drawn.is_empty() {
+            continue;
+        }
+        // What a dimension can measure to: each piece's ends, each curve's
+        // centre, and its extremes along `along`.
+        let primitives: Vec<Primitive> = drawn.iter().flat_map(|e| e.primitives(tables)).collect();
+        let features = |along: Vec2| -> Vec<f64> {
+            let level = |q: Point2| (q - Point2::ORIGIN).dot(along);
+            primitives
+                .iter()
+                .flat_map(|p| match p {
+                    Primitive::Segment(s) => vec![level(s.start), level(s.end)],
+                    Primitive::Circle(c) => {
+                        let at = level(c.center);
+                        vec![at, at - c.radius, at + c.radius]
+                    }
+                    Primitive::Arc(a) => {
+                        let at = level(a.center);
+                        vec![at, at - a.radius, at + a.radius]
+                    }
+                })
+                .collect()
+        };
+        // Real lengths, as the view's own numbers give them: a view at a
+        // scale of its own is drawn `k` times them (#352).
+        let k = view.ratio.map_or(1.0, |r| r * unit);
+        for entity in &entities {
+            let Entity::Dimension(dimension) = entity else {
+                continue;
+            };
+            let (a, b, along) = match dimension.measure {
+                cad_document::Measure::Linear { a, b, rotation } => {
+                    (a, b, Vec2::from_polar(1.0, rotation))
+                }
+                cad_document::Measure::Aligned { a, b } => match cad_geometry::normalized(b - a) {
+                    Some(along) => (a, b, along),
+                    None => continue,
+                },
+                _ => continue,
+            };
+            let levels = features(along);
+            let off = |end: Point2| {
+                let on = drawn
+                    .iter()
+                    .map(|e| e.distance_to(end, tables))
+                    .fold(f64::INFINITY, f64::min);
+                if on <= tolerance {
+                    return 0.0;
+                }
+                let at = (end - Point2::ORIGIN).dot(along);
+                levels
+                    .iter()
+                    .map(|level| (level - at).abs())
+                    .fold(f64::INFINITY, f64::min)
+            };
+            let off = off(a).max(off(b));
+            if off > tolerance {
+                findings.push(format!(
+                    "In view {}, the dimension reading {} has an end {} from the level of anything the view draws: a dimension measures between points of the drawing, and this one reads a size the drawing does not have. Draw the part to the size the request gives, reaching the points dimensioned, or dimension what is drawn.",
+                    view.id,
+                    number(dimension.value() / k),
+                    number(off / k)
+                ));
+            }
         }
     }
     findings
@@ -1505,6 +1771,180 @@ mod tests {
                 .any(|f| f
                     .starts_with("The request asks for an A4 sheet, and the title block is A3.")),
             "{findings:?}"
+        );
+    }
+
+    /// The nightly's MK-III armour (AI service #15): its overall height
+    /// dimensioned from 0 to 1950, its boots standing at 35 — a figure
+    /// 1915 tall said to be 1950. A dimension with an end nothing of its
+    /// view is at is a finding, saying the view and what it reads, in the
+    /// view's own numbers, also in a view at a scale of its own; one from
+    /// an edge, a corner, or a hole's centre, or along a centreline, is not.
+    #[test]
+    fn a_dimension_with_an_end_on_nothing_is_a_finding() {
+        let sheet = |bottom: u32, detail: &str| {
+            cad_intent::parse(&format!(
+                r#"{{"version": {}, "operations": [
+                   {{"op": "title_block", "paper": "A1", "scale": 5, "title": "MK-III", "at": [0, 0]}},
+                   {{"op": "dim_scale", "scale": 5}},
+                   {{"op": "layer", "name": "OUTLINES", "current": true}},
+                   {{"op": "view", "id": "FRONT", "placed": "principal", "operations": [
+                       {{"op": "polyline", "closed": true, "points": [[-150, {bottom}], [150, {bottom}], [150, 1950], [-150, 1950]]}},
+                       {{"op": "circle", "center": [0, 1360], "radius": 65}},
+                       {{"op": "line", "points": [[0, 1200], [0, 1520]]}},
+                       {{"op": "dim_linear", "from": [0, 0], "to": [0, 1950], "at": [400, 975], "orientation": "vertical"}},
+                       {{"op": "dim_linear", "from": [-150, 1950], "to": [150, 1950], "at": [0, 2050], "orientation": "horizontal"}},
+                       {{"op": "dim_linear", "from": [0, 1360], "to": [150, 1360], "at": [0, 1700], "orientation": "horizontal"}},
+                       {{"op": "dim_linear", "from": [0, 1300], "to": [-150, 1300], "at": [0, 1100], "orientation": "horizontal"}}]}}
+                   {detail}]}}"#,
+                cad_intent::VERSION
+            ))
+            .unwrap()
+        };
+        let on_nothing = |intent: &cad_intent::Intent| -> Vec<String> {
+            review_document(intent, Some("mm"))
+                .unwrap()
+                .into_iter()
+                .filter(|f| f.contains("from the level of anything the view draws"))
+                .collect()
+        };
+        assert!(
+            on_nothing(&sheet(0, "")).is_empty(),
+            "{:?}",
+            on_nothing(&sheet(0, ""))
+        );
+        let short = on_nothing(&sheet(35, ""));
+        assert_eq!(short.len(), 1, "{short:?}");
+        assert!(
+            short[0].starts_with(
+                "In view FRONT, the dimension reading 1950 has an end 35 from the level of anything the view draws"
+            ),
+            "{short:?}"
+        );
+        // A detail at 2:1 on the 1:5 sheet, its numbers its own.
+        let detail = |from: u32| {
+            format!(
+                r#", {{"op": "view", "id": "D", "placed": "free", "scale": "2:1", "operations": [
+                       {{"op": "rectangle", "corner": [0, 0], "opposite": [40, 20]}},
+                       {{"op": "dim_linear", "from": [{from}, 0], "to": [40, 0], "at": [20, -10], "orientation": "horizontal"}}]}}"#
+            )
+        };
+        assert!(on_nothing(&sheet(0, &detail(0))).is_empty());
+        let off = on_nothing(&sheet(
+            0,
+            &detail(0).replace("[0, 0], \"to\"", "[-3, 0], \"to\""),
+        ));
+        assert!(
+            off.len() == 1
+                && off[0]
+                    .starts_with("In view D, the dimension reading 43 has an end 3 from the level"),
+            "{off:?}"
+        );
+    }
+
+    /// The nightly's MK-III armour (AI service #15): its rear view, a free
+    /// view looking from behind, stood on 130 while the front stood on 0.
+    /// A free view that says where it looks from is held to the principal
+    /// view's height or width as a projected view is; one that says
+    /// nothing, or a detail at a scale of its own, is not.
+    #[test]
+    fn a_free_view_looking_from_behind_is_as_tall_as_the_front() {
+        let sheet = |rear: &str| {
+            cad_intent::parse(&format!(
+                r#"{{"version": {}, "operations": [
+                   {{"op": "title_block", "paper": "A1", "scale": 5, "title": "MK-III", "at": [0, 0]}},
+                   {{"op": "dim_scale", "scale": 5}},
+                   {{"op": "layer", "name": "OUTLINES", "current": true}},
+                   {{"op": "view", "id": "FRONT", "placed": "principal", "operations": [
+                       {{"op": "rectangle", "corner": [-150, 0], "opposite": [150, 1950]}},
+                       {{"op": "dim_linear", "from": [-150, 0], "to": [-150, 1950], "at": [-300, 975], "orientation": "vertical"}}]}},
+                   {{"op": "view", "id": "REAR", "placed": "free"{rear}]}}]}}"#,
+                cad_intent::VERSION
+            ))
+            .unwrap()
+        };
+        let disagree = |rear: &str| -> Vec<String> {
+            review_document(&sheet(rear), Some("mm"))
+                .unwrap()
+                .into_iter()
+                .filter(|f| f.contains("disagree"))
+                .collect()
+        };
+        let short = r#", "looking": "from_behind", "operations": [
+                       {"op": "rectangle", "corner": [-150, 130], "opposite": [150, 1950]}"#;
+        assert_eq!(
+            disagree(short),
+            [
+                "Views REAR and FRONT disagree on the object's height: 1820 in REAR and 1950 in FRONT. A view looking from behind shows the whole object, as tall as the principal view: draw both from the same positions."
+            ]
+        );
+        let whole = short.replace("[-150, 130]", "[-150, 0]");
+        assert!(disagree(&whole).is_empty(), "{:?}", disagree(&whole));
+        let said_nothing = short.replace(r#""looking": "from_behind", "#, "");
+        assert!(disagree(&said_nothing).is_empty());
+        let detail = short.replace(r#""looking""#, r#""scale": "1:2", "looking""#);
+        assert!(disagree(&detail).is_empty(), "{:?}", disagree(&detail));
+    }
+
+    /// The nightly's L-bracket (AI service #15), asked for on A4 at 1:1:
+    /// a one-line note 120 mm wide left no room, and was kept through
+    /// every ask, the model told only to make room. The finding says the
+    /// width the notes compose at — here 100, 110 still too wide; where narrower notes do not make room
+    /// — ten lines of them taking what the bill of materials needed — that
+    /// the sheet composes without them; and nothing of notes it has none.
+    #[test]
+    fn a_sheet_with_no_room_is_told_what_its_notes_take() {
+        let sheet = |notes: &str| {
+            cad_intent::parse(&format!(
+                r#"{{"version": {}, "operations": [
+                   {{"op": "title_block", "paper": "A4", "scale": 1, "title": "L-BRACKET", "projection": "third", "at": [0, 0]}},
+                   {{"op": "layer", "name": "OUTLINE", "current": true}},
+                   {{"op": "view", "id": "front", "placed": "principal", "operations": [
+                       {{"op": "polyline", "closed": true, "points": [[0, 0], [80, 0], [80, 5], [5, 5], [5, 60], [0, 60]]}},
+                       {{"op": "dim_linear", "from": [0, 0], "to": [80, 0], "at": [40, -15], "orientation": "horizontal"}},
+                       {{"op": "dim_linear", "from": [0, 0], "to": [0, 60], "at": [-15, 30], "orientation": "vertical"}}]}},
+                   {{"op": "view", "id": "left", "placed": "projected", "of": "front", "looking": "from_left", "operations": [
+                       {{"op": "rectangle", "corner": [-40, 0], "opposite": [0, 60]}},
+                       {{"op": "dim_linear", "from": [-40, 0], "to": [0, 0], "at": [-20, -15], "orientation": "horizontal"}}]}},
+                   {{"op": "view", "id": "top", "placed": "projected", "of": "front", "looking": "from_above", "operations": [
+                       {{"op": "rectangle", "corner": [0, 0], "opposite": [80, 40]}}]}}
+                   {notes},
+                   {{"op": "bill_of_materials", "parts": [{{"number": 1, "name": "Bracket", "quantity": 1, "material": "S235"}}]}}]}}"#,
+                cad_intent::VERSION
+            ))
+            .unwrap()
+        };
+        let stated = crate::stated::stated("an L-bracket on an A4 sheet at 1:1");
+        let found = |notes: &str| review_stated(&sheet(notes), Some("mm"), &stated).unwrap();
+        let wide = found(
+            r#", {"op": "notes", "lines": ["Schematic L-bracket; bend radius and other manufacturing details not specified."], "width": 120}"#,
+        );
+        assert!(
+            wide[0].starts_with("The sheet could not be composed: View notes needs 120 × 22 mm")
+                && wide[0].ends_with(
+                    " With the notes no wider than 100 mm it composes: give each `notes` a `width` of 100 or less."
+                ),
+            "{wide:?}"
+        );
+        let lines: Vec<String> = (1..=10)
+            .map(|i| format!("\"Note {i}: material and finish as specified.\""))
+            .collect();
+        let tall = found(&format!(
+            r#", {{"op": "notes", "lines": [{}], "width": 80}}"#,
+            lines.join(", ")
+        ));
+        assert!(
+            tall[0].starts_with("The sheet could not be composed: View bom needs")
+                && tall[0].ends_with(
+                    " Without its notes the sheet composes, at any width they take: leave out notes the request does not ask for, and say in `reply` what they would have said."
+                ),
+            "{tall:?}"
+        );
+        // Composed, there is nothing to say of the notes.
+        assert!(
+            found(r#", {"op": "notes", "lines": ["Break all edges."], "width": 60}"#)
+                .iter()
+                .all(|f| !f.contains("notes")),
         );
     }
 

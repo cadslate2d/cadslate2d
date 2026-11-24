@@ -15,7 +15,7 @@ pub const NOTES_LAYER: &str = "NOTES";
 /// The notes' text height and their width when none is given, in paper
 /// millimetres.
 const TEXT: f64 = 3.5;
-const WIDTH: f64 = 120.0;
+pub(crate) const WIDTH: f64 = 120.0;
 
 #[derive(Debug, PartialEq)]
 enum State {
