@@ -6,7 +6,7 @@
 - the image never stored by the service;
 - reading an image on the service's paid plan (the service's repository).
 
-Not to be built on until accepted, and its spike (§9, #523) has measured the model. The service's half is cadslate2d/cadslate2d-ai-service#33.
+The spike (§9, #523) ran the same day: the model reads written sizes and asks where none is written, and places the image only roughly. §7 and §8 are amended to that, as §9 foresaw. Not to be built on until the maintainer accepts it. The service's half is cadslate2d/cadslate2d-ai-service#33.
 
 **Date:** 2026-11-24  
 **Issue:** #523 · **Epic:** #366, milestone M27  
@@ -119,10 +119,12 @@ Clipping (`IMAGECLIP`) and brightness or contrast are not in this milestone.
 **The model answers** with an intent document as for words. Intent version 27 adds one operation, `underlay`:
 
 ```json
-{ "op": "underlay", "at": [x, y], "width": w, "rotation": 0, "fade": 50 }
+{ "op": "underlay", "marks": [ { "pixel": [px, py], "point": [x, y] }, { "pixel": [px, py], "point": [x, y] } ], "fade": 50 }
 ```
 
-It places the request's image with its lower-left corner at `at`, spanning `w` drawing units, so that the image lies under what the document draws as the image shows it. The model knows the image's pixel size and the sizes it read. The image itself is not in the document: `underlay` names the request's image, which the engine holds for the request.
+It places the request's image by two marks: two pixels of the image, far apart — two corners of what was drawn — and the drawing points they show. The engine lays the image so that each pixel falls on its point: the move, turn, and uniform scale that `ALIGN` makes from two pairs of points. The image itself is not in the document: `underlay` names the request's image, which the engine holds for the request.
+
+**The placement is a starting point** (§9). The spike found the model's marks a tenth of the image's width out, at worst, and usually too small. The panel says the image is placed roughly. After Accept, the user sets it exactly with `ALIGN`: a corner of the image, then the corner it shows, twice. `ALIGN` takes an image as it takes any entity, its geometry being its frame. The drawing itself never depends on the placement: it is drawn to the sizes read.
 
 **The proposal** shows the image under the drawn geometry in the overlay (§2). On Accept, the image definition, the image entity, and the geometry are committed in one transaction: one undo. Rejected, nothing of the image stays in the drawing.
 
@@ -140,10 +142,10 @@ The corpus gains **L7**, in English and Portuguese, each case an image and a req
 A case is judged on what the image states:
 - each written size is drawn, and dimensioned where asked;
 - the structure the image shows: counts of closed outlines, of openings, of rooms;
-- the underlay placed so that two named marks of the image fall within a tolerance of the points they mark in the drawing;
+- the underlay placed roughly: the image's marks within 15% of its width of the points they mark, a check that it lies under its drawing at all, not that it is aligned;
 - the reply asks where the image gives no size.
 
-A judged size is exact; a placement is within 2% of the image's width.
+A judged size is exact. Placement is judged loosely, as §7 says it is.
 
 ### 9. First, a spike
 
@@ -155,7 +157,19 @@ Before anything is built, a spike measures the configured model on twelve images
 
 It measures how many written sizes it reads right, whether its outlines close, how close its `underlay` lands, and whether it asks where it should. The ADR's acceptance waits on it.
 
-If the model reads written sizes reliably but places poorly, §7 stands and the placement becomes a reviewed finding. If it cannot read sizes, the AI half waits for a better model: the underlay (§1–§6) is worth building alone.
+If the model reads written sizes reliably but places poorly, §7 stands, with the placement made the user's to finish. If it cannot read sizes, the AI half waits for a better model: the underlay (§1–§6) is worth building alone.
+
+**What it found** (2026-11-24, two rounds; the tools, the images' sources, and both rounds' judgments are in [`0042-spike/`](0042-spike/README.md)):
+- **Written sizes are read.**
+  - Every sketch's outline was drawn the size written, with all 14 of its sizes, in both rounds.
+  - The PDF pages had all 5 of theirs.
+  - The scans' small feet-and-inches figures are where it slips: their outlines came out the size written in 1 of 4 runs, then 4 of 4; their sizes 9 then 12 of 18. One scan was right in one round and wrong in the other.
+- **Rules are followed.**
+  - Chains that do not add up to their overall size were drawn to the overall size and said so, on three scans.
+  - A size read from proportions was said to be: the PDF bracket's thickness.
+  - Both images with no size got a question and nothing drawn.
+- **Placement is rough.** Run back over its image, a drawing lands from nearly on its plan to a tenth of the image's width away, by an `underlay` (`at`, `width`, `rotation`: 7–11% on the sketches) or by two marks (9–11%, and 5% on the PDF bracket). Hence the amended §7 and §8.
+- **Cost and time.** About $0.003 a request at the meter's prices, none of it served from the provider's cache, against $0.0004–0.0008 for a request in words. A median 17–19 s.
 
 ## Alternatives considered
 
@@ -178,7 +192,7 @@ If the model reads written sizes reliably but places poorly, §7 stands and the 
 
 ## Revisit when
 
-- The spike or L7 shows sizes read and outlines placed poorly: weigh the vector-tracing pre-pass.
+- Users find setting the placement by `ALIGN` a chore, or L7 shows it too rough to find the image under its drawing: weigh the vector-tracing pre-pass, which would place by the image's own lines.
 - Users ask for clipping, brightness, or contrast: `IMAGECLIP` and `IMAGEADJUST`'s other settings.
 - DWG users meet images: write them through the DWG writer.
 - A PDF's vector geometry is wanted as lines: a PDF import, by its own ADR.

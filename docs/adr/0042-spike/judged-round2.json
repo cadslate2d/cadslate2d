@@ -1,0 +1,156 @@
+[
+ {
+  "name": "sketch-room",
+  "asks": 1,
+  "seconds": 8,
+  "reply": "I\u2019ll draw the room\u2019s L-shaped outline in millimetres from the stated dimensions; the inner recess is derived as 2800 \u00d7 2400 mm. The sketch\u2019s perspective is not used to set the geometry.",
+  "box": [
+   6000.0,
+   4500.0
+  ],
+  "box_right": true,
+  "sizes_read": "4/4",
+  "closed": 1,
+  "dimensions": 0,
+  "placement_error_pct": 10.63
+ },
+ {
+  "name": "sketch-plate",
+  "asks": 1,
+  "seconds": 6,
+  "reply": "The proposal draws a 120 \u00d7 80 mm plate with four \u00d810 holes, each 15 mm from both adjacent edges, using the dimensions written in the sketch.",
+  "box": [
+   120.0,
+   80.0
+  ],
+  "box_right": true,
+  "sizes_read": "3/3",
+  "closed": 0,
+  "dimensions": 0,
+  "holes": 4,
+  "placement_error_pct": 8.61
+ },
+ {
+  "name": "sketch-house",
+  "asks": 1,
+  "seconds": 5,
+  "reply": "I\u2019ll trace the outer walls and the two interior wall lines as single lines, using the written dimensions in metres converted to millimetres. The sketch\u2019s proportions are taken from its dimensions, not measured from the image.",
+  "box": [
+   10000.0,
+   7500.0
+  ],
+  "box_right": true,
+  "sizes_read": "4/4",
+  "closed": 0,
+  "dimensions": 0,
+  "placement_error_pct": 9.84
+ },
+ {
+  "name": "sketch-bracket",
+  "asks": 1,
+  "seconds": 6,
+  "reply": "The proposal draws the bracket\u2019s closed L-shaped profile in millimetres, using 60 mm overall height, 80 mm overall length, and 5 mm thickness. The image is aligned to the drawing using the two marked points.",
+  "box": [
+   80.0,
+   60.0
+  ],
+  "box_right": true,
+  "sizes_read": "3/3",
+  "closed": 1,
+  "dimensions": 0,
+  "placement_error_pct": 11.27
+ },
+ {
+  "name": "scan-leopold",
+  "asks": 1,
+  "seconds": 16,
+  "reply": "The proposal traces the right-hand plan\u2019s L-shaped outer wall face in millimetres, using the overall dimensions and the written 10\u2032-1\u2033 and 6\u2032-0\u2033 offsets to place the step. The dimension chains do not match the overall dimensions, so the remaining segments are adjusted to the overall width and height",
+  "box": [
+   6845.3,
+   5588.0
+  ],
+  "box_right": true,
+  "sizes_read": "4/5",
+  "closed": 1,
+  "dimensions": 0
+ },
+ {
+  "name": "scan-bugbee",
+  "asks": 1,
+  "seconds": 18,
+  "reply": "The proposal traces the second-floor wall outline to the written overall dimensions, using the scan\u2019s proportions for the step positions. The dimension chains disagree with those overall dimensions (horizontally, 40\u2032-2\u00be\u2033 vs. 40\u2032-1\u2033; vertically, 37\u2032-2\u00bc\u2033 vs. 37\u2032-0\u00bd\u2033), so the overall dimensions govern.",
+  "box": [
+   12217.4,
+   11290.3
+  ],
+  "box_right": true,
+  "sizes_read": "2/6",
+  "closed": 1,
+  "dimensions": 0
+ },
+ {
+  "name": "scan-telephone",
+  "asks": 1,
+  "seconds": 21,
+  "reply": "I\u2019ll trace the main floor plan\u2019s L-shaped outer wall face using the written dimensions in millimetres, anchored to the scan\u2019s top corners.",
+  "box": [
+   8817.0,
+   6378.6
+  ],
+  "box_right": true,
+  "sizes_read": "4/4",
+  "closed": 1,
+  "dimensions": 0
+ },
+ {
+  "name": "scan-library",
+  "asks": 1,
+  "seconds": 25,
+  "reply": "I\u2019ll trace a simplified outer-wall outline, converting the written overall dimensions to millimetres and reading the undimensioned shape proportionally from the scan.",
+  "box": [
+   19508.5,
+   30545.0
+  ],
+  "box_right": true,
+  "sizes_read": "2/3",
+  "closed": 1,
+  "dimensions": 0
+ },
+ {
+  "name": "pdf-bracket",
+  "asks": 1,
+  "seconds": 10,
+  "reply": "The proposal draws the bracket\u2019s front L-profile at 80 \u00d7 60 mm, using an approximately 5 mm thickness read proportionally from the image; that thickness is not dimensioned there.",
+  "box": [
+   80.0,
+   60.0
+  ],
+  "box_right": true,
+  "sizes_read": "2/2",
+  "closed": 1,
+  "dimensions": 0,
+  "placement_error_pct": 5.02
+ },
+ {
+  "name": "pdf-pump",
+  "asks": 1,
+  "seconds": 39,
+  "reply": "The proposal draws a schematic front elevation at 1:5, using the written 600 mm base width to read the undimensioned component proportions; component profiles and connection details remain to be specified.",
+  "box": [
+   1485.0,
+   1050.0
+  ],
+  "box_right": false,
+  "sizes_read": "3/3",
+  "closed": 9,
+  "dimensions": 0
+ },
+ {
+  "name": "nosize-shelf",
+  "verdict": "no record"
+ },
+ {
+  "name": "nosize-garden",
+  "verdict": "no record"
+ }
+]

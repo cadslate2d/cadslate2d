@@ -1,0 +1,162 @@
+[
+ {
+  "name": "sketch-room",
+  "asks": 1,
+  "seconds": 14,
+  "reply": "I\u2019ll draw the room\u2019s L-shaped outline in millimetres, deriving the 2.80 m and 2.40 m inset sides from the written overall dimensions. The underlay will be aligned approximately because the photo is perspective-skewed.",
+  "box": [
+   6000.0,
+   4500.0
+  ],
+  "box_right": true,
+  "sizes_read": "4/4",
+  "closed": 1,
+  "dimensions": 0,
+  "placement_error_pct": 10.5
+ },
+ {
+  "name": "sketch-plate",
+  "asks": 1,
+  "seconds": 11,
+  "reply": "The drawing will show a 120 \u00d7 80 mm plate with four \u00d810 holes, each 15 mm from its adjacent edges. The image underlay is aligned approximately because the sketch photo has perspective distortion.",
+  "box": [
+   120.0,
+   80.0
+  ],
+  "box_right": true,
+  "sizes_read": "3/3",
+  "closed": 0,
+  "dimensions": 0,
+  "holes": 4,
+  "placement_error_pct": 6.83
+ },
+ {
+  "name": "sketch-house",
+  "asks": 1,
+  "seconds": 9,
+  "reply": "I\u2019ll draw the house plan as single-line geometry in millimetres, using the written dimensions: 10,000 \u00d7 7,500 overall, the vertical partition 4,000 from the left, and the cross-partition 3,000 from the bottom.",
+  "box": [
+   10000.0,
+   7500.0
+  ],
+  "box_right": true,
+  "sizes_read": "4/4",
+  "closed": 0,
+  "dimensions": 0,
+  "placement_error_pct": 11.45
+ },
+ {
+  "name": "sketch-bracket",
+  "asks": 1,
+  "seconds": 16,
+  "reply": "I\u2019ll draw the 80 \u00d7 60 mm L-profile with 5 mm thickness; the vertical-leg thickness is read proportionally from the sketch using the marked t = 5, and corner details remain unspecified.",
+  "box": [
+   80.0,
+   60.0
+  ],
+  "box_right": true,
+  "sizes_read": "3/3",
+  "closed": 1,
+  "dimensions": 0,
+  "placement_error_pct": 9.35
+ },
+ {
+  "name": "scan-leopold",
+  "asks": 1,
+  "seconds": 19,
+  "reply": "I\u2019ll trace the L-shaped outer wall face in millimetres, using the overall dimensions 22\u2032-5 1/2\u2033 \u00d7 18\u2032-4\u2033; the written split dimensions conflict with those overall dimensions, so the outline\u2019s step is adjusted to fit them.",
+  "box": [
+   6845.3,
+   5588.0
+  ],
+  "box_right": true,
+  "sizes_read": "4/5",
+  "closed": 1,
+  "dimensions": 0
+ },
+ {
+  "name": "scan-bugbee",
+  "asks": 1,
+  "seconds": 20,
+  "reply": "The proposal traces the second-floor outer wall outline, including the projecting bay, using the written overall dimensions; the left-side vertical dimensions sum to 37\u2032-2\u00bc\u2033, while the overall dimension reads 37\u2032-0\u00bd\u2033, so the overall dimension is used.",
+  "box": [
+   13738.4,
+   11283.3
+  ],
+  "box_right": false,
+  "sizes_read": "3/6",
+  "closed": 1,
+  "dimensions": 0
+ },
+ {
+  "name": "scan-telephone",
+  "asks": 1,
+  "seconds": 20,
+  "reply": "The proposal draws the main-floor outer wall outline as an L, using the written overall dimensions to control; the bottom horizontal chain and right-side vertical chain do not add up to their overall dimensions. The scanned sheet will be placed underneath at an approximate alignment based on the pla",
+  "box": [
+   8817.0,
+   6353.2
+  ],
+  "box_right": false,
+  "sizes_read": "1/4",
+  "closed": 1,
+  "dimensions": 0
+ },
+ {
+  "name": "scan-library",
+  "asks": 1,
+  "seconds": 24,
+  "reply": "The proposal traces a schematic outer-wall outline in millimetres, using the written 64\u2032-0 1/2\u2033 overall width to scale proportions for parts not separately dimensioned.",
+  "box": [
+   22072.0,
+   30673.0
+  ],
+  "box_right": false,
+  "sizes_read": "1/3",
+  "closed": 1,
+  "dimensions": 0
+ },
+ {
+  "name": "pdf-bracket",
+  "asks": 1,
+  "seconds": 28,
+  "reply": "I\u2019ll draw the bracket\u2019s front profile on an A3 sheet at 1:1. Its approximately 5 mm web and flange thickness is read proportionally from the image; I\u2019ll note that estimate on the drawing.",
+  "box": [
+   420.0,
+   297.0
+  ],
+  "box_right": false,
+  "sizes_read": "2/2",
+  "closed": 5,
+  "dimensions": 0,
+  "placement_error_pct": 46.32
+ },
+ {
+  "name": "pdf-pump",
+  "asks": 1,
+  "seconds": 39,
+  "reply": "The proposal draws the pump set\u2019s front elevation on an A3 sheet at 1:5, retaining the 600, 420, and 250 mm dimensions. The component outlines not dimensioned in the image are schematic, read proportionally using the 600 mm width; their exact forms and the feature corresponding to the 250 mm level r",
+  "box": [
+   2100.0,
+   1485.0
+  ],
+  "box_right": false,
+  "sizes_read": "3/3",
+  "closed": 10,
+  "dimensions": 3
+ },
+ {
+  "name": "nosize-shelf",
+  "asks": 1,
+  "seconds": 3,
+  "reply": "The sketch shows a bookshelf with two side panels and three shelves, but gives no dimensions or scale; please provide its overall width and height (and depth, if you want that shown).",
+  "verdict": "asked"
+ },
+ {
+  "name": "nosize-garden",
+  "asks": 1,
+  "seconds": 3,
+  "reply": "The sketch has no written dimensions or scale, so I can\u2019t set its size without guessing. Please provide the garden boundary dimensions and the shed\u2019s dimensions and position; then I can draw it in millimetres.",
+  "verdict": "asked"
+ }
+]

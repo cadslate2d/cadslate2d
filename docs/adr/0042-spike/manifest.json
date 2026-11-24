@@ -1,0 +1,110 @@
+[
+ {
+  "name": "sketch-room",
+  "image": "sketch-room.jpg",
+  "pixels": [
+   2048,
+   1536
+  ],
+  "prompt": "Draw this room from my sketch. The sizes are in metres."
+ },
+ {
+  "name": "sketch-plate",
+  "image": "sketch-plate.jpg",
+  "pixels": [
+   2048,
+   1536
+  ],
+  "prompt": "Draw this plate from my sketch, in millimetres."
+ },
+ {
+  "name": "sketch-house",
+  "image": "sketch-house.jpg",
+  "pixels": [
+   2048,
+   1536
+  ],
+  "prompt": "Draw the walls of this house from my sketch as single lines. The sizes are in metres."
+ },
+ {
+  "name": "sketch-bracket",
+  "image": "sketch-bracket.jpg",
+  "pixels": [
+   2048,
+   1536
+  ],
+  "prompt": "Draw this bracket's profile from my sketch, in millimetres."
+ },
+ {
+  "name": "scan-leopold",
+  "image": "scan-leopold.png",
+  "pixels": [
+   2048,
+   1368
+  ],
+  "prompt": "Draw the outline of the floor plan on the right of this scanned sheet — the outer face of its walls — to the dimensions written on it, in millimetres."
+ },
+ {
+  "name": "scan-bugbee",
+  "image": "scan-bugbee.png",
+  "pixels": [
+   1370,
+   2048
+  ],
+  "prompt": "Draw the outline of the second floor plan on this scanned sheet — the outer face of its walls — to the dimensions written on it, in millimetres."
+ },
+ {
+  "name": "scan-telephone",
+  "image": "scan-telephone.png",
+  "pixels": [
+   2048,
+   1365
+  ],
+  "prompt": "Draw the outline of the main floor plan on this scanned sheet — the outer face of its walls — to the dimensions written on it, in millimetres."
+ },
+ {
+  "name": "scan-library",
+  "image": "scan-library.png",
+  "pixels": [
+   1362,
+   2048
+  ],
+  "prompt": "Draw the outline of the first floor plan on this scanned sheet — the outer face of its walls — to the dimensions written on it, in millimetres."
+ },
+ {
+  "name": "pdf-bracket",
+  "image": "pdf-bracket.png",
+  "pixels": [
+   2048,
+   1449
+  ],
+  "prompt": "Draw the front view of the bracket on this drawing sheet as an editable drawing, to the sizes written on it."
+ },
+ {
+  "name": "pdf-pump",
+  "image": "pdf-pump.png",
+  "pixels": [
+   2048,
+   1449
+  ],
+  "prompt": "Draw the front elevation of the pump set on this drawing sheet as an editable drawing, to the sizes written on it."
+ },
+ {
+  "name": "nosize-shelf",
+  "image": "nosize-shelf.jpg",
+  "pixels": [
+   2048,
+   1536
+  ],
+  "prompt": "Draw this bookshelf from my sketch."
+ },
+ {
+  "name": "nosize-garden",
+  "image": "nosize-garden.jpg",
+  "pixels": [
+   2048,
+   1536
+  ],
+  "prompt": "Make a CAD drawing of my garden from this sketch."
+ }
+]
