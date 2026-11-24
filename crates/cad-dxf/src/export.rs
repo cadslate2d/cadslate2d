@@ -770,8 +770,6 @@ fn dimension_block_name(n: usize) -> String {
     format!("*D{n}")
 }
 
-/// A kept LAYOUT's groups with the name the layout has now: the first
-/// group 1 after the `AcDbLayout` marker.
 /// The plot settings' groups for `plot` (#208): the rotation (73), the
 /// plot type (74), the window's corners (48, 49, 140, 141), the scale
 /// (142 over 143), and the flags (70, bit 16) with the standard scale (75)
@@ -806,7 +804,17 @@ fn plot_groups(plot: &LayoutPlot, groups: &[(i32, String)]) -> Vec<(i32, String)
     ]
 }
 
-fn layout_groups_as_now(groups: &[(i32, String)], layout: &Layout) -> Vec<(i32, String)> {
+/// A kept LAYOUT's groups as the layout is now: its name and its tab's
+/// place, `order`, in the first groups 1 and 71 after the `AcDbLayout`
+/// marker. The place is the layout's in the table, not the file's, which
+/// another layout written beside it — a paper block no LAYOUT named, read
+/// as a layout of its own — may have taken, so the file read again puts
+/// them in the order they were written.
+fn layout_groups_as_now(
+    groups: &[(i32, String)],
+    layout: &Layout,
+    order: i64,
+) -> Vec<(i32, String)> {
     let mut out = groups.to_vec();
     let start = out
         .iter()
@@ -814,6 +822,9 @@ fn layout_groups_as_now(groups: &[(i32, String)], layout: &Layout) -> Vec<(i32, 
         .unwrap_or(0);
     if let Some(slot) = out[start..].iter_mut().find(|(code, _)| *code == 1) {
         slot.1 = layout.name.clone();
+    }
+    if let Some(slot) = out[start..].iter_mut().find(|(code, _)| *code == 71) {
+        slot.1 = order.to_string();
     }
     // Plot settings set here (#208) replace the file's.
     if let Some(plot) = layout.plot.as_deref() {
@@ -2365,7 +2376,7 @@ impl Writer {
                 );
             } else {
                 self.group(0, "LAYOUT");
-                let groups = layout_groups_as_now(&layout.kept, layout);
+                let groups = layout_groups_as_now(&layout.kept, layout, index as i64 + 1);
                 self.kept_groups(
                     &groups,
                     sheet.layout,

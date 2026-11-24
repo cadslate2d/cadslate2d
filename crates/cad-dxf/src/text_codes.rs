@@ -71,7 +71,11 @@ pub(crate) fn plain_text(text: &str) -> (String, bool) {
 }
 
 /// An MTEXT's words with the formatting taken out: paragraph breaks become
-/// line breaks; whether any formatting was dropped.
+/// line breaks; whether any formatting was dropped. An ASCII control
+/// character but a tab or a break is a space, and dropped, as the writer
+/// puts one in the file (#430): words that held a NUL would otherwise lay
+/// out otherwise when read again. A C1 control is a character the writer
+/// escapes, and is kept.
 pub(crate) fn plain_mtext(text: &str) -> (String, bool) {
     let mut out = String::with_capacity(text.len());
     let mut dropped = false;
@@ -119,6 +123,10 @@ pub(crate) fn plain_mtext(text: &str) -> (String, bool) {
                 Some(_) => dropped = true,
                 None => dropped = true,
             },
+            c if c.is_ascii_control() && c != '\t' && c != '\n' => {
+                out.push(' ');
+                dropped = true;
+            }
             _ => out.push(c),
         }
     }
@@ -159,6 +167,20 @@ mod tests {
             ("first\nsecond".to_owned(), false)
         );
         assert_eq!(plain_mtext("one\\Ptwo"), ("one\ntwo".to_owned(), false));
+    }
+
+    /// A fuzzer finding: an MTEXT's words holding NULs were written with a
+    /// space for each (#430), and read again laid out otherwise — a space
+    /// is a place to break a line, and has a width. A control character
+    /// is read as the space it is written as; a tab, a break, and a C1
+    /// control, which the writer writes as themselves, are kept.
+    #[test]
+    fn a_control_character_in_a_paragraph_is_a_space() {
+        assert_eq!(plain_mtext("a\u{0}\u{1}b\rc"), ("a  b c".to_owned(), true));
+        assert_eq!(
+            plain_mtext("a\tb\nc\u{81}d"),
+            ("a\tb\nc\u{81}d".to_owned(), false)
+        );
     }
 
     #[test]

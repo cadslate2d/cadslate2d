@@ -227,7 +227,7 @@ pub fn import_records(
                         &record.kind,
                         Group {
                             code: *code,
-                            value: value.trim(),
+                            value: trimmed(value),
                             raw: value,
                             line: 0,
                         },
@@ -251,7 +251,7 @@ pub fn import_records(
                 };
                 let mut groups = record.groups.iter().map(|(code, value)| Group {
                     code: *code,
-                    value: value.trim(),
+                    value: trimmed(value),
                     raw: value,
                     line: 0,
                 });
@@ -309,6 +309,14 @@ fn decoded(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
 /// escaped.
 pub(crate) fn read_as_character(c: char) -> bool {
     !c.is_ascii_control()
+}
+
+/// A group's value without what pads it: whitespace, and an ASCII control
+/// character at either end, which the writer writes as a space (#430) — a
+/// value read with a NUL at its start would be written with a space
+/// there, and read again without it.
+fn trimmed(value: &str) -> &str {
+    value.trim_matches(|c: char| c.is_whitespace() || c.is_ascii_control())
 }
 
 /// `text` with each `\U+XXXX` escape of a character `decode` takes written
@@ -435,7 +443,7 @@ impl<'a> Groups<'a> {
         }
         Ok(Some(Group {
             code,
-            value: value.trim(),
+            value: trimmed(value),
             raw: value.strip_suffix('\r').unwrap_or(value),
             line,
         }))

@@ -260,6 +260,38 @@ fn a_c1_control_in_a_paragraph_is_read_and_saved_as_itself() {
     assert_eq!(export(&again.drawing), written);
 }
 
+/// A fuzzer finding: a value padded with control characters — NULs before
+/// a layout's plot origin, here, and others after its paper name. The
+/// writer writes a control character as a space (#430) and the reader
+/// trims the spaces at a value's ends, so the file saved again said `0.0`
+/// where the first save said eight spaces and `0.0`. A control character
+/// at a value's end is trimmed as a space is.
+#[test]
+fn a_value_padded_with_control_characters_is_read_without_them() {
+    let first = load("valid", "layouts-values-padded-with-controls.dxf").unwrap();
+    let (_, layout) = first
+        .drawing
+        .layouts()
+        .iter()
+        .find(|(_, layout)| layout.name == "Layout1")
+        .expect("the layout");
+    let kept = |code: i32| {
+        layout
+            .kept
+            .iter()
+            .find(|(own, _)| *own == code)
+            .map(|(_, value)| value.as_str())
+    };
+    assert_eq!(kept(4), Some("A3"), "the paper name");
+    assert_eq!(kept(47), Some("0.0"), "the plot origin's y");
+
+    let written = export(&first.drawing);
+    assert!(!written.contains("A3 "), "{written}");
+    assert!(!written.contains(" 0.0\n"), "{written}");
+    let again = import(written.as_bytes()).unwrap();
+    assert_eq!(export(&again.drawing), written, "stable on the second pass");
+}
+
 /// A fuzzer finding (#177): a pattern line placed at y = 1e20, so far from
 /// the region against its spacing that the pattern's lines could not be
 /// told apart, and the walk over them never ended. The hatch is reported
@@ -644,6 +676,64 @@ fn two_layout_records_named_alike_are_written_with_a_name_each() {
             "*Paper_Space",
             "*Paper_Space1",
             "*Paper_Space0"
+        ]
+    );
+
+    let again = import(text.as_bytes()).unwrap();
+    assert_eq!(
+        layout_blocks(&again.drawing),
+        [
+            owned("Layout1", "*Paper_Space", 2),
+            owned("Layout2", "*Paper_Space1", 0),
+            owned("Layout3", "*Paper_Space0", 1),
+        ]
+    );
+    assert_eq!(export(&again.drawing), text, "stable on the second pass");
+}
+
+/// A fuzzer finding: a LAYOUT's tab order (71), kept, past the place the
+/// writer gave a layout after it — one read from a paper block no LAYOUT
+/// names. Read again, the two changed places, and with them their paper
+/// blocks' names. Each layout's tab order is written as its place in the
+/// table, so the file reads back in the order it was written.
+#[test]
+fn a_layouts_tab_order_is_written_as_its_place() {
+    let first = load("valid", "layouts-tab-order-past-a-sheet.dxf").unwrap();
+    let owned = |name: &str, block: &str, held| (name.to_owned(), block.to_owned(), held);
+    // Layout2's record is none in the file, so its block, which no
+    // LAYOUT names now, is a layout of its own after it.
+    assert_eq!(
+        layout_blocks(&first.drawing),
+        [
+            owned("Layout1", "*Paper_Space", 2),
+            owned("Layout2", "", 0),
+            owned("Layout3", "*Paper_Space0", 1),
+        ]
+    );
+
+    let text = export(&first.drawing);
+    // Each layout's name and tab order, as its AcDbLayout subclass says.
+    let tabs: Vec<(&str, &str)> = text
+        .split("\nAcDbLayout\n")
+        .skip(1)
+        .filter_map(|rest| {
+            let lines: Vec<&str> = rest.lines().collect();
+            let value = |code: &str| {
+                lines
+                    .chunks(2)
+                    .find(|pair| pair[0].trim() == code)
+                    .map(|pair| pair[1])
+            };
+            Some((value("1")?, value("71")?))
+        })
+        .collect();
+    assert_eq!(
+        tabs,
+        [
+            ("Model", "0"),
+            ("Layout1", "1"),
+            ("Layout2", "2"),
+            ("Layout3", "3")
         ]
     );
 
