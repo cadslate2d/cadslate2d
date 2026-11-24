@@ -2444,9 +2444,14 @@ impl<'a> Reader<'a> {
             {
                 block_record_handle.clear();
             }
+            // A layout's paper block is named like one. A record named
+            // like a block of the drawing's names none of the layout's,
+            // and the layout is written with a paper block of its own
+            // rather than a second block of that name.
             let block_name = self
                 .block_record_names
                 .get(&block_record_handle)
+                .filter(|name| is_paper_space(name))
                 .cloned()
                 .unwrap_or_default();
             let at = paper_blocks

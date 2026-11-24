@@ -467,6 +467,28 @@ fn layouts_are_kept_through_a_round_trip() {
     assert_eq!(export(&back.drawing), text, "stable on the second pass");
 }
 
+/// Each layout other than the model's: its name, its paper block's name
+/// in the file, and how many entities are on it.
+fn layout_blocks(drawing: &Drawing) -> Vec<(String, String, usize)> {
+    drawing
+        .layouts()
+        .iter()
+        .skip(1)
+        .map(|(id, layout)| {
+            let held = drawing.shown_in(id).count();
+            (layout.name.clone(), layout.block_name.clone(), held)
+        })
+        .collect()
+}
+
+/// The names of the BLOCK records a file holds, in its order.
+fn written_block_names(text: &str) -> Vec<&str> {
+    text.split("\nAcDbBlockBegin\n  2\n")
+        .skip(1)
+        .filter_map(|rest| rest.lines().next())
+        .collect()
+}
+
 /// A fuzzer finding: two LAYOUT objects of a file pieced together from
 /// others named one block record. Both were written naming the record of
 /// the last, so read again they shared its block, and the file saved
@@ -476,22 +498,11 @@ fn layouts_are_kept_through_a_round_trip() {
 #[test]
 fn two_layouts_naming_one_block_record_are_written_with_one_each() {
     let first = load("valid", "layouts-sharing-a-block-record.dxf").unwrap();
-    let blocks = |drawing: &Drawing| -> Vec<(String, String, usize)> {
-        drawing
-            .layouts()
-            .iter()
-            .skip(1)
-            .map(|(id, layout)| {
-                let held = drawing.shown_in(id).count();
-                (layout.name.clone(), layout.block_name.clone(), held)
-            })
-            .collect()
-    };
     let owned = |name: &str, block: &str, held| (name.to_owned(), block.to_owned(), held);
     // Layout2 names Layout1's record; Layout2's own block, which no
     // LAYOUT names now, is a layout of its own.
     assert_eq!(
-        blocks(&first.drawing),
+        layout_blocks(&first.drawing),
         [
             owned("Layout1", "*Paper_Space", 2),
             owned("Layout2", "", 0),
@@ -559,7 +570,86 @@ fn two_layouts_naming_one_block_record_are_written_with_one_each() {
 
     let again = import(text.as_bytes()).unwrap();
     assert_eq!(
-        blocks(&again.drawing),
+        layout_blocks(&again.drawing),
+        [
+            owned("Layout1", "*Paper_Space", 2),
+            owned("Layout2", "*Paper_Space1", 0),
+            owned("Layout3", "*Paper_Space0", 1),
+        ]
+    );
+    assert_eq!(export(&again.drawing), text, "stable on the second pass");
+}
+
+/// A fuzzer finding: a layout's block record named like a block of the
+/// drawing's, `DOOR`. The layout's sheet was written as a second block
+/// `DOOR`, and read again one of the two was lost, with the line in it.
+/// A layout's paper block is named like one, so this layout has none of
+/// the file's and is written with a paper block of its own.
+#[test]
+fn a_layout_record_named_like_a_block_is_written_with_a_paper_block() {
+    let first = load("valid", "layouts-record-named-like-a-block.dxf").unwrap();
+    let owned = |name: &str, block: &str, held| (name.to_owned(), block.to_owned(), held);
+    let door_holds = |drawing: &Drawing| {
+        let door = drawing.blocks().find("DOOR").expect("the block");
+        drawing.blocks().get(door).unwrap().entities.len()
+    };
+    assert_eq!(
+        layout_blocks(&first.drawing),
+        [owned("Layout1", "*Paper_Space", 2), owned("Layout2", "", 0)]
+    );
+    assert_eq!(door_holds(&first.drawing), 1);
+
+    let text = export(&first.drawing);
+    assert_eq!(
+        written_block_names(&text),
+        ["*Model_Space", "*Paper_Space", "*Paper_Space0", "DOOR"]
+    );
+
+    let again = import(text.as_bytes()).unwrap();
+    assert_eq!(
+        layout_blocks(&again.drawing),
+        [
+            owned("Layout1", "*Paper_Space", 2),
+            owned("Layout2", "*Paper_Space0", 0),
+        ]
+    );
+    assert_eq!(door_holds(&again.drawing), 1);
+    assert_eq!(export(&again.drawing), text, "stable on the second pass");
+}
+
+/// Two block records a file named alike, both `*Paper_Space`, each named
+/// by a layout: the second layout's sheet is written with a name of its
+/// own, not as a second block `*Paper_Space`.
+#[test]
+fn two_layout_records_named_alike_are_written_with_a_name_each() {
+    let first = load("valid", "layouts-records-named-alike.dxf").unwrap();
+    let owned = |name: &str, block: &str, held| (name.to_owned(), block.to_owned(), held);
+    // Layout2's record is named like Layout1's, whose block Layout1
+    // has; Layout2's own block, which no record names now, is a
+    // layout of its own.
+    assert_eq!(
+        layout_blocks(&first.drawing),
+        [
+            owned("Layout1", "*Paper_Space", 2),
+            owned("Layout2", "*Paper_Space", 0),
+            owned("Layout3", "*Paper_Space0", 1),
+        ]
+    );
+
+    let text = export(&first.drawing);
+    assert_eq!(
+        written_block_names(&text),
+        [
+            "*Model_Space",
+            "*Paper_Space",
+            "*Paper_Space1",
+            "*Paper_Space0"
+        ]
+    );
+
+    let again = import(text.as_bytes()).unwrap();
+    assert_eq!(
+        layout_blocks(&again.drawing),
         [
             owned("Layout1", "*Paper_Space", 2),
             owned("Layout2", "*Paper_Space1", 0),

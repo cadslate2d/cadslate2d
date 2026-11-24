@@ -130,16 +130,26 @@ impl Structure {
             sheets: Vec::new(),
             remap: HashMap::new(),
         };
-        // A layout's paper block keeps the name the file gave it; one
-        // made here takes the next name a writer would give it.
-        let mut block_names: Vec<String> = layouts
+        // A layout's paper block keeps the name the file gave it, unless
+        // an earlier layout's has it — a file's two records, or two
+        // blocks, named alike. One made here, or one whose name is taken,
+        // takes the next name a writer would give it: no two blocks share
+        // a name.
+        let mut block_names: Vec<String> = Vec::new();
+        let keeps_name: Vec<bool> = layouts
             .iter()
             .filter(|(id, _)| *id != LayoutId::MODEL)
-            .map(|(_, layout)| layout.block_name.to_uppercase())
-            .filter(|name| !name.is_empty())
+            .map(|(_, layout)| {
+                let name = layout.block_name.to_uppercase();
+                let keeps = !name.is_empty() && !block_names.contains(&name);
+                if keeps {
+                    block_names.push(name);
+                }
+                keeps
+            })
             .collect();
         let sheets = layouts.iter().filter(|(id, _)| *id != LayoutId::MODEL);
-        for (index, (id, layout)) in sheets.enumerate() {
+        for (index, ((id, layout), keeps_name)) in sheets.zip(keeps_name).enumerate() {
             // The first layout takes the handles a drawing without any
             // gives its one `Layout1`, so a file of ours read back writes
             // the same bytes again.
@@ -148,15 +158,15 @@ impl Structure {
             } else {
                 (handles.take(), handles.take())
             };
-            let block_name = if layout.block_name.is_empty() {
+            let block_name = if keeps_name {
+                layout.block_name.clone()
+            } else {
                 let name = std::iter::once("*Paper_Space".to_owned())
                     .chain((0..).map(|n| format!("*Paper_Space{n}")))
                     .find(|name| !block_names.contains(&name.to_uppercase()))
                     .expect("some name is free");
                 block_names.push(name.to_uppercase());
                 name
-            } else {
-                layout.block_name.clone()
             };
             let kept: Vec<Handle> = layout
                 .kept_entities
