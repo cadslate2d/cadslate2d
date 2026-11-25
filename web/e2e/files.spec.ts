@@ -55,6 +55,30 @@ test.describe("open", () => {
     expect(await litPixels(canvas)).toBeGreaterThan(empty + 300);
   });
 
+  // Playwright's Firefox picker answers "cancelled" before it sets the
+  // files; a person's picker never says both, and `chooseFile` keeps the
+  // first from the page. Were it heard, every flow that opens a file would
+  // give up instead.
+  test("a file chosen in the picker is all the file input hears", async ({ page }) => {
+    await page.addInitScript(() => {
+      const heard: string[] = [];
+      (window as unknown as { __heard: string[] }).__heard = heard;
+      const click = HTMLInputElement.prototype.click;
+      HTMLInputElement.prototype.click = function (this: HTMLInputElement) {
+        for (const kind of ["cancel", "change"])
+          this.addEventListener(kind, () => heard.push(kind));
+        click.call(this);
+      };
+    });
+    await openApp(page);
+
+    await chooseFile(page, () => enter(page, "OPEN"), fixturePath("valid/minimal-line.dxf"));
+
+    const heard = await page.evaluate(() => (window as unknown as { __heard: string[] }).__heard);
+    expect(heard).toEqual(["change"]);
+    await expect(logLines(page).last()).toHaveText("Imported 1 line.");
+  });
+
   test("polylines with arc segments open, draw their arcs, and export them again", async ({
     page,
   }) => {

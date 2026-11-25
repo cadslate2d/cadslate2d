@@ -378,16 +378,55 @@ export function decoded(bytes: Uint8Array): string {
   }
 }
 
-/** Runs `action`, which must open a file picker, and chooses `file` in it. */
+/**
+ * Runs `action`, which must open a file picker, and chooses `file` in it,
+ * as a person does: the input hears the file and nothing else.
+ *
+ * Playwright stands in for the person at the picker. In Firefox it does so
+ * (since Playwright 1.65) by replacing the native picker with one that
+ * answers "cancelled" at once, so the input hears a `cancel` before the
+ * files Playwright then gives it — a sequence no person's picker makes, and
+ * one the app rightly reads as giving up (`downloadFiles.open`). That
+ * `cancel` is kept from the page until the file arrives.
+ */
 export async function chooseFile(
   page: Page,
   action: () => Promise<void>,
   file: string | { name: string; mimeType: string; buffer: Buffer },
 ): Promise<void> {
+  await page.evaluate(holdPickerCancel);
   const pending = page.waitForEvent("filechooser");
   await action();
   await (await pending).setFiles(file);
   await settle(page);
+}
+
+/**
+ * Runs in the page: the next file input the page opens has any `cancel`
+ * stopped before the page's own listeners hear it, until it hears a
+ * `change`. A capturing listener runs first at the target, whenever added.
+ */
+function holdPickerCancel(): void {
+  const scope = window as unknown as { __pickerStandIn?: { armed: boolean } };
+  if (!scope.__pickerStandIn) {
+    const standIn = { armed: false };
+    scope.__pickerStandIn = standIn;
+    const click = HTMLInputElement.prototype.click;
+    HTMLInputElement.prototype.click = function (this: HTMLInputElement) {
+      if (standIn.armed && this.type === "file") {
+        standIn.armed = false;
+        const hold = (event: Event) => event.stopImmediatePropagation();
+        this.addEventListener("cancel", hold, { capture: true });
+        this.addEventListener(
+          "change",
+          () => this.removeEventListener("cancel", hold, { capture: true }),
+          { once: true },
+        );
+      }
+      click.call(this);
+    };
+  }
+  scope.__pickerStandIn.armed = true;
 }
 
 /** Records every request the page makes from now on. */
