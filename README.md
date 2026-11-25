@@ -5,7 +5,7 @@
 **Free 2D CAD in your browser. Draw it yourself, or describe it and the AI drafts it.**
 
 [![CI](https://github.com/cadslate2d/cadslate2d/actions/workflows/ci.yml/badge.svg)](https://github.com/cadslate2d/cadslate2d/actions/workflows/ci.yml)
-[![Version 0.3.0](https://img.shields.io/badge/version-0.3.0-0f766e)](web/package.json)
+[![Version 0.3.1](https://img.shields.io/badge/version-0.3.1-0f766e)](web/package.json)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE)
 [![cadslate2d.com](https://img.shields.io/badge/app-cadslate2d.com-111827)](https://cadslate2d.com)
 
@@ -69,7 +69,7 @@ Rust compiled to WebAssembly owns all CAD state — entities, commands, selectio
 
 ## Status
 
-Version 0.3.0. Milestones M0 to M26 are complete: the classic drafting set, DXF and DWG, layouts and plotting, the AI assistant with its five levels of requests — drafting, parts and constraints, floor plans, views and sections, composed sheets — the requests it should answer with a question rather than a guess, and every answer checked against its request and shown with how it was checked. M27, drawings from images — a sketch, a scan, or a PDF page as an underlay and with an AI request — is under way: images can be attached, saved in DXF, and plotted ([#366](https://github.com/cadslate2d/cadslate2d/issues/366), [ADR-0042](docs/adr/0042-drawings-from-images.md), accepted). What remains otherwise needs a person: a check on real GPUs and in WebKit, and of the files in AutoCAD and a desktop PDF viewer ([M15](https://github.com/cadslate2d/cadslate2d/milestone/16)). See the [milestones](https://github.com/cadslate2d/cadslate2d/milestones) and [issues](https://github.com/cadslate2d/cadslate2d/issues).
+Version 0.3.1. Milestones M0 to M26 are complete: the classic drafting set, DXF and DWG, layouts and plotting, the AI assistant with its five levels of requests — drafting, parts and constraints, floor plans, views and sections, composed sheets — the requests it should answer with a question rather than a guess, and every answer checked against its request and shown with how it was checked. M27, drawings from images — a sketch, a scan, or a PDF page as an underlay and with an AI request — is under way: images can be attached, saved in DXF, and plotted ([#366](https://github.com/cadslate2d/cadslate2d/issues/366), [ADR-0042](docs/adr/0042-drawings-from-images.md), accepted). What remains otherwise needs a person: a check on real GPUs and in WebKit, and of the files in AutoCAD and a desktop PDF viewer ([M15](https://github.com/cadslate2d/cadslate2d/milestone/16)). See the [milestones](https://github.com/cadslate2d/cadslate2d/milestones) and [issues](https://github.com/cadslate2d/cadslate2d/issues).
 
 ## Contributing
 

@@ -15,6 +15,7 @@ const allowance = (remaining: number): Allowance => ({
   allowance: 100,
   remaining,
   resetsAt: "2026-11-01T00:00:00Z",
+  promptLimit: 2000,
 });
 
 const CIRCLE = { version: 1, operations: [{ op: "circle", center: [0, 0], radius: 5 }] };

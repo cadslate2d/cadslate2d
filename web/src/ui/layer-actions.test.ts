@@ -6,8 +6,13 @@ import {
   createLayer,
   deleteLayer,
   LINEWEIGHT_CHOICES,
+  LAYER_COLOR_CHOICES,
+  LAYER_LINEWEIGHT_CHOICES,
   renameLayer,
   setCurrent,
+  setLayerColor,
+  setLayerLinetype,
+  setLayerLineweight,
   swatchColor,
   toggleFrozen,
   toggleLocked,
@@ -36,6 +41,9 @@ describe("the Layers panel's actions are LAYER options with their answers", () =
       createLayer("doors"),
       renameLayer(walls, "partitions"),
       deleteLayer(walls),
+      setLayerColor(walls, "blue"),
+      setLayerLinetype(walls, "HIDDEN"),
+      setLayerLineweight(walls, "0.35"),
     ]) {
       expect(script[0]).toBe("LAYER");
       expect(script.at(-1)).toBe("");
@@ -89,4 +97,20 @@ describe("the Properties panel's changes are CHPROP with its answers", () => {
     expect(LINEWEIGHT_CHOICES).toHaveLength(27);
     expect(LINEWEIGHT_CHOICES.at(-1)).toBe("2.11");
   });
+});
+
+test("a layer's colour, linetype, and lineweight are LAYER's options, the value before the layer", () => {
+  expect(setLayerColor(walls, "34")).toEqual(["LAYER", "Color", "34", "walls", ""]);
+  expect(setLayerLinetype(walls, "HIDDEN")).toEqual(["LAYER", "LType", "HIDDEN", "walls", ""]);
+  expect(setLayerLineweight(walls, "0.35")).toEqual(["LAYER", "LWeight", "0.35", "walls", ""]);
+});
+
+test("a layer is offered no ByLayer or ByBlock, which it cannot be", () => {
+  for (const choices of [LAYER_COLOR_CHOICES, LAYER_LINEWEIGHT_CHOICES]) {
+    expect(choices).not.toContain("ByLayer");
+    expect(choices).not.toContain("ByBlock");
+  }
+  expect(LAYER_LINEWEIGHT_CHOICES).toContain("Default");
+  expect(LAYER_LINEWEIGHT_CHOICES).toContain("0.35");
+  expect(LAYER_COLOR_CHOICES).toContain("red");
 });

@@ -5,11 +5,17 @@
 import { useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import type { CadApp } from "../app/cad-app";
 import type { LayerRow } from "../cad/engine";
+import { ChoiceField } from "./ChoiceField";
 import {
   createLayer,
   deleteLayer,
+  LAYER_COLOR_CHOICES,
+  LAYER_LINEWEIGHT_CHOICES,
   renameLayer,
   setCurrent,
+  setLayerColor,
+  setLayerLinetype,
+  setLayerLineweight,
   swatchColor,
   toggleFrozen,
   toggleLocked,
@@ -102,15 +108,22 @@ function NameField({
 
 function Row({
   layer,
+  index,
+  linetypes,
   busy,
   run,
 }: {
   layer: LayerRow;
+  /** Its place in the table, for the ids of its fields. */
+  index: number;
+  /** The drawing's linetypes, which a layer's may be. */
+  linetypes: readonly string[];
   busy: boolean;
   /** Runs a script unless the panel is busy. */
   run: (script: CommandScript) => void;
 }) {
   const [renaming, setRenaming] = useState(false);
+  const key = `layer-${index}`;
   const button = (
     label: string,
     pressed: boolean | undefined,
@@ -191,10 +204,38 @@ function Row({
           style={{ background: swatchColor(layer) }}
           aria-hidden="true"
         />
-        <span className="layers__muted">{layer.color}</span>
+        <ChoiceField
+          id={`${key}-color`}
+          label={`Color of ${layer.name}`}
+          value={String(layer.color)}
+          choices={LAYER_COLOR_CHOICES}
+          disabled={busy}
+          className="layers__value"
+          onChange={(color) => run(setLayerColor(layer, color))}
+        />
       </td>
-      <td className="layers__muted">{layer.linetype}</td>
-      <td className="layers__muted">{layer.lineweight}</td>
+      <td>
+        <ChoiceField
+          id={`${key}-linetype`}
+          label={`Linetype of ${layer.name}`}
+          value={layer.linetype}
+          choices={linetypes}
+          disabled={busy}
+          className="layers__value"
+          onChange={(linetype) => run(setLayerLinetype(layer, linetype))}
+        />
+      </td>
+      <td>
+        <ChoiceField
+          id={`${key}-lineweight`}
+          label={`Lineweight of ${layer.name}`}
+          value={layer.lineweight}
+          choices={LAYER_LINEWEIGHT_CHOICES}
+          disabled={busy}
+          className="layers__value"
+          onChange={(lineweight) => run(setLayerLineweight(layer, lineweight))}
+        />
+      </td>
       <td className="layers__tools">
         <button
           type="button"
@@ -229,7 +270,7 @@ export function LayersPanel({ app }: { app: CadApp }) {
   };
 
   return (
-    <aside className="layers" aria-label="Layers">
+    <aside className="layers" aria-label="Layers" data-dock="layers">
       <div className="layers__header">
         <h2 className="layers__title">Layers</h2>
         <button
@@ -278,8 +319,15 @@ export function LayersPanel({ app }: { app: CadApp }) {
             </tr>
           </thead>
           <tbody>
-            {snapshot.layers.map((layer) => (
-              <Row key={layer.name} layer={layer} busy={busy} run={run} />
+            {snapshot.layers.map((layer, index) => (
+              <Row
+                key={layer.name}
+                layer={layer}
+                index={index}
+                linetypes={snapshot.linetypes}
+                busy={busy}
+                run={run}
+              />
             ))}
           </tbody>
         </table>

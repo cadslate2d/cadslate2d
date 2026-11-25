@@ -134,6 +134,8 @@ export class FakeAiService {
       allowance,
       remaining: Math.max(0, allowance - this.used),
       resets_at: "2026-11-01T00:00:00Z",
+      // As the service's `meter::prompt_limit`: Pro takes long requests.
+      prompt_limit: plan === "pro" ? 8000 : 2000,
     };
   }
 

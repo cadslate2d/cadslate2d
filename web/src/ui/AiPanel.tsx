@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import type { AiAssistant, AiSnapshot } from "../app/ai-assistant";
-import type { Trail } from "../app/ai-client";
+import { PROMPT_LIMIT, promptLength, type Trail } from "../app/ai-client";
 
 /** How many selected objects the consent lists before "and N more". */
 const LISTED = 12;
@@ -153,7 +153,13 @@ export function AiPanel({
 }) {
   const snapshot = useSyncExternalStore(assistant.subscribe, assistant.getSnapshot);
   return (
-    <aside className="ai" aria-label="AI Assistant" onKeyDown={keep} data-testid="ai-panel">
+    <aside
+      className="ai"
+      aria-label="AI Assistant"
+      onKeyDown={keep}
+      data-testid="ai-panel"
+      data-dock="ai"
+    >
       <div className="ai__header">
         <h2 className="ai__title">AI Assistant</h2>
         {snapshot.status === "signed-in" && snapshot.allowance && (
@@ -593,6 +599,7 @@ function Conversation({
             value={text}
             disabled={snapshot.busy || snapshot.consent !== undefined || atLimit}
             placeholder="A 120 × 80 plate with a hole of Ø10 at each corner"
+            aria-describedby="ai-prompt-count"
             onChange={(event) => setText(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
@@ -617,15 +624,37 @@ function Conversation({
               setText(next === 0 ? draft : (asked[asked.length - next] ?? ""));
             }}
           />
-          <button
-            type="submit"
-            className="ai__button ai__button--primary"
-            disabled={snapshot.busy || snapshot.consent !== undefined || atLimit || !text.trim()}
-          >
-            Ask
-          </button>
+          <div className="ai__ask-row">
+            <button
+              type="submit"
+              className="ai__button ai__button--primary"
+              disabled={snapshot.busy || snapshot.consent !== undefined || atLimit || !text.trim()}
+            >
+              Ask
+            </button>
+            <PromptCount text={text} limit={snapshot.allowance?.promptLimit ?? PROMPT_LIMIT} />
+          </div>
         </form>
       </div>
     </>
+  );
+}
+
+/**
+ * How much of the plan's longest request the prompt uses, counted as the
+ * service counts it; past the limit it says so, and the service refuses.
+ */
+function PromptCount({ text, limit }: { text: string; limit: number }) {
+  const used = promptLength(text);
+  const over = used > limit;
+  return (
+    <span
+      id="ai-prompt-count"
+      className={`ai__count${over ? " ai__count--over" : ""}`}
+      data-testid="ai-prompt-count"
+    >
+      {used} / {limit} characters
+      {over && " — too long"}
+    </span>
   );
 }

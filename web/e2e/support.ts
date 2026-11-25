@@ -727,3 +727,25 @@ export function scenarioDxf(): string {
   text = text.slice(0, entsEnd) + drawn + text.slice(entsEnd);
   return text;
 }
+
+/**
+ * A field a panel opens to change a value (`ChoiceField`): it opens empty,
+ * focused, the current value its placeholder, and its list holds every
+ * choice. The browser's own list cannot be seen from a test, but what it
+ * shows can: only the choices that match what is in the field — so a field
+ * opened with "ByLayer" in it offered "ByLayer" alone, and nothing else
+ * could be chosen.
+ */
+export async function expectOffers(
+  field: Locator,
+  current: string,
+  choices: readonly string[],
+): Promise<void> {
+  await expect(field).toBeFocused();
+  await expect(field).toHaveValue("");
+  await expect(field).toHaveAttribute("placeholder", current);
+  const offered = await field.evaluate((input: HTMLInputElement) =>
+    [...(input.list?.options ?? [])].map((option) => option.value),
+  );
+  expect(offered).toEqual([...choices]);
+}

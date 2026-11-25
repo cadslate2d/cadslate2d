@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { CadApp } from "../app/cad-app";
 import { CadEngine, KeyAction, coreVersion, loadEngine } from "../cad/engine";
 import { CanvasView } from "./CanvasView";
@@ -20,6 +27,7 @@ import { MENUS } from "./menus";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { ShortcutMenu } from "./ShortcutMenu";
 import { AiPanel } from "./AiPanel";
+import { Divider, sizeStyle, usePanelSizes, WidthHandle, type DockedPanel } from "./PanelSizes";
 import { AiAssistant, browserSessionStore } from "../app/ai-assistant";
 import { httpAiClient } from "../app/ai-client";
 import { AI_SERVICE_URL } from "../app/ai-service";
@@ -90,6 +98,7 @@ export function App() {
   // Off until the user opens it (ADR-0037), or comes back from a sign-in link.
   // The AI panel is open from the start in a build that has the service.
   const ai = useVisibilityPreference("cadslate2d.ai", SIGNING_IN || AI_SERVICE_URL !== undefined);
+  const { sizes, update: resize } = usePanelSizes();
 
   useEffect(() => {
     let cancelled = false;
@@ -189,8 +198,21 @@ export function App() {
   const shell = ["shell", toolbar.visible && "shell--with-toolbar", panels && "shell--with-panels"]
     .filter(Boolean)
     .join(" ");
+  // The docked panels shown, top to bottom, with a divider between each two.
+  const docked: [DockedPanel, ReactNode][] = [];
+  if (layers.visible) docked.push(["layers", <LayersPanel app={core.app} />]);
+  if (properties.visible) docked.push(["properties", <PropertiesPanel app={core.app} />]);
+  if (ai.visible)
+    docked.push([
+      "ai",
+      <AiPanel
+        assistant={core.assistant}
+        privacyUrl={AI_SERVICE_URL ? new URL("privacy", AI_SERVICE_URL).href : undefined}
+        pricingUrl={AI_SERVICE_URL ? new URL("pricing", AI_SERVICE_URL).href : undefined}
+      />,
+    ]);
   return (
-    <div className={shell}>
+    <div className={shell} style={sizeStyle(sizes)}>
       <Header
         coreVersion={core.version}
         account={<AccountButton assistant={core.assistant} onOpen={() => setAccount(true)} />}
@@ -247,15 +269,16 @@ export function App() {
       <CommandLine app={core.app} />
       {panels && (
         <div className="panels">
-          {layers.visible && <LayersPanel app={core.app} />}
-          {properties.visible && <PropertiesPanel app={core.app} />}
-          {ai.visible && (
-            <AiPanel
-              assistant={core.assistant}
-              privacyUrl={AI_SERVICE_URL ? new URL("privacy", AI_SERVICE_URL).href : undefined}
-              pricingUrl={AI_SERVICE_URL ? new URL("pricing", AI_SERVICE_URL).href : undefined}
-            />
-          )}
+          <WidthHandle sizes={sizes} update={resize} />
+          {docked.map(([panel, element], index) => {
+            const above = docked[index - 1]?.[0];
+            return (
+              <Fragment key={panel}>
+                {above && <Divider above={above} below={panel} sizes={sizes} update={resize} />}
+                {element}
+              </Fragment>
+            );
+          })}
         </div>
       )}
       <StatusBar app={core.app} />

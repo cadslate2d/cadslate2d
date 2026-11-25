@@ -1019,6 +1019,30 @@ describe("layers for the panel", () => {
     await tick();
     expect(app.ui.getSnapshot().layers[1]?.locked).toBe(false);
   });
+
+  test("a refused answer ends a panel's script and the command, so no answer lands on the wrong question", async () => {
+    const { app, tick } = harness();
+    // A layer has no ByLayer lineweight: LAYER says so and asks again. The
+    // layer's name, typed next, must not become the lineweight.
+    app.run("LAYER", "LWeight", "ByLayer", "0", "");
+    await tick();
+    let snapshot = app.ui.getSnapshot();
+    expect(snapshot.command).toBeUndefined();
+    expect(snapshot.log).toContain(
+      "A layer needs a lineweight of its own, not ByLayer or ByBlock.",
+    );
+    expect(snapshot.log).not.toContain("Enter lineweight (mm or Default): 0");
+    expect(snapshot.layers[0]?.lineweight).toBe("Default");
+
+    // The command line is free again, and the next action goes through.
+    app.run("LAYER", "LWeight", "0.35", "0", "");
+    app.run("LAYER", "Color", "nonsense", "0", "");
+    app.run("LAYER", "Color", "red", "0", "");
+    await tick();
+    snapshot = app.ui.getSnapshot();
+    expect(snapshot.command).toBeUndefined();
+    expect(snapshot.layers[0]).toMatchObject({ lineweight: "0.35 mm", color: 1 });
+  });
 });
 
 // #141: the Properties panel reads a bounded summary and changes through CHPROP.

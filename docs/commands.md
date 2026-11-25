@@ -7,7 +7,7 @@ Every command CadSlate2D has, what it asks, and what it does — the manual. The
 Type anywhere on the page; you never need to click the command line first. The menu bar, the toolbar, and the panels are optional ways to type:
 - every menu item and button runs the same command you could type ([ADR-0034](adr/0034-menu-macros.md)). A menu item may wait for your answer before typing the rest, as AutoCAD's menus do;
 - a Layers panel action is `LAYER` with its answers, a change in the Properties panel is `CHPROP`, and the log shows each step;
-- View shows and hides the toolbar and the panels.
+- View shows and hides the toolbar and the panels. Drag the panels' left edge to widen or narrow them, and the bar between two panels to share the height between them, or focus either and use the arrow keys; a double-click puts the usual size back, and the browser remembers what you chose.
 
 The menu bar has the menus of AutoCAD 2007/2008's classic workspace, in its order: **File, Edit, View, Insert, Format, Tools, Draw, Dimension, Modify, Help**. Each command sits where that program puts it, for example Draw › Arc › Start, Center, End, or Format › Layer Tools › Layer Off. Items AutoCAD has and this program does not are left out rather than shown dead. Items that cannot apply now are greyed: Undo with nothing to undo, Paste with nothing to paste, the viewport items off a layout. From the keyboard, as in AutoCAD:
 - Alt and a letter opens a menu (Alt+F File, Alt+O Format, Alt+D Draw, Alt+N Dimension, …), and Alt alone underlines the letters;
@@ -231,11 +231,11 @@ A position that would collapse the object — a line of no length, a circle of n
 
 ## Layers
 
-Every object is on a layer; new objects go on the current one, and an object made from another — a copy, an offset, a piece of a trim — stays on its source's. `LAYER` makes and manages them, and the Layers panel on the right does the same by button: switch on or off, lock, make current, create, rename, delete. It waits while a command is in progress. A layer that is **off** hides its objects from the screen and from the pointer. A layer that is **locked** still shows them, and they can be snapped to and trimmed against, but no command changes them.
+Every object is on a layer; new objects go on the current one, and an object made from another — a copy, an offset, a piece of a trim — stays on its source's. `LAYER` makes and manages them, and the Layers panel on the right does the same by button: switch on or off, freeze, lock, make current, create, rename, delete, and a click on a layer's colour, linetype, or lineweight to change it, from the full list or typed. It waits while a command is in progress, and a value `LAYER` refuses is said in the log and changes nothing. A layer that is **off** hides its objects from the screen and from the pointer. A layer that is **locked** still shows them, and they can be snapped to and trimmed against, but no command changes them.
 
 Objects are drawn in the colour of their layer (`LAYER`, `Color`), or in a colour of their own if they were drawn after `COLOR` set one. A colour is a number from 1 to 255 or one of seven names: 1 red, 2 yellow, 3 green, 4 cyan, 5 blue, 6 magenta, 7 white. Colour 7, which a new layer has, is the foreground: light on the dark canvas.
 
-The Properties panel shows what is selected — how many objects of which kinds — and the layer, colour, linetype, and lineweight they share, or that they vary; for one object it also lists what defines it, read only. Changing a value there runs `CHPROP` on the selection. The summary is computed in Rust and is a few counts and strings however large the selection.
+The Properties panel shows what is selected — how many objects of which kinds — and the layer, colour, linetype, and lineweight they share, or that they vary; for one object it also lists what defines it, read only. Clicking a value opens a field offering every choice — the drawing's layers and linetypes, the colours, the lineweights — or one typed; choosing runs `CHPROP` on the selection. The summary is computed in Rust and is a few counts and strings however large the selection.
 
 A layer also has a lineweight (`LAYER`, `LWeight`), and an object can have one of its own (`LWEIGHT`). They are drawn at their true width — 1 mm is about 3.8 pixels — while **LWT** on the status bar is on, and at the ordinary width while it is off. A lineweight never changes how an object is picked or snapped to.
 

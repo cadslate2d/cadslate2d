@@ -1,7 +1,17 @@
 // The Properties panel (#141): what is selected and what it shares, and a
 // change made there is CHPROP through the command line.
 import { expect, test, type Page } from "@playwright/test";
-import { clickWorld, downloadFrom, enter, entities, group, logLines, openApp } from "./support";
+import { COLOR_CHOICES, LINEWEIGHT_CHOICES } from "../src/ui/layer-actions";
+import {
+  clickWorld,
+  downloadFrom,
+  enter,
+  entities,
+  expectOffers,
+  group,
+  logLines,
+  openApp,
+} from "./support";
 
 const panel = (page: Page) => page.getByRole("complementary", { name: "Properties" });
 const headline = (page: Page) => page.getByTestId("selection-headline");
@@ -57,5 +67,70 @@ test.describe("Properties panel", () => {
     await expect(headline(page)).toHaveText("2 objects: 1 line, 1 circle");
     await expect(value(page, "Color")).toHaveText("*Varies*");
     await expect(value(page, "Layer")).toHaveText("walls");
+  });
+
+  test("every property opens offering every choice, and each one changes the selection", async ({
+    page,
+  }) => {
+    const canvas = await openApp(page);
+    await enter(page, "LAYER", "N", "walls", "");
+    await enter(page, "LINETYPE", "L", "Dashed", "");
+    await enter(page, "L", "0,0", "100,0", "");
+    await clickWorld(page, canvas, 50, 0);
+    await expect(headline(page)).toHaveText("1 line");
+    const field = (property: string) => page.getByRole("combobox", { name: property });
+    const said = (text: string) => expect(logLines(page).filter({ hasText: text })).toHaveCount(1);
+
+    await value(page, "Layer").click();
+    await expectOffers(field("Layer"), "0", ["0", "walls"]);
+    await field("Layer").fill("walls");
+    await page.keyboard.press("Enter");
+    await said('1 object changed to layer "walls".');
+    await expect(value(page, "Layer")).toHaveText("walls");
+
+    await value(page, "Color").click();
+    await expectOffers(field("Color"), "ByLayer", COLOR_CHOICES);
+    await field("Color").fill("blue");
+    await page.keyboard.press("Enter");
+    await said("1 object changed to blue.");
+    await expect(value(page, "Color")).toHaveText("blue");
+
+    await value(page, "Linetype").click();
+    await expectOffers(field("Linetype"), "ByLayer", [
+      "ByLayer",
+      "ByBlock",
+      "Continuous",
+      "Dashed",
+    ]);
+    await field("Linetype").fill("Dashed");
+    await page.keyboard.press("Enter");
+    await said("1 object changed to linetype Dashed.");
+    await expect(value(page, "Linetype")).toHaveText("Dashed");
+
+    await value(page, "Lineweight").click();
+    await expectOffers(field("Lineweight"), "ByLayer", LINEWEIGHT_CHOICES);
+    await field("Lineweight").fill("0.35");
+    await page.keyboard.press("Enter");
+    await said("1 object changed to lineweight 0.35 mm.");
+    await expect(value(page, "Lineweight")).toHaveText("0.35 mm");
+
+    // Escape, or an answer left empty, changes nothing.
+    const lines = await logLines(page).count();
+    await value(page, "Color").click();
+    await page.keyboard.press("Escape");
+    await expect(field("Color")).toHaveCount(0);
+    await value(page, "Color").click();
+    await page.keyboard.press("Enter");
+    await expect(value(page, "Color")).toHaveText("blue");
+    expect(await logLines(page).count()).toBe(lines);
+
+    const file = await downloadFrom(page, () => enter(page, "DXFOUT"));
+    const line = entities(file.text, "LINE")[0];
+    expect([group(line, 8), group(line, 62), group(line, 6), group(line, 370)]).toEqual([
+      "walls",
+      "5",
+      "Dashed",
+      "35",
+    ]);
   });
 });

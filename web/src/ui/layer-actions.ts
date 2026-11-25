@@ -44,6 +44,33 @@ export const renameLayer = (layer: LayerRow, name: string): CommandScript => [
 
 export const deleteLayer = (layer: LayerRow): CommandScript => ["LAYER", "Delete", layer.name, ""];
 
+/** A layer's colour: a number from 1 to 255 or a name. */
+export const setLayerColor = (layer: LayerRow, color: string): CommandScript => [
+  "LAYER",
+  "Color",
+  color,
+  layer.name,
+  "",
+];
+
+/** A layer's linetype: a loaded name, or a built-in one loaded with it (#356). */
+export const setLayerLinetype = (layer: LayerRow, linetype: string): CommandScript => [
+  "LAYER",
+  "LType",
+  linetype,
+  layer.name,
+  "",
+];
+
+/** A layer's lineweight: millimetres, or Default. */
+export const setLayerLineweight = (layer: LayerRow, lineweight: string): CommandScript => [
+  "LAYER",
+  "LWeight",
+  lineweight,
+  layer.name,
+  "",
+];
+
 /** The CSS colour of a layer's swatch: its colour, or the theme's foreground. */
 export function swatchColor(layer: LayerRow): string {
   return layer.rgb
@@ -111,3 +138,13 @@ export const LINEWEIGHT_CHOICES = [
   "2",
   "2.11",
 ] as const;
+
+/** What a layer's colour may be: a layer has no ByLayer or ByBlock. */
+export const LAYER_COLOR_CHOICES = COLOR_CHOICES.filter(
+  (choice) => choice !== "ByLayer" && choice !== "ByBlock",
+);
+
+/** What a layer's lineweight may be: a layer has no ByLayer or ByBlock. */
+export const LAYER_LINEWEIGHT_CHOICES = LINEWEIGHT_CHOICES.filter(
+  (choice) => choice !== "ByLayer" && choice !== "ByBlock",
+);

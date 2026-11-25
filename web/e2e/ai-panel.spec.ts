@@ -883,3 +883,28 @@ test("a proposal says how it was checked", async ({ page }) => {
   );
   await expect(trail).toContainText("Sent back to the model before you saw it:");
 });
+
+test("the prompt counts its characters toward the plan's longest request", async ({ page }) => {
+  const service = await fakeAiService(page);
+  await openApp(page);
+  await signIn(page, service);
+  const field = panel(page).getByLabel("What should be drawn or changed?");
+  const count = panel(page).getByTestId("ai-prompt-count");
+  await expect(field).toHaveAttribute("aria-describedby", "ai-prompt-count");
+  await expect(count).toHaveText("0 / 2000 characters");
+  await field.fill("a circle");
+  await expect(count).toHaveText("8 / 2000 characters");
+  // Counted as the service counts: an é, a Ø, an emoji is one character.
+  await field.fill("Ø10 é 😀");
+  await expect(count).toHaveText("7 / 2000 characters");
+  await field.fill("x".repeat(2001));
+  await expect(count).toHaveText("2001 / 2000 characters — too long");
+
+  // Pro takes longer requests, and the count says Pro's.
+  service.plan = "pro";
+  await page.reload();
+  await loaded(page);
+  await expect(count).toHaveText("0 / 8000 characters");
+  await field.fill("x".repeat(2001));
+  await expect(count).toHaveText("2001 / 8000 characters");
+});

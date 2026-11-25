@@ -288,9 +288,26 @@ export class CadApp {
    * Runs a command with its answers, exactly as if each had been typed: a
    * panel's button is a macro over the command line, never a second path
    * into the drawing (DESIGN §5, §15). The log shows every step.
+   *
+   * Each answer moves the command on to its next question. One the command
+   * refuses leaves it asking the same again, and the answers after it were
+   * meant for later questions: typed there, a layer's name became a
+   * lineweight and the command was left open. So a refused answer ends the
+   * script and cancels the command; the log says why.
    */
   run(name: string, ...answers: readonly string[]): void {
-    this.runMacro({ command: name, steps: answers });
+    this.#paused = undefined;
+    this.invoke(name);
+    for (const answer of answers) {
+      const before = this.ui.getSnapshot();
+      if (before.command === undefined) return;
+      this.submitText(answer);
+      const after = this.ui.getSnapshot();
+      if (after.command === before.command && after.prompt === before.prompt) {
+        this.key(KeyAction.Escape);
+        return;
+      }
+    }
   }
 
   /**

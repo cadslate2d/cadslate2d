@@ -73,14 +73,58 @@ body {
     "status status";
 }
 
-/* The docked panels share the right column, top to bottom. */
+/* The docked panels share the right column, top to bottom, each its share
+   of the height (--share-*, set on the shell as the dividers move). */
 .panels {
   grid-area: panels;
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
   min-height: 0;
   margin: var(--space-2) var(--space-2) var(--space-2) 0;
+}
+
+.panels > .layers {
+  flex-grow: var(--share-layers, 1);
+}
+
+.panels > .properties {
+  flex-grow: var(--share-properties, 1);
+}
+
+.panels > .ai {
+  flex-grow: var(--share-ai, 3);
+}
+
+/* The column's left edge, dragged to widen or narrow the panels. */
+.panels__edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--space-2));
+  width: var(--space-2);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+/* Between two panels, dragged to share the height between them. */
+.panels__divider {
+  flex: 0 0 var(--space-2);
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.panels__edge:hover,
+.panels__edge:focus-visible,
+.panels__divider:hover,
+.panels__divider:focus-visible {
+  outline: none;
+  background: linear-gradient(var(--color-accent), var(--color-accent)) center / 2px 100% no-repeat;
+}
+
+.panels__divider:hover,
+.panels__divider:focus-visible {
+  background-size: 100% 2px;
 }
 
 .header {
@@ -587,6 +631,32 @@ body {
   cursor: default;
 }
 
+/* A layer's colour, linetype, or lineweight: a value that opens a field. */
+.layers__value {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.layers__value:hover:not(:disabled),
+.layers__value:focus-visible {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+}
+
+.layers__value:disabled {
+  cursor: default;
+}
+
 .properties__value--varies {
   color: var(--color-text-faint);
   font-style: italic;
@@ -598,11 +668,11 @@ body {
   font-family: var(--font-mono);
 }
 
-.properties__form {
+.choice__form {
   margin: 0;
 }
 
-.properties__field {
+.choice__field {
   width: 100%;
   box-sizing: border-box;
   padding: var(--space-1) var(--space-2);
@@ -1342,6 +1412,24 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+/* The Ask button, and how long the request is beside it. */
+.ai__ask-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.ai__count {
+  color: var(--color-text-faint);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.ai__count--over {
+  color: var(--color-danger);
 }
 
 .ai__note {

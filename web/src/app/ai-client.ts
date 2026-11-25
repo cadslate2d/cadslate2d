@@ -10,7 +10,19 @@ export interface Allowance {
   readonly remaining: number;
   /** ISO 8601: when the allowance resets. */
   readonly resetsAt: string;
+  /**
+   * The longest request the plan takes, in characters (Unicode code
+   * points, as the service counts them); a service that does not say is
+   * taken to allow `PROMPT_LIMIT`.
+   */
+  readonly promptLimit: number;
 }
+
+/** The longest request the service takes on any plan, in characters. */
+export const PROMPT_LIMIT = 8000;
+
+/** A request's length as the service counts it: code points, not UTF-16 units. */
+export const promptLength = (text: string): number => [...text].length;
 
 /** The account's subscription, as the service learned it from Stripe (ADR-0002). */
 export interface Billing {
@@ -171,6 +183,7 @@ interface WireAllowance {
   allowance: number;
   remaining: number;
   resets_at: string;
+  prompt_limit?: number;
 }
 
 interface WireBilling {
@@ -197,6 +210,7 @@ const allowanceOf = (wire: WireAllowance): Allowance => ({
   allowance: wire.allowance,
   remaining: wire.remaining,
   resetsAt: wire.resets_at,
+  promptLimit: wire.prompt_limit ?? PROMPT_LIMIT,
 });
 
 /** The service at `base`, over `fetch`. */

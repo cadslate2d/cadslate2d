@@ -2,9 +2,10 @@
 // properties it shares, and — for one object — its defining geometry. The
 // summary is computed in Rust and bounded; a change runs CHPROP through the
 // command line. React holds nothing about the objects themselves.
-import { useState, useSyncExternalStore, type FormEvent } from "react";
+import { useSyncExternalStore } from "react";
 import type { CadApp } from "../app/cad-app";
 import type { UiSnapshot } from "../app/ui-store";
+import { ChoiceField } from "./ChoiceField";
 import {
   CHANGEABLE,
   changeProperty,
@@ -45,8 +46,9 @@ function valueOf(property: Changeable, snapshot: UiSnapshot): string | undefined
 }
 
 /**
- * One property: its shared value, editable as text with the table's names
- * offered. Submitting runs CHPROP; the field shows whatever Rust decided.
+ * One property: its shared value, a click away from a field offering every
+ * choice — the table's names or the fixed list — or a typed one.
+ * Submitting runs CHPROP; the field shows whatever Rust decided.
  */
 function PropertyField({
   property,
@@ -60,57 +62,23 @@ function PropertyField({
   onChange: (property: Changeable, value: string) => void;
 }) {
   const value = valueOf(property, snapshot);
-  const [editing, setEditing] = useState(false);
   const id = `property-${property.toLowerCase()}`;
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const typed = new FormData(event.currentTarget).get("value");
-    setEditing(false);
-    if (typeof typed === "string" && typed.trim() && typed.trim() !== value) {
-      onChange(property, typed.trim());
-    }
-  };
   return (
     <tr>
-      <th scope="row">
-        <label htmlFor={id}>{property}</label>
+      <th scope="row" id={`${id}-label`}>
+        {property}
       </th>
       <td>
-        {editing ? (
-          <form className="properties__form" onSubmit={submit}>
-            <input
-              id={id}
-              className="properties__field"
-              name="value"
-              list={`${id}-choices`}
-              defaultValue={value ?? ""}
-              autoFocus
-              autoComplete="off"
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setEditing(false);
-                event.stopPropagation();
-              }}
-              onBlur={() => setEditing(false)}
-            />
-            <datalist id={`${id}-choices`}>
-              {choicesFor(property, snapshot).map((choice) => (
-                <option key={choice} value={choice} />
-              ))}
-            </datalist>
-          </form>
-        ) : (
-          <button
-            id={id}
-            type="button"
-            className={`properties__value${value === undefined ? " properties__value--varies" : ""}`}
-            title={`Change ${property.toLowerCase()}`}
-            disabled={busy}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => setEditing(true)}
-          >
-            {value ?? VARIES}
-          </button>
-        )}
+        <ChoiceField
+          id={id}
+          label={property}
+          value={value}
+          shown={value ?? VARIES}
+          choices={choicesFor(property, snapshot)}
+          disabled={busy}
+          className={`properties__value${value === undefined ? " properties__value--varies" : ""}`}
+          onChange={(chosen) => onChange(property, chosen)}
+        />
       </td>
     </tr>
   );
@@ -126,7 +94,12 @@ export function PropertiesPanel({ app }: { app: CadApp }) {
   };
 
   return (
-    <aside className="properties" aria-label="Properties" data-panel="properties">
+    <aside
+      className="properties"
+      aria-label="Properties"
+      data-panel="properties"
+      data-dock="properties"
+    >
       <div className="properties__header">
         <h2 className="properties__title">Properties</h2>
         <span className="properties__headline" data-testid="selection-headline">

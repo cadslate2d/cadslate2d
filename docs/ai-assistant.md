@@ -72,7 +72,7 @@ A sheet is composed by the program, not the model ([ADR-0041](adr/0041-composed-
 
 - The request is sent. The selected objects and your layer names go with it **only when you agree, for that request**, after seeing exactly what would go. Nothing is sent in the background.
 - The assistant needs an account — sign in with your email; a link arrives that works once — and the hosted service. Its privacy page, linked from the panel, says what it keeps and for how long. Signing out, and deleting the account with every record of it, are in the panel.
-- The allowance of AI actions per month, and when it resets, are shown in the panel.
+- The allowance of AI actions per month, and when it resets, are shown in the panel; under the prompt, how many characters the request uses of the longest your plan takes.
 - A build with no service configured, signed out, over the allowance, or offline: the panel says why, and everything else works as before.
 
 ## For contributors
